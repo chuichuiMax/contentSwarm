@@ -29,7 +29,9 @@ import {
   Sparkles,
   Tags,
   UserRoundCog,
-  WandSparkles
+  WandSparkles,
+  X,
+  ZoomIn
 } from 'lucide-vue-next'
 import AgentInputArea from '@/components/AgentInputArea.vue'
 import ContentOcrDrawer from '@/components/content/ContentOcrDrawer.vue'
@@ -101,6 +103,10 @@ const selectedImagePreviewUrl = ref('')
 const selectedImagePreviewLoading = ref(false)
 const hycanvasCompositePreviewUrl = ref('')
 const hycanvasCompositePreviewLoading = ref(false)
+const imagePreviewOpen = ref(false)
+const imagePreviewSrc = ref('')
+const imagePreviewTitle = ref('')
+const imagePreviewAlt = ref('')
 const selectedPosterTemplateId = ref('')
 const materialImageUrls = ref({})
 const posterTemplateUrls = ref({})
@@ -608,6 +614,14 @@ const loadHyCanvasCompositePreview = async (imageItemId, templateId) => {
   } finally {
     if (generation === hycanvasCompositePreviewGeneration) hycanvasCompositePreviewLoading.value = false
   }
+}
+
+const openImagePreview = (src, title, alt) => {
+  if (!src) return
+  imagePreviewSrc.value = src
+  imagePreviewTitle.value = title
+  imagePreviewAlt.value = alt || title
+  imagePreviewOpen.value = true
 }
 
 const initializeVisualSelection = () => {
@@ -1570,11 +1584,25 @@ const openVersions = async () => {
                     <div class="selected-gallery-preview-card">
                       <span class="selected-gallery-preview-media">
                         <LoaderCircle v-if="selectedImagePreviewLoading" class="spin" :size="18" />
-                        <img
+                        <button
                           v-else-if="selectedImagePreviewUrl"
-                          :src="selectedImagePreviewUrl"
-                          :alt="selectedImageSummary?.name || '封面原图预览'"
-                        />
+                          type="button"
+                          class="selected-gallery-preview-trigger"
+                          aria-label="放大查看封面原图"
+                          @click="openImagePreview(
+                            selectedImagePreviewUrl,
+                            '封面原图',
+                            selectedImageSummary?.name || '封面原图预览'
+                          )"
+                        >
+                          <img
+                            :src="selectedImagePreviewUrl"
+                            :alt="selectedImageSummary?.name || '封面原图预览'"
+                          />
+                          <span class="selected-gallery-preview-zoom" aria-hidden="true">
+                            <ZoomIn :size="20" />
+                          </span>
+                        </button>
                         <Image v-else :size="20" />
                       </span>
                       <strong>封面原图</strong>
@@ -1582,11 +1610,25 @@ const openVersions = async () => {
                     <div class="selected-gallery-preview-card">
                       <span class="selected-gallery-preview-media">
                         <LoaderCircle v-if="hycanvasCompositePreviewLoading" class="spin" :size="18" />
-                        <img
+                        <button
                           v-else-if="hycanvasCompositePreviewUrl"
-                          :src="hycanvasCompositePreviewUrl"
-                          :alt="`${selectedHyCanvasTemplate?.title || '模板'}合成效果`"
-                        />
+                          type="button"
+                          class="selected-gallery-preview-trigger"
+                          aria-label="放大查看模板叠加效果"
+                          @click="openImagePreview(
+                            hycanvasCompositePreviewUrl,
+                            '模板叠加效果',
+                            `${selectedHyCanvasTemplate?.title || '模板'}合成效果`
+                          )"
+                        >
+                          <img
+                            :src="hycanvasCompositePreviewUrl"
+                            :alt="`${selectedHyCanvasTemplate?.title || '模板'}合成效果`"
+                          />
+                          <span class="selected-gallery-preview-zoom" aria-hidden="true">
+                            <ZoomIn :size="20" />
+                          </span>
+                        </button>
                         <LayoutTemplate v-else :size="22" />
                       </span>
                       <strong>模板叠加效果</strong>
@@ -2335,6 +2377,29 @@ const openVersions = async () => {
       v-model:open="publishModalOpen"
       :artifact="store.artifact"
     />
+    <a-modal
+      v-model:open="imagePreviewOpen"
+      class="content-image-preview-modal"
+      :aria-label="imagePreviewTitle"
+      :width="560"
+      :footer="null"
+      :closable="false"
+      centered
+      destroy-on-close
+    >
+      <div class="content-image-preview-stage">
+        <img :src="imagePreviewSrc" :alt="imagePreviewAlt" />
+        <button
+          type="button"
+          class="content-image-preview-close"
+          aria-label="关闭图片预览"
+          title="关闭"
+          @click="imagePreviewOpen = false"
+        >
+          <X :size="20" />
+        </button>
+      </div>
+    </a-modal>
     <ContentOcrDrawer v-if="store.task" v-model:open="ocrModalOpen" :task-id="store.task.id" />
   </div>
 </template>
@@ -2430,6 +2495,17 @@ const openVersions = async () => {
 .selected-gallery-preview-card > small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .selected-gallery-preview-media { display: grid; place-items: center; width: 100%; aspect-ratio: 3 / 4; overflow: hidden; border: 1px solid var(--gray-150); border-radius: 6px; color: var(--color-text-tertiary); background: var(--gray-25); }
 .selected-gallery-preview-media img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.selected-gallery-preview-trigger { position: relative; width: 100%; height: 100%; padding: 0; overflow: hidden; border: 0; color: inherit; background: transparent; cursor: zoom-in; }
+.selected-gallery-preview-trigger:focus-visible { outline: 2px solid var(--main-color); outline-offset: -2px; }
+.selected-gallery-preview-zoom { position: absolute; inset: 0; display: grid; place-items: center; color: var(--gray-0); background: var(--shadow-5); opacity: 0; transition: opacity 0.15s ease; }
+.selected-gallery-preview-trigger:hover .selected-gallery-preview-zoom,
+.selected-gallery-preview-trigger:focus-visible .selected-gallery-preview-zoom { opacity: 1; }
+.content-image-preview-stage { position: relative; width: min(100%, calc((100vh - 80px) * 0.75)); aspect-ratio: 3 / 4; margin: 0 auto; overflow: hidden; border-radius: 6px; background: var(--gray-25); }
+.content-image-preview-stage img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.content-image-preview-close { position: absolute; top: 12px; right: 12px; width: 36px; height: 36px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 50%; color: var(--gray-0); background: var(--shadow-5); cursor: pointer; }
+.content-image-preview-close:hover { background: var(--shadow-4); }
+.content-image-preview-close:focus-visible { outline: 2px solid var(--gray-0); outline-offset: 2px; }
+:global(.content-image-preview-modal .ant-modal-content) { padding: 0; overflow: hidden; background: transparent; box-shadow: none; }
 .poster-choice-grid { display: grid; grid-auto-flow: column; grid-auto-columns: 142px; gap: 12px; padding: 2px 2px 8px; overflow-x: auto; }
 .gallery-modal-content { display: grid; gap: 16px; padding-top: 4px; }
 .gallery-modal-back { width: fit-content; padding: 0; display: inline-flex; align-items: center; gap: 5px; border: 0; color: var(--main-700); background: transparent; cursor: pointer; }
