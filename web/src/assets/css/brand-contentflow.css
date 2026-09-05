@@ -1,0 +1,33 @@
+/* ContentFlow 产品品牌色 */
+:root {
+  --main-1000: #12112f;
+  --main-900: #27245e;
+  --main-800: #373282;
+  --main-700: #5146e5;
+  --main-600: #6258ec;
+  --main-500: #756cf0;
+  --main-400: #918af3;
+  --main-300: #b0acf7;
+  --main-200: #d0cdfa;
+  --main-100: #e5e3fd;
+  --main-50: #f0effe;
+  --main-40: #f4f3fe;
+  --main-30: #f7f7ff;
+  --main-20: #f9f9ff;
+  --main-10: #fbfbff;
+  --main-5: #fdfdff;
+  --main-1: #fefeff;
+  --main-0: #ffffff;
+
+  --main-color: var(--main-700);
+  --main-bright: #756cf0;
+
+  --color-primary-50: var(--main-50);
+  --color-primary-100: var(--main-200);
+  --color-primary-500: var(--main-500);
+  --color-primary-700: var(--main-700);
+  --color-primary-900: var(--main-900);
+
+  --chart-palette-1: var(--main-600);
+  --bg-sider: var(--main-5);
+}

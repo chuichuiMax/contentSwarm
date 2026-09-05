@@ -1,0 +1,33 @@
+/* 博云东方品牌色 — 覆盖全局主色阶，登录页/仪表盘/内页统一继承 */
+:root {
+  --main-1000: #071428;
+  --main-900: #1e326e;
+  --main-800: #0d4486;
+  --main-700: #234ea0;
+  --main-600: #2a58b0;
+  --main-500: #0e68b0;
+  --main-400: #1a7fc9;
+  --main-300: #5ba3d6;
+  --main-200: #94c5e8;
+  --main-100: #c5dff3;
+  --main-50: #e5f1fa;
+  --main-40: #edf4fb;
+  --main-30: #f3f8fc;
+  --main-20: #f7fafd;
+  --main-10: #fafcfe;
+  --main-5: #fcfdfe;
+  --main-1: #fefefe;
+  --main-0: #ffffff;
+
+  --main-color: #234ea0;
+  --main-bright: #0e68b0;
+
+  --color-primary-50: var(--main-50);
+  --color-primary-100: var(--main-200);
+  --color-primary-500: var(--main-500);
+  --color-primary-700: var(--main-700);
+  --color-primary-900: var(--main-900);
+
+  --chart-palette-1: var(--main-500);
+  --bg-sider: var(--main-5);
+}

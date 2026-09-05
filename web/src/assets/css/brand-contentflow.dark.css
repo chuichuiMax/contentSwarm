@@ -1,0 +1,25 @@
+/* ContentFlow 深色模式品牌色 */
+:root.dark {
+  --main-1000: #f3f2ff;
+  --main-900: #e1defe;
+  --main-800: #c5c1fb;
+  --main-700: #aaa4f8;
+  --main-600: #918af3;
+  --main-500: #756cf0;
+  --main-400: #6258ec;
+  --main-300: #5146e5;
+  --main-200: #3a34a0;
+  --main-100: #2a276e;
+  --main-50: #1d1b4c;
+  --main-40: #18163f;
+  --main-30: #131233;
+  --main-20: #0f0e29;
+  --main-10: #0b0a20;
+  --main-5: #070716;
+  --main-1: #03030b;
+  --main-0: #000000;
+
+  --main-color: var(--main-600);
+  --main-bright: var(--main-500);
+  --chart-palette-1: var(--main-600);
+}

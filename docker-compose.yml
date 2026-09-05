@@ -1,0 +1,581 @@
+x-api-worker-env: &api-worker-env
+  HOST_IP: ${HOST_IP:-}
+  LITE_MODE: ${LITE_MODE:-false}
+  RUNNING_IN_DOCKER: "true"
+  YUXI_ENV: ${YUXI_ENV:-development}
+  WATCHFILES_FORCE_POLLING: ${WATCHFILES_FORCE_POLLING:-true}
+  # DBs and other services
+  POSTGRES_URL: ${POSTGRES_URL:-postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-yuxi}}
+  REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+  NEO4J_URI: ${NEO4J_URI:-bolt://graph:7687}
+  NEO4J_USERNAME: ${NEO4J_USERNAME:-neo4j}
+  NEO4J_PASSWORD: ${NEO4J_PASSWORD:-0123456789}
+  MILVUS_URI: ${MILVUS_URI:-http://milvus:19530}
+  MILVUS_DB_NAME: ${MILVUS_DB_NAME:-default}
+  MILVUS_TOKEN: ${MILVUS_TOKEN:-}
+  MINIO_URI: ${MINIO_URI:-http://minio:9000}
+  # 文档解析
+  MINERU_API_URI: ${MINERU_API_URI:-http://mineru-api:30001}
+  PADDLEX_URI: ${PADDLEX_URI:-http://paddlex:8080}
+  # Sandbox related
+  YUXI_DOCKER_API_BASE: ${YUXI_DOCKER_API_BASE:-http://localhost}
+  SANDBOX_PROVIDER: ${SANDBOX_PROVIDER:-provisioner}
+  SANDBOX_PROVISIONER_URL: ${SANDBOX_PROVISIONER_URL:-http://sandbox-provisioner:8002}
+  SANDBOX_VIRTUAL_PATH_PREFIX: ${SANDBOX_VIRTUAL_PATH_PREFIX:-/home/gem/user-data}
+  SANDBOX_EXEC_TIMEOUT_SECONDS: ${SANDBOX_EXEC_TIMEOUT_SECONDS:-180}
+  SANDBOX_MAX_OUTPUT_BYTES: ${SANDBOX_MAX_OUTPUT_BYTES:-262144}
+  IMAGE2_BASE_URL: ${IMAGE2_BASE_URL:-}
+  IMAGE2_API_KEY: ${IMAGE2_API_KEY:-}
+  IMAGE2_MODEL: ${IMAGE2_MODEL:-}
+  IMAGE2_SUBMIT_PATH: ${IMAGE2_SUBMIT_PATH:-/images/generations}
+  IMAGE2_EDIT_PATH: ${IMAGE2_EDIT_PATH:-/images/edits}
+  IMAGE2_STATUS_PATH: ${IMAGE2_STATUS_PATH:-/images/generations/{task_id}}
+  IMAGE2_TIMEOUT_SECONDS: ${IMAGE2_TIMEOUT_SECONDS:-120}
+  IMAGE2_POLL_INTERVAL_SECONDS: ${IMAGE2_POLL_INTERVAL_SECONDS:-2}
+  IMAGE2_POLL_TIMEOUT_SECONDS: ${IMAGE2_POLL_TIMEOUT_SECONDS:-900}
+  IMAGE2_MAX_CONCURRENT: ${IMAGE2_MAX_CONCURRENT:-1}
+  IMAGE2_SEND_RESPONSE_FORMAT: ${IMAGE2_SEND_RESPONSE_FORMAT:-false}
+  IMAGE2_TRUSTED_OUTPUT_ORIGINS: ${IMAGE2_TRUSTED_OUTPUT_ORIGINS:-}
+  CONTENT_COVER_BUCKET: ${CONTENT_COVER_BUCKET:-content-covers}
+  CONTENT_COVER_TEMPLATE_REPLICATION_V2: ${CONTENT_COVER_TEMPLATE_REPLICATION_V2:-true}
+  XHS_BROWSER_GATEWAY_URL: ${XHS_BROWSER_GATEWAY_URL:-http://xhs-browser-gateway:5051}
+  XHS_GATEWAY_TOKEN: ${XHS_GATEWAY_TOKEN:-local-dev-change-me}
+  XHS_GATEWAY_HEADLESS: ${XHS_GATEWAY_HEADLESS:-true}
+  XHS_GATEWAY_IDLE_SECONDS: ${XHS_GATEWAY_IDLE_SECONDS:-900}
+  XHS_GATEWAY_REAPER_INTERVAL_SECONDS: ${XHS_GATEWAY_REAPER_INTERVAL_SECONDS:-30}
+  XHS_GATEWAY_MAX_SESSIONS: ${XHS_GATEWAY_MAX_SESSIONS:-5}
+  XHS_BROWSER_CONTROL_LEASE_SECONDS: ${XHS_BROWSER_CONTROL_LEASE_SECONDS:-120}
+  XHS_BROWSER_OPERATION_LOCK_SECONDS: ${XHS_BROWSER_OPERATION_LOCK_SECONDS:-180}
+  XHS_BROWSER_OPERATION_BLOCK_SECONDS: ${XHS_BROWSER_OPERATION_BLOCK_SECONDS:-3}
+  HYCANVAS_BASE_URL: ${HYCANVAS_BASE_URL:-http://hycanvas-app:8005}
+  # Local HyCanvas runs its hot-reload Next.js frontend separately from the Go
+  # API. ContentFlow browser links must point at the frontend port; server-side
+  # API traffic continues to use hycanvas-app:8005.
+  HYCANVAS_PUBLIC_URL: ${HYCANVAS_DEV_PUBLIC_URL:-http://127.0.0.1:${HYCANVAS_DEV_FRONTEND_PORT:-3000}}
+  HYCANVAS_DEV_PUBLIC_URL: ${HYCANVAS_DEV_PUBLIC_URL:-http://127.0.0.1:${HYCANVAS_DEV_FRONTEND_PORT:-3000}}
+  HYCANVAS_API_KEY: ${HYCANVAS_API_KEY:-hyk_contentswarm_local_integration_key_change_me}
+  HYCANVAS_WORKSPACE_ID: ${HYCANVAS_WORKSPACE_ID:-00000000-0000-4000-8000-000000001001}
+  WECHAT_MP_APPID: ${WECHAT_MP_APPID:-}
+  WECHAT_MP_SECRET: ${WECHAT_MP_SECRET:-}
+  # Model request timeouts
+  EMBEDDING_TIMEOUT: ${EMBEDDING_TIMEOUT:-600}
+  LLM_TIMEOUT: ${LLM_TIMEOUT:-600}
+  # Agent run
+  RUN_CANCEL_KEY_TTL_SECONDS: ${RUN_CANCEL_KEY_TTL_SECONDS:-1800}
+  RUN_EVENTS_STREAM_TTL_SECONDS: ${RUN_EVENTS_STREAM_TTL_SECONDS:-7200}
+  # 其他环境变量
+  NO_PROXY: localhost,127.0.0.1,milvus,graph,minio,milvus-etcd-dev,etcd,mineru,paddlex,sandbox-provisioner,hycanvas-app,api.siliconflow.cn
+  no_proxy: localhost,127.0.0.1,milvus,graph,minio,milvus-etcd-dev,etcd,mineru,paddlex,sandbox-provisioner,hycanvas-app,api.siliconflow.cn
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: docker/api.Dockerfile
+    image: yuxi-api:${YUXI_VERSION:-0.7.0}
+    container_name: api-dev
+    working_dir: /app
+    volumes:
+      - ./backend/server:/app/server
+      - ./backend/package:/app/package
+      - ./docker/volumes/yuxi:/app/saves
+      - ./docker/volumes/models:/app/models
+      - ./backend/test:/app/test
+      - ./backend/scripts:/app/scripts
+      - ./docker/sandbox_provisioner:/app/docker/sandbox_provisioner:ro
+      - ./.env:/app/.env
+      - /var/run/docker.sock:/var/run/docker.sock
+      - nltk_data:/root/nltk_data  # 使用命名卷持久化NLTK数据，避免路径展开差异
+    ports:
+      - "5050:5050"
+    networks:
+      - app-network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    env_file:
+      - .env
+    # region api_envs
+    environment:
+      <<: *api-worker-env
+    # endregion api_envs
+    command: uv run --no-sync --no-dev uvicorn server.main:app --host 0.0.0.0 --port 5050 --reload --reload-dir /app/server --reload-dir /app/package
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:5050/api/system/health || exit 1"]
+      interval: 30s
+      timeout: 15s
+      retries: 8
+      start_period: 180s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      sandbox-provisioner:
+        condition: service_healthy
+      hycanvas-init:
+        condition: service_completed_successfully
+
+  xhs-browser-gateway:
+    build:
+      context: .
+      dockerfile: docker/api.Dockerfile
+    image: yuxi-api:${YUXI_VERSION:-0.7.0}
+    container_name: xhs-browser-gateway
+    working_dir: /app
+    shm_size: ${XHS_GATEWAY_SHM_SIZE:-1gb}
+    mem_limit: ${XHS_GATEWAY_MEMORY_LIMIT:-4g}
+    volumes:
+      - ./backend/server:/app/server
+      - ./backend/package:/app/package
+      - ./docker/volumes/yuxi:/app/saves
+      - ./docker/volumes/models:/app/models
+      - ./.env:/app/.env
+      - ./backend/pyproject.toml:/app/pyproject.toml
+      - ./backend/uv.lock:/app/uv.lock
+    networks:
+      - app-network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    env_file:
+      - .env
+    environment:
+      <<: *api-worker-env
+      XHS_GATEWAY_TOKEN: ${XHS_GATEWAY_TOKEN:-local-dev-change-me}
+      XHS_GATEWAY_HEADLESS: ${XHS_GATEWAY_HEADLESS:-true}
+    command: uv run --no-sync --no-dev uvicorn server.xhs_browser_gateway:app --host 0.0.0.0 --port 5051
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:5051/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 8
+      start_period: 60s
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: .
+      dockerfile: docker/api.Dockerfile
+    image: yuxi-api:${YUXI_VERSION:-0.7.0}
+    container_name: worker-dev
+    working_dir: /app
+    volumes:
+      - ./backend/server:/app/server
+      - ./backend/package:/app/package
+      - ./docker/volumes/yuxi:/app/saves
+      - ./docker/volumes/models:/app/models
+      - ./backend/test:/app/test
+      - ./backend/scripts:/app/scripts
+      - ./docker/sandbox_provisioner:/app/docker/sandbox_provisioner:ro
+      - ./.env:/app/.env
+      - ./backend/pyproject.toml:/app/pyproject.toml
+      - ./backend/uv.lock:/app/uv.lock
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - app-network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    env_file:
+      - .env
+    environment:
+      <<: *api-worker-env
+    command: watchfiles --filter python "arq server.worker_main.WorkerSettings" /app/server /app/package
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      sandbox-provisioner:
+        condition: service_healthy
+      hycanvas-init:
+        condition: service_completed_successfully
+
+  sandbox-provisioner:
+    build:
+      context: ./docker/sandbox_provisioner
+      dockerfile: Dockerfile
+    image: yuxi-sandbox-provisioner:${YUXI_VERSION:-0.7.0}
+    container_name: sandbox-provisioner
+    volumes:
+      - ./docker/volumes/yuxi:/app/saves
+      - ./docker/sandbox_provisioner/app.py:/app/app.py:ro
+      - ./docker/sandbox_provisioner/sandbox.env:/app/sandbox.env:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    ports:
+      - "8002:8002"
+    networks:
+      - app-network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      # Common provisioner settings
+      - PROVISIONER_BACKEND=${SANDBOX_PROVISIONER_BACKEND:-docker}
+      - SANDBOX_IMAGE=${SANDBOX_IMAGE:-enterprise-public-cn-beijing.cr.volces.com/vefaas-public/all-in-one-sandbox:latest}
+      - SANDBOX_CONTAINER_PORT=${SANDBOX_CONTAINER_PORT:-8080}
+      - MEMORY_SANDBOX_URL_TEMPLATE=${MEMORY_SANDBOX_URL_TEMPLATE:-http://agent-sandbox:8000}
+      - SANDBOX_HEALTH_TIMEOUT_SECONDS=${SANDBOX_HEALTH_TIMEOUT_SECONDS:-300}
+      - SANDBOX_IDLE_TIMEOUT_SECONDS=${SANDBOX_IDLE_TIMEOUT_SECONDS:-120}
+      - SANDBOX_IDLE_CHECK_INTERVAL_SECONDS=${SANDBOX_IDLE_CHECK_INTERVAL_SECONDS:-10}
+      - SANDBOX_EXEC_TIMEOUT_SECONDS=${SANDBOX_EXEC_TIMEOUT_SECONDS:-180}
+      # Optional proxy for sandbox-provisioner container
+      - HTTP_PROXY=${SANDBOX_HTTP_PROXY:-}
+      - HTTPS_PROXY=${SANDBOX_HTTPS_PROXY:-}
+      - NO_PROXY=localhost,127.0.0.1,host.docker.internal
+      # Docker backend only
+      - DOCKER_NETWORK=${SANDBOX_DOCKER_NETWORK:-yuxi-know_app-network}
+      - DOCKER_THREADS_HOST_PATH=${SANDBOX_DOCKER_THREADS_HOST_PATH:-}
+      - DOCKER_SANDBOX_PREFIX=${SANDBOX_DOCKER_SANDBOX_PREFIX:-yuxi-sandbox}
+      - DOCKER_SANDBOX_HOST=${SANDBOX_DOCKER_SANDBOX_HOST:-host.docker.internal}
+      # Kubernetes backend only
+      - K8S_NAMESPACE=${SANDBOX_K8S_NAMESPACE:-yuxi-know}
+      - NODE_HOST=${SANDBOX_NODE_HOST:-host.docker.internal}
+      - KUBECONFIG_PATH=${KUBECONFIG_PATH:-}
+      - THREAD_PVC=${THREAD_PVC:-yuxi-thread}
+      - SKILLS_PVC=${SKILLS_PVC:-yuxi-skills}
+    command: >
+      sh -lc "python -c 'import docker' >/dev/null 2>&1 || pip install --no-cache-dir 'docker>=7.1.0';
+      uvicorn app:app --host 0.0.0.0 --port 8002"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8002/health').read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: docker/web.Dockerfile
+      target: development
+    image: yuxi-web:${YUXI_VERSION:-0.7.0}
+    container_name: web-dev
+    volumes:
+      - ./web/src:/app/src
+      - ./web/public:/app/public
+      - ./web/index.html:/app/index.html
+      - ./web/vite.config.js:/app/vite.config.js
+    ports:
+      - "5173:5173"
+    depends_on:
+      - api
+      - minio
+    networks:
+      - app-network
+    environment:
+      - NODE_ENV=development
+      - VITE_API_URL=http://api:5050
+      - VITE_MINIO_URL=http://minio:9000
+      - VITE_USE_RUNS_API=${VITE_USE_RUNS_API:-false}
+      - VITE_LITE_MODE=${LITE_MODE:-}
+    command: pnpm run server
+    restart: unless-stopped
+
+  # region neo4j
+  graph:
+    image: neo4j:5.26
+    container_name: graph
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    volumes:
+      - ./docker/volumes/neo4j/data:/data
+      - ./docker/volumes/neo4j/logs:/var/lib/neo4j/logs
+    healthcheck:
+      test: ["CMD-SHELL", "cypher-shell -a bolt://localhost:7687 -u ${NEO4J_USERNAME:-neo4j} -p ${NEO4J_PASSWORD:-0123456789} 'RETURN 1;' >/dev/null || exit 1"]
+      interval: 20s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    environment:
+      - NEO4J_AUTH=${NEO4J_USERNAME:-neo4j}/${NEO4J_PASSWORD:-0123456789}
+      - NEO4J_server_bolt_listen__address=0.0.0.0:7687
+      - NEO4J_server_http_listen__address=0.0.0.0:7474
+      - ENTITY_EMBEDDING=true
+    networks:
+      - app-network
+    restart: unless-stopped
+  # endregion neo4j
+
+  etcd:
+    container_name: milvus-etcd-dev
+    image: quay.io/coreos/etcd:v3.5.5
+    environment:
+      - ETCD_AUTO_COMPACTION_MODE=revision
+      - ETCD_AUTO_COMPACTION_RETENTION=1000
+      - ETCD_QUOTA_BACKEND_BYTES=4294967296
+      - ETCD_SNAPSHOT_COUNT=50000
+    volumes:
+      - ./docker/volumes/milvus/etcd:/etcd
+    command: etcd -advertise-client-urls=http://etcd:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health"]
+      interval: 60s
+      timeout: 30s
+      retries: 5
+      start_period: 30s
+    networks:
+      - app-network
+    restart: unless-stopped
+
+  minio:
+    container_name: minio
+    image: minio/minio:RELEASE.2023-03-20T20-16-18Z
+    environment:
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+    volumes:
+      - ./docker/volumes/milvus/minio:/minio_data
+      - ./docker/volumes/milvus/minio_config:/root/.minio
+    command: minio server /minio_data --address 0.0.0.0:9000 --console-address 0.0.0.0:9001
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 60s
+      timeout: 30s
+      retries: 5
+      start_period: 30s
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    networks:
+      - app-network
+    restart: unless-stopped
+
+  milvus:
+    image: milvusdb/milvus:v2.5.6
+    container_name: milvus
+    command: ["milvus", "run", "standalone"]
+    security_opt:
+      - seccomp:unconfined
+    environment:
+      ETCD_ENDPOINTS: etcd:2379
+      MINIO_ADDRESS: minio:9000
+      MILVUS_LOG_LEVEL: error
+    volumes:
+      - ./docker/volumes/milvus/milvus:/var/lib/milvus
+      - ./docker/volumes/milvus/logs:/var/lib/milvus/logs
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
+      interval: 60s
+      start_period: 120s
+      timeout: 30s
+      retries: 5
+    ports:
+      - "19530:19530"
+      - "9091:9091"
+    depends_on:
+      - "etcd"
+      - "minio"
+    networks:
+      - app-network
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16
+    container_name: postgres
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+      - POSTGRES_DB=${POSTGRES_DB:-yuxi}
+      - TZ=${TZ:-Asia/Shanghai}
+    volumes:
+      - ./docker/volumes/postgresql:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-yuxi} || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    networks:
+      - app-network
+    restart: unless-stopped
+
+  hycanvas-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${HYCANVAS_DB_USER:-hycanvas}
+      POSTGRES_PASSWORD: ${HYCANVAS_DB_PASSWORD:-hycanvas-local-password}
+      POSTGRES_DB: ${HYCANVAS_DB_NAME:-hycanvas}
+    volumes:
+      - ./docker/volumes/hycanvas-postgresql:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${HYCANVAS_DB_USER:-hycanvas} -d ${HYCANVAS_DB_NAME:-hycanvas}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks:
+      - app-network
+    restart: unless-stopped
+
+  hycanvas-app:
+    build:
+      context: ./apps/hycanvas
+      dockerfile: Dockerfile.dev
+    image: contentswarm-hycanvas-dev:${YUXI_VERSION:-0.7.0}
+    entrypoint: ["/bin/sh", "/app/docker/entrypoint-dev.sh"]
+    working_dir: /app
+    depends_on:
+      hycanvas-db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: development
+      PORT: "8005"
+      DB_AUTO_MIGRATE: "true"
+      DATABASE_URL: postgresql://${HYCANVAS_DB_USER:-hycanvas}:${HYCANVAS_DB_PASSWORD:-hycanvas-local-password}@hycanvas-db:5432/${HYCANVAS_DB_NAME:-hycanvas}?schema=public
+      JWT_SECRET: ${HYCANVAS_JWT_SECRET:-dev-insecure-hycanvas-jwt-secret-change-me}
+      COOKIE_SECURE: "false"
+      REDIS_URL: ""
+      PUBLIC_DIR: ""
+      FRONTEND_URL: http://127.0.0.1:${HYCANVAS_DEV_FRONTEND_PORT:-3000}
+      APP_URL: http://127.0.0.1:${HYCANVAS_PORT:-8005}
+      NEXT_PUBLIC_BACKEND_URL: http://127.0.0.1:${HYCANVAS_PORT:-8005}/api
+      HYCANVAS_DEV_BACKEND_URL: http://127.0.0.1:8005
+      STORAGE_DRIVER: local
+      LOCAL_STORAGE_PATH: /app/.data/storage
+      FONTS_DIR: /usr/share/fonts/opentype/noto
+      HYCANVAS_AUTH_MODE: contentswarm
+      CONTENTSWARM_URL: ${CONTENTSWARM_PUBLIC_URL:-http://127.0.0.1:5173}
+      WATCHPACK_POLLING: "true"
+      CHOKIDAR_USEPOLLING: "true"
+    ports:
+      - "${HYCANVAS_PORT:-8005}:8005"
+      - "${HYCANVAS_DEV_FRONTEND_PORT:-3000}:3000"
+    volumes:
+      - ./apps/hycanvas:/app
+      - hycanvas-node-modules:/app/node_modules
+      - hycanvas-frontend-node-modules:/app/frontend/node_modules
+      - hycanvas-go-mod:/go/pkg/mod
+      - hycanvas-go-build:/root/.cache/go-build
+      - ./docker/volumes/hycanvas-storage:/app/.data/storage
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8005/healthz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
+    networks:
+      - app-network
+    restart: unless-stopped
+
+  hycanvas-init:
+    image: postgres:16-alpine
+    depends_on:
+      hycanvas-app:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${HYCANVAS_DB_USER:-hycanvas}:${HYCANVAS_DB_PASSWORD:-hycanvas-local-password}@hycanvas-db:5432/${HYCANVAS_DB_NAME:-hycanvas}
+      HYCANVAS_API_KEY: ${HYCANVAS_API_KEY:-hyk_contentswarm_local_integration_key_change_me}
+      HYCANVAS_WORKSPACE_ID: ${HYCANVAS_WORKSPACE_ID:-00000000-0000-4000-8000-000000001001}
+    volumes:
+      - ./docker/hycanvas/init-integration.sh:/init-integration.sh:ro
+    entrypoint: ["/bin/sh", "/init-integration.sh"]
+    networks:
+      - app-network
+    restart: "no"
+
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - ./docker/volumes/redis:/data
+    networks:
+      - app-network
+    restart: unless-stopped
+
+  # lastest version: wget https://gcore.jsdelivr.net/gh/opendatalab/MinerU@master/docker/compose.yaml
+  mineru-api:
+    build:
+      context: .
+      dockerfile: docker/mineru.Dockerfile
+    image: mineru-vllm:latest
+    container_name: mineru-api
+    profiles:
+      - all
+    env_file:
+      - .env
+    ports:
+      - 30001:30001
+    environment:
+      MINERU_MODEL_SOURCE: local
+      VLLM_USE_V1: "1"
+    entrypoint: mineru-api
+    command:
+      --host 0.0.0.0
+      --port 30001
+      # --allow-public-http-client  # Disabled by default; when binding to 0.0.0.0 or ::, this re-enables *-http-client backends and server_url. Enable only if you accept the SSRF risk.
+      # parameters for vllm-engine
+      # --gpu-memory-utilization 0.5  # If encountering VRAM shortage, reduce the KV cache size by this parameter; if VRAM issues persist, try lowering it further to `0.4` or below.
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    ipc: host
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:30001/health || exit 1"]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["0"]  # Modify for multiple GPUs: ["0", "1"]
+              capabilities: [gpu]
+    networks:
+      - app-network
+    restart: unless-stopped
+
+  paddlex:
+    build:
+      context: .
+      dockerfile: docker/paddlex.Dockerfile
+    image: paddlex:latest
+    container_name: paddlex-ocr
+    profiles:
+      - all
+    volumes:
+      - ./docker/volumes/paddlex:/paddlex
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
+      interval: 20s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['0']
+              capabilities: [gpu]
+    networks:
+      - app-network
+    restart: unless-stopped
+
+volumes:
+  nltk_data:
+  hycanvas-node-modules:
+  hycanvas-frontend-node-modules:
+  hycanvas-go-mod:
+  hycanvas-go-build:
+
+networks:
+  app-network:
+    driver: bridge
+    name: ${SANDBOX_DOCKER_NETWORK:-yuxi-know_app-network}

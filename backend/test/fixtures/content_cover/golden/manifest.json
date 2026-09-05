@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "processing_version": "template-replication-v2",
+  "output": {"width": 1080, "height": 1440, "format": "PNG"},
+  "quality_gates": {
+    "locked_ssim_min": 0.98,
+    "layout_deviation_max": 0.02,
+    "ocr_accuracy_min": 0.99,
+    "mosaic_count_max": 0,
+    "residual_text_count_max": 0,
+    "overflow_count_max": 0
+  },
+  "cases": [
+    {"id": "large-title-light", "layout": "hero", "title": "大号浅色主标题"},
+    {"id": "large-title-dark", "layout": "hero", "title": "大号深色主标题"},
+    {"id": "two-color-title", "layout": "hero", "title": "双色强调标题"},
+    {"id": "outlined-title", "layout": "hero", "title": "描边阴影标题"},
+    {"id": "two-line-title", "layout": "hero", "title": "双行标题适配"},
+    {"id": "top-eyebrows", "layout": "stacked", "title": "顶部双眉题"},
+    {"id": "subtitle-panel", "layout": "stacked", "title": "副标题胶囊"},
+    {"id": "bottom-slogan", "layout": "stacked", "title": "底部口号条"},
+    {"id": "three-tags", "layout": "tags", "title": "三标签模板"},
+    {"id": "icon-labels", "layout": "tags", "title": "图标标签模板"},
+    {"id": "corner-sticker", "layout": "decorated", "title": "角标贴纸模板"},
+    {"id": "line-decoration", "layout": "decorated", "title": "线条装饰模板"},
+    {"id": "rounded-card", "layout": "card", "title": "圆角卡片模板"},
+    {"id": "transparent-panel", "layout": "card", "title": "半透明面板"},
+    {"id": "busy-background", "layout": "hero", "title": "复杂底图可读性"},
+    {"id": "light-background", "layout": "hero", "title": "浅色底图对比度"},
+    {"id": "dark-background", "layout": "hero", "title": "深色底图对比度"},
+    {"id": "long-copy", "layout": "hero", "title": "超长内容资产标题适配"},
+    {"id": "short-copy", "layout": "hero", "title": "短标题"},
+    {"id": "no-content-asset", "layout": "stacked", "title": "保留模板原文"}
+  ]
+}

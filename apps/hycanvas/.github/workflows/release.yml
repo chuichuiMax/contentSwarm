@@ -1,0 +1,266 @@
+name: Release
+
+# Builds the self-contained HyCanvas binary (frontend embedded via go:embed)
+# for every supported platform, publishes them as a GitHub Release, and
+# publishes the lean Docker images from those binaries.
+#
+# Triggers:
+#   push of a version tag (v*) -> build all targets + release + Docker images.
+#                                 Tags are only accepted from the STABLE
+#                                 branch (the guard job enforces it); merge
+#                                 development into stable, then tag there.
+#   workflow_dispatch          -> build-only dry run (artifacts, no release)
+#
+# Every target cross-compiles from one Ubuntu runner: the backend is pure Go
+# (CGO_ENABLED=0), so no macOS/Windows runners and no QEMU are needed.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  BINARY_NAME: hycanvas
+
+jobs:
+  # Releases are cut from the stable branch only: a tag whose commit is not
+  # reachable from origin/stable fails here before anything builds.
+  guard:
+    name: Verify release source
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Require the tag to be on stable
+        if: github.ref_type == 'tag'
+        run: |
+          git fetch origin stable
+          if git merge-base --is-ancestor "$GITHUB_SHA" origin/stable; then
+            echo "tag commit is reachable from stable"
+          else
+            echo "::error::Release tags must point to a commit on the stable branch. Merge development into stable, then tag there."
+            exit 1
+          fi
+
+  frontend:
+    name: Frontend export
+    runs-on: ubuntu-latest
+    needs: guard
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+      # Fresh install rather than `npm ci`: npm's optional-dependency lockfile bug
+      # (npm/cli#4828) makes `npm ci` skip platform-native packages such as
+      # @rollup/rollup-linux-x64-gnu on Linux. This mirrors ci.yml and the Dockerfile.
+      - run: rm -f package-lock.json && npm install --no-audit --no-fund
+      - run: npm run build:packages
+      # build:dist sets BUILD_DIST=true, which routes the exported frontend to the
+      # same-origin /api, exactly like scripts/build-dist.js does for the bundle.
+      - run: npm run build:dist -w frontend
+      - uses: actions/upload-artifact@v7
+        with:
+          name: frontend-out
+          path: frontend/out
+          if-no-files-found: error
+
+  build:
+    name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
+    runs-on: ubuntu-latest
+    needs: frontend
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { goos: linux, goarch: amd64 }
+          - { goos: linux, goarch: arm64 }
+          - { goos: darwin, goarch: amd64 }
+          - { goos: darwin, goarch: arm64 }
+          - { goos: windows, goarch: amd64 }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.25"
+          cache-dependency-path: backend/go.sum
+      # Stage the exported frontend into the gitignored go:embed target.
+      - uses: actions/download-artifact@v8
+        with:
+          name: frontend-out
+          path: backend/internal/webui/public
+      - name: Resolve version
+        id: version
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          if [ "$REF_TYPE" = "tag" ]; then
+            VERSION="$REF_NAME"
+          else
+            VERSION="$(git describe --tags --always 2>/dev/null || echo dev)"
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+      - name: Build binary
+        working-directory: backend
+        env:
+          CGO_ENABLED: "0"
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          BIN="$BINARY_NAME"
+          if [ "$GOOS" = "windows" ]; then BIN="${BIN}.exe"; fi
+          go build -tags embed -trimpath \
+            -ldflags "-s -w -X main.version=${VERSION}" \
+            -o "../out/${BIN}" ./cmd/api
+      - name: Package archive
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          BASE="${BINARY_NAME}_${VERSION}_${GOOS}_${GOARCH}"
+          mkdir -p archives
+          if [ "$GOOS" = "windows" ]; then
+            (cd out && zip -qr "../archives/${BASE}.zip" .)
+          else
+            tar -czf "archives/${BASE}.tar.gz" -C out .
+          fi
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: archives/
+          if-no-files-found: error
+
+  release:
+    name: GitHub Release
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.ref_type == 'tag'
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Full history + tags so the release notes can list the commits since
+          # the previous release tag.
+          fetch-depth: 0
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: dist-*
+          merge-multiple: true
+          path: dist
+      - name: Generate checksums
+        working-directory: dist
+        run: sha256sum *.tar.gz *.zip > SHA256SUMS.txt
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          # What's changed: the commit subjects since the previous tag. Releases
+          # are cut from direct commits (no PRs), so GitHub's auto-generated
+          # notes alone would only produce a compare link.
+          PREV=$(git describe --tags --abbrev=0 "${TAG}^" 2>/dev/null || true)
+          {
+            echo "## What's changed"
+            echo ""
+            if [ -n "$PREV" ]; then
+              git log --no-merges --reverse --pretty='- %s' "${PREV}..${TAG}"
+            else
+              git log --no-merges --reverse --pretty='- %s' "${TAG}"
+            fi
+            echo ""
+          } > notes.md
+          cat >> notes.md <<'EOF'
+          ## Platform notes
+
+          - Each archive contains just the self-contained `hycanvas` binary with the frontend embedded; see the README for setup (`.env`, PostgreSQL). The first-run wizard generates the configuration for you, and `.env.example` in the repository documents every setting.
+          - First run: `./hycanvas service start` daemonizes the server (pidfile + logfile next to the binary; Linux, macOS, and Windows) and asks whether to set up in the browser or in the terminal. The browser wizard at /installation/step-1 is unlocked by the one-time access secret it prints; the CLI wizard asks the same questions right there. Other verbs: `stop`, `restart`, `status`, `log -f`. `./hycanvas start` runs in the foreground.
+          - The macOS binaries are not signed or notarized. If macOS quarantines the download, run `xattr -d com.apple.quarantine hycanvas` or right-click the binary and choose Open.
+          - ffmpeg is only required for server-side video export; everything else works without it.
+          EOF
+          ARGS=(--title "$TAG" --verify-tag --generate-notes --notes "$(cat notes.md)")
+          case "$TAG" in *-*) ARGS+=(--prerelease) ;; esac
+          gh release create "$TAG" dist/* "${ARGS[@]}"
+      - name: Summary
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          {
+            echo "## Release summary"
+            echo ""
+            echo "**Tag**: \`${TAG}\`"
+            echo "**Assets**:"
+            for f in dist/*; do
+              echo "- \`$(basename "$f")\`"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # Publish the Docker image from the release binaries just uploaded: a lean
+  # runtime-only build (Dockerfile.release), no Node/Go toolchains and no
+  # QEMU-emulated compilation. Channel mapping:
+  #   final tag (v0.2.0)        -> :latest, :development, :0.2.0, :0.2
+  #   pre-release (v0.2.0-rc.1) -> :development, :0.2.0-rc.1
+  docker:
+    name: Docker image (from release binaries)
+    runs-on: ubuntu-latest
+    needs: release
+    if: github.ref_type == 'tag'
+    permissions:
+      contents: read
+    env:
+      DOCKER_IMAGE: hycanvas/hycanvas
+    steps:
+      - uses: actions/checkout@v7
+      - name: Download release binaries
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          mkdir -p binaries/amd64 binaries/arm64
+          gh release download "$TAG" -p "hycanvas_${TAG}_linux_amd64.tar.gz" -O - | tar -xz -C binaries/amd64
+          gh release download "$TAG" -p "hycanvas_${TAG}_linux_arm64.tar.gz" -O - | tar -xz -C binaries/arm64
+          file binaries/amd64/hycanvas binaries/arm64/hycanvas
+      - name: Compute Docker tags
+        id: meta
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          BARE="${TAG#v}"
+          if [ "${TAG#*-}" != "$TAG" ]; then
+            # Pre-release: refresh only the development channel.
+            TAGS="${DOCKER_IMAGE}:development,${DOCKER_IMAGE}:${BARE}"
+          else
+            MINOR="${BARE%.*}"
+            TAGS="${DOCKER_IMAGE}:latest,${DOCKER_IMAGE}:development,${DOCKER_IMAGE}:${BARE},${DOCKER_IMAGE}:${MINOR}"
+          fi
+          echo "tags=${TAGS}" >> "$GITHUB_OUTPUT"
+          echo "publishing: ${TAGS}"
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64,amd64
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile.release
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          cache-from: type=registry,ref=${{ env.DOCKER_IMAGE }}:buildcache-release
+          cache-to: type=registry,ref=${{ env.DOCKER_IMAGE }}:buildcache-release,mode=max
