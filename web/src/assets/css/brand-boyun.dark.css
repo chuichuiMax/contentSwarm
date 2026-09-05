@@ -1,0 +1,26 @@
+/* 博云东方品牌色 — 深色模式 */
+:root.dark {
+  --main-1000: #e8f1fb;
+  --main-900: #c5daf5;
+  --main-800: #9fc0eb;
+  --main-700: #6b9fe0;
+  --main-600: #4a85d4;
+  --main-500: #3578c8;
+  --main-400: #234ea0;
+  --main-300: #1e326e;
+  --main-200: #162a5c;
+  --main-100: #0f1f45;
+  --main-50: #091530;
+  --main-40: #071228;
+  --main-30: #050e1f;
+  --main-20: #030a16;
+  --main-10: #02060f;
+  --main-5: #010308;
+  --main-1: #000102;
+  --main-0: #000000;
+
+  --main-color: #6b9fe0;
+  --main-bright: #4a9fd4;
+
+  --chart-palette-1: var(--main-700);
+}

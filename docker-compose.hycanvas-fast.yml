@@ -1,0 +1,5 @@
+services:
+  hycanvas-app:
+    entrypoint: ["/app/release/hycanvas"]
+    volumes:
+      - ./docker/volumes/hycanvas-release/current:/app/release:ro

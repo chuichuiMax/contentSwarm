@@ -1,0 +1,23 @@
+FROM node:24-bookworm AS frontend
+WORKDIR /app
+ENV HYCANVAS_AUTH_MODE=contentswarm
+ENV CONTENTSWARM_URL=http://127.0.0.1:5173
+COPY . .
+RUN rm -f package-lock.json && npm install --no-audit --no-fund
+RUN npm run build:packages && npm run build:dist -w frontend
+
+FROM golang:1.25-bookworm AS backend
+WORKDIR /src
+COPY backend/go.mod backend/go.sum ./
+RUN go mod download
+COPY backend/ ./
+COPY --from=frontend /app/frontend/out ./internal/webui/public
+RUN CGO_ENABLED=0 go build -tags embed -trimpath \
+    -ldflags "-s -w -X main.version=contentswarm" \
+    -o /out/hycanvas ./cmd/api
+
+# Reuse the already-provisioned local runtime so rebuilding this integration
+# does not depend on apt mirrors. The newly compiled single binary contains the
+# frontend, API, templates and fonts required by the ContentSwarm flow.
+FROM hycanvas-local:contentswarm-integration-live
+COPY --from=backend /out/hycanvas /app/hycanvas

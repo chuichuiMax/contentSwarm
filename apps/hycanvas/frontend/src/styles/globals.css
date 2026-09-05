@@ -1,0 +1,361 @@
+@import "tailwindcss";
+
+/* Dark mode is class-driven, not media-driven: lib/theme.ts puts `dark` on
+   <html> from the stored preference (system/light/dark), so `dark:` utilities
+   and the generated `.dark` token overrides both key off that class. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* HyCanvas design tokens. The brand/accent tokens, the semantic chrome
+   surfaces, the identity gradient, and the `.dark` overrides below are
+   GENERATED from the single source src/theme.config.mjs by
+   scripts/gen-theme.mjs (npm run gen:theme); edit colors there, not here.
+   The brand font is injected by next/font as --font-sans.
+
+   This @theme block is intentionally NOT `inline`: utilities must reference
+   the CSS variables (bg-brand-50 -> var(--color-brand-50)) so the `.dark`
+   class can swap values at runtime. */
+@theme {
+  /* THEME:colors:start (generated from src/theme.config.mjs - do not edit by hand) */
+  --color-brand-50: #E1F6FB;
+  --color-brand-100: #C4EAF5;
+  --color-brand-200: #A3D8E8;
+  --color-brand-300: #82C3D6;
+  --color-brand-400: #5FAEC2;
+  --color-brand-500: #3996AE;
+  --color-brand-600: #24839A;
+  --color-brand-700: #046A82;
+  --color-brand-800: #035065;
+  --color-brand-900: #023944;
+  --color-brand-950: #01151F;
+
+  --color-accent-50: #ECFEFF;
+  --color-accent-100: #CFFAFE;
+  --color-accent-200: #A5F3FC;
+  --color-accent-300: #67E8F9;
+  --color-accent-400: #22D3EE;
+  --color-accent-500: #06B6D4;
+  --color-accent-600: #0891B2;
+  --color-accent-700: #0E7490;
+  --color-accent-800: #155E75;
+  --color-accent-900: #164E63;
+  --color-accent-950: #083344;
+
+
+  /* The app's neutral ramp. Emitted (rather than left to Tailwind's
+     default palette) because steps 400/500 are tuned for WCAG 1.4.3 AA
+     on the chrome backgrounds; see the note in theme.config.mjs. */
+  --color-neutral-50: #fafafa;
+  --color-neutral-100: #f5f5f5;
+  --color-neutral-200: #e5e5e5;
+  --color-neutral-300: #d4d4d4;
+  --color-neutral-400: #6f6f6f;
+  --color-neutral-500: #5f5f5f;
+  --color-neutral-600: #525252;
+  --color-neutral-700: #404040;
+  --color-neutral-800: #262626;
+  --color-neutral-900: #171717;
+  --color-neutral-950: #0a0a0a;
+
+  /* Semantic chrome surfaces (dark mode swaps these; see THEME:dark). */
+  --color-page: #ffffff;
+  --color-surface: #ffffff;
+  --color-brand-ink: #046A82;
+  /* THEME:colors:end */
+}
+
+@theme inline {
+  --font-sans: var(--font-brand), ui-sans-serif, system-ui, sans-serif;
+}
+
+:root {
+  /* THEME:root:start (generated from src/theme.config.mjs - do not edit by hand) */
+  --oc-brand-start: #035065;
+  --oc-brand-mid: var(--color-brand-600);
+  --oc-brand-end: #3996AE;
+  --oc-gradient: linear-gradient(135deg, var(--oc-brand-start) 0%, var(--oc-brand-mid) 45%, var(--oc-brand-end) 100%);
+
+  --color-selection: #2563eb;
+  --color-guide-subtle: #3b82f6;
+  --color-guide-active: #06b6d4;
+  --color-guide-conflict: #f43f5e;
+  --color-pen-preview: #a855f7;
+  --color-ruler: #9ca3af;
+  /* THEME:root:end */
+
+  /* Non-token chrome details that flip with the theme (static, hand-edited). */
+  --oc-scrollbar: #d4d4d8;
+  --oc-panel-dot: rgba(22, 10, 18, 0.07);
+  --oc-swatch-border: rgba(0, 0, 0, 0.12);
+}
+
+/* THEME:dark:start (generated from src/theme.config.mjs - do not edit by hand) */
+.dark {
+  --color-page: #111114;
+  --color-surface: #1b1b20;
+  --color-brand-ink: #E195C7;
+
+  --color-neutral-50: #161619;
+  --color-neutral-100: #1e1e23;
+  --color-neutral-200: #2a2a31;
+  --color-neutral-300: #3a3a42;
+  --color-neutral-400: #8f8f9a;
+  --color-neutral-500: #a5a5b0;
+  --color-neutral-600: #c2c2cb;
+  --color-neutral-700: #d8d8de;
+  --color-neutral-800: #e8e8ed;
+  --color-neutral-900: #f4f4f6;
+  --color-neutral-950: #fbfbfc;
+
+  --color-brand-50: #2b1424;
+  --color-brand-100: #3a1b30;
+  --color-brand-200: #4e2340;
+}
+
+/* Escape hatch: subtrees that must stay light even under a dark app chrome
+   (document surfaces such as sheets, docs, and the present stage render the
+   user's content, which the app theme must never restyle). */
+.light {
+  color-scheme: light;
+  --color-page: #ffffff;
+  --color-surface: #ffffff;
+  --color-brand-ink: #046A82;
+
+  --color-neutral-50: #fafafa;
+  --color-neutral-100: #f5f5f5;
+  --color-neutral-200: #e5e5e5;
+  --color-neutral-300: #d4d4d4;
+  --color-neutral-400: #6f6f6f;
+  --color-neutral-500: #5f5f5f;
+  --color-neutral-600: #525252;
+  --color-neutral-700: #404040;
+  --color-neutral-800: #262626;
+  --color-neutral-900: #171717;
+  --color-neutral-950: #0a0a0a;
+
+  --color-brand-50: #E1F6FB;
+  --color-brand-100: #C4EAF5;
+  --color-brand-200: #A3D8E8;
+}
+/* THEME:dark:end */
+
+.dark {
+  color-scheme: dark;
+  --oc-scrollbar: #3f3f46;
+  --oc-panel-dot: rgba(244, 244, 246, 0.06);
+  --oc-swatch-border: rgba(255, 255, 255, 0.16);
+}
+
+/* THEME:hc:start (generated from src/theme.config.mjs - do not edit by hand) */
+/* High-contrast chrome (F38 FR-4): the `hc` class strengthens the tokens the
+   dark region swaps, on both the light and dark chrome. Design content is
+   never restyled: the `.light` escape hatch re-declares these tokens on a
+   nearer ancestor, so document surfaces win inside their own subtrees. */
+.hc {
+  --color-brand-ink: #681A49;
+
+  --color-neutral-50: #f8f8f8;
+  --color-neutral-100: #ededed;
+  --color-neutral-200: #bdbdbd;
+  --color-neutral-300: #8f8f8f;
+  --color-neutral-400: #4f4f4f;
+  --color-neutral-500: #454545;
+  --color-neutral-600: #333333;
+  --color-neutral-700: #232323;
+  --color-neutral-800: #141414;
+  --color-neutral-900: #000000;
+  --color-neutral-950: #000000;
+}
+
+.hc.dark {
+  --color-page: #000000;
+  --color-surface: #0d0d0d;
+  --color-brand-ink: #EDBBDC;
+
+  --color-neutral-50: #0d0d0d;
+  --color-neutral-100: #161616;
+  --color-neutral-200: #3d3d3d;
+  --color-neutral-300: #5c5c5c;
+  --color-neutral-400: #b3b3b3;
+  --color-neutral-500: #cccccc;
+  --color-neutral-600: #e0e0e0;
+  --color-neutral-700: #ededed;
+  --color-neutral-800: #f7f7f7;
+  --color-neutral-900: #ffffff;
+  --color-neutral-950: #ffffff;
+}
+
+/* A focus indicator that cannot be missed: neutral-900 is near-black on the
+   light chrome and white on the dark one, so the ring is always extreme. */
+.hc :focus-visible {
+  outline: 2px solid var(--color-neutral-900);
+  outline-offset: 2px;
+}
+
+/* Windows/forced-colors high contrast: the system repaints colors itself;
+   the app's job is to never suppress the focus indicator it relies on. */
+@media (forced-colors: active) {
+  :focus-visible {
+    outline: 2px solid ButtonText;
+    outline-offset: 2px;
+  }
+}
+/* THEME:hc:end */
+
+html,
+body {
+  background: var(--color-page);
+  color: var(--color-neutral-900);
+}
+
+body {
+  font-family: var(--font-sans);
+}
+
+/* Brand gradient helpers. */
+.oc-gradient {
+  background-image: var(--oc-gradient);
+}
+.oc-gradient-text {
+  background-image: var(--oc-gradient);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* Auth showcase: gentle float for the floating design cards + a staggered
+   entrance, and a subtle dotted grid for brand surfaces. */
+@keyframes oc-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-10px); }
+}
+.oc-float { animation: oc-float 6s ease-in-out infinite; }
+@keyframes oc-fade-up {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.oc-fade-up { animation: oc-fade-up 0.7s cubic-bezier(0.16, 1, 0.3, 1) both; }
+/* Local echo for whiteboard reactions (doc 30 FR-9): the sender's own emoji
+   floats up and fades, so reactions are visible to the actor (and solo). */
+@keyframes oc-reaction-rise {
+  0% { opacity: 0; transform: translateY(8px) scale(0.7); }
+  15% { opacity: 1; transform: translateY(-4px) scale(1.1); }
+  100% { opacity: 0; transform: translateY(-72px) scale(1); }
+}
+.oc-reaction-rise { animation: oc-reaction-rise 2.2s ease-out forwards; }
+/* The canvas floor (mirrors the marketing site): the brand ink surface with a
+   design-tool dot grid, two slow ambient plum blobs, and film grain, used
+   behind the auth showcase and landing cards so the app opens on the same
+   stage the marketing sets. Ink #160A12 is a brand SURFACE constant (like the
+   logo's paper), not the app accent, which stays in theme.config.mjs. */
+.oc-floor {
+  background: #160a12;
+}
+.oc-floor-grid {
+  background-image: radial-gradient(circle, rgba(251, 247, 250, 0.13) 1px, transparent 1.4px);
+  background-size: 28px 28px;
+  -webkit-mask-image: radial-gradient(140% 120% at 50% 30%, #000 55%, transparent 100%);
+  mask-image: radial-gradient(140% 120% at 50% 30%, #000 55%, transparent 100%);
+}
+.oc-floor-blob {
+  border-radius: 50%;
+  filter: blur(90px);
+  will-change: transform;
+}
+.oc-floor-blob-a {
+  background: var(--oc-brand-start);
+  opacity: 0.45;
+  animation: oc-blob-a 38s ease-in-out infinite alternate;
+}
+.oc-floor-blob-b {
+  background: var(--color-brand-800);
+  opacity: 0.5;
+  animation: oc-blob-b 46s ease-in-out infinite alternate;
+}
+@keyframes oc-blob-a {
+  to { transform: translate(12%, 10%) scale(1.15); }
+}
+@keyframes oc-blob-b {
+  to { transform: translate(-10%, -10%) scale(1.1); }
+}
+.oc-floor-grain {
+  opacity: 0.07;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+/* Whisper-light canvas dots for working panels (ink dots on light surfaces). */
+.oc-panel-dots {
+  background-image: radial-gradient(circle, var(--oc-panel-dot) 1px, transparent 1.4px);
+  background-size: 22px 22px;
+}
+
+/* Thin, modern scrollbars for panels. */
+.oc-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: var(--oc-scrollbar) transparent;
+}
+
+/* Scroll container with NO visible scrollbar, for strips that manage their
+   own scrolling (the pages bar keeps the active thumb in view); an overlay
+   scrollbar flashing over the thumbnails on every programmatic scroll reads
+   as UI flicker. */
+.oc-scroll-none {
+  scrollbar-width: none;
+}
+.oc-scroll-none::-webkit-scrollbar {
+  display: none;
+}
+
+/* Clean, swatch-style native color inputs used across the editor panels. */
+.oc-color {
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+}
+.oc-color::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+.oc-color::-webkit-color-swatch {
+  border: 1px solid var(--oc-swatch-border);
+  border-radius: 8px;
+}
+.oc-color::-moz-color-swatch {
+  border: 1px solid var(--oc-swatch-border);
+  border-radius: 8px;
+}
+
+/* Respect the OS "reduce motion" setting app-wide: damp transitions/animations
+   and instant scrolling for users who opt out of motion. PresentMode also reads
+   the preference directly to skip slide transitions. */
+/* The OS preference applies unless the user explicitly chose "Full" in
+   Settings (html.motion-full); an explicit "Reduced" choice applies the same
+   damping with no OS involvement (html.motion-reduce). lib/theme.ts owns the
+   classes; prefersReducedMotion() is the JS-side view of the same result. */
+@media (prefers-reduced-motion: reduce) {
+  html:not(.motion-full) *,
+  html:not(.motion-full) *::before,
+  html:not(.motion-full) *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+html.motion-reduce *,
+html.motion-reduce *::before,
+html.motion-reduce *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  scroll-behavior: auto !important;
+}
+
+/* Precision cursor for the pen tool: an open-center reticle (thin white-outlined
+   ticks + 1px center dot) instead of the OS crosshair, whose thick block hides
+   the anchor being placed. Hotspot dead center; falls back to crosshair. */
+.oc-cursor-pen {
+  cursor: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2224%22%20height%3D%2224%22%3E%3Cg%20fill%3D%22none%22%20stroke%3D%22%23ffffff%22%20stroke-width%3D%223%22%20stroke-linecap%3D%22round%22%3E%3Cpath%20d%3D%22M12%202v6M12%2016v6M2%2012h6M16%2012h6%22%2F%3E%3C%2Fg%3E%3Cg%20fill%3D%22none%22%20stroke%3D%22%23111827%22%20stroke-width%3D%221.4%22%20stroke-linecap%3D%22round%22%3E%3Cpath%20d%3D%22M12%202v6M12%2016v6M2%2012h6M16%2012h6%22%2F%3E%3C%2Fg%3E%3Ccircle%20cx%3D%2212%22%20cy%3D%2212%22%20r%3D%221.1%22%20fill%3D%22%23111827%22%20stroke%3D%22%23ffffff%22%20stroke-width%3D%220.8%22%2F%3E%3C%2Fsvg%3E") 12 12, crosshair;
+}

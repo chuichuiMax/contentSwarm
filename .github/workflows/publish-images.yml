@@ -1,0 +1,385 @@
+name: Publish versioned images
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Immutable image version, for example 0.7.2-contentflow"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: publish-images-${{ inputs.version }}
+  cancel-in-progress: false
+
+env:
+  API_IMAGE: ghcr.io/shenwei8899-ctrl/contentswarm-yuxi-api
+  WEB_IMAGE: ghcr.io/shenwei8899-ctrl/contentswarm-yuxi-web
+  SANDBOX_PROVISIONER_IMAGE: ghcr.io/shenwei8899-ctrl/contentswarm-yuxi-sandbox-provisioner
+  HYCANVAS_IMAGE: ghcr.io/shenwei8899-ctrl/contentswarm-hycanvas
+
+jobs:
+  test-build-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate version
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          if ! [[ "$VERSION" =~ ^[0-9A-Za-z][0-9A-Za-z._-]*$ ]] || [[ "$VERSION" == "latest" ]]; then
+            echo "Invalid immutable version: $VERSION" >&2
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.7.2"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Test backend skills
+        working-directory: backend
+        run: |
+          uv sync --group test --no-dev --frozen
+          uv run pytest \
+            test/unit/agents/skills/test_humanizer_skill.py \
+            test/unit/services/test_skill_service.py
+
+      - name: Start isolated content integration dependencies
+        run: |
+          docker run -d --name yuxi-ci-postgres \
+            -e POSTGRES_USER=yuxi_ci \
+            -e POSTGRES_PASSWORD=ci-postgres-password \
+            -e POSTGRES_DB=yuxi_ci \
+            -p 127.0.0.1::5432 \
+            postgres:16
+          docker run -d --name yuxi-ci-minio \
+            -e MINIO_ROOT_USER=yuxi_ci \
+            -e MINIO_ROOT_PASSWORD=ci-minio-secret-password \
+            -p 127.0.0.1::9000 \
+            minio/minio:RELEASE.2023-03-20T20-16-18Z \
+            server /data --address :9000
+          docker run -d --name yuxi-ci-redis \
+            -p 127.0.0.1::6379 \
+            redis:7-alpine
+
+          postgres_port="$(docker port yuxi-ci-postgres 5432/tcp | sed 's/.*://')"
+          minio_port="$(docker port yuxi-ci-minio 9000/tcp | sed 's/.*://')"
+          redis_port="$(docker port yuxi-ci-redis 6379/tcp | sed 's/.*://')"
+          echo "CI_POSTGRES_PORT=$postgres_port" >> "$GITHUB_ENV"
+          echo "CI_MINIO_PORT=$minio_port" >> "$GITHUB_ENV"
+          echo "CI_REDIS_PORT=$redis_port" >> "$GITHUB_ENV"
+
+          for _ in $(seq 1 60); do
+            if docker exec yuxi-ci-postgres pg_isready -U yuxi_ci -d yuxi_ci >/dev/null \
+              && curl -sf "http://127.0.0.1:${minio_port}/minio/health/live" >/dev/null \
+              && docker exec yuxi-ci-redis redis-cli ping >/dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs yuxi-ci-postgres --tail 80 || true
+          docker logs yuxi-ci-minio --tail 80 || true
+          docker logs yuxi-ci-redis --tail 80 || true
+          exit 1
+
+      - name: Test content cover and OCR
+        working-directory: backend
+        env:
+          POSTGRES_URL: postgresql+asyncpg://yuxi_ci:ci-postgres-password@127.0.0.1:${{ env.CI_POSTGRES_PORT }}/yuxi_ci
+          MINIO_URI: http://127.0.0.1:${{ env.CI_MINIO_PORT }}
+          MINIO_ACCESS_KEY: yuxi_ci
+          MINIO_SECRET_KEY: ci-minio-secret-password
+          CONTENT_COVER_BUCKET: yuxi-ci-content-covers
+          REDIS_URL: redis://127.0.0.1:${{ env.CI_REDIS_PORT }}/0
+        run: |
+          uv run pytest \
+            test/unit/content/test_cover_generation.py \
+            test/integration/test_cover_generation_flow.py \
+            test/unit/content/test_content_ocr.py \
+            test/unit/services/test_material_library_service.py \
+            test/unit/scripts/test_migrate_material_library_to_image.py \
+            test/e2e/test_material_library_migration.py
+
+      - name: Lint material library changes
+        working-directory: backend
+        run: |
+          uv run ruff check \
+            package/yuxi/storage/postgres/models_content.py \
+            package/yuxi/repositories/material_library_repository.py \
+            package/yuxi/services/material_library_service.py \
+            package/yuxi/services/content_cover_service.py \
+            server/routers/material_library_router.py \
+            scripts/migrate_material_library_to_image.py \
+            test/unit/services/test_material_library_service.py \
+            test/unit/scripts/test_migrate_material_library_to_image.py \
+            test/integration/test_cover_generation_flow.py \
+            test/e2e/test_material_library_migration.py
+
+      - name: Test Xiaohongshu distribution and browser sessions
+        working-directory: backend
+        run: |
+          uv run pytest \
+            test/unit/content/test_xiaohongshu_distribution.py \
+            test/unit/content/test_xiaohongshu_browser_session.py
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.11.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+
+      - name: Build web
+        working-directory: web
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm exec eslint .
+          pnpm run build
+
+      - name: Reclaim runner disk before image builds
+        run: |
+          docker rm -f yuxi-ci-postgres yuxi-ci-minio yuxi-ci-redis
+          docker image rm postgres:16 minio/minio:RELEASE.2023-03-20T20-16-18Z redis:7-alpine
+          docker system prune --all --force
+          uv cache clean
+          pnpm store prune
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc
+          df -h /
+
+      - name: Set up Docker Buildx
+        id: api-buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          cleanup: false
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Reject a fully published release version
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          existing_count=0
+          for image in "$API_IMAGE" "$WEB_IMAGE" "$SANDBOX_PROVISIONER_IMAGE" "$HYCANVAS_IMAGE"; do
+            if docker buildx imagetools inspect "$image:$VERSION" >/dev/null 2>&1; then
+              existing_count=$((existing_count + 1))
+            fi
+          done
+          if [[ "$existing_count" -eq 4 ]]; then
+            echo "Release version is already fully published and immutable: $VERSION" >&2
+            exit 1
+          fi
+          if [[ "$existing_count" -gt 0 ]]; then
+            echo "Detected a partial release with $existing_count/4 tags; only identical candidate digests may repair it."
+          fi
+
+      - name: Build and push API candidate image
+        id: api-image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/api.Dockerfile
+          push: true
+          tags: ${{ env.API_IMAGE }}:${{ inputs.version }}-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          cache-from: type=gha,scope=api
+          cache-to: type=gha,mode=max,scope=api
+
+      - name: Release API build cache before runtime verification
+        env:
+          BUILDER_NAME: ${{ steps.api-buildx.outputs.name }}
+        run: docker buildx rm --force "$BUILDER_NAME"
+
+      - name: Test Xiaohongshu browser runtime in API image
+        env:
+          CANDIDATE_TAG: ${{ inputs.version }}-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          docker pull "$API_IMAGE:$CANDIDATE_TAG"
+          docker run --rm --shm-size=512m \
+            -e XHS_BROWSER_E2E=1 \
+            -v "$GITHUB_WORKSPACE/backend/test:/app/test:ro" \
+            "$API_IMAGE:$CANDIDATE_TAG" \
+            python -m pytest test/e2e/test_xiaohongshu_runtime.py -q
+
+      - name: Set up Docker Buildx for web
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push web candidate image
+        id: web-image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/web.Dockerfile
+          target: production
+          push: true
+          tags: ${{ env.WEB_IMAGE }}:${{ inputs.version }}-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          build-args: VITE_BASE_PATH=/boyun/
+          cache-from: type=gha,scope=web
+          cache-to: type=gha,mode=max,scope=web
+
+      - name: Build and push sandbox provisioner candidate image
+        id: sandbox-provisioner-image
+        uses: docker/build-push-action@v6
+        with:
+          context: docker/sandbox_provisioner
+          file: docker/sandbox_provisioner/Dockerfile
+          push: true
+          tags: ${{ env.SANDBOX_PROVISIONER_IMAGE }}:${{ inputs.version }}-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          cache-from: type=gha,scope=sandbox-provisioner
+          cache-to: type=gha,mode=max,scope=sandbox-provisioner
+
+      - name: Build and push HyCanvas candidate image
+        id: hycanvas-image
+        uses: docker/build-push-action@v6
+        with:
+          context: apps/hycanvas
+          file: apps/hycanvas/Dockerfile
+          push: true
+          tags: ${{ env.HYCANVAS_IMAGE }}:${{ inputs.version }}-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          build-args: |
+            MANAGED_MODE=contentswarm
+            HOST_APP_URL=https://bydf.openswarm.run/boyun
+            VERSION=${{ inputs.version }}
+          cache-from: type=gha,scope=hycanvas
+          cache-to: type=gha,mode=max,scope=hycanvas
+
+      - name: Promote all verified candidates to immutable release tags
+        id: promote-images
+        env:
+          VERSION: ${{ inputs.version }}
+          API_DIGEST: ${{ steps.api-image.outputs.digest }}
+          WEB_DIGEST: ${{ steps.web-image.outputs.digest }}
+          SANDBOX_PROVISIONER_DIGEST: ${{ steps.sandbox-provisioner-image.outputs.digest }}
+          HYCANVAS_DIGEST: ${{ steps.hycanvas-image.outputs.digest }}
+        run: |
+          resolve_digest() {
+            local reference="$1"
+            local manifest
+            manifest="$(docker buildx imagetools inspect "$reference" --format '{{json .Manifest}}' 2>/dev/null)" || return 1
+            jq -er '.digest' <<<"$manifest"
+          }
+
+          ensure_tags_compatible() {
+            local image="$1"
+            local source_digest="$2"
+            local tag existing_digest
+            for tag in "$VERSION" "sha-${GITHUB_SHA}"; do
+              existing_digest="$(resolve_digest "$image:$tag" || true)"
+              if [[ -n "$existing_digest" && "$existing_digest" != "$source_digest" ]]; then
+                echo "Immutable tag already points to different content: $image:$tag" >&2
+                exit 1
+              fi
+            done
+          }
+
+          promote_image() {
+            local image="$1"
+            local source_digest="$2"
+            local existing_digest attempt promoted=false
+            for attempt in 1 2 3; do
+              if docker buildx imagetools create \
+                --tag "$image:$VERSION" \
+                --tag "$image:sha-${GITHUB_SHA}" \
+                "$image@$source_digest"; then
+                promoted=true
+                break
+              fi
+              sleep $((attempt * 5))
+            done
+            [[ "$promoted" == "true" ]] || { echo "Failed to promote $image after 3 attempts" >&2; exit 1; }
+
+            existing_digest="$(resolve_digest "$image:$VERSION")"
+            [[ "$existing_digest" == "$source_digest" ]] || {
+              echo "Promoted tag digest does not match verified candidate: $image:$VERSION" >&2
+              exit 1
+            }
+          }
+
+          for digest in "$API_DIGEST" "$WEB_DIGEST" "$SANDBOX_PROVISIONER_DIGEST"; do
+            if ! [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+              echo "Candidate image digest is missing or invalid" >&2
+              exit 1
+            fi
+          done
+
+          if ! [[ "$HYCANVAS_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "HyCanvas candidate image digest is missing or invalid" >&2
+            exit 1
+          fi
+
+          ensure_tags_compatible "$API_IMAGE" "$API_DIGEST"
+          ensure_tags_compatible "$WEB_IMAGE" "$WEB_DIGEST"
+          ensure_tags_compatible "$SANDBOX_PROVISIONER_IMAGE" "$SANDBOX_PROVISIONER_DIGEST"
+          ensure_tags_compatible "$HYCANVAS_IMAGE" "$HYCANVAS_DIGEST"
+
+          promote_image "$API_IMAGE" "$API_DIGEST"
+          promote_image "$WEB_IMAGE" "$WEB_DIGEST"
+          promote_image "$SANDBOX_PROVISIONER_IMAGE" "$SANDBOX_PROVISIONER_DIGEST"
+          promote_image "$HYCANVAS_IMAGE" "$HYCANVAS_DIGEST"
+
+          api_release_digest="$(resolve_digest "$API_IMAGE:$VERSION")"
+          web_release_digest="$(resolve_digest "$WEB_IMAGE:$VERSION")"
+          sandbox_release_digest="$(resolve_digest "$SANDBOX_PROVISIONER_IMAGE:$VERSION")"
+          hycanvas_release_digest="$(resolve_digest "$HYCANVAS_IMAGE:$VERSION")"
+          for digest in "$api_release_digest" "$web_release_digest" "$sandbox_release_digest" "$hycanvas_release_digest"; do
+            if ! [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+              echo "Promoted release digest could not be resolved" >&2
+              exit 1
+            fi
+          done
+          echo "api_digest=$api_release_digest" >> "$GITHUB_OUTPUT"
+          echo "web_digest=$web_release_digest" >> "$GITHUB_OUTPUT"
+          echo "sandbox_provisioner_digest=$sandbox_release_digest" >> "$GITHUB_OUTPUT"
+          echo "hycanvas_digest=$hycanvas_release_digest" >> "$GITHUB_OUTPUT"
+
+      - name: Record immutable image digests
+        env:
+          VERSION: ${{ inputs.version }}
+          API_DIGEST: ${{ steps.promote-images.outputs.api_digest }}
+          WEB_DIGEST: ${{ steps.promote-images.outputs.web_digest }}
+          SANDBOX_PROVISIONER_DIGEST: ${{ steps.promote-images.outputs.sandbox_provisioner_digest }}
+          HYCANVAS_DIGEST: ${{ steps.promote-images.outputs.hycanvas_digest }}
+        run: |
+          DIGEST_FILE="$RUNNER_TEMP/image-digests.txt"
+          {
+            echo "release_version=$VERSION"
+            echo "git_sha=$GITHUB_SHA"
+            echo "api=$API_IMAGE@$API_DIGEST"
+            echo "web=$WEB_IMAGE@$WEB_DIGEST"
+            echo "sandbox_provisioner=$SANDBOX_PROVISIONER_IMAGE@$SANDBOX_PROVISIONER_DIGEST"
+            echo "hycanvas=$HYCANVAS_IMAGE@$HYCANVAS_DIGEST"
+          } > "$DIGEST_FILE"
+          {
+            echo "## Immutable image digests"
+            echo '```text'
+            cat "$DIGEST_FILE"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload image digest manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: image-digests-${{ inputs.version }}
+          path: ${{ runner.temp }}/image-digests.txt
+          if-no-files-found: error
+          retention-days: 90

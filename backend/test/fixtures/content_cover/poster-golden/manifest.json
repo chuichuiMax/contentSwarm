@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "processing_version": "poster-v1",
+  "output": {"width": 1080, "height": 1440, "format": "PNG"},
+  "quality_gates": {"overflow_count_max": 0, "template_locked": true, "product_locked": true},
+  "templates": [
+    {"id": "minimal-border", "accent": "#F0522D"},
+    {"id": "dark-header", "accent": "#222222"},
+    {"id": "yellow-service", "accent": "#F4C430"},
+    {"id": "orange-corner", "accent": "#FF7A2F"},
+    {"id": "blue-tech", "accent": "#3578E5"},
+    {"id": "green-product", "accent": "#2E9D68"},
+    {"id": "rose-beauty", "accent": "#E86682"},
+    {"id": "cream-editorial", "accent": "#C6A47E"},
+    {"id": "black-white", "accent": "#111111"},
+    {"id": "red-sale", "accent": "#D9363E"},
+    {"id": "purple-course", "accent": "#7654C6"},
+    {"id": "cyan-clean", "accent": "#1B9AAA"},
+    {"id": "brown-home", "accent": "#8A6240"},
+    {"id": "gray-review", "accent": "#666666"},
+    {"id": "navy-business", "accent": "#173B57"},
+    {"id": "lime-fresh", "accent": "#71A82F"},
+    {"id": "peach-lifestyle", "accent": "#F29F80"},
+    {"id": "gold-premium", "accent": "#B88A2A"},
+    {"id": "sky-service", "accent": "#58A6D6"},
+    {"id": "ink-poster", "accent": "#31343A"}
+  ],
+  "products": [
+    {"id": "light-product", "color": "#D7E8F5"},
+    {"id": "dark-product", "color": "#34495E"},
+    {"id": "warm-product", "color": "#E8C59B"}
+  ]
+}

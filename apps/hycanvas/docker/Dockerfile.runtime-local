@@ -1,0 +1,2 @@
+FROM hycanvas-local:contentswarm-integration-live
+COPY hycanvas /app/hycanvas

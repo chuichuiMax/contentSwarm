@@ -1,0 +1,208 @@
+// Package config loads typed service configuration from the environment. The Go
+// service is the whole backend (REST under /api/v1, the /realtime WebSocket, and
+// the statically-exported frontend), so it owns the application port and serves
+// the UI directly.
+package config
+
+import (
+	"errors"
+	"net/url"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/joho/godotenv"
+)
+
+// ErrDatabaseURLMissing marks the one config failure that is not fatal for
+// cmd/api: an unset DATABASE_URL means "unconfigured" and triggers the
+// first-run setup wizard instead of an exit.
+var ErrDatabaseURLMissing = errors.New("DATABASE_URL is required")
+
+type Config struct {
+	Port string
+	// BindHost narrows the listen interface (e.g. 127.0.0.1 behind a reverse
+	// proxy on the same host). Empty binds all interfaces.
+	BindHost    string
+	DatabaseURL string
+	JWTSecret   string
+	AISecret    string
+	// PublicDir is the directory of the exported Next.js frontend to serve. Empty
+	// disables static serving (API-only, e.g. local dev with `next dev`).
+	PublicDir string
+	// AutoMigrate applies pending SQL migrations on boot (default true).
+	AutoMigrate bool
+	// DBConnectAttempts and DBConnectRetryDelay tolerate a database that is still
+	// starting up when the API boots, which is common right after a host reboot
+	// when the process races Postgres. The initial connect is retried up to
+	// DBConnectAttempts times, waiting DBConnectRetryDelay between tries, before
+	// the API gives up. Defaults (12 x 5s) cover a typical cold start; raise
+	// DB_CONNECT_ATTEMPTS for a database that replays a large WAL after a reboot.
+	DBConnectAttempts   int           // DB_CONNECT_ATTEMPTS (default 12)
+	DBConnectRetryDelay time.Duration // DB_CONNECT_RETRY_DELAY (default 5s)
+	// Auth gates which sign-in methods and account-creation paths are available.
+	Auth AuthPolicy
+	// AuthMode is "standalone" by default. In "contentswarm" mode all human
+	// sign-in pages return to ContentSwarm and only integration tickets may mint
+	// new HyCanvas sessions.
+	AuthMode        string
+	ContentSwarmURL string
+	// Captcha optionally protects the human-facing auth forms.
+	Captcha CaptchaConfig
+	// AnalyticsGAID is a Google Analytics 4 measurement id (e.g. "G-XXXXXXXXXX").
+	// When set, the server injects the gtag.js snippet into every served HTML
+	// page at runtime. Empty (the default) means no analytics, so a self-hosted
+	// instance ships tracking-free unless the operator opts in.
+	AnalyticsGAID string
+}
+
+// CaptchaConfig configures a CAPTCHA on the auth forms (login, signup,
+// password-reset request, magic-link request). Empty Provider disables it, so
+// the zero value is off and an existing install is unchanged.
+type CaptchaConfig struct {
+	Provider  string  // "" (off) | "turnstile" | "recaptcha" (CAPTCHA_PROVIDER)
+	SiteKey   string  // public key sent to the browser (CAPTCHA_SITE_KEY)
+	SecretKey string  // server-side siteverify key (CAPTCHA_SECRET_KEY)
+	MinScore  float64 // reCAPTCHA v3 pass threshold (CAPTCHA_MIN_SCORE, default 0.5)
+}
+
+// Enabled reports whether a usable CAPTCHA is configured.
+func (c CaptchaConfig) Enabled() bool {
+	return c.Provider != "" && c.SiteKey != "" && c.SecretKey != ""
+}
+
+// AuthPolicy is the per-instance switchboard for authentication. Each method has
+// an independent login and signup toggle, so an operator can run, for example,
+// OIDC-only (password + magic-link off) without a code change. The zero value is
+// all-off; Load() fills it from env with defaults that preserve prior behavior.
+type AuthPolicy struct {
+	PasswordLogin   bool // AUTH_PASSWORD_LOGIN_ENABLED   (default true)
+	PasswordSignup  bool // AUTH_PASSWORD_SIGNUP_ENABLED  (default true)
+	MagicLinkLogin  bool // AUTH_MAGICLINK_LOGIN_ENABLED  (default true)
+	MagicLinkSignup bool // AUTH_MAGICLINK_SIGNUP_ENABLED (default false; creates accounts)
+	OidcLogin       bool // AUTH_OIDC_LOGIN_ENABLED       (default true; effective only when OIDC configured)
+	OidcSignup      bool // AUTH_OIDC_SIGNUP_ENABLED      (default true; effective only when OIDC configured)
+}
+
+// Load reads and validates configuration. DATABASE_URL is required.
+func Load() (Config, error) {
+	loadDotEnv()
+	authMode := strings.ToLower(strings.TrimSpace(getenv("HYCANVAS_AUTH_MODE", "standalone")))
+	contentSwarmURL := strings.TrimRight(strings.TrimSpace(os.Getenv("CONTENTSWARM_URL")), "/")
+	if authMode != "standalone" && authMode != "contentswarm" {
+		return Config{}, errors.New("HYCANVAS_AUTH_MODE must be standalone or contentswarm")
+	}
+	if authMode == "contentswarm" {
+		parsed, err := url.Parse(contentSwarmURL)
+		if err != nil || parsed.Scheme == "" || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+			return Config{}, errors.New("CONTENTSWARM_URL must be an absolute http(s) URL in contentswarm auth mode")
+		}
+	}
+	c := Config{
+		// PORT is the conventional deploy variable (compose, PaaS); GO_API_PORT
+		// remains accepted for continuity. Defaults to 8005, the single app port.
+		Port:            getenv("PORT", getenv("GO_API_PORT", "8005")),
+		BindHost:        os.Getenv("BIND_HOST"),
+		DatabaseURL:     os.Getenv("DATABASE_URL"),
+		JWTSecret:       os.Getenv("JWT_SECRET"),
+		AISecret:        os.Getenv("AI_SECRET"),
+		PublicDir:       getenv("PUBLIC_DIR", "./public"),
+		AutoMigrate:     os.Getenv("DB_AUTO_MIGRATE") != "false",
+		AuthMode:        authMode,
+		ContentSwarmURL: contentSwarmURL,
+
+		DBConnectAttempts:   envInt("DB_CONNECT_ATTEMPTS", 12),
+		DBConnectRetryDelay: envDuration("DB_CONNECT_RETRY_DELAY", 5*time.Second),
+		Auth: AuthPolicy{
+			PasswordLogin:   envBool("AUTH_PASSWORD_LOGIN_ENABLED", true),
+			PasswordSignup:  envBool("AUTH_PASSWORD_SIGNUP_ENABLED", true),
+			MagicLinkLogin:  envBool("AUTH_MAGICLINK_LOGIN_ENABLED", true),
+			MagicLinkSignup: envBool("AUTH_MAGICLINK_SIGNUP_ENABLED", false),
+			OidcLogin:       envBool("AUTH_OIDC_LOGIN_ENABLED", true),
+			OidcSignup:      envBool("AUTH_OIDC_SIGNUP_ENABLED", true),
+		},
+		Captcha: CaptchaConfig{
+			Provider:  strings.ToLower(strings.TrimSpace(os.Getenv("CAPTCHA_PROVIDER"))),
+			SiteKey:   os.Getenv("CAPTCHA_SITE_KEY"),
+			SecretKey: os.Getenv("CAPTCHA_SECRET_KEY"),
+			MinScore:  envFloat("CAPTCHA_MIN_SCORE", 0.5),
+		},
+		AnalyticsGAID: strings.TrimSpace(os.Getenv("GOOGLE_ANALYTICS_ID")),
+	}
+	if c.DatabaseURL == "" {
+		return c, ErrDatabaseURLMissing
+	}
+	return c, nil
+}
+
+// envFloat reads a float env var, keeping the default on empty or unparseable
+// input so a typo never silently changes the threshold.
+func envFloat(key string, def float64) float64 {
+	if v := os.Getenv(key); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			return f
+		}
+	}
+	return def
+}
+
+// envInt reads an integer env var, keeping the default on empty or unparseable
+// input so a typo never silently changes the value.
+func envInt(key string, def int) int {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
+			return n
+		}
+	}
+	return def
+}
+
+// envDuration reads a Go duration env var (e.g. "5s", "500ms", "2m"), keeping the
+// default on empty or unparseable input.
+func envDuration(key string, def time.Duration) time.Duration {
+	if v := os.Getenv(key); v != "" {
+		if d, err := time.ParseDuration(strings.TrimSpace(v)); err == nil {
+			return d
+		}
+	}
+	return def
+}
+
+// envBool reads a boolean env var. Only the exact strings "true" and "false"
+// flip it; anything else (including empty) keeps the default, so a partially set
+// deployment never silently disables a method by typo.
+func envBool(key string, def bool) bool {
+	switch os.Getenv(key) {
+	case "true":
+		return true
+	case "false":
+		return false
+	default:
+		return def
+	}
+}
+
+// loadDotEnv loads a .env file if one is present, so the production binary runs
+// standalone (`./dist/hycanvas`) with no Node dotenv-cli wrapper, matching
+// how it runs under Docker and the service daemon. It checks the working directory then the
+// parent (so running from the repo root or from dist/ both find the root .env).
+// godotenv never overrides variables already set in the environment, so a real
+// deployment (Docker/CI, which inject env directly) is unaffected even if a
+// stray .env exists. Absent .env is a no-op.
+func loadDotEnv() {
+	for _, p := range []string{".env", filepath.Join("..", ".env")} {
+		if _, err := os.Stat(p); err == nil {
+			_ = godotenv.Load(p)
+			return
+		}
+	}
+}
+
+func getenv(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
+}
