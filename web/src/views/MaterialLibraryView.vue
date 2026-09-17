@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import {
   ArrowLeft,
@@ -35,6 +35,12 @@ const canCreateShared = ref(false)
 const isGalleryRoot = computed(() => materialType.value === 'image' && !activeGallery.value)
 const loading = ref(false)
 const remoteSyncing = ref(false)
+const remoteSyncJob = ref(null)
+const remoteConfigOpen = ref(false)
+const remoteConfigSaving = ref(false)
+const remoteConfigState = ref(null)
+const resumeRemoteSync = ref(false)
+const remoteConfigForm = reactive({ username: '', password: '' })
 const uploading = ref(false)
 const categories = ref([])
 const galleries = ref([])
@@ -74,6 +80,25 @@ const deleteTargetCategory = ref('')
 const previewUrls = new Map()
 const maxUploadBytes = 20 * 1024 * 1024
 const supportedImageTypes = new Set(['image/png', 'image/jpeg', 'image/webp'])
+let remoteSyncPollTimer = null
+
+const remoteSyncPhaseLabel = computed(() => ({
+  queued: '等待后台任务',
+  starting: '准备同步',
+  authenticating: '验证远程账号',
+  discovering: '读取远程素材清单',
+  syncing: '下载并保存素材',
+  finalizing: '整理下架素材',
+  completed: '同步完成'
+}[remoteSyncJob.value?.phase] || '同步远程素材'))
+
+const remoteSyncCountLabel = computed(() => {
+  const job = remoteSyncJob.value
+  if (!job) return ''
+  if (job.total_assets) return `${job.processed_assets}/${job.total_assets} 张`
+  if (job.total_groups) return `${job.processed_groups}/${job.total_groups} 组`
+  return '正在准备'
+})
 
 const categoryMap = computed(() => Object.fromEntries(categories.value.map((item) => [item.code, item])))
 const currentGallery = computed(() => categoryMap.value[activeGallery.value])
@@ -526,22 +551,142 @@ function formatSize(bytes) {
   return bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.ceil(bytes / 1024)} KB`
 }
 
-async function syncRemoteMaterials() {
+function remoteErrorCode(error) {
+  return error?.response?.data?.detail?.error?.code || ''
+}
+
+function openRemoteConfig(state, { resumeSync = true } = {}) {
+  remoteConfigState.value = state
+  remoteConfigForm.username = ''
+  remoteConfigForm.password = ''
+  resumeRemoteSync.value = resumeSync
+  remoteConfigOpen.value = true
+}
+
+async function performRemoteSync() {
   if (remoteSyncing.value) return
   remoteSyncing.value = true
   try {
     const response = await materialLibraryApi.syncRemote()
-    const summary = response.summary || {}
-    message.success(`远程素材同步完成：${summary.assets || 0} 张图片`)
-    materialScope.value = 'enterprise'
-    activeGallery.value = ''
-    await loadCategories()
-    await loadGalleries()
+    remoteSyncJob.value = response.job
+    message.success(response.reused ? '远程素材同步正在后台运行' : '远程素材同步任务已提交')
+    pollRemoteSync(response.job.id)
   } catch (error) {
+    const code = remoteErrorCode(error)
+    if (userStore.isSuperAdmin && ['REMOTE_MATERIAL_CONFIG_REQUIRED', 'REMOTE_MATERIAL_AUTH_FAILED'].includes(code)) {
+      const state = await materialLibraryApi.getRemoteConfig()
+      openRemoteConfig(state)
+      message.warning(code === 'REMOTE_MATERIAL_AUTH_FAILED' ? '远程账号或密码已失效，请重新配置' : '请先配置远程素材库账号和密码')
+      return
+    }
     message.error(error.message || '远程素材同步失败，请稍后重试')
+    remoteSyncing.value = false
+  }
+}
+
+function scheduleRemoteSyncPoll(jobId) {
+  window.clearTimeout(remoteSyncPollTimer)
+  remoteSyncPollTimer = window.setTimeout(() => pollRemoteSync(jobId), 2000)
+}
+
+async function pollRemoteSync(jobId) {
+  try {
+    const response = await materialLibraryApi.getRemoteSyncStatus(jobId)
+    const job = response.job
+    if (!job) {
+      remoteSyncing.value = false
+      return
+    }
+    remoteSyncJob.value = job
+    remoteSyncing.value = ['queued', 'running'].includes(job.status)
+    if (remoteSyncing.value) {
+      scheduleRemoteSyncPoll(job.id)
+      return
+    }
+    if (job.status === 'succeeded') {
+      message.success(`远程素材同步完成：${job.summary?.assets || 0} 张图片`)
+      materialScope.value = 'enterprise'
+      activeGallery.value = ''
+      await loadCategories()
+      await loadGalleries()
+      return
+    }
+    if (job.status === 'failed') {
+      if (userStore.isSuperAdmin && ['REMOTE_MATERIAL_CONFIG_REQUIRED', 'REMOTE_MATERIAL_AUTH_FAILED'].includes(job.error_code)) {
+        openRemoteConfig(await materialLibraryApi.getRemoteConfig())
+      }
+      message.error(job.error_message || '远程素材同步失败，请稍后重试')
+    }
+  } catch (error) {
+    remoteSyncing.value = false
+    message.error(error.message || '远程素材同步状态读取失败')
+  }
+}
+
+async function restoreRemoteSync() {
+  try {
+    const response = await materialLibraryApi.getRemoteSyncStatus()
+    if (response.job && ['queued', 'running'].includes(response.job.status)) {
+      remoteSyncJob.value = response.job
+      remoteSyncing.value = true
+      scheduleRemoteSyncPoll(response.job.id)
+    }
+  } catch {
+    // 页面其他素材功能不依赖同步状态，恢复失败时允许用户重新点击。
+  }
+}
+
+async function syncRemoteMaterials() {
+  if (remoteSyncing.value) return
+  remoteSyncing.value = true
+  try {
+    const state = await materialLibraryApi.getRemoteConfig()
+    remoteConfigState.value = state
+    if (!state.configured) {
+      if (state.can_manage) {
+        openRemoteConfig(state)
+      } else {
+        message.error('远程素材库尚未配置，请联系超级管理员')
+      }
+      return
+    }
+  } catch (error) {
+    message.error(error.message || '远程素材库配置状态读取失败')
+    return
   } finally {
     remoteSyncing.value = false
   }
+  await performRemoteSync()
+}
+
+async function saveRemoteConfig() {
+  if (!remoteConfigForm.username.trim() || !remoteConfigForm.password.trim()) {
+    message.warning('请填写远程素材库账号和密码')
+    return
+  }
+  remoteConfigSaving.value = true
+  try {
+    remoteConfigState.value = await materialLibraryApi.saveRemoteConfig({
+      username: remoteConfigForm.username.trim(),
+      password: remoteConfigForm.password
+    })
+    const shouldResume = resumeRemoteSync.value
+    remoteConfigForm.password = ''
+    remoteConfigOpen.value = false
+    resumeRemoteSync.value = false
+    message.success('远程素材库账号验证并保存成功')
+    if (shouldResume) await performRemoteSync()
+  } catch (error) {
+    message.error(error.message || '远程素材库账号验证失败')
+  } finally {
+    remoteConfigSaving.value = false
+  }
+}
+
+function closeRemoteConfig() {
+  remoteConfigForm.username = ''
+  remoteConfigForm.password = ''
+  resumeRemoteSync.value = false
 }
 
 watch(materialType, async () => {
@@ -558,7 +703,11 @@ watch(materialType, async () => {
     message.error(error.message || '素材分类加载失败')
   }
 }, { immediate: true })
-onBeforeUnmount(releasePreviews)
+onMounted(restoreRemoteSync)
+onBeforeUnmount(() => {
+  window.clearTimeout(remoteSyncPollTimer)
+  releasePreviews()
+})
 </script>
 
 <template>
@@ -584,6 +733,14 @@ onBeforeUnmount(releasePreviews)
     </PageHeader>
 
     <main class="material-content">
+      <div v-if="remoteSyncing && remoteSyncJob" class="remote-sync-status">
+        <div>
+          <RefreshCw :size="16" class="remote-sync-spin" />
+          <strong>{{ remoteSyncPhaseLabel }}</strong>
+          <span>{{ remoteSyncCountLabel }}</span>
+        </div>
+        <a-progress :percent="remoteSyncJob.progress || 0" :show-info="false" size="small" />
+      </div>
       <div v-if="materialType === 'image'" class="context-head">
         <button v-if="activeGallery" type="button" class="back-button" @click="leaveGallery"><ArrowLeft :size="16" />{{ parentGallery ? `返回${parentGallery.name}` : '返回图库' }}</button>
         <div>
@@ -643,7 +800,7 @@ onBeforeUnmount(releasePreviews)
         </div>
 
         <div v-if="!isGalleryRoot && items.length" class="material-section">
-          <h3 v-if="isTopLevelGallery && filteredGalleries.length">当前图库图片</h3>
+          <h3 v-if="isTopLevelGallery && filteredGalleries.length">当前图库全部图片（含二级图库）</h3>
           <div :class="materialType === 'image' ? 'image-grid' : 'poster-wall'">
           <article v-for="item in items" :key="item.id" class="material-card" :class="{ poster: materialType === 'cover_template' }">
             <button type="button" class="preview-button" @click="previewItem = item">
@@ -673,6 +830,23 @@ onBeforeUnmount(releasePreviews)
       </a-spin>
       <a-pagination v-if="!isGalleryRoot && total > 24" v-model:current="page" :total="total" :page-size="24" show-less-items @change="loadItems" />
     </main>
+
+    <a-modal
+      v-model:open="remoteConfigOpen"
+      title="配置远程素材库"
+      :confirm-loading="remoteConfigSaving"
+      ok-text="验证并保存"
+      cancel-text="取消"
+      @ok="saveRemoteConfig"
+      @cancel="closeRemoteConfig"
+    >
+      <div class="remote-config-form">
+        <p>配置全站共享的远程素材库凭据。密码只用于服务端登录验证，不会在页面中回显。</p>
+        <label><span>远程地址</span><a-input :value="remoteConfigState?.base_url || ''" disabled /></label>
+        <label><span>账号</span><a-input v-model:value="remoteConfigForm.username" :maxlength="255" autocomplete="off" placeholder="请输入远程素材库账号" /></label>
+        <label><span>密码</span><a-input-password v-model:value="remoteConfigForm.password" :maxlength="500" autocomplete="new-password" placeholder="请输入远程素材库密码" /></label>
+      </div>
+    </a-modal>
 
     <a-modal v-model:open="uploadOpen" :title="`上传${materialType === 'image' ? '素材图片' : '封面模板'}`" :confirm-loading="uploading" ok-text="开始上传" @ok="uploadFiles" @cancel="resetUpload">
       <div class="upload-form">
@@ -764,6 +938,10 @@ onBeforeUnmount(releasePreviews)
 <style scoped lang="less">
 .material-library-view { height: 100%; display: flex; flex-direction: column; background: var(--gray-0); }
 .material-content { flex: 1; overflow: auto; padding: 20px var(--page-padding) 36px; }
+.remote-sync-status { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(180px, 320px); align-items: center; gap: 18px; margin-bottom: 16px; padding: 11px 14px; border: 1px solid var(--main-100); border-radius: 10px; background: var(--main-20); }
+.remote-sync-status > div { display: flex; align-items: center; gap: 8px; color: var(--color-text); }.remote-sync-status span { color: var(--color-text-secondary); font-size: 12px; }
+.remote-sync-spin { color: var(--color-primary); animation: remote-sync-rotate 1s linear infinite; }
+@keyframes remote-sync-rotate { to { transform: rotate(360deg); } }
 .context-head { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 16px; }
 .context-head h2 { margin: 0; font-size: 20px; color: var(--color-text); }
 .context-head p { margin: 5px 0 0; color: var(--color-text-secondary); }
@@ -809,6 +987,9 @@ onBeforeUnmount(releasePreviews)
 .card-actions button:hover { background: var(--gray-50); color: var(--color-primary); }.card-actions button.danger:hover { color: var(--color-error-700); }
 .upload-form { display: flex; flex-direction: column; gap: 16px; }
 .upload-form label { display: flex; flex-direction: column; gap: 6px; color: var(--color-text); }.upload-form label b { color: var(--color-error-700); }
+.remote-config-form { display: flex; flex-direction: column; gap: 16px; }
+.remote-config-form p { margin: 0; color: var(--color-text-secondary); line-height: 1.6; }
+.remote-config-form label { display: flex; flex-direction: column; gap: 7px; color: var(--color-text); font-weight: 500; }
 .upload-drop { display: flex; flex-direction: column; align-items: center; gap: 7px; padding: 28px; border: 1px dashed var(--gray-300); border-radius: 8px; background: var(--gray-25); color: var(--color-text-secondary); cursor: pointer; }
 .upload-drop:hover, .upload-drop.dragging { border-color: var(--main-500); background: var(--main-20); color: var(--main-700); }
 .upload-drop.dragging { box-shadow: 0 0 0 3px var(--main-100); }

@@ -1,4 +1,4 @@
-import { apiDelete, apiGet, apiPatch, apiPost } from './base'
+import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from './base'
 
 const encodeQuery = (params = {}) => {
   const query = new URLSearchParams()
@@ -21,7 +21,11 @@ export const materialLibraryApi = {
     }),
   listGalleries: (industrySlug = '') =>
     apiGet(`/api/material-library/galleries${encodeQuery({ industry_slug: industrySlug })}`),
+  getRemoteConfig: () => apiGet('/api/material-library/remote-config'),
+  saveRemoteConfig: (payload) => apiPut('/api/material-library/remote-config', payload),
   syncRemote: () => apiPost('/api/material-library/remote-sync', {}),
+  getRemoteSyncStatus: (jobId = '') =>
+    apiGet(`/api/material-library/remote-sync/status${encodeQuery({ job_id: jobId })}`),
   importImages: (files, category) => {
     const form = new FormData()
     Array.from(files).forEach((file) => form.append('files', file))

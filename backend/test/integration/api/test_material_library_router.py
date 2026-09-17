@@ -8,7 +8,7 @@ import uuid
 import pytest
 import pytest_asyncio
 from PIL import Image
-from sqlalchemy import delete
+from sqlalchemy import delete, update
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from yuxi.storage.postgres.models_business import Department, OperationLog, User
@@ -74,7 +74,12 @@ async def material_users(test_client):
         assert login.status_code == 200, login.text
         headers.append({"Authorization": f"Bearer {login.json()['access_token']}"})
     try:
-        yield {"owner": headers[0], "other": headers[1]}
+        yield {
+            "owner": headers[0],
+            "other": headers[1],
+            "owner_id": user_ids[0],
+            "other_id": user_ids[1],
+        }
     finally:
         async with session_factory() as db:
             from yuxi.storage.postgres.models_content import ContentMaterialCategory
@@ -85,6 +90,51 @@ async def material_users(test_client):
             await db.execute(delete(Department).where(Department.id == department_id))
             await db.commit()
         await engine.dispose()
+
+
+async def test_remote_config_state_is_redacted_and_only_superadmin_can_update(
+    test_client,
+    material_users,
+):
+    engine = create_async_engine(os.environ["POSTGRES_URL"])
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with session_factory() as db:
+        await db.execute(update(User).where(User.id == material_users["owner_id"]).values(role="admin"))
+        await db.execute(update(User).where(User.id == material_users["other_id"]).values(role="superadmin"))
+        await db.commit()
+    await engine.dispose()
+
+    admin_state = await test_client.get(
+        "/api/material-library/remote-config",
+        headers=material_users["owner"],
+    )
+    assert admin_state.status_code == 200, admin_state.text
+    assert admin_state.json()["can_manage"] is False
+    assert "password" not in admin_state.json()
+    assert "username" not in admin_state.json()
+
+    sync_status = await test_client.get(
+        "/api/material-library/remote-sync/status",
+        headers=material_users["owner"],
+    )
+    assert sync_status.status_code == 200, sync_status.text
+    assert "job" in sync_status.json()
+
+    forbidden = await test_client.put(
+        "/api/material-library/remote-config",
+        headers=material_users["owner"],
+        json={"username": "remote-user", "password": "remote-password"},
+    )
+    assert forbidden.status_code == 403, forbidden.text
+
+    superadmin_state = await test_client.get(
+        "/api/material-library/remote-config",
+        headers=material_users["other"],
+    )
+    assert superadmin_state.status_code == 200, superadmin_state.text
+    assert superadmin_state.json()["can_manage"] is True
+    assert "password" not in superadmin_state.json()
+    assert "username" not in superadmin_state.json()
 
 
 async def test_material_image_round_trip_uses_private_image_bucket(test_client, material_users):
@@ -436,6 +486,42 @@ async def test_image_gallery_supports_exactly_one_nested_level(test_client, mate
             json={"target_category_id": "uncategorized"},
         )
         assert removed_parent.status_code == 200, removed_parent.text
+    finally:
+        await test_client.delete(f"/api/material-library/items/{item['id']}", headers=headers)
+
+
+async def test_parent_image_gallery_lists_items_from_child_galleries(test_client, material_users):
+    headers = material_users["owner"]
+    parent_response = await test_client.post(
+        "/api/material-library/categories",
+        headers=headers,
+        json={"material_type": "image", "name": "汇总图库", "industry_slug": "decoration"},
+    )
+    assert parent_response.status_code == 201, parent_response.text
+    parent = parent_response.json()["category"]
+    child_response = await test_client.post(
+        "/api/material-library/categories",
+        headers=headers,
+        json={"material_type": "image", "name": "汇总子图库", "parent_id": parent["id"]},
+    )
+    assert child_response.status_code == 201, child_response.text
+    child = child_response.json()["category"]
+    uploaded = await test_client.post(
+        "/api/material-library/images/import",
+        headers=headers,
+        data={"category": child["id"]},
+        files=[("files", ("child-image.png", _png(), "image/png"))],
+    )
+    assert uploaded.status_code == 201, uploaded.text
+    item = uploaded.json()["items"][0]
+    try:
+        parent_items = await test_client.get(
+            f"/api/material-library/items?material_type=image&category={parent['id']}",
+            headers=headers,
+        )
+        assert parent_items.status_code == 200, parent_items.text
+        assert parent_items.json()["total"] == 1
+        assert [entry["id"] for entry in parent_items.json()["items"]] == [item["id"]]
     finally:
         await test_client.delete(f"/api/material-library/items/{item['id']}", headers=headers)
 

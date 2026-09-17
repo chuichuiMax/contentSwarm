@@ -437,10 +437,15 @@ async def list_material_items(
         if category
         else None
     )
-    rows, total = await MaterialLibraryRepository(db, include_shared=True).list_items(
+    repo = MaterialLibraryRepository(db, include_shared=True)
+    category_ids = [resolved_category.id] if resolved_category else None
+    if resolved_category and material_type == "image" and resolved_category.parent_id is None:
+        children = await repo.list_child_categories(_owner_uid(user), material_type, resolved_category.id)
+        category_ids.extend(child.id for child in children)
+    rows, total = await repo.list_items(
         _owner_uid(user),
         material_type=material_type,
-        category=resolved_category.id if resolved_category else None,
+        category_ids=category_ids,
         status=status,
         query_text=query,
         page=page,

@@ -1041,6 +1041,62 @@ class ContentCoverImage2Setting(Base):
     updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
 
 
+class RemoteMaterialLibrarySetting(Base):
+    __tablename__ = "remote_material_library_settings"
+
+    id = Column(String(32), primary_key=True, default="global")
+    base_url = Column(String(500), nullable=False)
+    username = Column(String(255), nullable=False)
+    password = Column(String(500), nullable=False)
+    verification_status = Column(String(32), nullable=False, default="verified")
+    verified_at = Column(DateTime, nullable=True)
+    updated_by = Column(Integer, nullable=True)
+    created_at = Column(DateTime, default=utc_now_naive)
+    updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
+
+
+class RemoteMaterialSyncJob(Base):
+    __tablename__ = "remote_material_sync_jobs"
+
+    id = Column(String(64), primary_key=True)
+    owner_uid = Column(String(255), nullable=False, index=True)
+    tenant_id = Column(String(64), nullable=True, index=True)
+    requested_by = Column(Integer, nullable=False)
+    status = Column(String(32), nullable=False, default="queued", index=True)
+    phase = Column(String(32), nullable=False, default="queued")
+    progress = Column(Integer, nullable=False, default=0)
+    total_groups = Column(Integer, nullable=False, default=0)
+    processed_groups = Column(Integer, nullable=False, default=0)
+    total_assets = Column(Integer, nullable=False, default=0)
+    processed_assets = Column(Integer, nullable=False, default=0)
+    summary_json = Column(JSON, nullable=False, default=dict)
+    error_code = Column(String(80), nullable=True)
+    error_message = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=utc_now_naive, nullable=False, index=True)
+    started_at = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+    updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive, nullable=False)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "status": self.status,
+            "phase": self.phase,
+            "progress": self.progress,
+            "total_groups": self.total_groups,
+            "processed_groups": self.processed_groups,
+            "total_assets": self.total_assets,
+            "processed_assets": self.processed_assets,
+            "summary": self.summary_json or {},
+            "error_code": self.error_code,
+            "error_message": self.error_message,
+            "created_at": format_utc_datetime(self.created_at),
+            "started_at": format_utc_datetime(self.started_at),
+            "completed_at": format_utc_datetime(self.completed_at),
+            "updated_at": format_utc_datetime(self.updated_at),
+        }
+
+
 class ContentCoverAsset(Base):
     __tablename__ = "content_cover_assets"
 

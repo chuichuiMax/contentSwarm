@@ -13,13 +13,54 @@ from yuxi.storage.postgres.models_content import (
     ContentMaterialCategory,
     ContentMaterialLibraryItem,
     ContentTask,
+    RemoteMaterialLibrarySetting,
 )
+from yuxi.utils.datetime_utils import utc_now_naive
 
 
 class MaterialLibraryRepository:
     def __init__(self, db: AsyncSession, *, include_shared: bool = False):
         self.db = db
         self.include_shared = include_shared
+
+    async def get_remote_setting(self, *, for_update: bool = False) -> RemoteMaterialLibrarySetting | None:
+        query = select(RemoteMaterialLibrarySetting).where(RemoteMaterialLibrarySetting.id == "global")
+        if for_update:
+            query = query.with_for_update()
+        return (await self.db.execute(query)).scalar_one_or_none()
+
+    async def upsert_remote_setting(
+        self,
+        *,
+        base_url: str,
+        username: str,
+        password: str,
+        verification_status: str,
+        verified_at,
+        updated_by: int | None,
+    ) -> RemoteMaterialLibrarySetting:
+        setting = await self.get_remote_setting(for_update=True)
+        if setting is None:
+            setting = RemoteMaterialLibrarySetting(
+                id="global",
+                base_url=base_url,
+                username=username,
+                password=password,
+                verification_status=verification_status,
+                verified_at=verified_at,
+                updated_by=updated_by,
+            )
+            self.db.add(setting)
+        else:
+            setting.base_url = base_url
+            setting.username = username
+            setting.password = password
+            setting.verification_status = verification_status
+            setting.verified_at = verified_at
+            setting.updated_by = updated_by
+            setting.updated_at = utc_now_naive()
+        await self.db.flush()
+        return setting
 
     def category_access(self, owner_uid: str):
         own = ContentMaterialCategory.owner_uid == owner_uid
@@ -180,7 +221,7 @@ class MaterialLibraryRepository:
         owner_uid: str,
         *,
         material_type: str,
-        category: str | None,
+        category_ids: list[str] | None,
         status: str | None,
         query_text: str | None,
         page: int,
@@ -196,8 +237,8 @@ class MaterialLibraryRepository:
         ]
         if scope:
             filters.append(ContentMaterialCategory.visibility == scope)
-        if category:
-            filters.append(ContentMaterialLibraryItem.category == category)
+        if category_ids:
+            filters.append(ContentMaterialLibraryItem.category.in_(category_ids))
         if status:
             filters.append(ContentMaterialLibraryItem.status == status)
         if query_text:
