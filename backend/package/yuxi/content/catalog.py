@@ -102,6 +102,7 @@ VARIABLES = [
     ("suspense", "悬念表达", "string", "normal", False),
     ("advice", "忠告表达", "string", "normal", False),
     ("call_to_action", "行动指令", "string", "normal", False),
+    ("quote_type", "报价口径", "string", "high_risk", True),
 ]
 
 INDUSTRY_CONFIG: dict[str, dict[str, Any]] = {
@@ -166,15 +167,17 @@ INDUSTRY_CONFIG: dict[str, dict[str, Any]] = {
     },
     "decoration": {
         "aliases": [
-            "装修案例分享",
-            "装修报价清单",
-            "装修避坑分享",
-            "装修省钱攻略",
-            "工艺施工展示",
-            "装修知识科普",
-            "装修人设自荐",
+            "自我介绍",
+            "项目单价",
+            "单价+面积",
+            "工种总价",
+            "人工+辅材",
+            "工艺展示",
+            "日常工作",
         ],
         "fields": [
+            ("renovation_scene", "本次装修场景", "scene"),
+            ("quote_type", "报价口径（标准单价/项目报价/预算/结算）", "quote_type"),
             ("project_type", "户型", "product"),
             ("area", "面积", "quantity"),
             ("budget", "预算", "price"),
@@ -254,7 +257,7 @@ def content_form_fields(config: dict[str, Any], *, pro: bool) -> list[dict[str, 
             "key": key,
             "label": label,
             "type": "textarea",
-            "required": variable in {"product", "process"},
+            "required": variable in {"product", "process", "scene", "quote_type"},
             "variable_code": variable,
             "evidence_required": variable in {"price", "duration", "quantity", "result", "process"},
         }

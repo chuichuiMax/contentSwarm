@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, toRaw } from 'vue'
 import { onBeforeRouteLeave, useRouter } from 'vue-router'
 import { message, Modal } from 'ant-design-vue'
 import {
@@ -18,6 +18,8 @@ import {
   Search,
   Trash2
 } from 'lucide-vue-next'
+import ContentFormulaDetails from '@/components/content/ContentFormulaDetails.vue'
+import ContentViralAssets from '@/components/content/ContentViralAssets.vue'
 import ContentRuleEditorDrawer from '@/components/content/ContentRuleEditorDrawer.vue'
 import { contentApi } from '@/apis/content_api'
 import { useContentStudioStore } from '@/stores/contentStudio'
@@ -28,7 +30,12 @@ const store = useContentStudioStore()
 const userStore = useUserStore()
 const ruleVersions = ref([])
 const industries = ref([])
+const uniqueIndustries = computed(() => industries.value.filter((item, index, items) =>
+  items.findIndex(entry => entry.slug === item.slug) === index
+))
 const industryPacks = ref([])
+const showPackHistory = ref(false)
+const visibleIndustryPacks = computed(() => industryPacks.value.filter(item => item.slug === 'decoration' && (showPackHistory.value || (item.schema_version === 3 && item.status === 'published'))))
 const workflows = ref([])
 const activeTab = ref('methods')
 const selectedVersionId = ref('')
@@ -36,6 +43,29 @@ const ruleBundle = ref(null)
 const savedSnapshot = ref('')
 const validation = ref(null)
 const searchText = ref('')
+const industryFilter = ref('decoration')
+const combinationTypeNames = { single: '单用', double: '双拼', triple: '三拼', quadruple: '四拼' }
+const formulaName = (code, section, industry = 'decoration') => {
+  const formula = (ruleBundle.value?.[section] || []).find(item => item.code === code)
+  return (industry !== 'decoration' && formula?.source_content?.cross_industry?.name) || formula?.name || code
+}
+const directionName = (item) => item.source_metadata?.content_direction_name || item.content_type_codes.map(code => (ruleBundle.value?.content_types || []).find(type => type.code === code)?.name || code).join('、')
+const compositionBlueprint = (item) => item.source_metadata?.composition_blueprint
+const layerCombination = (item) => (compositionBlueprint(item)?.layer_sequence || []).map(layer => `${layer.order} ${layer.name}`).join('、') || '-'
+const phraseCombination = (item) => {
+  const blueprint = compositionBlueprint(item)
+  const names = Object.fromEntries((blueprint?.layer_sequence || []).map(layer => [layer.code, layer.name]))
+  return (blueprint?.phrase_composition || []).map((rule) => {
+    const name = names[rule.layer_code] || rule.layer_code
+    const groups = (rule.allowed_groups || []).join('/')
+    if (rule.selection === 'fixed') return `${name}（${groups}）`
+    if (rule.selection === 'available') return `${name}（${groups}）`
+    if (rule.selection === 'all') return rule.layer_code === 'content_structure' ? name : `${name}（全取）`
+    const count = rule.min_groups === rule.max_groups ? `${rule.min_groups}` : `${rule.min_groups}-${rule.max_groups}`
+    return `${name}（${groups ? `${groups}，` : ''}随机取${count}组）`
+  }).join(' + ') || '-'
+}
+const methodName = (code) => code === 'S01' ? '场景法' : formulaName(code, 'methods')
 const loading = ref(false)
 const saving = ref(false)
 const editorOpen = ref(false)
@@ -54,24 +84,25 @@ const publishedVersion = computed(() =>
 const draftVersion = computed(() =>
   ruleVersions.value.find((item) => item.status === 'draft' && item.schema_version === 3)
 )
-const canEdit = computed(() => userStore.isSuperAdmin && selectedVersion.value?.status === 'draft')
-const coreMethods = computed(() =>
-  (ruleBundle.value?.methods || []).filter((item) => item.method_type === 'core' && item.enabled)
-)
-const enabledTitles = computed(() =>
-  (ruleBundle.value?.title_formulas || []).filter((item) => item.enabled)
-)
-const enabledBodies = computed(() =>
-  (ruleBundle.value?.content_formulas || []).filter((item) => item.enabled)
-)
+const canEdit = computed(() => userStore.isAdmin && selectedVersion.value?.status === 'draft')
+const inCurrentIndustry = (item) => !industryFilter.value || !(item.industry_scope || []).length || item.industry_scope.includes(industryFilter.value)
+const scopedMethods = computed(() => (ruleBundle.value?.methods || []).filter(inCurrentIndustry))
+const scopedTitles = computed(() => (ruleBundle.value?.title_formulas || []).filter(inCurrentIndustry))
+const scopedBodies = computed(() => (ruleBundle.value?.content_formulas || []).filter(inCurrentIndustry))
+const coreMethods = computed(() => scopedMethods.value.filter((item) => item.enabled))
+const enabledTitles = computed(() => scopedTitles.value.filter((item) => item.enabled))
+const enabledBodies = computed(() => scopedBodies.value.filter((item) => item.enabled))
 const query = computed(() => searchText.value.trim().toLowerCase())
 
-const filteredMethods = computed(() => filterItems(ruleBundle.value?.methods, ['code', 'name', 'principle']))
-const filteredTitles = computed(() => filterItems(ruleBundle.value?.title_formulas, ['code', 'name', 'core_goal']))
-const filteredBodies = computed(() => filterItems(ruleBundle.value?.content_formulas, ['code', 'name']))
-const filteredCombinations = computed(() => filterItems(ruleBundle.value?.combination_rules, [
+const filteredMethods = computed(() => filterItems(scopedMethods.value, ['code', 'name', 'principle']))
+const filteredTitles = computed(() => filterItems(scopedTitles.value, ['code', 'name', 'core_goal']))
+const filteredBodies = computed(() => filterItems(scopedBodies.value, ['code', 'name']))
+const industryCombinations = computed(() => (ruleBundle.value?.combination_rules || [])
+  .filter(item => !industryFilter.value || item.industry_scope.includes(industryFilter.value))
+  .sort((a, b) => (a.source_metadata?.source_row || 999) - (b.source_metadata?.source_row || 999)))
+const filteredCombinations = computed(() => filterItems(industryCombinations.value, [
   'content_type_codes', 'title_formula_candidate_codes', 'body_formula_candidate_codes',
-  'scenario_description', 'recommendation_reason'
+  'scenario_description', 'recommendation_reason', 'source_metadata'
 ]))
 
 const withoutId = (item) => {
@@ -101,7 +132,7 @@ function filterItems(items = [], fields = []) {
   if (!query.value) return items || []
   return (items || []).filter((item) => fields.some((field) => {
     const value = item[field]
-    return (Array.isArray(value) ? value.join(' ') : String(value || '')).toLowerCase().includes(query.value)
+    return (Array.isArray(value) ? value.join(' ') : (typeof value === 'object' ? JSON.stringify(value) : String(value || ''))).toLowerCase().includes(query.value)
   }))
 }
 
@@ -134,11 +165,11 @@ const load = async (force = false, preferredVersionId = '') => {
       contentApi.listWorkflowTemplates()
     ])
     ruleVersions.value = rules.items || []
-    industries.value = templates.items || []
+    industries.value = (templates.items || []).filter(item => item.slug === 'decoration')
     industryPacks.value = packs.items || []
     workflows.value = flowList.items || []
     const targetId = preferredVersionId
-      || (userStore.isSuperAdmin ? draftVersion.value?.id : '')
+      || (userStore.isAdmin ? draftVersion.value?.id : '')
       || publishedVersion.value?.id
       || ruleVersions.value[0]?.id
     if (targetId) await loadVersion(targetId)
@@ -262,13 +293,25 @@ const refreshVersionList = async () => {
 
 const openEditor = (type, item = null, index = -1) => {
   editorType.value = type
-  editingItem.value = item ? structuredClone(item) : null
+  editingItem.value = item ? structuredClone(toRaw(item)) : null
   editingIndex.value = index
   editorOpen.value = true
 }
 
+const editorDirections = computed(() => {
+  const slug = editingItem.value?.industry_scope?.[0] || industryFilter.value
+  return (ruleBundle.value?.content_types || []).map(item => {
+    const group = (ruleBundle.value?.combination_rules || []).find(group => group.industry_scope.includes(slug) && group.content_type_codes.includes(item.code))
+    return { ...item, name: group?.source_metadata?.content_direction_name || item.name }
+  })
+})
+
 const saveEditor = (value) => {
   const items = ruleBundle.value[editorType.value]
+  if (editorType.value === 'combination_rules' && editingIndex.value >= 0
+    && JSON.stringify(items[editingIndex.value].content_type_codes) !== JSON.stringify(value.content_type_codes)) {
+    value.source_metadata = { ...value.source_metadata, content_direction_name: value.content_type_codes.map(code => editorDirections.value.find(item => item.code === code)?.name || code).join('、') }
+  }
   if (editorType.value !== 'combination_rules' && editingIndex.value < 0) {
     const duplicate = items.some((item) => item.code.toUpperCase() === value.code.toUpperCase())
     if (duplicate) {
@@ -382,7 +425,7 @@ const toggleItem = (item) => {
     message.warning('S01 场景增强是当前工作流依赖项，必须保持启用')
     return
   }
-  item.enabled = !item.enabled
+  item.enabled = item.enabled === false
 }
 
 const openPublish = () => {
@@ -453,9 +496,9 @@ onBeforeUnmount(() => window.removeEventListener('beforeunload', beforeUnload))
     </header>
 
     <div class="overview-grid">
-      <div><Layers3 :size="20" /><strong>{{ ruleBundle?.methods?.filter(item => item.enabled).length || 0 }}</strong><span>启用的创作手法</span></div>
+      <div><Layers3 :size="20" /><strong>{{ coreMethods.length }}</strong><span>启用的创作手法</span></div>
       <div><Database :size="20" /><strong>{{ enabledTitles.length }} / {{ enabledBodies.length }}</strong><span>启用的标题 / 正文公式</span></div>
-      <div><GitBranch :size="20" /><strong>{{ ruleBundle?.combination_rules?.length || 0 }}</strong><span>V3 组合组</span></div>
+      <div><GitBranch :size="20" /><strong>{{ industryCombinations.filter(item => item.enabled !== false).length }} / {{ industryCombinations.length }}</strong><span>启用 / 当前行业组合</span></div>
     </div>
 
     <section class="workspace-bar">
@@ -470,7 +513,7 @@ onBeforeUnmount(() => window.removeEventListener('beforeunload', beforeUnload))
         <span v-if="isDirty" class="unsaved-badge">有未保存修改</span>
       </div>
       <div class="workspace-actions">
-        <a-button v-if="userStore.isSuperAdmin && !draftVersion" @click="createDraft"><FileEdit :size="16" />基于线上版本创建草稿</a-button>
+        <a-button v-if="userStore.isAdmin && !draftVersion" @click="createDraft"><FileEdit :size="16" />基于线上版本创建草稿</a-button>
         <template v-if="canEdit">
           <a-button danger @click="discardDraft">放弃草稿</a-button>
           <a-button :loading="saving" :disabled="!isDirty" @click="saveDraft"><Save :size="16" />保存修改</a-button>
@@ -504,8 +547,13 @@ onBeforeUnmount(() => window.removeEventListener('beforeunload', beforeUnload))
     </div>
 
     <section class="rule-card" :class="{ 'is-loading': loading }">
+      <div class="industry-scope-bar">
+        <label>当前行业规则</label>
+        <strong>装修与家居</strong>
+        <span>仅展示装修与家居适用的手法、标题、正文和组合规则。</span>
+      </div>
       <a-tabs v-model:activeKey="activeTab" @change="searchText = ''">
-        <a-tab-pane key="methods" :tab="`创作手法 ${ruleBundle?.methods?.length || 0}`">
+        <a-tab-pane key="methods" :tab="`创作手法 ${scopedMethods.length}`">
           <div class="tab-toolbar">
             <a-input v-model:value="searchText" allow-clear placeholder="搜索编码、名称或原则"><template #prefix><Search :size="15" /></template></a-input>
             <a-button v-if="canEdit" type="primary" @click="openEditor('methods')"><Plus :size="16" />新增手法</a-button>
@@ -526,22 +574,23 @@ onBeforeUnmount(() => window.removeEventListener('beforeunload', beforeUnload))
           </div>
         </a-tab-pane>
 
-        <a-tab-pane key="titles" :tab="`标题公式 ${ruleBundle?.title_formulas?.length || 0}`">
+        <a-tab-pane key="titles" :tab="`标题公式 ${scopedTitles.length}`">
           <div class="tab-toolbar">
             <a-input v-model:value="searchText" allow-clear placeholder="搜索编码、公式或目标"><template #prefix><Search :size="15" /></template></a-input>
             <a-button v-if="canEdit" type="primary" @click="openEditor('title_formulas')"><Plus :size="16" />新增标题公式</a-button>
           </div>
           <a-table :data-source="filteredTitles" row-key="code" :pagination="false" :scroll="{ x: 900 }">
+            <template #expandedRowRender="{ record }"><ContentFormulaDetails :item="record" /></template>
             <a-table-column title="编码" data-index="code" width="80" />
             <a-table-column title="公式" data-index="name" width="190" />
             <a-table-column title="核心目标" data-index="core_goal" />
-            <a-table-column title="兼容手法" width="180"><template #default="{ record }">{{ record.compatible_methods.join('、') || '-' }}</template></a-table-column>
+
             <a-table-column title="状态" width="74"><template #default="{ record }"><span :class="record.enabled ? 'status-on' : 'status-off'">{{ record.enabled ? '启用' : '停用' }}</span></template></a-table-column>
             <a-table-column v-if="canEdit" title="操作" width="200" fixed="right"><template #default="{ record }"><div class="table-actions"><a-switch :checked="record.enabled" size="small" @change="toggleItem(record)" /><button type="button" class="lucide-icon-btn" title="上移" :disabled="ruleBundle.title_formulas.indexOf(record) === 0" @click="moveItem('title_formulas', ruleBundle.title_formulas.indexOf(record), -1)"><ChevronUp :size="16" /></button><button type="button" class="lucide-icon-btn" title="下移" :disabled="ruleBundle.title_formulas.indexOf(record) === ruleBundle.title_formulas.length - 1" @click="moveItem('title_formulas', ruleBundle.title_formulas.indexOf(record), 1)"><ChevronDown :size="16" /></button><button type="button" class="lucide-icon-btn" title="编辑" @click="openEditor('title_formulas', record, ruleBundle.title_formulas.indexOf(record))"><Pencil :size="16" /></button><button type="button" class="lucide-icon-btn danger" title="删除" @click="deleteItem('title_formulas', record, ruleBundle.title_formulas.indexOf(record))"><Trash2 :size="16" /></button></div></template></a-table-column>
           </a-table>
         </a-tab-pane>
 
-        <a-tab-pane key="bodies" :tab="`正文公式 ${ruleBundle?.content_formulas?.length || 0}`">
+        <a-tab-pane key="bodies" :tab="`正文公式 ${scopedBodies.length}`">
           <div class="tab-toolbar">
             <a-input v-model:value="searchText" allow-clear placeholder="搜索编码或公式名称"><template #prefix><Search :size="15" /></template></a-input>
             <a-button v-if="canEdit" type="primary" @click="openEditor('content_formulas')"><Plus :size="16" />新增正文公式</a-button>
@@ -550,41 +599,47 @@ onBeforeUnmount(() => window.removeEventListener('beforeunload', beforeUnload))
             <article v-for="item in filteredBodies" :key="item.code" :class="{ disabled: !item.enabled }">
               <div class="rule-heading"><code>{{ item.code }}</code><i>{{ item.enabled ? '启用' : '停用' }}</i></div>
               <h3>{{ item.name }}</h3><ol><li v-for="section in item.structure_schema" :key="section">{{ section }}</li></ol>
+              <details><summary>适用场景、变量与参考案例</summary><ContentFormulaDetails :item="item" /></details>
               <div v-if="canEdit" class="item-actions">
                 <a-switch :checked="item.enabled" size="small" @change="toggleItem(item)" />
                 <button type="button" class="lucide-icon-btn" :disabled="ruleBundle.content_formulas.indexOf(item) === 0" @click="moveItem('content_formulas', ruleBundle.content_formulas.indexOf(item), -1)"><ChevronUp :size="16" /></button>
                 <button type="button" class="lucide-icon-btn" :disabled="ruleBundle.content_formulas.indexOf(item) === ruleBundle.content_formulas.length - 1" @click="moveItem('content_formulas', ruleBundle.content_formulas.indexOf(item), 1)"><ChevronDown :size="16" /></button>
-                <button type="button" class="lucide-icon-btn" @click="openEditor('content_formulas', item, ruleBundle.content_formulas.indexOf(item))"><Pencil :size="16" /></button>
-                <button type="button" class="lucide-icon-btn danger" @click="deleteItem('content_formulas', item, ruleBundle.content_formulas.indexOf(item))"><Trash2 :size="16" /></button>
+                <button type="button" class="lucide-icon-btn" title="编辑" @click="openEditor('content_formulas', item, ruleBundle.content_formulas.indexOf(item))"><Pencil :size="16" /></button>
+                <button type="button" class="lucide-icon-btn danger" title="删除" @click="deleteItem('content_formulas', item, ruleBundle.content_formulas.indexOf(item))"><Trash2 :size="16" /></button>
               </div>
             </article>
           </div>
         </a-tab-pane>
 
-        <a-tab-pane key="combinations" :tab="`组合矩阵 ${ruleBundle?.combination_rules?.length || 0}`">
+        <a-tab-pane key="combinations" :tab="`组合矩阵 ${industryCombinations.length}`">
           <div class="tab-toolbar">
           <a-input v-model:value="searchText" allow-clear placeholder="搜索内容方向、公式编码或适用场景"><template #prefix><Search :size="15" /></template></a-input>
             <a-button v-if="canEdit" type="primary" @click="openEditor('combination_rules')"><Plus :size="16" />新增组合</a-button>
           </div>
-          <a-table :data-source="filteredCombinations" row-key="id" :pagination="false" :scroll="{ x: 980 }">
-            <a-table-column title="内容方向" width="110"><template #default="{ record }">{{ record.content_type_codes.join('、') }}</template></a-table-column>
-            <a-table-column title="组合类型" data-index="combination_type" width="100" />
-            <a-table-column title="创作手法" width="160"><template #default="{ record }">{{ record.method_members.map(item => item.method_code).join(' + ') }}</template></a-table-column>
-            <a-table-column title="标题候选池" width="190"><template #default="{ record }">{{ record.title_formula_candidate_codes.join('、') }}</template></a-table-column>
-            <a-table-column title="正文候选池" width="150"><template #default="{ record }">{{ record.body_formula_candidate_codes.join('、') }}</template></a-table-column>
+          <a-table :data-source="filteredCombinations" row-key="id" :pagination="false" :scroll="{ x: 2100 }">
+            <a-table-column title="选题类型" width="105"><template #default="{ record }">{{ record.source_metadata?.topic_type || '-' }}</template></a-table-column>
+            <a-table-column title="内容类型" width="120"><template #default="{ record }">{{ directionName(record) }}</template></a-table-column>
+            <a-table-column title="层级组合" width="330"><template #default="{ record }">{{ layerCombination(record) }}</template></a-table-column>
+            <a-table-column title="词组组合" width="620"><template #default="{ record }">{{ phraseCombination(record) }}</template></a-table-column>
+            <a-table-column title="组合类型" width="80"><template #default="{ record }">{{ combinationTypeNames[record.combination_type] }}</template></a-table-column>
+            <a-table-column title="创作手法" width="160"><template #default="{ record }">{{ record.method_members.length === 1 ? '纯' : '' }}{{ record.method_members.map(item => methodName(item.method_code)).join('+') }}</template></a-table-column>
+            <a-table-column title="专属标题公式" width="230"><template #default="{ record }"><p v-for="code in record.title_formula_candidate_codes" :key="code" :class="{ 'status-off': !enabledTitles.some(item => item.code === code) }">{{ code }} · {{ formulaName(code, 'title_formulas', record.industry_scope[0]) }}</p></template></a-table-column>
+            <a-table-column title="专属正文公式" width="230"><template #default="{ record }"><p v-for="code in record.body_formula_candidate_codes" :key="code" :class="{ 'status-off': !enabledBodies.some(item => item.code === code) }">{{ code }} · {{ formulaName(code, 'content_formulas', record.industry_scope[0]) }}</p></template></a-table-column>
             <a-table-column title="适用场景" data-index="scenario_description" />
-            <a-table-column title="优先级" data-index="priority" width="74" />
-            <a-table-column v-if="canEdit" title="操作" width="100" fixed="right"><template #default="{ record }"><div class="table-actions"><button type="button" class="lucide-icon-btn" @click="openEditor('combination_rules', record, ruleBundle.combination_rules.indexOf(record))"><Pencil :size="16" /></button><button type="button" class="lucide-icon-btn danger" @click="deleteItem('combination_rules', record, ruleBundle.combination_rules.indexOf(record))"><Trash2 :size="16" /></button></div></template></a-table-column>
+            <a-table-column title="状态" width="74"><template #default="{ record }"><span :class="record.enabled !== false ? 'status-on' : 'status-off'">{{ record.enabled !== false ? '启用' : '停用' }}</span></template></a-table-column>
+            <a-table-column v-if="canEdit" title="操作" width="140" fixed="right"><template #default="{ record }"><div class="table-actions"><a-switch :checked="record.enabled !== false" size="small" :aria-label="`启用组合 ${directionName(record)} ${combinationTypeNames[record.combination_type]}`" @change="toggleItem(record)" /><button type="button" class="lucide-icon-btn" title="编辑" @click="openEditor('combination_rules', record, ruleBundle.combination_rules.indexOf(record))"><Pencil :size="16" /></button><button type="button" class="lucide-icon-btn danger" title="删除" @click="deleteItem('combination_rules', record, ruleBundle.combination_rules.indexOf(record))"><Trash2 :size="16" /></button></div></template></a-table-column>
           </a-table>
         </a-tab-pane>
 
-        <a-tab-pane key="industries" :tab="`行业包 ${industryPacks.length}`">
-          <div class="readonly-note">行业包采用独立版本管理，并按“草稿 → 校验 → 灰度 → 发布”晋级；规则草稿不会直接修改行业包。</div>
+        <a-tab-pane key="industries" :tab="`行业包 ${visibleIndustryPacks.length}`">
+          <div class="readonly-note">发布矩阵时自动同步行业包的组合引用和结构样本。行业业务配置沿用原版；业务政策调整仍需独立校验、灰度和发布。</div>
+          <a-checkbox v-model:checked="showPackHistory">显示历史行业包</a-checkbox>
           <div class="workflow-list industry-pack-list">
-            <article v-for="item in industryPacks" :key="item.id">
+            <article v-for="item in visibleIndustryPacks" :key="item.id">
               <div><code>{{ item.id }}</code><h3>{{ item.name }}</h3></div>
               <span>{{ packStatusText(item.status) }}</span>
-              <p>{{ Object.keys(item.content_type_aliases || {}).length }} 个方向 · {{ item.combination_overrides?.length || 0 }} 个组合组 · {{ item.golden_samples?.length || 0 }} 个黄金样本</p>
+              <p>{{ Object.keys(item.content_type_aliases || {}).length }} 个方向 · {{ item.combination_overrides?.length || 0 }} 个组合组 · {{ item.golden_samples?.length || 0 }} 个{{ item.source_metadata?.update_kind === 'rule_binding_sync' ? '结构样本' : '黄金样本' }}</p>
+              <small v-if="item.source_metadata?.rule_version_id">绑定规则：{{ item.source_metadata.rule_version_id }} · 行业业务配置：{{ item.source_metadata.business_config_version_id }}</small>
               <small>离线评测：{{ item.evaluation_report?.evaluation?.passed ? '通过' : '待校验' }} · canary 全链路回归：{{ item.evaluation_report?.regression?.passed ? '通过' : '待完成' }} · 最低覆盖率 {{ Math.round((item.minimum_coverage || 0) * 100) }}%</small>
               <div v-if="userStore.isSuperAdmin && item.schema_version === 3" class="pack-actions">
                 <a-button size="small" @click="validatePack(item)">校验与评测</a-button>
@@ -600,6 +655,7 @@ onBeforeUnmount(() => window.removeEventListener('beforeunload', beforeUnload))
           <div class="readonly-note">工作流是独立的可执行版本，需要单独设计和发布。</div>
           <div class="workflow-list"><article v-for="item in workflows" :key="item.id"><div><code>{{ item.id }}</code><h3>{{ item.slug }} · v{{ item.version }}</h3></div><span>{{ item.status }}</span><p>{{ item.definition.nodes?.length || 0 }} 个节点 · {{ item.definition.edges?.length || 0 }} 条连线</p><small>定义哈希：{{ item.definition_hash || '草稿未冻结' }}</small><a-button v-if="userStore.isSuperAdmin && item.definition.schema_version === 3 && item.status !== 'published'" class="workflow-action" size="small" type="primary" @click="publishWorkflow(item)">校验并发布</a-button><details><summary>查看工作流 JSON 定义</summary><pre>{{ JSON.stringify(item.definition, null, 2) }}</pre></details></article></div>
         </a-tab-pane>
+        <a-tab-pane key="viral-assets" tab="爆款参考资产"><ContentViralAssets :industries="uniqueIndustries" /></a-tab-pane>
       </a-tabs>
     </section>
 
@@ -618,9 +674,10 @@ onBeforeUnmount(() => window.removeEventListener('beforeunload', beforeUnload))
       :type="editorType"
       :item="editingItem"
       :method-options="coreMethods"
-      :title-options="enabledTitles"
-      :content-options="enabledBodies"
-      :content-type-options="ruleBundle?.content_types || []"
+      :title-options="scopedTitles.map(item => ({ ...item, name: formulaName(item.code, 'title_formulas', editingItem?.industry_scope?.[0] || industryFilter) }))"
+      :content-options="scopedBodies.map(item => ({ ...item, name: formulaName(item.code, 'content_formulas', editingItem?.industry_scope?.[0] || industryFilter) }))"
+      :content-type-options="editorDirections"
+      :default-industry="industryFilter"
       @close="editorOpen = false"
       @save="saveEditor"
     />
@@ -662,6 +719,9 @@ onBeforeUnmount(() => window.removeEventListener('beforeunload', beforeUnload))
 .validation-success { border-color: var(--color-success-200); background: var(--color-success-50); color: var(--color-success-700); }
 .rule-card, .version-list { padding: 20px; border: 1px solid var(--gray-150); border-radius: 8px; background: var(--gray-0); }
 .rule-card { margin-top: 16px; }
+.industry-scope-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; padding: 10px 12px; border-radius: 6px; background: var(--gray-25); }
+.industry-scope-bar label { font-weight: 600; }
+.industry-scope-bar span { color: var(--color-text-secondary); font-size: 12px; }
 .rule-card.is-loading { opacity: .68; pointer-events: none; }
 .tab-toolbar { margin-bottom: 14px; display: flex; justify-content: space-between; gap: 12px; }
 .tab-toolbar :deep(.ant-input-affix-wrapper) { max-width: 360px; }
@@ -680,7 +740,10 @@ onBeforeUnmount(() => window.removeEventListener('beforeunload', beforeUnload))
 .tag-list span { padding: 2px 6px; border-radius: 999px; background: var(--main-30); color: var(--main-700); font-size: 12px; }
 .item-actions { position: absolute; left: 12px; right: 12px; bottom: 10px; display: flex; justify-content: flex-end; align-items: center; gap: 4px; padding-top: 8px; border-top: 1px solid var(--gray-100); }
 .item-actions .ant-switch { margin-right: auto; }
-.lucide-icon-btn.danger { color: var(--color-error-600); }
+.lucide-icon-btn { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 5px; background: transparent; color: var(--color-text-secondary); cursor: pointer; }
+.lucide-icon-btn:hover:not(:disabled) { background: var(--gray-100); color: var(--main-700); }
+.lucide-icon-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+.lucide-icon-btn.danger { color: var(--color-error-500); }
 .table-actions { display: flex; align-items: center; justify-content: flex-end; gap: 4px; }
 .readonly-note { margin-bottom: 14px; padding: 10px 12px; border-radius: 6px; background: var(--gray-25); color: var(--color-text-secondary); font-size: 13px; }
 .workflow-list { display: flex; flex-direction: column; gap: 10px; }

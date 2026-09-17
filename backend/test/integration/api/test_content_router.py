@@ -73,3 +73,34 @@ async def test_content_bootstrap_and_v3_task_flow(test_client, admin_headers):
     finally:
         delete_response = await test_client.delete(f"/api/content/tasks/{task_id}", headers=admin_headers)
         assert delete_response.status_code == 200, delete_response.text
+
+
+async def test_content_history_batch_delete(test_client, admin_headers):
+    bootstrap = (await test_client.get("/api/content/bootstrap", headers=admin_headers)).json()
+    template = next(item for item in bootstrap["industry_templates"] if item["slug"] == "decoration")
+    task_ids = []
+    for index in range(2):
+        response = await test_client.post(
+            "/api/content/tasks",
+            headers=admin_headers,
+            json={
+                "industry_template_id": template["id"],
+                "mode": "quick",
+                "content_goal": template["default_goal"],
+                "name": f"pytest_batch_delete_{index}_{uuid.uuid4().hex[:8]}",
+            },
+        )
+        assert response.status_code == 200, response.text
+        task_ids.append(response.json()["task"]["id"])
+
+    response = await test_client.post(
+        "/api/content/tasks/batch-delete",
+        headers=admin_headers,
+        json={"task_ids": task_ids},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {"deleted": True, "task_ids": task_ids, "deleted_count": 2}
+    for task_id in task_ids:
+        deleted = await test_client.get(f"/api/content/tasks/{task_id}", headers=admin_headers)
+        assert deleted.status_code == 404

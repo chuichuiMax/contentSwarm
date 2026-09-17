@@ -120,6 +120,12 @@ const router = createRouter({
           meta: { keepAlive: false, requiresAuth: true }
         },
         {
+          path: 'image-design',
+          name: 'ImageDesign',
+          component: () => import('../views/ImageDesignView.vue'),
+          meta: { keepAlive: false, requiresAuth: true }
+        },
+        {
           path: 'covers/:assetId/edit',
           name: 'ContentCoverEditor',
           component: () => import('../views/CoverEditorView.vue'),

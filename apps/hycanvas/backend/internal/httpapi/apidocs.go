@@ -93,6 +93,17 @@ curl -sS -X POST "$HYCANVAS/api/v1/designs/$ID/links" \
 <p>Or compose on a TEMPLATE's layout system and theme (workspace templates, e.g. built from an uploaded PPTX, or public built-ins):</p>
 <pre><code>-d '{"prompt": "...", "templateId": "..."}'</code></pre>
 
+<h2>Categorized templates</h2>
+<p>Public endpoint: fetch all template categories and the templates assigned to each category. No authentication or workspace id is required:</p>
+<pre><code>curl -sS "$HYCANVAS/api/v1/templates/catalog"
+# =&gt; { "categories": [{ "id": "...", "name": "内容报价", "templates": [...] }] }</code></pre>
+<p>Clients that load categories and templates separately can use the following public endpoints. Neither endpoint requires authentication, an API key, or a workspace id:</p>
+<pre><code>curl -sS "$HYCANVAS/api/v1/templates/categories"
+# =&gt; { "categories": [{ "id": "...", "name": "内容报价" }] }
+
+curl -sS "$HYCANVAS/api/v1/templates/categories/templates?categoryIds=CATEGORY_ID_1,CATEGORY_ID_2"
+# =&gt; { "categories": [{ "id": "...", "name": "内容报价", "templates": [...] }] }</code></pre>
+
 <h2>Grounding sources</h2>
 <p>Attach up to 8 text sources; the outline is grounded strictly in them (their content is treated as untrusted reference material):</p>
 <pre><code>-d '{"prompt": "quarterly review deck", "sources": [{"name": "Q3 notes", "text": "..."}]}'</code></pre>

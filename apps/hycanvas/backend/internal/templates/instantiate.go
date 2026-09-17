@@ -18,17 +18,18 @@ type InstantiateImage struct {
 // InstantiateInput describes one automation-created design. Fields are keyed
 // by the human-readable labels declared in the template's fillableFields.
 type InstantiateInput struct {
-	WorkspaceID string
-	Title       string
-	Fields      map[string]string
-	Images      map[string]InstantiateImage
-	Background  *InstantiateImage
+	WorkspaceID      string
+	Title            string
+	Fields           map[string]string
+	Images           map[string]InstantiateImage
+	Background       *InstantiateImage
+	PhotoComposition *PhotoComposition
 }
 
 // PreviewWithBackground applies the same ContentSwarm background transform as
 // Instantiate without creating a design. The returned file is only rendered
 // in memory by the HTTP preview endpoint.
-func (s *Service) PreviewWithBackground(ctx context.Context, userID, templateID string, image InstantiateImage) (map[string]any, Template, error) {
+func (s *Service) PreviewWithBackground(ctx context.Context, userID, templateID string, image InstantiateImage, compositions ...*PhotoComposition) (map[string]any, Template, error) {
 	template, err := s.Get(ctx, userID, templateID)
 	if err != nil {
 		return nil, Template{}, err
@@ -37,7 +38,11 @@ func (s *Service) PreviewWithBackground(ctx context.Context, userID, templateID 
 	if err != nil {
 		return nil, Template{}, err
 	}
-	if err := applyBackgroundImage(file, image); err != nil {
+	if len(compositions) > 0 && compositions[0] != nil {
+		if err := applyPhotoComposition(file, compositions[0]); err != nil {
+			return nil, Template{}, err
+		}
+	} else if err := applyBackgroundImage(file, image); err != nil {
 		return nil, Template{}, err
 	}
 	return file, template, nil
@@ -76,7 +81,11 @@ func (s *Service) Instantiate(ctx context.Context, userID, templateID string, in
 	if err := fillImageFields(file, template.FillableFields, in.Images); err != nil {
 		return "", err
 	}
-	if in.Background != nil {
+	if in.PhotoComposition != nil {
+		if err := applyPhotoComposition(file, in.PhotoComposition); err != nil {
+			return "", err
+		}
+	} else if in.Background != nil {
 		if err := applyBackgroundImage(file, *in.Background); err != nil {
 			return "", err
 		}
@@ -193,9 +202,17 @@ func fillTextFields(file map[string]any, declarations []any, values map[string]s
 				continue
 			}
 			label := asStr(field["label"])
+			key := asStr(field["key"])
+			if key == "" {
+				key = label
+			}
+			fieldNodes[key] = asStr(field["nodeId"])
 			fieldNodes[label] = asStr(field["nodeId"])
 			constraints := asObj(field["constraints"])
-			value, present := values[label]
+			value, present := values[key]
+			if !present {
+				value, present = values[label]
+			}
 			if required, _ := constraints["required"].(bool); required && (!present || strings.TrimSpace(value) == "") {
 				return ErrBadRequest
 			}
@@ -240,6 +257,13 @@ func fillTextFields(file map[string]any, declarations []any, values map[string]s
 				if len(runs) == 0 {
 					return
 				}
+				for _, declarationRaw := range declarations {
+					declaration := asObj(declarationRaw)
+					if asStr(declaration["nodeId"]) == asStr(node["id"]) {
+						restoreTemplateTypography(node, asObj(declaration["typography"]))
+						break
+					}
+				}
 				for paragraphIndex, paragraphRaw := range paragraphs {
 					paragraphRuns := asArr(asObj(paragraphRaw)["runs"])
 					for runIndex, runRaw := range paragraphRuns {
@@ -258,4 +282,83 @@ func fillTextFields(file map[string]any, declarations []any, values map[string]s
 		return ErrBadRequest
 	}
 	return nil
+}
+
+// restoreTemplateTypography makes the saved field contract authoritative at
+// instantiation time. Older templates only contain the compact runs/alignment
+// snapshot; newer templates also retain the complete rich-text, paragraph,
+// text-box, and text-effect values used by the renderer.
+func restoreTemplateTypography(node map[string]any, typography map[string]any) {
+	if typography == nil {
+		return
+	}
+	paragraphs := asArr(node["content"])
+	contracts := asArr(typography["paragraphs"])
+	if len(contracts) > 0 {
+		for paragraphIndex, contractRaw := range contracts {
+			if paragraphIndex >= len(paragraphs) {
+				break
+			}
+			paragraph := asObj(paragraphs[paragraphIndex])
+			contract := asObj(contractRaw)
+			if style := asObj(contract["style"]); style != nil {
+				paragraph["style"] = deepCloneValue(style)
+			}
+			runs := asArr(paragraph["runs"])
+			for runIndex, runContractRaw := range asArr(contract["runs"]) {
+				if runIndex >= len(runs) {
+					break
+				}
+				if style := asObj(asObj(runContractRaw)["style"]); style != nil {
+					asObj(runs[runIndex])["style"] = deepCloneValue(style)
+				}
+			}
+		}
+		if box := asObj(typography["box"]); box != nil {
+			node["box"] = deepCloneValue(box)
+		}
+		if effects, ok := typography["textEffects"].([]any); ok {
+			node["textEffects"] = deepCloneValue(effects)
+		}
+		return
+	}
+
+	// Backward compatibility for contracts saved before full style snapshots.
+	if align := asStr(typography["paragraphAlign"]); align != "" && len(paragraphs) > 0 {
+		style := asObj(asObj(paragraphs[0])["style"])
+		if style == nil {
+			style = map[string]any{}
+			asObj(paragraphs[0])["style"] = style
+		}
+		style["align"] = align
+	}
+	runContracts := asArr(typography["runs"])
+	contractIndex := 0
+	for _, paragraphRaw := range paragraphs {
+		for _, runRaw := range asArr(asObj(paragraphRaw)["runs"]) {
+			if contractIndex >= len(runContracts) {
+				return
+			}
+			contract := asObj(runContracts[contractIndex])
+			style := asObj(asObj(runRaw)["style"])
+			if style == nil {
+				style = map[string]any{}
+				asObj(runRaw)["style"] = style
+			}
+			for _, key := range []string{"fontFamily", "fontStyle", "fontSize", "letterSpacing", "lineHeight"} {
+				if value, ok := contract[key]; ok {
+					style[key] = deepCloneValue(value)
+				}
+			}
+			if weight := asNum(contract["fontWeight"]); weight > 0 {
+				axes := asObj(style["axes"])
+				if axes == nil {
+					axes = map[string]any{}
+					style["axes"] = axes
+				}
+				axes["wght"] = weight
+			}
+			contractIndex++
+		}
+	}
 }

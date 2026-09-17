@@ -22,6 +22,7 @@ export * from './role_api' // 内容发布角色 API
 export * from './content_type_api' // 内容类型配置 API
 export * from './variable_api' // 变量配置 API
 export * from './material_library_api' // 素材库 API
+export * from './image_design_api' // 图片设计 API
 
 // 导出基础工具函数
 export {

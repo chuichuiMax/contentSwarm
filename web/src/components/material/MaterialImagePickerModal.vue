@@ -10,7 +10,10 @@ const props = defineProps({
   open: { type: Boolean, default: false },
   selectedItemId: { type: String, default: '' },
   selectedGalleryId: { type: String, default: '' },
-  disabled: { type: Boolean, default: false }
+  disabled: { type: Boolean, default: false },
+  title: { type: String, default: '选择素材库底图' },
+  description: { type: String, default: '选择一张图片作为完整封面的底图' },
+  confirmText: { type: String, default: '使用这张底图' }
 })
 
 const emit = defineEmits(['update:open', 'select'])
@@ -166,7 +169,7 @@ onBeforeUnmount(() => {
 <template>
   <a-modal
     :open="open"
-    title="选择素材库底图"
+    :title="props.title"
     width="min(1040px, 94vw)"
     :footer="null"
     :mask-closable="!disabled"
@@ -185,7 +188,7 @@ onBeforeUnmount(() => {
               @click="chooseGallery(gallery.id)"
             >
               <FolderOpen :size="16" />
-              <span>{{ gallery.name }}</span>
+              <span>{{ gallery.visibility === 'enterprise' ? '企业共享 · ' : '' }}{{ gallery.name }}</span>
               <small>{{ gallery.direct_count || 0 }}</small>
             </button>
             <div v-if="galleryChildren(gallery.id).length" class="gallery-tree-children">
@@ -210,7 +213,7 @@ onBeforeUnmount(() => {
         <div class="picker-toolbar">
           <div>
             <strong>{{ activeGallery?.name || '素材图片' }}</strong>
-            <small>选择一张图片作为完整封面的底图</small>
+            <small>{{ props.description }}</small>
           </div>
           <label class="picker-search">
             <Search :size="16" />
@@ -235,7 +238,7 @@ onBeforeUnmount(() => {
               <ImageIcon v-else :size="24" />
               <CheckCircle2 v-if="pendingItem?.id === item.id" class="selected-check" :size="21" />
             </span>
-            <strong :title="item.name">{{ item.name }}</strong>
+            <strong :title="item.name">{{ item.visibility === 'enterprise' ? '企业共享 · ' : '' }}{{ item.name }}</strong>
             <small>{{ item.width }} × {{ item.height }}</small>
           </button>
         </div>
@@ -254,7 +257,7 @@ onBeforeUnmount(() => {
           </div>
           <div class="footer-actions">
             <a-button @click="close">取消</a-button>
-            <a-button type="primary" :disabled="!pendingItem || disabled" @click="confirm">使用这张底图</a-button>
+            <a-button type="primary" :disabled="!pendingItem || disabled" @click="confirm">{{ props.confirmText }}</a-button>
           </div>
         </div>
       </section>

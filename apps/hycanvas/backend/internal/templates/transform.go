@@ -94,8 +94,13 @@ func visitTree(node map[string]any, fn func(map[string]any)) {
 }
 
 func deepCloneJSON(v map[string]any) map[string]any {
+	clone, _ := deepCloneValue(v).(map[string]any)
+	return clone
+}
+
+func deepCloneValue(v any) any {
 	raw, _ := json.Marshal(v)
-	var out map[string]any
+	var out any
 	_ = json.Unmarshal(raw, &out)
 	return out
 }

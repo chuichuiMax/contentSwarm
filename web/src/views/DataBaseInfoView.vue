@@ -267,6 +267,11 @@
           />
         </a-form-item>
 
+        <a-form-item label="爆款创作类型">
+          <a-select v-model:value="editForm.viral_content_type" :options="CREATION_TYPE_OPTIONS" allow-clear placeholder="普通资料库不绑定；爆款库请选择一个类型" />
+          <span>每库只对应一种类型，修改后按新类型筛选参考文章。</span>
+        </a-form-item>
+
         <a-form-item v-if="!isConnector" label="自动生成问题" name="auto_generate_questions">
           <a-switch
             v-model:checked="editForm.auto_generate_questions"
@@ -356,6 +361,7 @@
 </template>
 
 <script setup>
+import { CREATION_TYPE_OPTIONS } from '@/utils/content_creation_types'
 import { computed, defineAsyncComponent, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDatabaseStore } from '@/stores/database'
@@ -745,6 +751,7 @@ const editModalVisible = ref(false)
 const editFormRef = ref(null)
 const shareConfigFormRef = ref(null)
 const editForm = reactive({
+  viral_content_type: undefined,
   name: '',
   description: '',
   auto_generate_questions: false,
@@ -829,6 +836,7 @@ const loadUsers = async () => {
 }
 
 const showEditModal = () => {
+  editForm.viral_content_type = database.value.additional_params?.viral_content_type || undefined
   editForm.name = database.value.name || ''
   editForm.description = database.value.description || ''
   editForm.auto_generate_questions =
@@ -905,6 +913,7 @@ const handleEditSubmit = () => {
         }
       }
 
+      updateData.additional_params.viral_content_type = editForm.viral_content_type || null
       await store.updateDatabaseInfo(updateData)
       editModalVisible.value = false
     })

@@ -37,7 +37,7 @@ class TokenUsagePayload(TypedDict, total=False):
     summary_active: bool
     summary_message_tokens: int
     summary_trigger_tokens: int | None
-    model_usage: dict[str, int]
+    model_usage: dict[str, Any]
     counter: str
     estimate: bool
     measured_at: str
@@ -82,14 +82,26 @@ def _is_summary_message(message: AnyMessage) -> bool:
     return getattr(message, "additional_kwargs", {}).get("lc_source") == "summarization"
 
 
-def _model_usage_from_response(response: ModelResponse) -> dict[str, int]:
+def _model_usage_from_response(response: ModelResponse) -> dict[str, Any]:
     for message in reversed(response.result):
         if not isinstance(message, AIMessage):
             continue
         usage = getattr(message, "usage_metadata", None)
         if not isinstance(usage, Mapping):
             continue
-        return {str(key): value for key, value in usage.items() if isinstance(value, int)}
+        return {
+            str(key): (
+                {
+                    str(detail_key): detail_value
+                    for detail_key, detail_value in value.items()
+                    if isinstance(detail_value, int)
+                }
+                if isinstance(value, Mapping)
+                else value
+            )
+            for key, value in usage.items()
+            if isinstance(value, (int, Mapping))
+        }
     return {}
 
 
@@ -191,7 +203,9 @@ class TokenUsageMiddleware(AgentMiddleware[TokenUsageState]):
         model_usage = snapshot.get("model_usage") or {}
         output_tokens = model_usage.get("output_tokens")
         if isinstance(output_tokens, int):
-            current = output_tokens
+            output_details = model_usage.get("output_token_details") or {}
+            reasoning_tokens = output_details.get("reasoning", 0) if isinstance(output_details, Mapping) else 0
+            current = max(output_tokens - reasoning_tokens, 0)
         else:
             current = max(
                 int(snapshot.get("state_messages_tokens", 0))

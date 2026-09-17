@@ -55,6 +55,7 @@ import { attachableAccept, extractAiSources, maxAiSources, type AiSource } from 
 import { mermaidToDiagram, normalizeDiagramSpec, type DiagramSpec } from "@hc/whiteboard";
 import type { BrandVoice, BrandLintViolation } from "@hc/sdk";
 import { useEditor, type BrandFixTarget, type DeckTextEntry } from "@/store/editor";
+import { CoverElementsPanel } from "./CoverElementsPanel";
 import { useBrand } from "@/store/brand";
 import { useComments } from "@/store/comments";
 import { useToast } from "@/components/ui/Toast";
@@ -1154,6 +1155,7 @@ export function UploadsPanel({ workspaceId }: { workspaceId: string | null }) {
               content_type: it.file.type,
               data_url: dataUrl,
               category_name: categoryName,
+              category_id: managedCategoryId || undefined,
             });
             setManagedRefreshNonce((nonce) => nonce + 1);
           } catch {
@@ -1377,7 +1379,7 @@ export function UploadsPanel({ workspaceId }: { workspaceId: string | null }) {
             className={`rounded-xl border-2 border-dashed p-3 text-center transition ${dragOver ? "border-brand-400 bg-brand-50" : "border-neutral-200"}`}
           >
             <Button block onClick={() => fileRef.current?.click()} disabled={!workspaceId}>
-              <Upload size={16} /> {selectedManagedGallery ? `上传到 ${selectedManagedGallery.name}` : selectedFolder ? `Upload to ${selectedFolder.name}` : tr("editor.upload_images")}
+              <Upload size={16} /> {selectedManagedGallery ? `上传到 ${selectedManagedGallery.visibility === "enterprise" ? "企业共享 · " : ""}${selectedManagedGallery.name}` : selectedFolder ? `Upload to ${selectedFolder.name}` : tr("editor.upload_images")}
             </Button>
             <p className="mt-2 text-[11px] text-neutral-400">{tr("editor.or_drop_images_here")}</p>
             {/* Compact one-word labels so the three cells hold one line at
@@ -5547,7 +5549,7 @@ const animatedStickers = (): { id: string; label: string; preset: "pulse" | "spi
 ];
 
 export function StockPanel({ workspaceId }: { workspaceId: string | null }) {
-  if (isContentSwarmManaged) return <ContentSwarmMaterialPanel workspaceId={workspaceId} />;
+  if (isContentSwarmManaged) return <ContentSwarmMaterialPanel />;
   return <BuiltInStockPanel workspaceId={workspaceId} />;
 }
 
@@ -5895,15 +5897,15 @@ function ManagedUploadMedia({ categoryId }: { categoryId: string }) {
   );
 }
 
-function ContentSwarmMaterialPanel({ workspaceId }: { workspaceId: string | null }) {
+function ContentSwarmMaterialPanel() {
   const toast = useToast();
-  const [source, setSource] = useState<"workspace" | "system">("workspace");
+  const [source, setSource] = useState<"workspace" | "enterprise" | "system">("workspace");
   const [galleries, setGalleries] = useState<ContentSwarmGallery[]>([]);
   const [galleryError, setGalleryError] = useState("");
   const [activeCategory, setActiveCategory] = useState("");
   const [query, setQuery] = useState("");
   const debouncedQuery = useDebouncedValue(query);
-  const requestKey = `${activeCategory}\n${debouncedQuery}`;
+  const requestKey = `${source}\n${activeCategory}\n${debouncedQuery}`;
   const [materialState, setMaterialState] = useState<{ key: string; items: ContentSwarmMaterial[]; error: string }>({ key: "", items: [], error: "" });
   const [placing, setPlacing] = useState<string | null>(null);
 
@@ -5916,9 +5918,11 @@ function ContentSwarmMaterialPanel({ workspaceId }: { workspaceId: string | null
   }, []);
 
   useEffect(() => {
+    if (source === "system") return;
     let cancelled = false;
     void requestContentSwarmMaterials<ContentSwarmMaterialList>("list-items", {
       category: activeCategory || undefined,
+      scope: source === "enterprise" ? "enterprise" : "private",
       query: debouncedQuery || undefined,
       page: 1,
       page_size: 24,
@@ -5928,16 +5932,16 @@ function ContentSwarmMaterialPanel({ workspaceId }: { workspaceId: string | null
       if (!cancelled) setMaterialState({ key: requestKey, items: [], error: cause instanceof Error ? cause.message : "素材读取失败" });
     });
     return () => { cancelled = true; };
-  }, [activeCategory, debouncedQuery, requestKey]);
+  }, [activeCategory, debouncedQuery, requestKey, source]);
 
   const loading = materialState.key !== requestKey;
   const items = loading ? [] : materialState.items;
   const error = galleryError || (loading ? "" : materialState.error);
 
   const orderedGalleries = useMemo(() => {
-    const roots = galleries.filter((gallery) => !gallery.parent_id);
+    const roots = galleries.filter((gallery) => !gallery.parent_id && (gallery.visibility || "private") === (source === "enterprise" ? "enterprise" : "private"));
     return roots.flatMap((root) => [root, ...galleries.filter((gallery) => gallery.parent_id === root.id)]);
-  }, [galleries]);
+  }, [galleries, source]);
 
   async function place(item: ContentSwarmMaterial) {
     if (placing) return;
@@ -5954,14 +5958,17 @@ function ContentSwarmMaterialPanel({ workspaceId }: { workspaceId: string | null
 
   return (
     <PanelShell title="素材库">
-      <div className="mb-3 grid grid-cols-2 gap-1 rounded-lg bg-neutral-100 p-1">
-        <button type="button" onClick={() => setSource("workspace")} className={`rounded-md px-2 py-1.5 text-xs font-medium ${source === "workspace" ? "bg-surface text-brand-ink shadow-sm" : "text-neutral-600 hover:text-neutral-900"}`}>我的素材</button>
+      <div className="mb-3 grid grid-cols-3 gap-1 rounded-lg bg-neutral-100 p-1">
+        <button type="button" onClick={() => { setSource("workspace"); setActiveCategory(""); }} className={`rounded-md px-2 py-1.5 text-xs font-medium ${source === "workspace" ? "bg-surface text-brand-ink shadow-sm" : "text-neutral-600 hover:text-neutral-900"}`}>我的素材</button>
+        <button type="button" onClick={() => { setSource("enterprise"); setActiveCategory(""); }} className={`rounded-md px-2 py-1.5 text-xs font-medium ${source === "enterprise" ? "bg-surface text-brand-ink shadow-sm" : "text-neutral-600 hover:text-neutral-900"}`}>企业共享</button>
         <button type="button" onClick={() => setSource("system")} className={`rounded-md px-2 py-1.5 text-xs font-medium ${source === "system" ? "bg-surface text-brand-ink shadow-sm" : "text-neutral-600 hover:text-neutral-900"}`}>系统素材</button>
       </div>
-      {source === "system" ? <BuiltInStockPanel workspaceId={workspaceId} embedded /> : <>
+      {source === "system" ? (
+        <CoverElementsPanel />
+      ) : <>
       <div className="relative mb-3">
         <Search size={15} className="absolute start-3 top-1/2 -translate-y-1/2 text-neutral-400" />
-        <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索自己的素材" className="h-9 w-full rounded-lg border border-neutral-200 ps-9 pe-3 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100" />
+        <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={source === "enterprise" ? "搜索企业共享素材" : "搜索自己的素材"} className="h-9 w-full rounded-lg border border-neutral-200 ps-9 pe-3 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100" />
       </div>
       <div className="mb-3 flex max-h-24 flex-wrap gap-1 overflow-y-auto">
         <button onClick={() => setActiveCategory("")} className={stockChipCls(activeCategory === "")}>全部</button>

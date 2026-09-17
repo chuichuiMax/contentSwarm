@@ -44,7 +44,7 @@ const ensureImageGallery = async (name) => {
   const normalizedName = String(name || '').trim()
   if (!normalizedName) return 'uncategorized'
   const current = await materialLibraryApi.listGalleries()
-  const existing = current.galleries?.find((gallery) => gallery.name === normalizedName)
+  const existing = current.galleries?.find((gallery) => gallery.name === normalizedName && gallery.visibility !== 'enterprise')
   if (existing) return existing.id
   const created = await materialLibraryApi.createCategory({
     material_type: 'image',
@@ -66,6 +66,8 @@ const handleMaterialRequest = async (event) => {
       const result = await materialLibraryApi.listItems({
         material_type: 'image',
         category: payload.category,
+        scope: payload.scope,
+        status: 'enabled',
         query: payload.query,
         page: payload.page || 1,
         page_size: payload.page_size || 24,
@@ -90,7 +92,7 @@ const handleMaterialRequest = async (event) => {
       return
     }
     if (action === 'upload-image') {
-      const categoryId = await ensureImageGallery(payload.category_name)
+      const categoryId = payload.category_id || await ensureImageGallery(payload.category_name)
       const response = await fetch(payload.data_url)
       const blob = await response.blob()
       const file = new File([blob], payload.name, { type: payload.content_type || blob.type || 'application/octet-stream' })

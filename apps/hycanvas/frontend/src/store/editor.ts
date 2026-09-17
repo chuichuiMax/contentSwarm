@@ -910,7 +910,7 @@ interface EditorState {
    *  chosen pages after the active page's run, ids regenerated, assets carried
    *  (colliding ids reminted), and optionally restyled to this document's
    *  theme via the exact slot-by-slot remap. Returns the inserted count. */
-  importPagesFrom(file: DesignFile, pageIndices: number[], opts?: { matchTheme?: boolean }): number;
+  importPagesFrom(file: DesignFile, pageIndices: number[], opts?: { matchTheme?: boolean; preservePageSize?: boolean }): number;
   /** Import a full SVG file (e.g. an SVG export from another design tool) as editable elements:
    *  shapes/paths/text/images, registered assets, scaled to fit the page and
    *  grouped (ungroup to edit each element). Undoable. */
@@ -5709,7 +5709,7 @@ export const useEditor = create<EditorState>((set, get) => {
       };
 
       const cur = doc.pages[Math.min(get().activePage, Math.max(0, doc.pages.length - 1))];
-      const target = cur && cur.width > 0 && cur.height > 0 ? { width: cur.width, height: cur.height } : null;
+      const target = !opts?.preservePageSize && cur && cur.width > 0 && cur.height > 0 ? { width: cur.width, height: cur.height } : null;
       const made = srcPages.map((p, i) => {
         let page = structuredClone(p) as Page & { name?: string; readingOrder?: string[]; layoutId?: string; sectionId?: string };
         page.id = `page_${crypto.randomUUID().slice(0, 12)}`;

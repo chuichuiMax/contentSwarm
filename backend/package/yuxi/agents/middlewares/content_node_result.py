@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -54,6 +55,30 @@ class ContentNodeResultMiddleware(AgentMiddleware):
         tool_results = [
             f"[{message.name or 'tool'}]\n{message.content}" for message in messages if isinstance(message, ToolMessage)
         ]
+        failed_result = next(
+            (
+                message
+                for message in reversed(messages)
+                if isinstance(message, ToolMessage)
+                and message.name == ContentNodeResultMiddleware.RESULT_TOOL_NAME
+                and message.status == "error"
+            ),
+            None,
+        )
+        if failed_result is not None:
+            for message in reversed(messages):
+                if not isinstance(message, AIMessage):
+                    continue
+                for call in message.tool_calls:
+                    if call["id"] == failed_result.tool_call_id:
+                        tool_results.append(
+                            "上次提交的候选结果（未通过校验，仅供根据错误修正，不是已验收事实）：\n"
+                            + json.dumps(call["args"], ensure_ascii=False)
+                        )
+                        break
+                else:
+                    continue
+                break
         if tool_results:
             completed_results = "\n\n".join(tool_results)
             retained.append(

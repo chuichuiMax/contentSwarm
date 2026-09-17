@@ -20,6 +20,19 @@ const DEFAULT_FIELD_LABELS = {
   effective_at: '生效时间',
   scope: '适用范围',
   result: '案例结果',
+  product: '产品或项目',
+  process: '实施过程',
+  project_name: '项目名称',
+  service_advantage: '服务优势',
+  core_selling_points: '核心卖点',
+  proof: '证明材料',
+  quantity: '数量',
+  emotion: '体验感受',
+  city: '所在城市',
+  cta: '引导行动',
+  content_goal: '内容目标',
+  persona: '人设信息',
+  topic: '创作主题',
   source: '资料来源'
 }
 

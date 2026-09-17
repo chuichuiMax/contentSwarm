@@ -123,7 +123,16 @@ def validate_content(
             )
 
     for claim in HIGH_RISK_CLAIMS:
-        if claim in combined:
+        # “第一次刷到”等明确时间/步骤序数不属于排名宣传，避免无效回修。
+        matched = (
+            re.search(
+                r"第一(?!次|天|周|月|年|步|阶段|版|期|轮|页|张|个|条|段|件|套|层|集|批|遍|回|季度|部分)",
+                combined,
+            )
+            if claim == "第一"
+            else claim in combined
+        )
+        if matched:
             checks.append(
                 {
                     "code": "CONTENT_HIGH_RISK_CLAIM",

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+import hashlib
 from pathlib import Path
 from pathlib import PurePosixPath
 from typing import Annotated, Any, NotRequired, TypedDict
@@ -498,9 +499,7 @@ class SkillsMiddleware(AgentMiddleware):
 
     def _build_required_skills_section(self, slugs: list[str], runtime_context) -> str:
         metadata = self._get_runtime_prompt_metadata(runtime_context)
-        sections = [
-            "以下 Skill 是本节点已强制激活的完整执行指令，必须遵守；SKILL.md 全文已经注入，不要再调用 read_file："
-        ]
+        sections = ["以下是本节点已强制激活 Skill 的有效执行指令，必须遵守；所需指令已注入，不要再调用 read_file："]
         for slug in slugs:
             item = metadata.get(slug) or {}
             instructions = str(item.get("instructions") or "").strip()
@@ -509,6 +508,45 @@ class SkillsMiddleware(AgentMiddleware):
                     "required_skill_instructions_unavailable",
                     f"必需 Skill 的 SKILL.md 不可读: {slug}",
                 )
+            if getattr(runtime_context, "_content_max_model_calls", None):
+                node_input = getattr(runtime_context, "_content_node_input", None)
+                mode = (
+                    (getattr(node_input, "payload", {}) or {})
+                    .get("runtime_config_snapshot", {})
+                    .get(
+                        "creation_mode",
+                        "original",
+                    )
+                )
+                if slug == "viral-layout-formatter":
+                    original_start = instructions.index("## 原创模式")
+                    viral_start = instructions.index("## 一、读取参考排版")
+                    instructions = (
+                        instructions[:viral_start]
+                        if mode == "original"
+                        else instructions[:original_start] + instructions[viral_start:]
+                    )
+                if slug == "content-joint-strategy-selector":
+                    original_start = instructions.index("## 原创模式")
+                    rewrite_start = instructions.index("## 仿写模式")
+                    instructions = (
+                        instructions[:rewrite_start]
+                        if mode == "original"
+                        else instructions[:original_start] + instructions[rewrite_start:]
+                    )
+                if slug == "content-reviewer":
+                    mode = (getattr(node_input, "payload", {}) or {}).get("review_scope", "full")
+                    if mode in {"emoji", "expression"}:
+                        instructions = instructions.split("## 完整审核", 1)[0]
+                applied = getattr(runtime_context, "_content_applied_skill_instructions", {})
+                applied[slug] = {
+                    "mode": mode,
+                    "version": item.get("version"),
+                    "content_hash": item.get("content_hash"),
+                    "instruction_chars": len(instructions),
+                    "applied_hash": hashlib.sha256(instructions.encode()).hexdigest(),
+                }
+                runtime_context._content_applied_skill_instructions = applied
             sections.append(f'\n<required-skill slug="{slug}">\n{instructions}\n</required-skill>')
         return "\n".join(sections)
 

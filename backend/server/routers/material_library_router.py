@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from urllib.parse import quote
+from typing import Literal
 
 from fastapi import APIRouter, Depends, File, Form, Query, UploadFile, status
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from server.utils.auth_middleware import get_db, get_required_user
+from server.utils.auth_middleware import get_admin_user, get_db, get_required_user, get_superadmin_user
 from yuxi.services.material_library_service import (
     MaterialCategoryCreate,
     MaterialCategoryDelete,
@@ -24,9 +25,51 @@ from yuxi.services.material_library_service import (
     update_material_item,
     update_material_category,
 )
+from yuxi.services.remote_material_library_service import (
+    RemoteMaterialConfigUpdate,
+    create_remote_material_sync_job,
+    get_remote_material_config_state,
+    get_remote_material_sync_job,
+    verify_and_save_remote_material_config,
+)
 from yuxi.storage.postgres.models_business import User
 
 material_library = APIRouter(prefix="/material-library", tags=["material-library"])
+
+
+@material_library.get("/remote-config")
+async def remote_material_config(
+    current_user: User = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    return await get_remote_material_config_state(db, current_user)
+
+
+@material_library.put("/remote-config")
+async def update_remote_material_config(
+    payload: RemoteMaterialConfigUpdate,
+    current_user: User = Depends(get_superadmin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    return await verify_and_save_remote_material_config(db, current_user, payload)
+
+
+@material_library.get("/remote-sync/status")
+async def remote_material_sync_status(
+    job_id: str | None = Query(None, min_length=8, max_length=64),
+    current_user: User = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    del current_user
+    return await get_remote_material_sync_job(db, job_id=job_id)
+
+
+@material_library.post("/remote-sync", status_code=status.HTTP_202_ACCEPTED)
+async def sync_remote_materials(
+    current_user: User = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    return await create_remote_material_sync_job(db, current_user)
 
 
 @material_library.post("/images/import", status_code=status.HTTP_201_CREATED)
@@ -102,6 +145,7 @@ async def material_items(
     page: int = Query(1, ge=1),
     page_size: int = Query(24, ge=1, le=100),
     sort: str = Query("newest"),
+    scope: Literal["private", "enterprise"] | None = Query(None),
     current_user: User = Depends(get_required_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -115,6 +159,7 @@ async def material_items(
         page=page,
         page_size=page_size,
         sort=sort,
+        scope=scope,
     )
 
 
@@ -140,7 +185,7 @@ async def material_item_file(
         content=data,
         media_type=content_type,
         headers={
-            "Cache-Control": "private, max-age=3600",
+            "Cache-Control": "private, no-cache",
             "Content-Disposition": f"inline; filename*=UTF-8''{encoded_name}",
         },
     )
@@ -158,7 +203,7 @@ async def material_item_thumbnail(
         content=data,
         media_type="image/jpeg",
         headers={
-            "Cache-Control": "private, max-age=86400",
+            "Cache-Control": "private, no-cache",
             "Content-Disposition": f"inline; filename*=UTF-8''{encoded_name}.thumb.jpg",
         },
     )

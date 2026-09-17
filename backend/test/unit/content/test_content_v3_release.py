@@ -55,6 +55,27 @@ def test_task_create_rejects_legacy_version_pinning_fields():
         )
 
 
+def test_industry_rule_scope_can_override_platform_content_goal():
+    bundle = {
+        "combination_rules": [
+            {
+                "enabled": True,
+                "industry_scope": ["decoration"],
+                "content_goal_codes": [],
+                "content_type_codes": ["CT04", "CT06"],
+            },
+            {
+                "enabled": True,
+                "industry_scope": ["education"],
+                "content_goal_codes": [],
+                "content_type_codes": ["CT02"],
+            },
+        ]
+    }
+
+    assert content_service._scoped_content_type_codes(bundle, "decoration", "acquire") == {"CT04", "CT06"}
+
+
 @pytest.mark.asyncio
 async def test_v34_brief_compiles_without_visual_material(monkeypatch):
     task = SimpleNamespace(
@@ -309,6 +330,7 @@ async def test_new_tasks_only_lock_v3_rule_pack_and_workflow(monkeypatch):
                 status="published",
                 version=3,
                 schema_version=3,
+                source_metadata={},
             )
 
         async def create_task(self, **kwargs):

@@ -16,6 +16,18 @@ TITLE_FORMULA_LEXICON_CODES = {
     "T05": ("title.advice", "title.audience", "title.solution"),
     "T06": ("title.house_type", "title.contrast"),
     "T07": ("title.instruction_value",),
+    "FRT01": ("title.positioning", "title.house_type"),
+    "FRT02": ("title.positioning", "title.beneficial_result"),
+    "FRT03": ("title.oral_emotion", "title.positive_result"),
+    "FRT04": ("title.positioning", "title.audience", "title.pain"),
+    "FRT05": ("title.positioning", "title.beneficial_result"),
+    "FRT06": ("title.positioning", "title.positive_result"),
+    "FRT07": ("title.positioning", "title.instruction_value"),
+    "FRT08": ("title.positioning", "title.instruction_value"),
+    "FRT09": ("title.positioning", "title.house_type"),
+    "FRT10": ("title.house_type", "title.positioning"),
+    "FRT11": ("title.positioning", "title.instruction_value"),
+    "FRT12": ("title.positioning", "title.audience"),
 }
 
 
@@ -24,7 +36,7 @@ def _semantic_lexicon_catalog() -> dict[str, dict[str, Any]]:
 
 
 def get_formula_lexicon_requirements(title_formula_code: str, body_formula_code: str) -> dict[str, Any]:
-    """返回必须从标题资料库和正文资料库加载的精确文件清单。"""
+    """返回必须从标题词库和正文词库加载的精确文件清单。"""
 
     catalog = _semantic_lexicon_catalog()
     title_codes = TITLE_FORMULA_LEXICON_CODES[title_formula_code]
@@ -38,7 +50,7 @@ def get_formula_lexicon_requirements(title_formula_code: str, body_formula_code:
                 {
                     "code": code,
                     "name": item["name"],
-                    "knowledge_base_name": "标题资料库" if scope == "title" else "正文资料库",
+                    "knowledge_base_name": "标题词库" if scope == "title" else "正文词库",
                     "filename": item["source_heading"].split("、", 1)[-1],
                 }
             )

@@ -1,6 +1,7 @@
 <template>
   <MessageInputComponent
     ref="inputRef"
+    :class="{ 'has-input-toolbar': $slots.toolbar }"
     :model-value="modelValue"
     @update:modelValue="updateValue"
     :is-loading="isLoading"
@@ -13,6 +14,7 @@
     @keydown="handleKeyDown"
   >
     <template #top>
+      <slot name="toolbar"></slot>
       <div v-if="currentImage || previewAttachments.length" class="input-top-stack">
         <ImagePreviewComponent
           v-if="currentImage"
@@ -158,6 +160,10 @@ defineExpose({
 </script>
 
 <style lang="less" scoped>
+.has-input-toolbar :deep(.top-slot) {
+  flex-direction: column;
+}
+
 .input-actions-left {
   display: flex;
   align-items: center;

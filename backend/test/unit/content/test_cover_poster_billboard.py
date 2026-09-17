@@ -541,8 +541,9 @@ async def test_worker_runs_deterministic_poster_without_image2(
         def __init__(self, db):
             del db
 
-        async def get_asset_for_user(self, asset_id, owner_uid):
+        async def get_asset_for_user(self, asset_id, owner_uid, *, allow_material_use=False):
             assert owner_uid == "alice"
+            assert allow_material_use is (asset_id == "cca_product")
             return product_asset if asset_id == "cca_product" else template_asset
 
     @asynccontextmanager
@@ -602,8 +603,9 @@ async def test_worker_image2_enhancement_uses_protection_mask_and_relocks_produc
         def __init__(self, db):
             del db
 
-        async def get_asset_for_user(self, asset_id, owner_uid):
+        async def get_asset_for_user(self, asset_id, owner_uid, *, allow_material_use=False):
             assert owner_uid == "alice"
+            assert allow_material_use is (asset_id == "cca_product")
             return product_asset if asset_id == "cca_product" else template_asset
 
     class FakeClient:

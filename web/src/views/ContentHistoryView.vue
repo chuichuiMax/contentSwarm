@@ -1,16 +1,29 @@
 <script setup>
 import { onMounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { message, Modal } from 'ant-design-vue'
 import { Copy, FilePlus2, History, RotateCcw, Trash2 } from 'lucide-vue-next'
 import { contentApi } from '@/apis/content_api'
 import { useContentStudioStore } from '@/stores/contentStudio'
 
+import ContentResultView from './ContentResultView.vue'
+import { formatDateTime } from '@/utils/time'
+
 const router = useRouter()
+const route = useRoute()
+const activeTaskId = ref(typeof route.query.task === 'string' ? route.query.task : '')
+const generatedOnly = ref(true)
+const selectTask = (id) => {
+  activeTaskId.value = id || ''
+  router.replace({ query: { ...route.query, task: id || undefined } })
+}
+const taskTitle = (task) => task.selected_title?.text || task.name || '未命名内容'
 const store = useContentStudioStore()
 const page = ref(1)
 const pageSize = ref(20)
 const status = ref(undefined)
+const selectedTaskIds = ref([])
+const deleting = ref(false)
 
 const statusLabels = {
   draft: '草稿',
@@ -19,6 +32,7 @@ const statusLabels = {
   queued: '排队中',
   waiting_human: '等待人工',
   failed: '失败',
+  review_required: '待审核',
   reviewed: '已审核',
   review_blocked: '审核阻断',
   completed: '已完成',
@@ -27,7 +41,8 @@ const statusLabels = {
 
 const load = async () => {
   try {
-    await store.loadHistory({ page: page.value, page_size: pageSize.value, status: status.value })
+    await store.loadHistory({ page: page.value, page_size: pageSize.value, status: status.value, generated_only: generatedOnly.value })
+    if (!store.history.some(task => task.id === activeTaskId.value)) selectTask(store.history[0]?.id)
   } catch (error) {
     message.error(error.message || '加载生产历史失败')
   }
@@ -51,8 +66,43 @@ const remove = (task) => {
     cancelText: '取消',
     okType: 'danger',
     onOk: async () => {
-      await contentApi.deleteTask(task.id)
-      await load()
+      try {
+        await contentApi.deleteTask(task.id)
+        selectedTaskIds.value = selectedTaskIds.value.filter((id) => id !== task.id)
+        if (store.history.length === 1 && page.value > 1) page.value -= 1
+        await load()
+        message.success('生成历史已删除')
+      } catch (error) {
+        message.error(error.message || '删除生成历史失败')
+        throw error
+      }
+    }
+  })
+}
+
+const removeSelected = () => {
+  const taskIds = [...selectedTaskIds.value]
+  if (!taskIds.length) return
+  Modal.confirm({
+    title: `批量删除 ${taskIds.length} 条生成历史`,
+    content: '确定删除所选内容任务吗？内容任务会软删除，正式审计记录仍保留。',
+    okText: '删除',
+    cancelText: '取消',
+    okType: 'danger',
+    onOk: async () => {
+      deleting.value = true
+      try {
+        const response = await contentApi.deleteTasks(taskIds)
+        selectedTaskIds.value = []
+        if (store.history.length <= response.deleted_count && page.value > 1) page.value -= 1
+        await load()
+        message.success(`已删除 ${response.deleted_count} 条生成历史`)
+      } catch (error) {
+        message.error(error.message || '批量删除失败')
+        throw error
+      } finally {
+        deleting.value = false
+      }
     }
   })
 }
@@ -63,61 +113,73 @@ const handlePageChange = (nextPage, nextPageSize) => {
   void load()
 }
 
+const handleSelectionChange = (keys) => {
+  selectedTaskIds.value = keys
+}
+
 onMounted(load)
 </script>
 
 <template>
   <div class="content-history-page">
     <header>
-      <div><span>Content Strategy Studio</span><h1><History :size="22" />生产历史</h1><p>恢复草稿、处理人工节点、查看失败原因或复用已有策略。</p></div>
+      <h1><History :size="22" />生成历史</h1>
       <a-button type="primary" @click="router.push('/content/new')"><FilePlus2 :size="16" />新建内容</a-button>
     </header>
-
-    <section class="history-card">
-      <div class="history-toolbar">
-        <a-select v-model:value="status" allow-clear placeholder="全部状态" style="width: 180px" @change="load">
+    <div class="history-workspace">
+      <aside class="history-card" aria-label="历史文章列表">
+        <div class="history-toolbar">
+          <a-checkbox v-model:checked="generatedOnly" @change="page = 1; load()">仅看已生成</a-checkbox>
+          <a-button aria-label="刷新历史" @click="load"><RotateCcw :size="15" /></a-button>
+        </div>
+        <a-select v-model:value="status" allow-clear placeholder="全部状态" @change="page = 1; load()">
           <a-select-option v-for="(label, value) in statusLabels" :key="value" :value="value">{{ label }}</a-select-option>
         </a-select>
-        <a-button @click="load"><RotateCcw :size="15" />刷新</a-button>
-      </div>
-
-      <a-table
-        :data-source="store.history"
-        :loading="store.loading.history"
-        :pagination="{ current: page, pageSize, total: store.historyTotal, showSizeChanger: true }"
-        row-key="id"
-        @change="(pagination) => handlePageChange(pagination.current, pagination.pageSize)"
-      >
-        <a-table-column title="任务" key="name">
-          <template #default="{ record }"><button type="button" class="task-link" @click="router.push(`/content/tasks/${record.id}`)"><strong>{{ record.name }}</strong><small>{{ record.id }}</small></button></template>
-        </a-table-column>
-        <a-table-column title="模式" data-index="mode" key="mode"><template #default="{ text }">{{ text === 'quick' ? '简化版' : '专业版' }}</template></a-table-column>
-        <a-table-column title="目标" data-index="content_goal" key="goal" />
-        <a-table-column title="状态" key="status"><template #default="{ record }"><span class="task-status" :class="record.status">{{ statusLabels[record.status] || record.status }}</span></template></a-table-column>
-        <a-table-column title="更新时间" data-index="updated_at" key="updated" />
-        <a-table-column title="操作" key="actions" width="150"><template #default="{ record }"><div class="row-actions"><a-button type="text" @click="duplicate(record)"><Copy :size="15" /></a-button><a-button type="text" danger @click="remove(record)"><Trash2 :size="15" /></a-button></div></template></a-table-column>
-      </a-table>
-    </section>
+        <a-button v-if="selectedTaskIds.length" danger :loading="deleting" @click="removeSelected">
+          <Trash2 :size="15" />删除所选（{{ selectedTaskIds.length }}）
+        </a-button>
+        <a-spin :spinning="store.loading.history">
+          <div class="history-list">
+            <div v-for="record in store.history" :key="record.id" class="history-item" :class="{ active: activeTaskId === record.id }">
+              <a-checkbox :checked="selectedTaskIds.includes(record.id)" :aria-label="`选择 ${taskTitle(record)}`" @change="event => handleSelectionChange(event.target.checked ? [...selectedTaskIds, record.id] : selectedTaskIds.filter(id => id !== record.id))" />
+              <button type="button" class="task-link" :aria-current="activeTaskId === record.id ? 'true' : undefined" @click="selectTask(record.id)">
+                <strong>{{ taskTitle(record) }}</strong>
+                <small>{{ statusLabels[record.status] || record.status }} · {{ formatDateTime(record.updated_at) }}</small>
+              </button>
+              <div class="row-actions">
+                <a-button type="text" aria-label="复制任务" @click="duplicate(record)"><Copy :size="15" /></a-button>
+                <a-button type="text" danger aria-label="删除任务" @click="remove(record)"><Trash2 :size="15" /></a-button>
+              </div>
+            </div>
+            <a-empty v-if="!store.history.length && !store.loading.history" description="暂无符合条件的内容" />
+          </div>
+        </a-spin>
+        <a-pagination :current="page" :page-size="pageSize" :total="store.historyTotal" simple @change="handlePageChange" />
+      </aside>
+      <ContentResultView v-if="activeTaskId" :key="activeTaskId" :task-id="activeTaskId" class="history-result" />
+      <div v-else class="history-empty"><a-empty description="暂无文章，生成内容后可在这里查看" /></div>
+    </div>
   </div>
 </template>
 
 <style scoped lang="less">
-.content-history-page { min-height: 100vh; padding: 24px var(--page-padding) 48px; background: var(--gray-25); color: var(--color-text); }
-header { max-width: 1180px; margin: 0 auto 18px; display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; }
-header > div > span { color: var(--main-700); font-size: 12px; font-weight: 600; }
-header h1 { display: flex; align-items: center; gap: 8px; margin: 4px 0; font-size: 24px; }
-header p { margin: 0; color: var(--color-text-secondary); }
-header :deep(.ant-btn), .history-toolbar :deep(.ant-btn) { display: inline-flex; align-items: center; gap: 6px; }
-.history-card { max-width: 1180px; margin: 0 auto; padding: 18px; border: 1px solid var(--gray-150); border-radius: 8px; background: var(--gray-0); }
-.history-toolbar { display: flex; justify-content: flex-end; gap: 8px; margin-bottom: 14px; }
-.task-link { display: flex; flex-direction: column; gap: 3px; border: 0; padding: 0; background: transparent; color: var(--color-text); text-align: left; cursor: pointer; }
-.task-link:hover strong { color: var(--main-color); }
-.task-link small { color: var(--color-text-tertiary); }
-.task-status { display: inline-flex; padding: 3px 8px; border-radius: 999px; background: var(--gray-100); color: var(--gray-600); font-size: 12px; }
-.task-status.completed, .task-status.reviewed { background: var(--color-success-50); color: var(--color-success-700); }
-.task-status.failed, .task-status.review_blocked { background: var(--color-error-50); color: var(--color-error-700); }
-.task-status.waiting_human { background: var(--color-warning-50); color: var(--color-warning-900); }
-.task-status.queued { background: var(--color-info-50); color: var(--color-info-700); }
-.row-actions { display: flex; gap: 2px; }
-@media (max-width: 700px) { header { flex-direction: column; } .history-card { padding: 12px; overflow-x: auto; } }
+.content-history-page { min-height: 100vh; padding: 20px var(--page-padding); background: var(--gray-25); color: var(--color-text); }
+header { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: 16px; }
+header h1 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 22px; }
+header :deep(.ant-btn), .history-card :deep(.ant-btn) { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+.history-workspace { display: grid; grid-template-columns: 260px minmax(0, 1fr); align-items: start; gap: 20px; }
+.history-card { min-width: 0; padding: 12px; display: flex; flex-direction: column; gap: 12px; border: 1px solid var(--gray-150); border-radius: 8px; background: var(--gray-0); position: sticky; top: 16px; }
+.history-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.history-list { max-height: calc(100dvh - 280px); overflow-y: auto; }
+.history-item { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px; padding: 12px 8px; border-bottom: 1px solid var(--gray-150); border-radius: 6px; }
+.history-item.active { background: var(--main-50); }
+.task-link { min-width: 0; display: flex; flex-direction: column; gap: 7px; border: 0; padding: 0; background: transparent; color: var(--color-text); text-align: left; cursor: pointer; }
+.task-link strong { overflow-wrap: anywhere; line-height: 1.6; }
+.task-link:hover strong, .history-item.active strong { color: var(--main-700); }
+.task-link small { color: var(--color-text-tertiary); font-size: 11px; }
+.row-actions { grid-column: 2; display: flex; justify-content: flex-end; }
+.history-result { padding: 0; min-height: 0; }
+.history-empty { padding: 60px 20px; }
+@media (max-width: 1500px) { .history-result :deep(.result-layout) { grid-template-columns: minmax(0, 1fr); } .history-result :deep(.result-header) { flex-wrap: wrap; } }
+@media (max-width: 900px) { .history-workspace { grid-template-columns: minmax(0, 1fr); } .history-card { position: static; } .history-list { max-height: 240px; } }
 </style>

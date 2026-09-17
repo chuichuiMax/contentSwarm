@@ -72,6 +72,21 @@ def make_chunk(index: int, content: str = "content") -> dict:
     }
 
 
+def test_embedding_function_caps_provider_batch_size(monkeypatch):
+    class FakeEmbeddingModel:
+        batch_size = 40
+
+        def batch_encode(self, messages, batch_size=None):
+            return [batch_size, messages]
+
+    monkeypatch.setattr("yuxi.models.embed.select_embedding_model", lambda _spec: FakeEmbeddingModel())
+
+    kb = MilvusKB.__new__(MilvusKB)
+    embedding_function = kb._get_embedding_function("test-provider:test-embedding", sync=True)
+
+    assert embedding_function(["one"])[0] == 10
+
+
 def test_build_chunk_pg_records_preserves_extraction_result():
     kb = MilvusKB.__new__(MilvusKB)
 

@@ -81,6 +81,13 @@ async def render_hycanvas_template(
     return Response(content=content, media_type=content_type)
 
 
+@content_covers.get("/photo-layouts")
+async def photo_layouts(current_user: User = Depends(get_required_user)):
+    from yuxi.content_cover.photo_composition import PHOTO_LAYOUTS
+
+    return {"layouts": PHOTO_LAYOUTS}
+
+
 @content_covers.post("/hycanvas/templates/{template_id}/preview.png")
 async def preview_hycanvas_template(
     template_id: str,

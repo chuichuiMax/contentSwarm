@@ -679,8 +679,8 @@ func (c *pdfCtx) textBody(node map[string]any) {
 				show = "<" + emb.hexGlyphs(text) + ">"
 				advance = emb.textWidth(text, size, ls)
 			} else {
-				bold := asNum(style["weight"]) >= 600
-				font := selectFont(family, asStr(style["fontStyle"]), bold, asBool(style["italic"]))
+				bold := effectiveFontWeight(style) >= 600
+				font := selectFont(family, asStr(style["fontStyle"]), bold, effectiveFontItalic(style))
 				fontKey = font.key
 				show = "(" + pdfEscapeText(text) + ")"
 				advance = textAdvance(font, text, size, ls)

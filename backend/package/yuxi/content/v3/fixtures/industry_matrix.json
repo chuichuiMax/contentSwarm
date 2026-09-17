@@ -1,0 +1,1237 @@
+{
+  "source": {
+    "source": "industry-matrix-editorial",
+    "revision": "2026-09-06-v2",
+    "basis": "沿用T01-T07、C01-C04公式逻辑，按各行业业务场景重新编排；非飞书原文"
+  },
+  "groups": [
+    {
+      "code": "food-ct01-01-industry-v1",
+      "industry": "food",
+      "content_type_code": "CT01",
+      "methods": [
+        "S01",
+        "M03"
+      ],
+      "title_formula_candidate_codes": [
+        "T02",
+        "T03"
+      ],
+      "body_formula_candidate_codes": [
+        "C02"
+      ],
+      "scenario_description": "门店真实用餐纪实：沿到店、点单、出餐到品尝展开，用菜品实拍和顾客原话说明体验。"
+    },
+    {
+      "code": "food-ct01-02-industry-v1",
+      "industry": "food",
+      "content_type_code": "CT01",
+      "methods": [
+        "M01",
+        "M04",
+        "S01"
+      ],
+      "title_formula_candidate_codes": [
+        "T01",
+        "T06"
+      ],
+      "body_formula_candidate_codes": [
+        "C02",
+        "C01"
+      ],
+      "scenario_description": "同城聚餐案例：按实际人数、账单和点单组合复盘，让同类聚餐人群判断预算与分量是否合适。"
+    },
+    {
+      "code": "food-ct02-01-industry-v1",
+      "industry": "food",
+      "content_type_code": "CT02",
+      "methods": [
+        "M01",
+        "M03"
+      ],
+      "title_formula_candidate_codes": [
+        "T01",
+        "T07"
+      ],
+      "body_formula_candidate_codes": [
+        "C01"
+      ],
+      "scenario_description": "菜单与套餐拆账：列明菜品、分量、单点价和套餐包含项，说明加价项目与使用条件。"
+    },
+    {
+      "code": "food-ct02-02-industry-v1",
+      "industry": "food",
+      "content_type_code": "CT02",
+      "methods": [
+        "M04",
+        "M03"
+      ],
+      "title_formula_candidate_codes": [
+        "T03",
+        "T05"
+      ],
+      "body_formula_candidate_codes": [
+        "C01",
+        "C03"
+      ],
+      "scenario_description": "按一人食、家庭或聚餐需求比较点单方案，说明每种方案的适用人数和取舍，不虚构优惠。"
+    },
+    {
+      "code": "food-ct03-01-industry-v1",
+      "industry": "food",
+      "content_type_code": "CT03",
+      "methods": [
+        "M02",
+        "S01"
+      ],
+      "title_formula_candidate_codes": [
+        "T04",
+        "T05"
+      ],
+      "body_formula_candidate_codes": [
+        "C03"
+      ],
+      "scenario_description": "到店踩坑复盘：还原排队、预约或套餐使用中的具体误解，解释限制条件和正确确认方式。"
+    },
+    {
+      "code": "food-ct03-02-industry-v1",
+      "industry": "food",
+      "content_type_code": "CT03",
+      "methods": [
+        "M04",
+        "M03"
+      ],
+      "title_formula_candidate_codes": [
+        "T05",
+        "T03"
+      ],
+      "body_formula_candidate_codes": [
+        "C03"
+      ],
+      "scenario_description": "面向带娃、聚餐或特殊饮食需求的人群，提供订位前应核对的分量、口味和服务条件清单。"
+    },
+    {
+      "code": "food-ct04-01-industry-v1",
+      "industry": "food",
+      "content_type_code": "CT04",
+      "methods": [
+        "M03",
+        "M01"
+      ],
+      "title_formula_candidate_codes": [
+        "T07",
+        "T01"
+      ],
+      "body_formula_candidate_codes": [
+        "C03",
+        "C01"
+      ],
+      "scenario_description": "点单攻略：以已核实的份量与人数给出搭配步骤，帮助顾客控制重复点单和预算。"
+    },
+    {
+      "code": "food-ct04-02-industry-v1",
+      "industry": "food",
+      "content_type_code": "CT04",
+      "methods": [
+        "S01",
+        "M04",
+        "M03"
+      ],
+      "title_formula_candidate_codes": [
+        "T03",
+        "T05"
+      ],
+      "body_formula_candidate_codes": [
+        "C03",
+        "C02"
+      ],
+      "scenario_description": "围绕午休、约会或家庭聚餐的具体动线，串联预约、到店、点单与用餐安排。"
+    },
+    {
+      "code": "food-ct05-01-industry-v1",
+      "industry": "food",
+      "content_type_code": "CT05",
+      "methods": [
+        "S01",
+        "M03"
+      ],
+      "title_formula_candidate_codes": [
+        "T03",
+        "T07"
+      ],
+      "body_formula_candidate_codes": [
+        "C02",
+        "C03"
+      ],
+      "scenario_description": "后厨流程实拍：展示备料、制作、出餐的操作细节，解释每一步如何影响风味和稳定性。"
+    },
+    {
+      "code": "food-ct05-02-industry-v1",
+      "industry": "food",
+      "content_type_code": "CT05",
+      "methods": [
+        "M01",
+        "S01",
+        "M03"
+      ],
+      "title_formula_candidate_codes": [
+        "T01",
+        "T02"
+      ],
+      "body_formula_candidate_codes": [
+        "C02"
+      ],
+      "scenario_description": "用有记录的制作时长、配料用量或出餐批次复盘一道菜，数字必须来自本店真实记录。"
+    },
+    {
+      "code": "food-ct06-01-industry-v1",
+      "industry": "food",
+      "content_type_code": "CT06",
+      "methods": [
+        "M02",
+        "M03"
+      ],
+      "title_formula_candidate_codes": [
+        "T04",
+        "T05"
+      ],
+      "body_formula_candidate_codes": [
+        "C03"
+      ],
+      "scenario_description": "解释常见菜品口味与食材处理误区，按疑问、误区、判断依据和实用建议组织内容。"
+    },
+    {
+      "code": "food-ct06-02-industry-v1",
+      "industry": "food",
+      "content_type_code": "CT06",
+      "methods": [
+        "M04",
+        "M03"
+      ],
+      "title_formula_candidate_codes": [
+        "T03",
+        "T07"
+      ],
+      "body_formula_candidate_codes": [
+        "C03"
+      ],
+      "scenario_description": "面向初次尝试某类菜品的顾客，讲清口味、吃法与点单术语，给出可直接使用的选择标准。"
+    },
+    {
+      "code": "food-ct07-01-industry-v1",
+      "industry": "food",
+      "content_type_code": "CT07",
+      "methods": [
+        "S01",
+        "M04"
+      ],
+      "title_formula_candidate_codes": [
+        "T03",
+        "T02"
+      ],
+      "body_formula_candidate_codes": [
+        "C04"
+      ],
+      "scenario_description": "主理人日常故事：从一次选料或顾客沟通经历讲出开店原则、服务对象和真实服务边界。"
+    },
+    {
+      "code": "food-ct07-02-industry-v1",
+      "industry": "food",
+      "content_type_code": "CT07",
+      "methods": [
+        "M01",
+        "M03",
+        "M04"
+      ],
+      "title_formula_candidate_codes": [
+        "T01",
+        "T05"
+      ],
+      "body_formula_candidate_codes": [
+        "C04"
+      ],
+      "scenario_description": "以可核实的从业经历和门店实践说明坚持的制作标准，避免把个人经历写成行业排名。"
+    },
+    {
+      "code": "education-ct01-01-industry-v1",
+      "industry": "education",
+      "content_type_code": "CT01",
+      "methods": [
+        "S01",
+        "M04",
+        "M03"
+      ],
+      "title_formula_candidate_codes": [
+        "T03",
+        "T05"
+      ],
+      "body_formula_candidate_codes": [
+        "C02"
+      ],
+      "scenario_description": "学习过程案例：交代学员起点、学习任务、练习调整和阶段反馈，保留个体差异与适用前提。"
+    },
+    {
+      "code": "education-ct01-02-industry-v1",
+      "industry": "education",
+      "content_type_code": "CT01",
+      "methods": [
+        "M01",
+        "S01"
+      ],
+      "title_formula_candidate_codes": [
+        "T01",
+        "T02"
+      ],
+      "body_formula_candidate_codes": [
+        "C02"
+      ],
+      "scenario_description": "用可核实的练习次数、课时或作品进度复盘学习变化，只陈述该案例已发生的结果。"
+    },
+    {
+      "code": "education-ct02-01-industry-v1",
+      "industry": "education",
+      "content_type_code": "CT02",
+      "methods": [
+        "M01",
+        "M04"
+      ],
+      "title_formula_candidate_codes": [
+        "T01",
+        "T07"
+      ],
+      "body_formula_candidate_codes": [
+        "C01"
+      ],
+      "scenario_description": "课程费用拆解：列明课时、班型、教材、服务包含项和额外费用，对齐学习阶段与预算。"
+    },
+    {
+      "code": "education-ct02-02-industry-v1",
+      "industry": "education",
+      "content_type_code": "CT02",
+      "methods": [
+        "M03",
+        "M04"
+      ],
+      "title_formula_candidate_codes": [
+        "T03",
+        "T05"
+      ],
+      "body_formula_candidate_codes": [
+        "C01",
+        "C03"
+      ],
+      "scenario_description": "根据基础、目标和可投入时间比较课程路径，解释适配条件与课程边界，不承诺升学或提分。"
+    },
+    {
+      "code": "education-ct03-01-industry-v1",
+      "industry": "education",
+      "content_type_code": "CT03",
+      "methods": [
+        "M02",
+        "M04"
+      ],
+      "title_formula_candidate_codes": [
+        "T04",
+        "T05"
+      ],
+      "body_formula_candidate_codes": [
+        "C03"
+      ],
+      "scenario_description": "选课误区解析：针对只看宣传结果或忽略基础的决策误区，给出试听与核验课程的判断步骤。"
+    },
+    {
+      "code": "education-ct03-02-industry-v1",
+      "industry": "education",
+      "content_type_code": "CT03",
+      "methods": [
+        "S01",
+        "M03"
+      ],
+      "title_formula_candidate_codes": [
+        "T03",
+        "T07"
+      ],
+      "body_formula_candidate_codes": [
+        "C03"
+      ],
+      "scenario_description": "复盘试听或报班沟通中的信息缺口，整理师资、班型、学习投入和服务范围的确认清单。"
+    },
+    {
+      "code": "education-ct04-01-industry-v1",
+      "industry": "education",
+      "content_type_code": "CT04",
+      "methods": [
+        "M03",
+        "M04"
+      ],
+      "title_formula_candidate_codes": [
+        "T03",
+        "T05"
+      ],
+      "body_formula_candidate_codes": [
+        "C03"
+      ],
+      "scenario_description": "分阶段学习攻略：按学员基础拆解目标、任务与复盘方法，让不同起点的人找到可执行步骤。"
+    },
+    {
+      "code": "education-ct04-02-industry-v1",
+      "industry": "education",
+      "content_type_code": "CT04",
+      "methods": [
+        "M01",
+        "M03"
+      ],
+      "title_formula_candidate_codes": [
+        "T07",
+        "T01"
+      ],
+      "body_formula_candidate_codes": [
+        "C03",
+        "C02"
+      ],
+      "scenario_description": "围绕已有学习计划的任务数量和时间安排，展示练习拆分与反馈节奏，不用数字包装效果保证。"
+    },
+    {
+      "code": "education-ct05-01-industry-v1",
+      "industry": "education",
+      "content_type_code": "CT05",
+      "methods": [
+        "S01",
+        "M03"
+      ],
+      "title_formula_candidate_codes": [
+        "T03",
+        "T02"
+      ],
+      "body_formula_candidate_codes": [
+        "C02"
+      ],
+      "scenario_description": "课堂片段拆解：展示讲解、练习、反馈与调整，说明教师如何识别问题并提供具体支持。"
+    },
+    {
+      "code": "education-ct05-02-industry-v1",
+      "industry": "education",
+      "content_type_code": "CT05",
+      "methods": [
+        "M02",
+        "M03",
+        "M04"
+      ],
+      "title_formula_candidate_codes": [
+        "T05",
+        "T04"
+      ],
+      "body_formula_candidate_codes": [
+        "C03",
+        "C04"
+      ],
+      "scenario_description": "从学员常见理解障碍切入，解释教学设计的依据、适用人群和教师处理方式。"
+    },
+    {
+      "code": "education-ct06-01-industry-v1",
+      "industry": "education",
+      "content_type_code": "CT06",
+      "methods": [
+        "M02",
+        "M03"
+      ],
+      "title_formula_candidate_codes": [
+        "T04",
+        "T05"
+      ],
+      "body_formula_candidate_codes": [
+        "C03"
+      ],
+      "scenario_description": "知识误区讲解：用一道真实问题区分常见错误与正确思路，给出推导步骤及练习建议。"
+    },
+    {
+      "code": "education-ct06-02-industry-v1",
+      "industry": "education",
+      "content_type_code": "CT06",
+      "methods": [
+        "M03",
+        "M01"
+      ],
+      "title_formula_candidate_codes": [
+        "T07",
+        "T03"
+      ],
+      "body_formula_candidate_codes": [
+        "C03"
+      ],
+      "scenario_description": "把一个知识点整理成有序检查清单或解题步骤，清楚标明适用题型和使用前提。"
+    },
+    {
+      "code": "education-ct07-01-industry-v1",
+      "industry": "education",
+      "content_type_code": "CT07",
+      "methods": [
+        "M04",
+        "S01"
+      ],
+      "title_formula_candidate_codes": [
+        "T03",
+        "T05"
+      ],
+      "body_formula_candidate_codes": [
+        "C04"
+      ],
+      "scenario_description": "教师成长故事：从一次备课或答疑经历说明教学理念、服务对象和对学生投入的要求。"
+    },
+    {
+      "code": "education-ct07-02-industry-v1",
+      "industry": "education",
+      "content_type_code": "CT07",
+      "methods": [
+        "M01",
+        "M04",
+        "M03"
+      ],
+      "title_formula_candidate_codes": [
+        "T01",
+        "T07"
+      ],
+      "body_formula_candidate_codes": [
+        "C04"
+      ],
+      "scenario_description": "用已核实的授课经历、课程建设或作品说明专业积累，并交代教学服务的承诺范围。"
+    },
+    {
+      "code": "beauty-ct01-01-industry-v1",
+      "industry": "beauty",
+      "content_type_code": "CT01",
+      "methods": [
+        "S01",
+        "M04"
+      ],
+      "title_formula_candidate_codes": [
+        "T03",
+        "T02"
+      ],
+      "body_formula_candidate_codes": [
+        "C02"
+      ],
+      "scenario_description": "护理体验纪实：从顾客需求、评估沟通、服务过程到体验反馈展开，说明个体差异。"
+    },
+    {
+      "code": "beauty-ct01-02-industry-v1",
+      "industry": "beauty",
+      "content_type_code": "CT01",
+      "methods": [
+        "M01",
+        "S01",
+        "M03"
+      ],
+      "title_formula_candidate_codes": [
+        "T01",
+        "T06"
+      ],
+      "body_formula_candidate_codes": [
+        "C02",
+        "C01"
+      ],
+      "scenario_description": "记录真实项目时长、步骤和费用，结合原始照片说明本次体验，不把单次反馈外推为普遍功效。"
+    },
+    {
+      "code": "beauty-ct02-01-industry-v1",
+      "industry": "beauty",
+      "content_type_code": "CT02",
+      "methods": [
+        "M01",
+        "M03"
+      ],
+      "title_formula_candidate_codes": [
+        "T07",
+        "T01"
+      ],
+      "body_formula_candidate_codes": [
+        "C01"
+      ],
+      "scenario_description": "护理项目价格拆解：列明服务步骤、耗材、时长和收费项，解释加购与套餐使用条件。"
+    },
+    {
+      "code": "beauty-ct02-02-industry-v1",
+      "industry": "beauty",
+      "content_type_code": "CT02",
+      "methods": [
+        "M04",
+        "M03"
+      ],
+      "title_formula_candidate_codes": [
+        "T03",
+        "T05"
+      ],
+      "body_formula_candidate_codes": [
+        "C01",
+        "C03"
+      ],
+      "scenario_description": "按护理需求和可投入时间比较项目方案，明确适用范围、沟通要点和费用边界。"
+    },
+    {
+      "code": "beauty-ct03-01-industry-v1",
+      "industry": "beauty",
+      "content_type_code": "CT03",
+      "methods": [
+        "M02",
+        "M04"
+      ],
+      "title_formula_candidate_codes": [
+        "T04",
+        "T05"
+      ],
+      "body_formula_candidate_codes": [
+        "C03"
+      ],
+      "scenario_description": "围绕盲目跟风项目、忽略需求差异等误区，说明咨询评估时应核对的条件。"
+    },
+    {
+      "code": "beauty-ct03-02-industry-v1",
+      "industry": "beauty",
+      "content_type_code": "CT03",
+      "methods": [
+        "S01",
+        "M03"
+      ],
+      "title_formula_candidate_codes": [
+        "T05",
+        "T07"
+      ],
+      "body_formula_candidate_codes": [
+        "C03"
+      ],
+      "scenario_description": "还原一次服务前沟通场景，拆解项目名称、服务承诺或加购信息中的理解偏差。"
+    },
+    {
+      "code": "beauty-ct04-01-industry-v1",
+      "industry": "beauty",
+      "content_type_code": "CT04",
+      "methods": [
+        "M04",
+        "M03"
+      ],
+      "title_formula_candidate_codes": [
+        "T03",
+        "T05"
+      ],
+      "body_formula_candidate_codes": [
+        "C03"
+      ],
+      "scenario_description": "按不同护理需求整理日常养护与到店准备步骤，区分个人体验、门店建议和需专业评估的问题。"
+    },
+    {
+      "code": "beauty-ct04-02-industry-v1",
+      "industry": "beauty",
+      "content_type_code": "CT04",
+      "methods": [
+        "M01",
+        "M03",
+        "S01"
+      ],
+      "title_formula_candidate_codes": [
+        "T07",
+        "T02"
+      ],
+      "body_formula_candidate_codes": [
+        "C03",
+        "C02"
+      ],
+      "scenario_description": "用明确的步骤数量组织护理前后注意事项，说明时间安排与操作顺序，不编造护理频率或疗效。"
+    },
+    {
+      "code": "beauty-ct05-01-industry-v1",
+      "industry": "beauty",
+      "content_type_code": "CT05",
+      "methods": [
+        "S01",
+        "M03"
+      ],
+      "title_formula_candidate_codes": [
+        "T03",
+        "T07"
+      ],
+      "body_formula_candidate_codes": [
+        "C02"
+      ],
+      "scenario_description": "实拍咨询、准备、操作与收尾流程，展示工具管理、服务细节和顾客沟通方式。"
+    },
+    {
+      "code": "beauty-ct05-02-industry-v1",
+      "industry": "beauty",
+      "content_type_code": "CT05",
+      "methods": [
+        "M04",
+        "S01",
+        "M03"
+      ],
+      "title_formula_candidate_codes": [
+        "T05",
+        "T03"
+      ],
+      "body_formula_candidate_codes": [
+        "C04",
+        "C02"
+      ],
+      "scenario_description": "以个体需求差异解释护理师如何调整服务，强调评估记录、操作边界和持续沟通。"
+    },
+    {
+      "code": "beauty-ct06-01-industry-v1",
+      "industry": "beauty",
+      "content_type_code": "CT06",
+      "methods": [
+        "M02",
+        "M03"
+      ],
+      "title_formula_candidate_codes": [
+        "T04",
+        "T05"
+      ],
+      "body_formula_candidate_codes": [
+        "C03"
+      ],
+      "scenario_description": "拆解常见护理概念和宣传误区，说明判断依据与适用条件，避免将护理内容写成诊疗建议。"
+    },
+    {
+      "code": "beauty-ct06-02-industry-v1",
+      "industry": "beauty",
+      "content_type_code": "CT06",
+      "methods": [
+        "M04",
+        "M03"
+      ],
+      "title_formula_candidate_codes": [
+        "T03",
+        "T07"
+      ],
+      "body_formula_candidate_codes": [
+        "C03"
+      ],
+      "scenario_description": "面向初次到店顾客解释项目术语与咨询问题，提供能帮助沟通需求的判断清单。"
+    },
+    {
+      "code": "beauty-ct07-01-industry-v1",
+      "industry": "beauty",
+      "content_type_code": "CT07",
+      "methods": [
+        "S01",
+        "M04"
+      ],
+      "title_formula_candidate_codes": [
+        "T02",
+        "T03"
+      ],
+      "body_formula_candidate_codes": [
+        "C04"
+      ],
+      "scenario_description": "护理师工作故事：从一次顾客沟通经历说明审美理念、服务原则与不会轻易承诺的边界。"
+    },
+    {
+      "code": "beauty-ct07-02-industry-v1",
+      "industry": "beauty",
+      "content_type_code": "CT07",
+      "methods": [
+        "M01",
+        "M03",
+        "M04"
+      ],
+      "title_formula_candidate_codes": [
+        "T01",
+        "T05"
+      ],
+      "body_formula_candidate_codes": [
+        "C04"
+      ],
+      "scenario_description": "用真实从业经历、训练记录和服务标准介绍护理师，避免无依据的资质、排名与效果承诺。"
+    },
+    {
+      "code": "retail-ct01-01-industry-v1",
+      "industry": "retail",
+      "content_type_code": "CT01",
+      "methods": [
+        "S01",
+        "M03"
+      ],
+      "title_formula_candidate_codes": [
+        "T02",
+        "T03"
+      ],
+      "body_formula_candidate_codes": [
+        "C02"
+      ],
+      "scenario_description": "产品真实使用记录：还原用户场景、操作过程与反馈，标明型号、环境和体验限制。"
+    },
+    {
+      "code": "retail-ct01-02-industry-v1",
+      "industry": "retail",
+      "content_type_code": "CT01",
+      "methods": [
+        "M01",
+        "S01"
+      ],
+      "title_formula_candidate_codes": [
+        "T01",
+        "T02"
+      ],
+      "body_formula_candidate_codes": [
+        "C02"
+      ],
+      "scenario_description": "以实际参数或有记录的测试数据对照使用结果，说明测试条件，不泛化为全人群结论。"
+    },
+    {
+      "code": "retail-ct02-01-industry-v1",
+      "industry": "retail",
+      "content_type_code": "CT02",
+      "methods": [
+        "M01",
+        "M03"
+      ],
+      "title_formula_candidate_codes": [
+        "T07",
+        "T01"
+      ],
+      "body_formula_candidate_codes": [
+        "C01"
+      ],
+      "scenario_description": "到手价与套装拆解：列清规格、配件、优惠条件、运费及售后范围，区分标价和实付。"
+    },
+    {
+      "code": "retail-ct02-02-industry-v1",
+      "industry": "retail",
+      "content_type_code": "CT02",
+      "methods": [
+        "M04",
+        "M03"
+      ],
+      "title_formula_candidate_codes": [
+        "T03",
+        "T05"
+      ],
+      "body_formula_candidate_codes": [
+        "C01",
+        "C03"
+      ],
+      "scenario_description": "针对预算和使用需求比较不同型号或套装，解释功能取舍与不适用人群。"
+    },
+    {
+      "code": "retail-ct03-01-industry-v1",
+      "industry": "retail",
+      "content_type_code": "CT03",
+      "methods": [
+        "M02",
+        "M01"
+      ],
+      "title_formula_candidate_codes": [
+        "T04",
+        "T07"
+      ],
+      "body_formula_candidate_codes": [
+        "C03"
+      ],
+      "scenario_description": "参数选购避坑：揭示容易误读的规格或容量指标，用核实的参数说明选择标准。"
+    },
+    {
+      "code": "retail-ct03-02-industry-v1",
+      "industry": "retail",
+      "content_type_code": "CT03",
+      "methods": [
+        "S01",
+        "M04",
+        "M03"
+      ],
+      "title_formula_candidate_codes": [
+        "T05",
+        "T03"
+      ],
+      "body_formula_candidate_codes": [
+        "C03",
+        "C02"
+      ],
+      "scenario_description": "从实际使用不匹配的场景复盘选购误区，说明购买前应确认的尺寸、兼容性和售后条件。"
+    },
+    {
+      "code": "retail-ct04-01-industry-v1",
+      "industry": "retail",
+      "content_type_code": "CT04",
+      "methods": [
+        "M03",
+        "M01"
+      ],
+      "title_formula_candidate_codes": [
+        "T07",
+        "T01"
+      ],
+      "body_formula_candidate_codes": [
+        "C03"
+      ],
+      "scenario_description": "把安装、使用或保养拆为有序步骤，标注操作条件和需核对的产品说明。"
+    },
+    {
+      "code": "retail-ct04-02-industry-v1",
+      "industry": "retail",
+      "content_type_code": "CT04",
+      "methods": [
+        "S01",
+        "M04"
+      ],
+      "title_formula_candidate_codes": [
+        "T03",
+        "T02"
+      ],
+      "body_formula_candidate_codes": [
+        "C02",
+        "C03"
+      ],
+      "scenario_description": "围绕出行、办公或家庭使用场景，展示产品的具体用法与搭配，避免脱离场景堆砌卖点。"
+    },
+    {
+      "code": "retail-ct05-01-industry-v1",
+      "industry": "retail",
+      "content_type_code": "CT05",
+      "methods": [
+        "M01",
+        "S01",
+        "M03"
+      ],
+      "title_formula_candidate_codes": [
+        "T01",
+        "T04"
+      ],
+      "body_formula_candidate_codes": [
+        "C02"
+      ],
+      "scenario_description": "展示产品功能测试与实际参数表现，公开测试过程、条件和能力边界。"
+    },
+    {
+      "code": "retail-ct05-02-industry-v1",
+      "industry": "retail",
+      "content_type_code": "CT05",
+      "methods": [
+        "M03",
+        "M04"
+      ],
+      "title_formula_candidate_codes": [
+        "T03",
+        "T07"
+      ],
+      "body_formula_candidate_codes": [
+        "C03",
+        "C04"
+      ],
+      "scenario_description": "从目标用户的核心需求解释材料、设计或服务细节，说明这些细节解决的具体问题。"
+    },
+    {
+      "code": "retail-ct06-01-industry-v1",
+      "industry": "retail",
+      "content_type_code": "CT06",
+      "methods": [
+        "M02",
+        "M03"
+      ],
+      "title_formula_candidate_codes": [
+        "T04",
+        "T05"
+      ],
+      "body_formula_candidate_codes": [
+        "C03"
+      ],
+      "scenario_description": "解释产品类别中的常见概念误区，以参数含义、使用条件和判断方法建立选购认知。"
+    },
+    {
+      "code": "retail-ct06-02-industry-v1",
+      "industry": "retail",
+      "content_type_code": "CT06",
+      "methods": [
+        "M04",
+        "M03",
+        "M01"
+      ],
+      "title_formula_candidate_codes": [
+        "T03",
+        "T07"
+      ],
+      "body_formula_candidate_codes": [
+        "C03"
+      ],
+      "scenario_description": "按人群需求整理规格对照和选购检查项，用清单帮助用户确定优先级。"
+    },
+    {
+      "code": "retail-ct07-01-industry-v1",
+      "industry": "retail",
+      "content_type_code": "CT07",
+      "methods": [
+        "M04",
+        "M03"
+      ],
+      "title_formula_candidate_codes": [
+        "T03",
+        "T05"
+      ],
+      "body_formula_candidate_codes": [
+        "C04"
+      ],
+      "scenario_description": "品牌选品理念：说明服务哪类用户、坚持哪些标准、如何处理取舍与售后责任。"
+    },
+    {
+      "code": "retail-ct07-02-industry-v1",
+      "industry": "retail",
+      "content_type_code": "CT07",
+      "methods": [
+        "S01",
+        "M01"
+      ],
+      "title_formula_candidate_codes": [
+        "T02",
+        "T01"
+      ],
+      "body_formula_candidate_codes": [
+        "C04",
+        "C02"
+      ],
+      "scenario_description": "通过一次可核实的选品、打样或质检经历讲述品牌决策，展示过程数据与真实改进。"
+    },
+    {
+      "code": "professional-services-ct01-01-industry-v1",
+      "industry": "professional-services",
+      "content_type_code": "CT01",
+      "methods": [
+        "S01",
+        "M04",
+        "M03"
+      ],
+      "title_formula_candidate_codes": [
+        "T03",
+        "T05"
+      ],
+      "body_formula_candidate_codes": [
+        "C02"
+      ],
+      "scenario_description": "服务交付案例：交代客户问题、约定范围、执行节点和实际交付物，明确案例适用前提。"
+    },
+    {
+      "code": "professional-services-ct01-02-industry-v1",
+      "industry": "professional-services",
+      "content_type_code": "CT01",
+      "methods": [
+        "M01",
+        "S01"
+      ],
+      "title_formula_candidate_codes": [
+        "T01",
+        "T02"
+      ],
+      "body_formula_candidate_codes": [
+        "C02"
+      ],
+      "scenario_description": "以有记录的周期、节点或交付数量复盘项目，区分已交付结果与客户后续经营效果。"
+    },
+    {
+      "code": "professional-services-ct02-01-industry-v1",
+      "industry": "professional-services",
+      "content_type_code": "CT02",
+      "methods": [
+        "M03",
+        "M04"
+      ],
+      "title_formula_candidate_codes": [
+        "T03",
+        "T05"
+      ],
+      "body_formula_candidate_codes": [
+        "C01"
+      ],
+      "scenario_description": "按客户问题解释服务方案与交付边界，列明包含内容、协作责任和不包含事项。"
+    },
+    {
+      "code": "professional-services-ct02-02-industry-v1",
+      "industry": "professional-services",
+      "content_type_code": "CT02",
+      "methods": [
+        "M01",
+        "M03"
+      ],
+      "title_formula_candidate_codes": [
+        "T01",
+        "T07"
+      ],
+      "body_formula_candidate_codes": [
+        "C01"
+      ],
+      "scenario_description": "费用与里程碑拆解：用真实报价说明收费方式、交付阶段、变更条件和额外成本。"
+    },
+    {
+      "code": "professional-services-ct03-01-industry-v1",
+      "industry": "professional-services",
+      "content_type_code": "CT03",
+      "methods": [
+        "M02",
+        "M04"
+      ],
+      "title_formula_candidate_codes": [
+        "T04",
+        "T05"
+      ],
+      "body_formula_candidate_codes": [
+        "C03"
+      ],
+      "scenario_description": "决策避坑：解释只看承诺结果、忽视服务边界等误区，给出核实资质、方案与交付物的步骤。"
+    },
+    {
+      "code": "professional-services-ct03-02-industry-v1",
+      "industry": "professional-services",
+      "content_type_code": "CT03",
+      "methods": [
+        "S01",
+        "M03"
+      ],
+      "title_formula_candidate_codes": [
+        "T05",
+        "T03"
+      ],
+      "body_formula_candidate_codes": [
+        "C03",
+        "C02"
+      ],
+      "scenario_description": "复盘需求沟通或项目变更中的误解，说明信息确认、责任划分与留痕方法。"
+    },
+    {
+      "code": "professional-services-ct04-01-industry-v1",
+      "industry": "professional-services",
+      "content_type_code": "CT04",
+      "methods": [
+        "M03",
+        "M01"
+      ],
+      "title_formula_candidate_codes": [
+        "T07",
+        "T01"
+      ],
+      "body_formula_candidate_codes": [
+        "C03"
+      ],
+      "scenario_description": "把业务办理或协作流程整理成材料清单和节点步骤，明确适用条件与需要客户配合的事项。"
+    },
+    {
+      "code": "professional-services-ct04-02-industry-v1",
+      "industry": "professional-services",
+      "content_type_code": "CT04",
+      "methods": [
+        "M04",
+        "S01",
+        "M03"
+      ],
+      "title_formula_candidate_codes": [
+        "T03",
+        "T05"
+      ],
+      "body_formula_candidate_codes": [
+        "C03",
+        "C02"
+      ],
+      "scenario_description": "围绕特定客户阶段规划服务准备路径，说明先解决什么、如何判断完成及何时进入下一步。"
+    },
+    {
+      "code": "professional-services-ct05-01-industry-v1",
+      "industry": "professional-services",
+      "content_type_code": "CT05",
+      "methods": [
+        "S01",
+        "M03"
+      ],
+      "title_formula_candidate_codes": [
+        "T03",
+        "T07"
+      ],
+      "body_formula_candidate_codes": [
+        "C02",
+        "C04"
+      ],
+      "scenario_description": "展示调研、诊断、方案、交付或复盘的工作过程，用实际交付物证明专业能力。"
+    },
+    {
+      "code": "professional-services-ct05-02-industry-v1",
+      "industry": "professional-services",
+      "content_type_code": "CT05",
+      "methods": [
+        "M01",
+        "M04",
+        "M03"
+      ],
+      "title_formula_candidate_codes": [
+        "T01",
+        "T05"
+      ],
+      "body_formula_candidate_codes": [
+        "C02"
+      ],
+      "scenario_description": "用可核验的项目节点与交付标准说明执行能力，强调客户条件和服务范围对结果的影响。"
+    },
+    {
+      "code": "professional-services-ct06-01-industry-v1",
+      "industry": "professional-services",
+      "content_type_code": "CT06",
+      "methods": [
+        "M02",
+        "M03"
+      ],
+      "title_formula_candidate_codes": [
+        "T04",
+        "T05"
+      ],
+      "body_formula_candidate_codes": [
+        "C03"
+      ],
+      "scenario_description": "解释客户高频问题中的概念误区，区分事实、判断依据与适用条件，不替代具体个案评估。"
+    },
+    {
+      "code": "professional-services-ct06-02-industry-v1",
+      "industry": "professional-services",
+      "content_type_code": "CT06",
+      "methods": [
+        "M04",
+        "M03"
+      ],
+      "title_formula_candidate_codes": [
+        "T03",
+        "T07"
+      ],
+      "body_formula_candidate_codes": [
+        "C03"
+      ],
+      "scenario_description": "针对客户所处阶段整理判断框架与问题清单，帮助准备资料和形成清楚的咨询需求。"
+    },
+    {
+      "code": "professional-services-ct07-01-industry-v1",
+      "industry": "professional-services",
+      "content_type_code": "CT07",
+      "methods": [
+        "M04",
+        "M03"
+      ],
+      "title_formula_candidate_codes": [
+        "T03",
+        "T05"
+      ],
+      "body_formula_candidate_codes": [
+        "C04"
+      ],
+      "scenario_description": "顾问服务主张：介绍服务对象、工作方法、责任范围与承诺边界，以清晰立场建立信任。"
+    },
+    {
+      "code": "professional-services-ct07-02-industry-v1",
+      "industry": "professional-services",
+      "content_type_code": "CT07",
+      "methods": [
+        "S01",
+        "M01",
+        "M04"
+      ],
+      "title_formula_candidate_codes": [
+        "T01",
+        "T02"
+      ],
+      "body_formula_candidate_codes": [
+        "C04"
+      ],
+      "scenario_description": "通过真实从业经历或一次交付决策讲述专业原则，数字仅引用可核实的经历记录。"
+    }
+  ]
+}

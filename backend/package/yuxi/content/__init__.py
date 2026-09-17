@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.content.foundation_seed import ensure_content_foundation_seed_data
 from yuxi.content.v3.agents import ensure_content_v3_agents
+from yuxi.content.v3.decoration_only import ensure_decoration_only_rules
 from yuxi.content.v3.seed import ensure_content_v3_seed_data
 
 
@@ -13,6 +14,7 @@ async def ensure_content_seed_data(db: AsyncSession) -> None:
     await ensure_content_foundation_seed_data(db)
     await ensure_content_v3_seed_data(db)
     await ensure_content_v3_agents(db)
+    await ensure_decoration_only_rules(db)
 
 
 __all__ = ["ensure_content_seed_data"]

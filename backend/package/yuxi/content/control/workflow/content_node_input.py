@@ -35,6 +35,16 @@ class ContentNodeInputAssembler:
             )
         raw_payload = {field: state[field] for field in required_fields}
         raw_payload.update({field: state.get(field) for field in optional_fields})
+        if contract_name == "SemanticReviewInputV1":
+            raw_payload.update(
+                review_scope=(
+                    "full"
+                    if (state.get("runtime_config_snapshot") or {}).get("strict_semantic_review")
+                    else "expression"
+                ),
+                channel_profile=state.get("channel_profile") or {},
+                persona_profile=state.get("persona_profile") or {},
+            )
         try:
             payload = get_input_contract_model(contract_name).model_validate(raw_payload).model_dump(mode="json")
         except ValidationError as exc:
@@ -46,6 +56,15 @@ class ContentNodeInputAssembler:
                 f"节点 {node['id']} 输入不符合 {contract_name}: {field_path} {message}".strip(),
                 "invalid",
             ) from exc
+        if contract_name in {"JointStrategyInputV1", "ReevaluateJointStrategyInputV1"}:
+            # 路径紧邻事实值，模型无需自行计数；只标注可见副本，不改冻结证据。
+            for index, item in enumerate(payload["evidence_bundle"].get("items", [])):
+                if (
+                    item.get("value") not in (None, "", [], {})
+                    and item.get("evidence_type", item.get("type")) != "style_reference"
+                    and (item.get("metadata") or {}).get("material_type") != "viral_example"
+                ):
+                    item["input_path"] = f"evidence_bundle.items.{index}.value"
         canonical = json.dumps(
             {"contract": contract_name, "payload": payload},
             ensure_ascii=False,

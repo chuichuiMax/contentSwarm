@@ -388,6 +388,15 @@ class PostgresManager(metaclass=SingletonMeta):
         """确保业务 schema 包含后续新增字段（运行时 schema 演进）。"""
         self._check_initialized()
         stmts = [
+            (
+                "ALTER TABLE IF EXISTS content_material_categories "
+                "ADD COLUMN IF NOT EXISTS visibility VARCHAR(20) NOT NULL DEFAULT 'private'"
+            ),
+            (
+                "ALTER TABLE IF EXISTS content_material_library_items "
+                "ADD COLUMN IF NOT EXISTS category_owner_uid VARCHAR(255)"
+            ),
+            "CREATE INDEX IF NOT EXISTS idx_material_category_visibility ON content_material_categories(visibility)",
             "ALTER TABLE IF EXISTS content_material_categories ADD COLUMN IF NOT EXISTS parent_id VARCHAR(64)",
             (
                 "ALTER TABLE IF EXISTS content_material_categories ADD COLUMN IF NOT EXISTS "
@@ -617,6 +626,20 @@ class PostgresManager(metaclass=SingletonMeta):
 
         self._check_initialized()
         stmts = [
+            "ALTER TABLE IF EXISTS content_viral_article_versions "
+            "DROP CONSTRAINT IF EXISTS content_viral_article_versions_file_id_fkey",
+            "ALTER TABLE IF EXISTS content_viral_article_versions "
+            "DROP CONSTRAINT IF EXISTS content_viral_article_versions_kb_id_fkey",
+            "ALTER TABLE IF EXISTS content_title_formulas "
+            "ADD COLUMN IF NOT EXISTS source_content JSONB NOT NULL DEFAULT '{}'::jsonb",
+            "ALTER TABLE IF EXISTS content_body_formulas "
+            "ADD COLUMN IF NOT EXISTS source_content JSONB NOT NULL DEFAULT '{}'::jsonb",
+            "ALTER TABLE IF EXISTS content_creation_methods "
+            "ADD COLUMN IF NOT EXISTS industry_scope JSONB NOT NULL DEFAULT '[]'::jsonb",
+            "ALTER TABLE IF EXISTS content_title_formulas "
+            "ADD COLUMN IF NOT EXISTS industry_scope JSONB NOT NULL DEFAULT '[]'::jsonb",
+            "ALTER TABLE IF EXISTS content_body_formulas "
+            "ADD COLUMN IF NOT EXISTS industry_scope JSONB NOT NULL DEFAULT '[]'::jsonb",
             """
             ALTER TABLE IF EXISTS content_combination_rules
             ADD COLUMN IF NOT EXISTS schema_version INTEGER NOT NULL DEFAULT 2
@@ -701,9 +724,9 @@ class PostgresManager(metaclass=SingletonMeta):
                         schema_version <> 3
                         OR (
                             combination_type IN ('single', 'double', 'triple', 'quadruple')
-                            AND jsonb_array_length(method_members) > 0
-                            AND jsonb_array_length(title_formula_candidate_codes) > 0
-                            AND jsonb_array_length(body_formula_candidate_codes) > 0
+                            AND jsonb_array_length(method_members::jsonb) > 0
+                            AND jsonb_array_length(title_formula_candidate_codes::jsonb) > 0
+                            AND jsonb_array_length(body_formula_candidate_codes::jsonb) > 0
                         )
                     );
                 END IF;

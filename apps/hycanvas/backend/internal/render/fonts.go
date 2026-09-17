@@ -27,6 +27,51 @@ var (
 	fontReg = map[fontKey]*opentype.Font{}
 )
 
+var namedFontWeights = map[string]int{
+	"thin":       100,
+	"extralight": 200,
+	"ultralight": 200,
+	"light":      300,
+	"book":       400,
+	"regular":    400,
+	"normal":     400,
+	"medium":     500,
+	"semibold":   600,
+	"demibold":   600,
+	"bold":       700,
+	"extrabold":  800,
+	"ultrabold":  800,
+	"black":      900,
+	"heavy":      900,
+}
+
+// effectiveFontWeight mirrors the browser renderer's compatibility rules.
+// Modern files store weight on axes.wght, while imported and older templates
+// may only carry a named fontStyle such as Bold or SemiBold.
+func effectiveFontWeight(style map[string]any) int {
+	if weight := int(asNum(asObj(style["axes"])["wght"])); weight > 0 {
+		return weight
+	}
+	for _, key := range []string{"fontWeight", "weight"} {
+		if weight := int(asNum(style[key])); weight > 0 {
+			return weight
+		}
+	}
+	name := strings.ToLower(asStr(style["fontStyle"]))
+	name = strings.NewReplacer("italic", "", "oblique", "", " ", "", "-", "", "_", "").Replace(name)
+	if weight := namedFontWeights[name]; weight > 0 {
+		return weight
+	}
+	return 400
+}
+
+func effectiveFontItalic(style map[string]any) bool {
+	axes := asObj(style["axes"])
+	return asNum(axes["ital"]) >= 0.5 || asNum(axes["slnt"]) < 0 ||
+		strings.Contains(strings.ToLower(asStr(style["fontStyle"])), "italic") ||
+		strings.Contains(strings.ToLower(asStr(style["fontStyle"])), "oblique") || asBool(style["italic"])
+}
+
 // normFamily canonicalizes a family name for lookup ("Space Mono" == "SpaceMono").
 func normFamily(f string) string {
 	return strings.ToLower(strings.ReplaceAll(f, " ", ""))

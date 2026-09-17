@@ -101,6 +101,17 @@ def _visual_plan_exceeds_template_limits(state: dict[str, Any]) -> bool:
     return False
 
 
+def _visual_plan_needs_template_field_repair(state: dict[str, Any]) -> bool:
+    from yuxi.content.control.visual_template_fields import missing_required_template_fields
+
+    visual_material = (state.get("runtime_config_snapshot") or {}).get("visual_material") or {}
+    missing = missing_required_template_fields(
+        visual_material.get("hycanvas_fillable_fields") or [], state.get("content_brief") or {}
+    )
+    supplied = (state.get("visual_plan") or {}).get("template_fields") or {}
+    return any(not str(supplied.get(label) or "").strip() for label in missing)
+
+
 def _retry_predecessor(workflow_definition: dict[str, Any], pending_node: str) -> str | None:
     for source, target in reversed(workflow_definition.get("edges") or []):
         if target == pending_node:
@@ -204,7 +215,19 @@ async def process_content_run(ctx, run_id: str):
                 "resume_parent_run_id": None,
             }
             retry_from_node = None
-            if requested_node == "submit_cover_job" and _visual_plan_exceeds_template_limits(state_values):
+            if (
+                pending_nodes == {"lock_creation_strategy"}
+                and (workflow.definition_json or {}).get("price_recovery")
+                and ((state_values.get("joint_strategy_decision") or {}).get("reference") or {}).get("status")
+                in {"needs_input", "no_candidate"}
+                and (state_values.get("strategy_price_evidence_collection") or {}).get("evidence_items")
+            ):
+                # 已补证的失败决策需按当前 Skill 复评；重复锁定同一拒绝结果无法恢复。
+                retry_from_node = "merge_strategy_prices"
+            elif requested_node == "submit_cover_job" and (
+                _visual_plan_exceeds_template_limits(state_values)
+                or _visual_plan_needs_template_field_repair(state_values)
+            ):
                 state_update["visual_plan"] = None
                 state_update["cover_job"] = None
                 retry_from_node = "human_content_approval"
@@ -345,12 +368,14 @@ async def process_content_run(ctx, run_id: str):
         if not explicitly_cancelled:
             async with pg_manager.get_async_session_context() as db:
                 persisted_task = await ContentRepository(db).get_task(task.id, for_update=True)
-                persisted_task.status = "failed"
-                persisted_task.error_json = {
-                    "code": "CONTENT_RUN_WORKER_INTERRUPTED",
-                    "message": "执行进程发生重载或重启，请从当前节点重试",
-                    "retryable": True,
-                }
+                # 任务可能在中断与收尾之间被用户删除，此时只收尾 run 状态
+                if persisted_task is not None:
+                    persisted_task.status = "failed"
+                    persisted_task.error_json = {
+                        "code": "CONTENT_RUN_WORKER_INTERRUPTED",
+                        "message": "执行进程发生重载或重启，请从当前节点重试",
+                        "retryable": True,
+                    }
                 await ContentRepository(db).track(
                     "content_run_interrupted_unexpectedly",
                     uid=run.uid,
@@ -378,8 +403,10 @@ async def process_content_run(ctx, run_id: str):
             return
         async with pg_manager.get_async_session_context() as db:
             persisted_task = await ContentRepository(db).get_task(task.id, for_update=True)
-            persisted_task.status = "cancelled"
-            persisted_task.error_json = {"code": "CONTENT_RUN_CANCELLED", "message": "内容运行已取消"}
+            # 任务可能在取消与收尾之间被用户删除，此时只收尾 run 状态
+            if persisted_task is not None:
+                persisted_task.status = "cancelled"
+                persisted_task.error_json = {"code": "CONTENT_RUN_CANCELLED", "message": "内容运行已取消"}
         await _set_content_run_status(
             run_id,
             status="cancelled",

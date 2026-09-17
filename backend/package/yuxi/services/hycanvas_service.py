@@ -17,6 +17,29 @@ from yuxi.services.content_cover_service import create_cover_asset, get_cover_as
 from yuxi.storage.postgres.models_business import User
 
 
+def _composition_payload(composition, images):
+    if composition is None:
+        return None
+    if len(images) != len(composition["slots"]):
+        raise ValueError("组合图片数量不匹配")
+    return {
+        "rows": composition["rows"],
+        "cols": composition["cols"],
+        "cells": composition["cells"],
+        "gap": composition["gap"],
+        "images": [
+            {
+                "filename": image[2],
+                "contentType": image[1],
+                "dataBase64": base64.b64encode(image[0]).decode("ascii"),
+                "focalX": slot["focal_x"],
+                "focalY": slot["focal_y"],
+            }
+            for image, slot in zip(images, composition["slots"], strict=True)
+        ],
+    }
+
+
 class HyCanvasClient:
     def __init__(
         self,
@@ -94,6 +117,8 @@ class HyCanvasClient:
         *,
         image: tuple[bytes, str, str] | None = None,
         image_field_label: str | None = None,
+        photo_composition: dict | None = None,
+        composition_images: list | None = None,
     ) -> dict:
         images = {}
         background_image = None
@@ -104,7 +129,7 @@ class HyCanvasClient:
                 "contentType": content_type,
                 "dataBase64": base64.b64encode(content).decode("ascii"),
             }
-            if image_field_label:
+            if image_field_label and photo_composition is None:
                 images[image_field_label] = background_image
         data = await self._request(
             "POST",
@@ -114,7 +139,12 @@ class HyCanvasClient:
                 "title": payload.title,
                 "fields": payload.fields,
                 "images": images,
-                "backgroundImage": background_image,
+                "backgroundImage": background_image if photo_composition is None else None,
+                **(
+                    {"photoComposition": _composition_payload(photo_composition, composition_images or [])}
+                    if photo_composition
+                    else {}
+                ),
             },
         )
         design_id = data["designId"]
@@ -289,17 +319,25 @@ class HyCanvasClient:
         self,
         template_id: str,
         image: tuple[bytes, str, str],
+        *,
+        photo_composition: dict | None = None,
+        composition_images: list | None = None,
     ) -> tuple[bytes, str]:
         content, content_type, file_name = image
         response = await self._send(
             "POST",
             f"/api/v1/templates/{quote(template_id, safe='')}/preview.png",
             json={
+                **(
+                    {"photoComposition": _composition_payload(photo_composition, composition_images or [])}
+                    if photo_composition
+                    else {}
+                ),
                 "backgroundImage": {
                     "filename": file_name,
                     "contentType": content_type,
                     "dataBase64": base64.b64encode(content).decode("ascii"),
-                }
+                },
             },
         )
         return response.content, response.headers.get("content-type", "image/png")

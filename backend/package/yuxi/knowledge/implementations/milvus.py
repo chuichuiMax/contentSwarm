@@ -479,7 +479,8 @@ class MilvusKB(KnowledgeBase):
         from yuxi.models.embed import select_embedding_model
 
         model = select_embedding_model(embedding_model_spec)
-        batch_size = int(getattr(model, "batch_size", 40) or 40)
+        # DashScope text-embedding-v4 accepts at most 10 inputs per request.
+        batch_size = min(int(getattr(model, "batch_size", 40) or 40), 10)
         method = model.batch_encode if sync else model.abatch_encode
         return partial(method, batch_size=batch_size)
 

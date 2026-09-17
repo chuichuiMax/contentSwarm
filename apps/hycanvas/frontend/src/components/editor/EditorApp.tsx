@@ -859,7 +859,7 @@ export function EditorApp() {
     }
   }
 
-  const save = useCallback(async () => {
+  const save = useCallback(async (showSuccess = true) => {
     if (!designId) return false;
     // Never checkpoint a history preview: without realtime the store doc IS
     // the previewed historical file, and saving it would silently move the
@@ -903,7 +903,7 @@ export function EditorApp() {
         }
         useEditor.getState().markClean();
         setSavedAt(new Date().toLocaleTimeString());
-        toast.success(tr("editor.branch_saved"));
+        if (showSuccess) toast.success(tr("editor.branch_saved"));
         return true;
       }
       // When realtime is live, snapshot the shared Y.Doc (the source of truth
@@ -921,7 +921,7 @@ export function EditorApp() {
       // the unload guard clear; record the wall-clock time for the status text.
       useEditor.getState().markClean();
       setSavedAt(new Date().toLocaleTimeString());
-      toast.success(tr("editor.saved"));
+      if (showSuccess) toast.success(tr("editor.saved"));
       return true;
     } catch {
       if (mounted.current) toast.error(tr("editor.save_failed"));
@@ -938,7 +938,7 @@ export function EditorApp() {
   }, [integrationReturnUrl, returnToIntegration, save]);
 
   const saveAndConfigureTemplate = useCallback(async () => {
-    if (!(await save())) return;
+    if (!(await save(false))) return;
     if (!isContentSwarmManaged) return;
     setTemplateOpen(true);
   }, [save]);
@@ -1206,7 +1206,7 @@ export function EditorApp() {
         key={designId ?? "unsaved"}
         open={templateOpen}
         onClose={() => setTemplateOpen(false)}
-        onSaved={async () => { await save(); }}
+        onSaved={async () => { await save(false); }}
         designId={designId}
         workspaceId={workspaceId}
       />

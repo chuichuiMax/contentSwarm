@@ -237,6 +237,7 @@ async def get_accessible_databases(current_user: User = Depends(get_required_use
                 "kb_id": db.get("kb_id"),
                 "description": db.get("description", ""),
                 "created_by": db.get("created_by"),
+                "viral_content_type": (db.get("additional_params") or {}).get("viral_content_type"),
             }
             for db in databases.get("databases", [])
         ]
@@ -551,6 +552,8 @@ async def add_documents(
     logger.debug(f"Add documents for kb_id {kb_id}: {items} {params=}")
     await _ensure_database_supports_documents(kb_id, "文档添加/解析/入库")
 
+    if "use_as_viral_reference" in params and not isinstance(params["use_as_viral_reference"], bool):
+        raise HTTPException(422, "参考用途必须为布尔值")
     content_type = params.get("content_type", "file")
     # 自动入库参数
     auto_index = params.get("auto_index", False)

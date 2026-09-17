@@ -178,7 +178,27 @@ class Image2Client:
 
     @staticmethod
     def _provider_size(size: str) -> str:
-        return "1024x1024" if size == "1080x1080" else "1024x1536"
+        # 保留封面旧尺寸的兼容映射，同时允许图片设计把 image2 支持的
+        # 目标尺寸原样传给中转站；未知尺寸必须显式失败，禁止静默改成竖版。
+        legacy_sizes = {
+            "1080x1080": "1024x1024",
+            "1080x1440": "1024x1536",
+        }
+        if size in legacy_sizes:
+            return legacy_sizes[size]
+        supported_sizes = {
+            "1024x1024",
+            "1024x1536",
+            "1536x1024",
+            "1152x1536",
+            "1536x1152",
+            "2048x2048",
+            "2304x3072",
+            "3072x2304",
+        }
+        if size not in supported_sizes:
+            raise Image2Error("IMAGE2_SIZE_UNSUPPORTED", f"image2 不支持输出尺寸：{size}")
+        return size
 
     def _prompt(self, request: Image2Request) -> str:
         if not request.negative_prompt:
@@ -346,7 +366,10 @@ class Image2Client:
             try:
                 response = await self._client.request(method, url, headers=request_headers, **kwargs)
             except (httpx.TimeoutException, httpx.NetworkError) as exc:
-                if method == "GET" and attempt < 2:
+                # 生成请求携带幂等键，网络错误重试不会重复创建供应商任务；
+                # 没有幂等键的 POST 仍不自动重发，避免未知的重复扣费。
+                can_retry_network = method == "GET" or "Idempotency-Key" in request_headers
+                if can_retry_network and attempt < 2:
                     await asyncio.sleep(0.5 * (2**attempt))
                     continue
                 raise Image2Error("IMAGE2_NETWORK_ERROR", "image2 中转站连接失败", retryable=True) from exc

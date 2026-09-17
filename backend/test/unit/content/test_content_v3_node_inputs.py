@@ -37,6 +37,29 @@ STRATEGY = {
 }
 
 
+def test_joint_strategy_labels_exact_evidence_paths_without_mutating_frozen_bundle():
+    from yuxi.content.model.contracts.strategy import resolve_input_path
+    from yuxi.content.v3.joint_workflow import WORKFLOW_JOINT
+
+    node = next(item for item in WORKFLOW_JOINT["nodes"] if item["id"] == "select_creation_strategy")
+    state = {
+        "content_brief": {"form_values": {"pain": "收纳不足"}},
+        "evidence_bundle": {"items": [{"value": ""}, {"value": "增加12㎡收纳空间"}]},
+        "strategy_candidates": {"industry_slug": "decoration"},
+        "reference_candidates": [],
+        "runtime_config_snapshot": {"creation_mode": "original"},
+    }
+    original = deepcopy(state)
+
+    assembly = ContentNodeInputAssembler.build(node=node, state=state)
+
+    items = assembly.payload["evidence_bundle"]["items"]
+    assert items[1]["input_path"] == "evidence_bundle.items.1.value"
+    assert resolve_input_path(assembly.payload, items[1]["input_path"]) == "增加12㎡收纳空间"
+    assert "input_path" not in items[0]
+    assert state == original
+
+
 STRATEGY["snapshot_hash"] = hashlib.sha256(
     json.dumps(STRATEGY, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
 ).hexdigest()
@@ -186,7 +209,8 @@ def test_unified_generation_input_exposes_locked_strategy_and_previous_validatio
 
 
 @pytest.mark.unit
-def test_semantic_review_input_contains_all_review_upstream_outputs():
+@pytest.mark.parametrize("strict", [False, True])
+def test_semantic_review_input_contains_all_review_upstream_outputs(strict):
     node = {
         "id": "semantic_review",
         "input_contract": "SemanticReviewInputV1",
@@ -203,12 +227,21 @@ def test_semantic_review_input_contains_all_review_upstream_outputs():
         "optional_state_inputs": ["persona_diff"],
     }
 
-    assembly = ContentNodeInputAssembler.build(node=node, state=_state())
+    state = {
+        **_state(),
+        "runtime_config_snapshot": {"strict_semantic_review": strict},
+        "channel_profile": {"body_constraints": {"emoji_allowed": False}},
+        "persona_profile": {"tone": "专业克制"},
+    }
+    assembly = ContentNodeInputAssembler.build(node=node, state=state)
 
     assert assembly.payload["content_draft"]["body"] == "正文"
     assert assembly.payload["validation_report"]["status"] == "passed"
     assert assembly.payload["strategy_snapshot"]["snapshot_hash"] == STRATEGY["snapshot_hash"]
     assert assembly.payload["persona_diff"] == {"change_summary": []}
+    assert assembly.payload["review_scope"] == ("full" if strict else "expression")
+    assert assembly.payload["channel_profile"] == state["channel_profile"]
+    assert assembly.payload["persona_profile"] == state["persona_profile"]
 
 
 @pytest.mark.unit
@@ -263,6 +296,12 @@ def test_input_contract_registry_contains_every_agent_payload_contract():
         "AnalyzeContentValueInputV1",
         "AnalyzeAndSelectDirectionInputV1",
         "SelectCreationStrategyInputV1",
+        "SelectStrategyInputV2",
+        "JointStrategyInputV1",
+        "JointStrategyPromptV1",
+        "ReevaluateJointStrategyInputV1",
+        "ResearchStrategyPricesInputV1",
+        "ViralAssetPreparationInputV1",
         "SelectContentDirectionInputV1",
         "ExplainStrategyInputV1",
         "CollectMissingEvidenceInputV1",
@@ -282,6 +321,7 @@ def test_input_contract_registry_contains_every_agent_payload_contract():
         "GenerateBodyInputV1",
         "PersonaStylePolishInputV1",
         "GenerateContentInputV1",
+        "GenerateContentPromptV1",
         "SemanticReviewInputV1",
         "PlanVisualsInputV1",
         "SubmitCoverJobInputV1",

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
+from yuxi.content_cover.photo_composition import PhotoComposition
+
 from pydantic import BaseModel, ConfigDict, Field
 from yuxi.content.model.industry.pack import IndustryPackRegressionMetrics
 
@@ -16,7 +18,7 @@ class ContentTaskCreate(BaseModel):
     mode: ContentMode = "quick"
     creation_mode: CreationMode = "original"
     content_goal: str | None = None
-    content_type_code: str | None = Field(default=None, pattern=r"^CT0[1-7]$")
+    content_type_code: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_-]{1,80}$")
     persona_profile_version_id: str | None = None
     channel_profile_version_id: str | None = None
     name: str | None = None
@@ -26,15 +28,23 @@ class ContentTaskCreate(BaseModel):
 class ContentTaskUpdate(BaseModel):
     name: str | None = None
     content_goal: str | None = None
-    content_type_code: str | None = Field(default=None, pattern=r"^CT0[1-7]$")
+    content_type_code: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_-]{1,80}$")
     persona_profile_version_id: str | None = None
     channel_profile_version_id: str | None = None
     mode: ContentMode | None = None
 
 
+class ContentTaskBatchDelete(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    task_ids: list[str] = Field(min_length=1, max_length=100)
+
+
+
 class ContentVisualMaterialSelection(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    photo_composition: PhotoComposition | None = None
     image_item_id: str | None = Field(default=None, min_length=1, max_length=64)
     poster_template_id: str | None = Field(default=None, min_length=1, max_length=64)
     hycanvas_template_id: str | None = Field(
@@ -47,6 +57,7 @@ class ContentVisualMaterialSelection(BaseModel):
 
 
 class ContentBriefPayload(BaseModel):
+    user_request: str = ""
     brand: dict[str, Any] = Field(default_factory=dict)
     audience: list[str] = Field(default_factory=list)
     business_variables: dict[str, Any] = Field(default_factory=dict)
@@ -192,6 +203,7 @@ class CreationMethodInput(RuleInputBase):
     code: str = Field(min_length=1, max_length=32, pattern=r"^[A-Za-z][A-Za-z0-9_-]*$")
     name: str = Field(min_length=1, max_length=80)
     method_type: Literal["core", "enhancer"] = "core"
+    industry_scope: list[str] = Field(default_factory=list)
     principle: str = Field(min_length=1, max_length=4000)
     suitable_scenes: list[str] = Field(default_factory=list)
     sentence_patterns: list[str] = Field(default_factory=list)
@@ -203,10 +215,12 @@ class CreationMethodInput(RuleInputBase):
 
 
 class TitleFormulaInput(RuleInputBase):
+    source_content: dict[str, Any] = Field(default_factory=dict)
     code: str = Field(min_length=1, max_length=32, pattern=r"^[A-Za-z][A-Za-z0-9_-]*$")
     name: str = Field(min_length=1, max_length=120)
     suitable_scenes: list[str] = Field(default_factory=list)
     core_goal: str = Field(min_length=1, max_length=4000)
+    industry_scope: list[str] = Field(default_factory=list)
     reference_examples: list[str] = Field(default_factory=list)
     variable_schema: list[str] = Field(default_factory=list)
     compatible_methods: list[str] = Field(default_factory=list)
@@ -216,9 +230,11 @@ class TitleFormulaInput(RuleInputBase):
 
 
 class ContentFormulaInput(RuleInputBase):
+    source_content: dict[str, Any] = Field(default_factory=dict)
     code: str = Field(min_length=1, max_length=32, pattern=r"^[A-Za-z][A-Za-z0-9_-]*$")
     name: str = Field(min_length=1, max_length=120)
     industry_aliases: dict[str, str] = Field(default_factory=dict)
+    industry_scope: list[str] = Field(default_factory=list)
     compatible_methods: list[str] = Field(default_factory=list)
     suitable_scenes: list[str] = Field(default_factory=list)
     business_pains: list[str] = Field(default_factory=list)
@@ -238,6 +254,7 @@ class MethodMemberInput(RuleInputBase):
 
 
 class CombinationRuleInput(RuleInputBase):
+    enabled: bool = True
     schema_version: Literal[3] = 3
     content_goal_codes: list[str] = Field(default_factory=list)
     content_type_codes: list[str] = Field(default_factory=list)

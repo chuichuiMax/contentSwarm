@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import {
   ArrowLeft,
@@ -20,6 +20,7 @@ import {
 
 import { contentApi } from '@/apis/content_api'
 import { materialLibraryApi } from '@/apis/material_library_api'
+import { useUserStore } from '@/stores/user'
 import PageHeader from '@/components/shared/PageHeader.vue'
 import PosterOcrReviewModal from '@/components/content/PosterOcrReviewModal.vue'
 import VisualWorkspaceHeader from '@/components/content/VisualWorkspaceHeader.vue'
@@ -28,8 +29,18 @@ const tabs = [
   { key: 'image', label: '素材图片', path: '/materials/images' }
 ]
 const materialType = ref('image')
+const userStore = useUserStore()
+const materialScope = ref('private')
+const canCreateShared = ref(false)
 const isGalleryRoot = computed(() => materialType.value === 'image' && !activeGallery.value)
 const loading = ref(false)
+const remoteSyncing = ref(false)
+const remoteSyncJob = ref(null)
+const remoteConfigOpen = ref(false)
+const remoteConfigSaving = ref(false)
+const remoteConfigState = ref(null)
+const resumeRemoteSync = ref(false)
+const remoteConfigForm = reactive({ username: '', password: '' })
 const uploading = ref(false)
 const categories = ref([])
 const galleries = ref([])
@@ -60,7 +71,7 @@ const categorySaving = ref(false)
 const categoryEditorMode = ref('create')
 const editingCategory = ref(null)
 const categoryParentId = ref('')
-const categoryForm = reactive({ name: '', description: '', industry_slug: '' })
+const categoryForm = reactive({ name: '', description: '', industry_slug: '', visibility: 'private' })
 const categoryManagerOpen = ref(false)
 const deleteCategoryOpen = ref(false)
 const categoryDeleting = ref(false)
@@ -69,6 +80,25 @@ const deleteTargetCategory = ref('')
 const previewUrls = new Map()
 const maxUploadBytes = 20 * 1024 * 1024
 const supportedImageTypes = new Set(['image/png', 'image/jpeg', 'image/webp'])
+let remoteSyncPollTimer = null
+
+const remoteSyncPhaseLabel = computed(() => ({
+  queued: '等待后台任务',
+  starting: '准备同步',
+  authenticating: '验证远程账号',
+  discovering: '读取远程素材清单',
+  syncing: '下载并保存素材',
+  finalizing: '整理下架素材',
+  completed: '同步完成'
+}[remoteSyncJob.value?.phase] || '同步远程素材'))
+
+const remoteSyncCountLabel = computed(() => {
+  const job = remoteSyncJob.value
+  if (!job) return ''
+  if (job.total_assets) return `${job.processed_assets}/${job.total_assets} 张`
+  if (job.total_groups) return `${job.processed_groups}/${job.total_groups} 组`
+  return '正在准备'
+})
 
 const categoryMap = computed(() => Object.fromEntries(categories.value.map((item) => [item.code, item])))
 const currentGallery = computed(() => categoryMap.value[activeGallery.value])
@@ -78,13 +108,13 @@ const orderedCategories = computed(() => {
   const roots = categories.value.filter((item) => !item.parent_id)
   return roots.flatMap((root) => [root, ...categories.value.filter((item) => item.parent_id === root.id)])
 })
-const uploadCategories = computed(() => orderedCategories.value)
+const uploadCategories = computed(() => orderedCategories.value.filter((item) => (item.visibility || 'private') === (currentGallery.value?.visibility || materialScope.value)))
 const uploadFileLimit = computed(() => materialType.value === 'image' ? 50 : 100)
-const deleteTargetOptions = computed(() => categories.value.filter((item) => item.id !== deletingCategory.value?.id))
+const deleteTargetOptions = computed(() => categories.value.filter((item) => item.id !== deletingCategory.value?.id && (deletingCategory.value?.visibility !== 'enterprise' || item.visibility === 'enterprise')))
 const filteredGalleries = computed(() => {
   const term = queryInput.value.trim().toLowerCase()
   const scoped = isGalleryRoot.value
-    ? galleries.value.filter((item) => !item.parent_id)
+    ? galleries.value.filter((item) => !item.parent_id && (item.visibility || 'private') === materialScope.value)
     : (isTopLevelGallery.value ? galleries.value.filter((item) => item.parent_id === activeGallery.value) : [])
   const industryScoped = isGalleryRoot.value && industryFilter.value
     ? scoped.filter((item) => (item.industry_slug || 'uncategorized') === industryFilter.value)
@@ -128,7 +158,10 @@ async function blobPreview(id, key = id) {
 async function loadCategories() {
   const requestedType = materialType.value
   const response = await materialLibraryApi.listCategories(requestedType)
-  if (materialType.value === requestedType) categories.value = response.categories || []
+  if (materialType.value === requestedType) {
+    categories.value = response.categories || []
+    canCreateShared.value = Boolean(response.can_create_shared)
+  }
 }
 
 function openCreateCategory(parentId = '') {
@@ -138,6 +171,7 @@ function openCreateCategory(parentId = '') {
   Object.assign(categoryForm, {
     name: '',
     description: '',
+    visibility: categoryParentId.value ? categoryMap.value[categoryParentId.value]?.visibility : materialScope.value,
     industry_slug: categoryParentId.value ? (categoryMap.value[categoryParentId.value]?.industry_slug || '') : ''
   })
   categoryEditorOpen.value = true
@@ -149,6 +183,7 @@ function openEditCategory(category) {
   categoryParentId.value = category.parent_id || ''
   Object.assign(categoryForm, {
     name: category.name,
+    visibility: category.visibility || 'private',
     description: category.description || '',
     industry_slug: category.industry_slug || ''
   })
@@ -163,6 +198,7 @@ async function saveCategory() {
   const payload = {
     name: categoryForm.name.trim(),
     description: categoryForm.description.trim(),
+    ...(!categoryParentId.value ? { visibility: categoryForm.visibility } : {}),
     ...(materialType.value === 'image' && !categoryParentId.value
       ? { industry_slug: categoryForm.industry_slug }
       : {})
@@ -177,7 +213,9 @@ async function saveCategory() {
       })
       message.success(categoryParentId.value ? '二级图库已创建' : (materialType.value === 'image' ? '图库已创建' : '分类已创建'))
     } else {
-      await materialLibraryApi.updateCategory(materialType.value, editingCategory.value.id, payload)
+      const response = await materialLibraryApi.updateCategory(materialType.value, editingCategory.value.id, payload)
+      if (activeGallery.value === editingCategory.value.id) activeGallery.value = response.category.id
+      materialScope.value = response.category.visibility || 'private'
       message.success(materialType.value === 'image' ? '图库信息已更新' : '分类已更新')
     }
     categoryEditorOpen.value = false
@@ -247,6 +285,7 @@ async function loadItems() {
     const response = await materialLibraryApi.listItems({
       material_type: materialType.value,
       category: materialType.value === 'image' ? activeGallery.value : categoryFilter.value,
+      status: 'enabled',
       query: query.value,
       sort: sort.value,
       page: page.value,
@@ -292,12 +331,12 @@ function leaveGallery() {
 }
 
 function categoryOptionLabel(category) {
-  if (!category.parent_id) return category.name
+  if (!category.parent_id) return `${category.visibility === 'enterprise' ? '[企业共享] ' : ''}${category.name}`
   return `${categoryMap.value[category.parent_id]?.name || '一级图库'} / ${category.name}`
 }
 
 function openUpload() {
-  uploadCategory.value = activeGallery.value || ''
+  uploadCategory.value = activeGallery.value || uploadCategories.value[0]?.id || ''
   uploadOpen.value = true
 }
 
@@ -493,7 +532,9 @@ async function downloadItem(item) {
 function removeItem(item) {
   Modal.confirm({
     title: `删除“${item.name}”`,
-    content: '素材文件会同时从私有 image 桶删除；正在被封面任务使用的素材不能删除。',
+    content: item.metadata?.ever_shared
+      ? '素材将从图库下架，已使用它的作品和任务仍可正常打开与导出。'
+      : '删除后无法从素材库恢复。正在被内容任务或封面任务使用的素材不能删除。',
     okText: '确认删除',
     okType: 'danger',
     cancelText: '取消',
@@ -510,6 +551,144 @@ function formatSize(bytes) {
   return bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.ceil(bytes / 1024)} KB`
 }
 
+function remoteErrorCode(error) {
+  return error?.response?.data?.detail?.error?.code || ''
+}
+
+function openRemoteConfig(state, { resumeSync = true } = {}) {
+  remoteConfigState.value = state
+  remoteConfigForm.username = ''
+  remoteConfigForm.password = ''
+  resumeRemoteSync.value = resumeSync
+  remoteConfigOpen.value = true
+}
+
+async function performRemoteSync() {
+  if (remoteSyncing.value) return
+  remoteSyncing.value = true
+  try {
+    const response = await materialLibraryApi.syncRemote()
+    remoteSyncJob.value = response.job
+    message.success(response.reused ? '远程素材同步正在后台运行' : '远程素材同步任务已提交')
+    pollRemoteSync(response.job.id)
+  } catch (error) {
+    const code = remoteErrorCode(error)
+    if (userStore.isSuperAdmin && ['REMOTE_MATERIAL_CONFIG_REQUIRED', 'REMOTE_MATERIAL_AUTH_FAILED'].includes(code)) {
+      const state = await materialLibraryApi.getRemoteConfig()
+      openRemoteConfig(state)
+      message.warning(code === 'REMOTE_MATERIAL_AUTH_FAILED' ? '远程账号或密码已失效，请重新配置' : '请先配置远程素材库账号和密码')
+      return
+    }
+    message.error(error.message || '远程素材同步失败，请稍后重试')
+    remoteSyncing.value = false
+  }
+}
+
+function scheduleRemoteSyncPoll(jobId) {
+  window.clearTimeout(remoteSyncPollTimer)
+  remoteSyncPollTimer = window.setTimeout(() => pollRemoteSync(jobId), 2000)
+}
+
+async function pollRemoteSync(jobId) {
+  try {
+    const response = await materialLibraryApi.getRemoteSyncStatus(jobId)
+    const job = response.job
+    if (!job) {
+      remoteSyncing.value = false
+      return
+    }
+    remoteSyncJob.value = job
+    remoteSyncing.value = ['queued', 'running'].includes(job.status)
+    if (remoteSyncing.value) {
+      scheduleRemoteSyncPoll(job.id)
+      return
+    }
+    if (job.status === 'succeeded') {
+      message.success(`远程素材同步完成：${job.summary?.assets || 0} 张图片`)
+      materialScope.value = 'enterprise'
+      activeGallery.value = ''
+      await loadCategories()
+      await loadGalleries()
+      return
+    }
+    if (job.status === 'failed') {
+      if (userStore.isSuperAdmin && ['REMOTE_MATERIAL_CONFIG_REQUIRED', 'REMOTE_MATERIAL_AUTH_FAILED'].includes(job.error_code)) {
+        openRemoteConfig(await materialLibraryApi.getRemoteConfig())
+      }
+      message.error(job.error_message || '远程素材同步失败，请稍后重试')
+    }
+  } catch (error) {
+    remoteSyncing.value = false
+    message.error(error.message || '远程素材同步状态读取失败')
+  }
+}
+
+async function restoreRemoteSync() {
+  try {
+    const response = await materialLibraryApi.getRemoteSyncStatus()
+    if (response.job && ['queued', 'running'].includes(response.job.status)) {
+      remoteSyncJob.value = response.job
+      remoteSyncing.value = true
+      scheduleRemoteSyncPoll(response.job.id)
+    }
+  } catch {
+    // 页面其他素材功能不依赖同步状态，恢复失败时允许用户重新点击。
+  }
+}
+
+async function syncRemoteMaterials() {
+  if (remoteSyncing.value) return
+  remoteSyncing.value = true
+  try {
+    const state = await materialLibraryApi.getRemoteConfig()
+    remoteConfigState.value = state
+    if (!state.configured) {
+      if (state.can_manage) {
+        openRemoteConfig(state)
+      } else {
+        message.error('远程素材库尚未配置，请联系超级管理员')
+      }
+      return
+    }
+  } catch (error) {
+    message.error(error.message || '远程素材库配置状态读取失败')
+    return
+  } finally {
+    remoteSyncing.value = false
+  }
+  await performRemoteSync()
+}
+
+async function saveRemoteConfig() {
+  if (!remoteConfigForm.username.trim() || !remoteConfigForm.password.trim()) {
+    message.warning('请填写远程素材库账号和密码')
+    return
+  }
+  remoteConfigSaving.value = true
+  try {
+    remoteConfigState.value = await materialLibraryApi.saveRemoteConfig({
+      username: remoteConfigForm.username.trim(),
+      password: remoteConfigForm.password
+    })
+    const shouldResume = resumeRemoteSync.value
+    remoteConfigForm.password = ''
+    remoteConfigOpen.value = false
+    resumeRemoteSync.value = false
+    message.success('远程素材库账号验证并保存成功')
+    if (shouldResume) await performRemoteSync()
+  } catch (error) {
+    message.error(error.message || '远程素材库账号验证失败')
+  } finally {
+    remoteConfigSaving.value = false
+  }
+}
+
+function closeRemoteConfig() {
+  remoteConfigForm.username = ''
+  remoteConfigForm.password = ''
+  resumeRemoteSync.value = false
+}
+
 watch(materialType, async () => {
   activeGallery.value = ''
   categoryFilter.value = ''
@@ -524,7 +703,11 @@ watch(materialType, async () => {
     message.error(error.message || '素材分类加载失败')
   }
 }, { immediate: true })
-onBeforeUnmount(releasePreviews)
+onMounted(restoreRemoteSync)
+onBeforeUnmount(() => {
+  window.clearTimeout(remoteSyncPollTimer)
+  releasePreviews()
+})
 </script>
 
 <template>
@@ -533,7 +716,10 @@ onBeforeUnmount(releasePreviews)
     <PageHeader title="素材库" :tabs="tabs" :active-key="materialType" :loading="loading" show-border>
       <template #actions>
         <template v-if="materialType === 'image'">
-          <a-button v-if="isGalleryRoot || (isTopLevelGallery && !currentGallery?.is_system)" class="lucide-icon-btn" @click="openCreateCategory(isTopLevelGallery ? activeGallery : '')">
+          <a-button v-if="userStore.isAdmin" class="lucide-icon-btn" :loading="remoteSyncing" @click="syncRemoteMaterials">
+            <RefreshCw :size="15" />同步远程素材
+          </a-button>
+          <a-button v-if="(isGalleryRoot && (materialScope === 'private' || canCreateShared)) || (isTopLevelGallery && !currentGallery?.is_system && currentGallery?.can_manage)" class="lucide-icon-btn" @click="openCreateCategory(isTopLevelGallery ? activeGallery : '')">
             <FolderPlus :size="15" />{{ isTopLevelGallery ? '新建二级图库' : '新建图库' }}
           </a-button>
         </template>
@@ -547,12 +733,25 @@ onBeforeUnmount(releasePreviews)
     </PageHeader>
 
     <main class="material-content">
+      <div v-if="remoteSyncing && remoteSyncJob" class="remote-sync-status">
+        <div>
+          <RefreshCw :size="16" class="remote-sync-spin" />
+          <strong>{{ remoteSyncPhaseLabel }}</strong>
+          <span>{{ remoteSyncCountLabel }}</span>
+        </div>
+        <a-progress :percent="remoteSyncJob.progress || 0" :show-info="false" size="small" />
+      </div>
       <div v-if="materialType === 'image'" class="context-head">
         <button v-if="activeGallery" type="button" class="back-button" @click="leaveGallery"><ArrowLeft :size="16" />{{ parentGallery ? `返回${parentGallery.name}` : '返回图库' }}</button>
         <div>
-          <h2>{{ activeGallery ? currentGallery?.name : '我的图库' }}</h2>
+          <a-radio-group v-if="isGalleryRoot" v-model:value="materialScope" button-style="solid" @change="activeGallery = ''; page = 1">
+            <a-radio-button value="private">我的素材</a-radio-button>
+            <a-radio-button value="enterprise">企业共享</a-radio-button>
+          </a-radio-group>
+          <a-tag v-else>{{ currentGallery?.visibility === 'enterprise' ? '企业共享' : '仅自己可见' }}</a-tag>
+          <h2>{{ activeGallery ? currentGallery?.name : (materialScope === 'enterprise' ? '企业共享图库' : '我的图库') }}</h2>
           <p v-if="parentGallery" class="gallery-path">{{ parentGallery.name }} / {{ currentGallery?.name }}</p>
-          <p>{{ activeGallery ? (currentGallery?.description || '这个图库还没有填写说明。') : '创建专属图库管理图片，也可以随时重命名、移动或整理素材。' }}</p>
+          <p>{{ activeGallery ? (currentGallery?.description || '这个图库还没有填写说明。') : '个人图库仅自己可见；企业共享图库供本站所有登录成员使用。' }}</p>
         </div>
       </div>
       <div v-else class="context-head">
@@ -593,15 +792,15 @@ onBeforeUnmount(releasePreviews)
               <span class="gallery-copy"><strong>{{ gallery.name }}</strong><small>{{ gallery.description || '暂未填写图库说明' }}</small><em v-if="isGalleryRoot">{{ gallery.industry_name }}</em></span>
             </button>
             <div class="gallery-actions">
-              <button type="button" :aria-label="`编辑图库 ${gallery.name}`" title="编辑图库" @click="openEditCategory(gallery)"><Pencil :size="15" /></button>
-              <button v-if="!gallery.is_system" type="button" class="danger" :aria-label="`删除图库 ${gallery.name}`" title="删除图库" @click="askDeleteCategory(gallery)"><Trash2 :size="15" /></button>
+              <button v-if="gallery.can_manage" type="button" :aria-label="`编辑图库 ${gallery.name}`" title="编辑图库" @click="openEditCategory(gallery)"><Pencil :size="15" /></button>
+              <button v-if="!gallery.is_system && gallery.can_manage" type="button" class="danger" :aria-label="`删除图库 ${gallery.name}`" title="删除图库" @click="askDeleteCategory(gallery)"><Trash2 :size="15" /></button>
             </div>
           </article>
           </div>
         </div>
 
         <div v-if="!isGalleryRoot && items.length" class="material-section">
-          <h3 v-if="isTopLevelGallery && filteredGalleries.length">当前图库图片</h3>
+          <h3 v-if="isTopLevelGallery && filteredGalleries.length">当前图库全部图片（含二级图库）</h3>
           <div :class="materialType === 'image' ? 'image-grid' : 'poster-wall'">
           <article v-for="item in items" :key="item.id" class="material-card" :class="{ poster: materialType === 'cover_template' }">
             <button type="button" class="preview-button" @click="previewItem = item">
@@ -611,26 +810,43 @@ onBeforeUnmount(releasePreviews)
             </button>
             <div class="material-info">
               <strong v-if="materialType === 'image'" :title="item.name">{{ item.name }}</strong>
-              <small>{{ item.category_name }} · {{ item.width }}×{{ item.height }} · {{ formatSize(item.file_size) }}</small>
+              <small>上传者 {{ item.uploaded_by_name }} · {{ item.category_name }} · {{ item.width }}×{{ item.height }} · {{ formatSize(item.file_size) }}</small>
             </div>
             <div class="card-actions">
               <button type="button" title="预览" @click="previewItem = item"><Eye :size="15" /></button>
               <button v-if="materialType === 'cover_template'" type="button" title="校对 OCR 识别结果" @click="openOcrReview(item)"><ScanText :size="15" /></button>
               <button type="button" title="下载" @click="downloadItem(item)"><Download :size="15" /></button>
-              <button type="button" title="编辑名称和分类" @click="showEdit(item)"><Pencil :size="15" /></button>
-              <button type="button" class="danger" title="删除" @click="removeItem(item)"><Trash2 :size="15" /></button>
+              <button v-if="item.can_manage" type="button" title="编辑名称和分类" @click="showEdit(item)"><Pencil :size="15" /></button>
+              <button v-if="item.can_manage" type="button" class="danger" title="删除" @click="removeItem(item)"><Trash2 :size="15" /></button>
             </div>
           </article>
           </div>
         </div>
 
         <a-empty v-if="!loading && !filteredGalleries.length && (isGalleryRoot || !items.length)" :image="false" :description="isGalleryRoot ? '没有匹配的图库' : (query ? '未找到匹配素材' : (isTopLevelGallery ? '当前图库还没有图片或二级图库' : '当前图库还没有图片'))">
-          <a-button v-if="!query && isGalleryRoot" type="primary" class="lucide-icon-btn" @click="openCreateCategory('')"><FolderPlus :size="15" />新建第一个图库</a-button>
+          <a-button v-if="!query && isGalleryRoot && (materialScope === 'private' || canCreateShared)" type="primary" class="lucide-icon-btn" @click="openCreateCategory('')"><FolderPlus :size="15" />新建第一个图库</a-button>
           <a-button v-else-if="!query" type="primary" class="lucide-icon-btn" @click="openUpload"><ImagePlus :size="15" />上传第一份素材</a-button>
         </a-empty>
       </a-spin>
       <a-pagination v-if="!isGalleryRoot && total > 24" v-model:current="page" :total="total" :page-size="24" show-less-items @change="loadItems" />
     </main>
+
+    <a-modal
+      v-model:open="remoteConfigOpen"
+      title="配置远程素材库"
+      :confirm-loading="remoteConfigSaving"
+      ok-text="验证并保存"
+      cancel-text="取消"
+      @ok="saveRemoteConfig"
+      @cancel="closeRemoteConfig"
+    >
+      <div class="remote-config-form">
+        <p>配置全站共享的远程素材库凭据。密码只用于服务端登录验证，不会在页面中回显。</p>
+        <label><span>远程地址</span><a-input :value="remoteConfigState?.base_url || ''" disabled /></label>
+        <label><span>账号</span><a-input v-model:value="remoteConfigForm.username" :maxlength="255" autocomplete="off" placeholder="请输入远程素材库账号" /></label>
+        <label><span>密码</span><a-input-password v-model:value="remoteConfigForm.password" :maxlength="500" autocomplete="new-password" placeholder="请输入远程素材库密码" /></label>
+      </div>
+    </a-modal>
 
     <a-modal v-model:open="uploadOpen" :title="`上传${materialType === 'image' ? '素材图片' : '封面模板'}`" :confirm-loading="uploading" ok-text="开始上传" @ok="uploadFiles" @cancel="resetUpload">
       <div class="upload-form">
@@ -671,6 +887,12 @@ onBeforeUnmount(releasePreviews)
     <a-modal v-model:open="categoryEditorOpen" :title="createCategoryTitle" :confirm-loading="categorySaving" ok-text="保存" @ok="saveCategory">
       <div class="upload-form">
         <label v-if="categoryEditorMode === 'create' && categoryParentId"><span>所属一级图库</span><a-input :value="categoryMap[categoryParentId]?.name" disabled /></label>
+        <label v-if="materialType === 'image' && !categoryParentId && !editingCategory?.is_system"><span>可见范围</span>
+          <a-radio-group v-model:value="categoryForm.visibility" :disabled="!canCreateShared">
+            <a-radio value="private">仅自己可见</a-radio><a-radio value="enterprise">企业共享</a-radio>
+          </a-radio-group>
+          <small>共享后，本图库及子图库中的素材可供本站所有登录成员使用。</small>
+        </label>
         <label v-if="materialType === 'image' && !categoryParentId"><span>所属行业 <b>*</b></span><a-select v-model:value="categoryForm.industry_slug" placeholder="请选择一个行业">
           <a-select-option v-for="item in industries" :key="item.slug" :value="item.slug">{{ item.name }}</a-select-option>
         </a-select></label>
@@ -716,6 +938,10 @@ onBeforeUnmount(releasePreviews)
 <style scoped lang="less">
 .material-library-view { height: 100%; display: flex; flex-direction: column; background: var(--gray-0); }
 .material-content { flex: 1; overflow: auto; padding: 20px var(--page-padding) 36px; }
+.remote-sync-status { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(180px, 320px); align-items: center; gap: 18px; margin-bottom: 16px; padding: 11px 14px; border: 1px solid var(--main-100); border-radius: 10px; background: var(--main-20); }
+.remote-sync-status > div { display: flex; align-items: center; gap: 8px; color: var(--color-text); }.remote-sync-status span { color: var(--color-text-secondary); font-size: 12px; }
+.remote-sync-spin { color: var(--color-primary); animation: remote-sync-rotate 1s linear infinite; }
+@keyframes remote-sync-rotate { to { transform: rotate(360deg); } }
 .context-head { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 16px; }
 .context-head h2 { margin: 0; font-size: 20px; color: var(--color-text); }
 .context-head p { margin: 5px 0 0; color: var(--color-text-secondary); }
@@ -727,18 +953,18 @@ onBeforeUnmount(releasePreviews)
 .gallery-section, .material-section { margin-bottom: 22px; }
 .gallery-section h3, .material-section h3 { margin: 0 0 12px; color: var(--color-text); font-size: 15px; }
 .gallery-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 18px; }
-.gallery-card { position: relative; overflow: hidden; min-height: 250px; border: 1px solid var(--gray-150); border-radius: 14px; background: var(--gray-0); transition: transform .18s, box-shadow .18s, border-color .18s; }
+.gallery-card { position: relative; overflow: hidden; border: 1px solid var(--gray-150); border-radius: 14px; background: var(--gray-0); transition: transform .18s, box-shadow .18s, border-color .18s; }
 .gallery-card:hover { transform: translateY(-2px); border-color: var(--color-primary); box-shadow: 0 8px 24px rgb(20 35 70 / 10%); }
 .gallery-open { display: block; width: 100%; padding: 0; text-align: left; border: 0; background: transparent; cursor: pointer; }
-.gallery-cover { position: relative; display: grid; place-items: center; height: 166px; overflow: hidden; background: radial-gradient(circle at 25% 20%, var(--main-20), transparent 48%), linear-gradient(145deg, var(--gray-25), var(--gray-100)); color: var(--color-primary); }
+.gallery-cover { position: relative; display: grid; place-items: center; width: 100%; aspect-ratio: 16 / 9; overflow: hidden; background: radial-gradient(circle at 25% 20%, var(--main-20), transparent 48%), linear-gradient(145deg, var(--gray-25), var(--gray-100)); color: var(--color-primary); }
 .gallery-cover::after { position: absolute; inset: 0; background: linear-gradient(180deg, transparent 60%, rgb(15 25 45 / 10%)); content: ''; pointer-events: none; }
 .gallery-cover img { width: 100%; height: 100%; object-fit: cover; transition: transform .25s; }.gallery-card:hover .gallery-cover img { transform: scale(1.035); }
 .folder-art { position: relative; display: grid; place-items: center; width: 84px; height: 72px; border-radius: 20px; background: var(--gray-0); box-shadow: 0 12px 28px rgb(30 55 95 / 12%); }.folder-art i { position: absolute; right: 13px; bottom: 12px; width: 22px; height: 5px; border-radius: 3px; background: var(--main-100); }
 .gallery-cover em { position: absolute; z-index: 1; right: 12px; bottom: 12px; padding: 4px 9px; border-radius: 14px; background: rgb(15 25 45 / 66%); color: white; font-size: 12px; font-style: normal; backdrop-filter: blur(4px); }
-.gallery-copy { display: flex; flex-direction: column; gap: 6px; padding: 15px 76px 18px 16px; }
-.gallery-copy strong { overflow: hidden; font-size: 17px; text-overflow: ellipsis; white-space: nowrap; color: var(--color-text); }.gallery-copy small { min-height: 40px; color: var(--color-text-secondary); line-height: 1.55; }
+.gallery-copy { display: flex; flex-direction: column; gap: 4px; min-height: 78px; padding: 11px 76px 11px 14px; }
+.gallery-copy strong { overflow: hidden; font-size: 16px; text-overflow: ellipsis; white-space: nowrap; color: var(--color-text); }.gallery-copy small { overflow: hidden; color: var(--color-text-secondary); line-height: 1.45; text-overflow: ellipsis; white-space: nowrap; }
 .gallery-copy em { color: var(--color-primary); font-size: 12px; font-style: normal; }
-.gallery-actions { position: absolute; right: 12px; bottom: 15px; display: flex; gap: 3px; }.gallery-actions button, .category-row-actions button { display: grid; place-items: center; width: 30px; height: 30px; border: 0; border-radius: 7px; background: var(--gray-25); color: var(--color-text-secondary); cursor: pointer; }.gallery-actions button:hover, .category-row-actions button:hover { background: var(--main-20); color: var(--color-primary); }.gallery-actions button.danger:hover, .category-row-actions button.danger:hover { color: var(--color-error-700); }
+.gallery-actions { position: absolute; right: 10px; bottom: 10px; display: flex; gap: 3px; }.gallery-actions button, .category-row-actions button { display: grid; place-items: center; width: 30px; height: 30px; border: 0; border-radius: 7px; background: var(--gray-25); color: var(--color-text-secondary); cursor: pointer; }.gallery-actions button:hover, .category-row-actions button:hover { background: var(--main-20); color: var(--color-primary); }.gallery-actions button.danger:hover, .category-row-actions button.danger:hover { color: var(--color-error-700); }
 .image-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 16px; }
 .poster-wall { columns: 260px; column-gap: 18px; }
 .material-card { position: relative; overflow: hidden; border: 1px solid var(--gray-150); border-radius: 9px; background: var(--gray-0); }
@@ -761,6 +987,9 @@ onBeforeUnmount(releasePreviews)
 .card-actions button:hover { background: var(--gray-50); color: var(--color-primary); }.card-actions button.danger:hover { color: var(--color-error-700); }
 .upload-form { display: flex; flex-direction: column; gap: 16px; }
 .upload-form label { display: flex; flex-direction: column; gap: 6px; color: var(--color-text); }.upload-form label b { color: var(--color-error-700); }
+.remote-config-form { display: flex; flex-direction: column; gap: 16px; }
+.remote-config-form p { margin: 0; color: var(--color-text-secondary); line-height: 1.6; }
+.remote-config-form label { display: flex; flex-direction: column; gap: 7px; color: var(--color-text); font-weight: 500; }
 .upload-drop { display: flex; flex-direction: column; align-items: center; gap: 7px; padding: 28px; border: 1px dashed var(--gray-300); border-radius: 8px; background: var(--gray-25); color: var(--color-text-secondary); cursor: pointer; }
 .upload-drop:hover, .upload-drop.dragging { border-color: var(--main-500); background: var(--main-20); color: var(--main-700); }
 .upload-drop.dragging { box-shadow: 0 0 0 3px var(--main-100); }

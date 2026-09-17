@@ -428,7 +428,24 @@ class KnowledgeBaseManager:
     async def parse_file(self, kb_id: str, file_id: str, operator_id: str | None = None) -> dict:
         """Parse file to Markdown"""
         kb_instance = await self._get_kb_for_database(kb_id)
-        return await kb_instance.parse_file(kb_id, file_id, operator_id)
+        result = await kb_instance.parse_file(kb_id, file_id, operator_id)
+        if (result.get("processing_params") or {}).get("use_as_viral_reference") is True:
+            from sqlalchemy import select
+            from yuxi.services.viral_document_service import schedule_reference_file
+            from yuxi.storage.postgres.manager import pg_manager
+            from yuxi.storage.postgres.models_business import User
+
+            async with pg_manager.get_async_session_context() as db:
+                user = (await db.execute(select(User).where(
+                    User.uid == (operator_id or result.get("updated_by") or result.get("created_by")),
+                    User.is_deleted == 0,
+                ))).scalar_one()
+                try:
+                    result["reference_preparation"] = await schedule_reference_file(db, user, kb_id, file_id)
+                except Exception as exc:
+                    logger.exception("文件解析成功，但参考准备触发失败")
+                    result["reference_preparation"] = {"status": "failed", "error_message": str(exc)}
+        return result
 
     async def index_file(
         self, kb_id: str, file_id: str, operator_id: str | None = None, params: dict | None = None

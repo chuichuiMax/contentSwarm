@@ -35,6 +35,10 @@ export interface FillableField {
       letterSpacing?: number;
       lineHeight?: number | { mode: "auto" | "multiple" | "absolute"; value: number };
     }>;
+    /** Complete renderer-facing snapshots restored when the template is instantiated. */
+    paragraphs?: Array<{ style: Record<string, unknown>; runs: Array<{ style: Record<string, unknown> }> }>;
+    box?: Record<string, unknown>;
+    textEffects?: unknown[];
   };
 }
 

@@ -334,7 +334,6 @@ export function DashboardApp({ view }: { view: DashboardView }) {
   const [sortBy, setSortBy] = useState<"recent" | "name">("recent");
   const [typeFilter, setTypeFilter] = useState<string>("all");
   // Template gallery filters.
-  const [tplCategory, setTplCategory] = useState<string | null>(null);
   const [tplCollection, setTplCollection] = useState<string | null>(null);
   const [pptxTemplateOpen, setPptxTemplateOpen] = useState(false); // F40 E13
   const [tplRefresh, setTplRefresh] = useState(0); // bump to re-fetch the template shelf
@@ -401,8 +400,7 @@ export function DashboardApp({ view }: { view: DashboardView }) {
     };
   }, [view, activeWorkspaceId]);
 
-  // Template gallery: load this workspace's collections, and reload templates
-  // whenever the category/collection filter changes.
+  // Template gallery: load this workspace's collections.
   useEffect(() => {
     if (view !== "templates" || !activeWorkspaceId) return;
     let cancelled = false;
@@ -415,8 +413,7 @@ export function DashboardApp({ view }: { view: DashboardView }) {
     };
   }, [view, activeWorkspaceId]);
 
-  // Collection filtering is server-side (scoped query); category filtering is
-  // client-side so the chip set stays stable as one is selected.
+  // Collection filtering is server-side (scoped query).
   useEffect(() => {
     if (view !== "templates" || !activeWorkspaceId) return;
     let cancelled = false;
@@ -434,20 +431,17 @@ export function DashboardApp({ view }: { view: DashboardView }) {
     };
   }, [view, activeWorkspaceId, tplCollection, tplRefresh]);
 
-  // Categories present across the loaded templates, for the filter chips.
   const templateZone = router.query.zone === "xiaohongshu" ? "xiaohongshu" : null;
   const zoneTemplates = templateZone
     ? templates.filter((t) => isTemplateInZone(t, templateZone))
     : templates;
-  const templateCategories = Array.from(
-    new Set(zoneTemplates.flatMap((t) => t.categories ?? [])),
-  ).sort();
-  const filteredTemplates = tplCategory
-    ? zoneTemplates.filter((t) => (t.categories ?? []).includes(tplCategory))
-    : zoneTemplates;
+  const filteredTemplates = zoneTemplates;
   const zoneDesigns = templateZone
     ? items.filter((item) => isDesignInZone(item, templateZone)).sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
     : [];
+  // Collections classify templates, not ordinary designs. Once a collection is
+  // selected, keep the result area scoped to templates in that collection.
+  const visibleZoneDesigns = tplCollection ? [] : zoneDesigns;
   // Recents sort (client-side): last edited or name. Shared by Home + Favorites.
   const bySort = (a: HomeItem, b: HomeItem) =>
     sortBy === "name" ? a.title.localeCompare(b.title) : new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
@@ -570,7 +564,12 @@ export function DashboardApp({ view }: { view: DashboardView }) {
     try {
       const file = parseHycFile(await readFileText(f));
       const title = importedTitle(file, f.name);
-      await oc.saveAsTemplate({ workspaceId: activeWorkspaceId, file, title, visibility: "workspace" });
+      const collectionId = tplCollection;
+      if (!collectionId) {
+        toast.error("请选择模板分类，或先在模板页面新建一个分类。");
+        return;
+      }
+      await oc.saveAsTemplate({ workspaceId: activeWorkspaceId, file, title, visibility: "workspace", collectionId });
       // Refresh with the SAME scope the Templates view loads under (workspace +
       // active collection), so the new card appears without collapsing the
       // view's scoping to an unfiltered global list.
@@ -1227,25 +1226,12 @@ export function DashboardApp({ view }: { view: DashboardView }) {
                   }}
                 />
                 <span className="flex-1" />
-                {collections.length > 0 && (
-                  <select
-                    value={tplCollection ?? ""}
-                    aria-label={tr("dashboard.filter_by_collection")}
-                    onChange={(e) => setTplCollection(e.target.value || null)}
-                    className="h-8 rounded-lg border border-neutral-200 bg-surface px-2 text-xs text-neutral-600 outline-none focus:border-brand-400"
-                  >
-                    <option value="">{tr("dashboard.all_collections")}</option>
-                    {collections.map((c) => (
-                      <option key={c.id} value={c.id}>{c.name}</option>
-                    ))}
-                  </select>
-                )}
               </div>
               {templateZone && (
                 <div className="mb-4 flex items-center gap-2 rounded-xl border border-brand-200 bg-brand-50 px-3 py-2 text-sm text-brand-ink">
                   <LayoutTemplate size={16} />
                   <span className="font-semibold">{tr("dashboard.xiaohongshu_template_zone")}</span>
-                  <span className="text-brand-700">{tr("dashboard.designs")} {zoneDesigns.length} · {tr("dashboard.templates")} {filteredTemplates.length}</span>
+                  <span className="text-brand-700">{tr("dashboard.designs")} {visibleZoneDesigns.length} · {tr("dashboard.templates")} {filteredTemplates.length}</span>
                   <span className="flex-1" />
                   <button
                     onClick={() => void router.push(dashboardPath("templates"))}
@@ -1255,37 +1241,35 @@ export function DashboardApp({ view }: { view: DashboardView }) {
                   </button>
                 </div>
               )}
-              {/* Category filter chips (FR-2): flat, bordered, with a tinted active
-                  state consistent with the rail and the grid/list controls. */}
-              {templateCategories.length > 0 && (
-                <div className="mb-4 flex flex-wrap gap-2">
+              <div className="mb-4 flex flex-wrap gap-2" aria-label={tr("dashboard.filter_by_collection")}>
+                <button
+                  type="button"
+                  onClick={() => setTplCollection(null)}
+                  className={`rounded-lg border px-3 py-1 text-sm transition ${tplCollection === null ? "border-brand-200 bg-brand-50 text-brand-ink" : "border-neutral-200 bg-surface text-neutral-600 hover:bg-neutral-50"}`}
+                >
+                  {tr("dashboard.all")}
+                </button>
+                {collections.map((collection) => (
                   <button
-                    onClick={() => setTplCategory(null)}
-                    className={`rounded-lg border px-3 py-1 text-sm transition ${tplCategory === null ? "border-brand-200 bg-brand-50 text-brand-ink" : "border-neutral-200 bg-surface text-neutral-600 hover:bg-neutral-50"}`}
+                    type="button"
+                    key={collection.id}
+                    onClick={() => setTplCollection(collection.id)}
+                    className={`rounded-lg border px-3 py-1 text-sm transition ${tplCollection === collection.id ? "border-brand-200 bg-brand-50 text-brand-ink" : "border-neutral-200 bg-surface text-neutral-600 hover:bg-neutral-50"}`}
                   >
-                    {tr("dashboard.all")}
+                    {collection.name}
                   </button>
-                  {templateCategories.map((c) => (
-                    <button
-                      key={c}
-                      onClick={() => setTplCategory(c)}
-                      className={`rounded-lg border px-3 py-1 text-sm capitalize transition ${tplCategory === c ? "border-brand-200 bg-brand-50 text-brand-ink" : "border-neutral-200 bg-surface text-neutral-600 hover:bg-neutral-50"}`}
-                    >
-                      {c}
-                    </button>
-                  ))}
-                </div>
-              )}
-              {templateZone && zoneDesigns.length > 0 && (
+                ))}
+              </div>
+              {templateZone && visibleZoneDesigns.length > 0 && (
                 <div className="mb-6">
-                  <h3 className="mb-3 text-xs font-bold uppercase tracking-wide text-neutral-400">{tr("dashboard.designs")} ({zoneDesigns.length})</h3>
-                  <ul className="grid grid-cols-2 gap-5 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">{zoneDesigns.map((item) => renderCard(item))}</ul>
+                  <h3 className="mb-3 text-xs font-bold uppercase tracking-wide text-neutral-400">{tr("dashboard.designs")} ({visibleZoneDesigns.length})</h3>
+                  <ul className="grid grid-cols-2 gap-5 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">{visibleZoneDesigns.map((item) => renderCard(item))}</ul>
                 </div>
               )}
               {templateZone && filteredTemplates.length > 0 && (
                 <h3 className="mb-3 text-xs font-bold uppercase tracking-wide text-neutral-400">{tr("dashboard.templates")} ({filteredTemplates.length})</h3>
               )}
-              {filteredTemplates.length === 0 && zoneDesigns.length === 0 ? (
+              {filteredTemplates.length === 0 && visibleZoneDesigns.length === 0 ? (
                 <EmptyState message={tr("dashboard.no_templates_yet_open_a_design_and_use_save")} />
               ) : filteredTemplates.length > 0 ? (
                 <ul className="grid grid-cols-2 gap-5 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">

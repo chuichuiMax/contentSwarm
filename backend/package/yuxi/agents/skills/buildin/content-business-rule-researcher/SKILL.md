@@ -14,5 +14,6 @@ description: 按已锁定内容策略检索品牌业务事实与平台业务规�
 - 用于标题时，`metadata.title_formula_code` 必须逐字复制 `payload.strategy_snapshot.title_formula.code`；用于正文时，`metadata.body_formula_code` 必须逐字复制 `payload.strategy_snapshot.body_formula.code`，`metadata.formula_section` 必须逐字选自 `payload.strategy_snapshot.body_formula.structure_schema`。禁止填写公式名称、版本 ID 或自行改写段落名。
 - 不得用其他客户案例覆盖当前任务变量，不得把通用规则改写成当前项目结果。
 - 新证据必须使用检索结果原始 `source_id`，并使用新的 Evidence ID；现有 Evidence 只能读取，不能重复提交。
+- 提交的是 EvidenceDraft：仅填写结果工具 schema 声明的字段，不携带现有证据中的 created_at、updated_at、privacy_status 等字段。段落名只从 structure_schema 数组逐字复制，不从参考案例或 source_content 中推导简称。
 - 没有合适事实时提交空列表，并在 `unresolved_questions` 说明原因，不得为了引用而硬塞资料。
 - 两次检索结束后立即严格提交一次 `BusinessRuleEvidenceCollectionResultV1`，不生成标题、正文或爆款结构。

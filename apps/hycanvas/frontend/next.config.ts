@@ -46,8 +46,8 @@ const nextConfig: NextConfig = {
         async rewrites() {
           return [
             // ContentFlow opens the managed-auth redemption URL on the public
-            // frontend origin. Proxy that one same-origin /api path to the Go
-            // dev server; normal SDK traffic still uses NEXT_PUBLIC_BACKEND_URL.
+            // frontend origin. Keep all browser API traffic on this same
+            // origin so integration auth cookies are sent consistently.
             { source: "/api/:path*", destination: `${process.env.HYCANVAS_DEV_BACKEND_URL || "http://127.0.0.1:8005"}/api/:path*` },
             { source: "/editor/:id", destination: "/editor" },
             { source: "/shared/:token", destination: "/shared" },

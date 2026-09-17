@@ -5,6 +5,7 @@ from typing import Any
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from yuxi.storage.postgres.models_content import (
     ContentArtifact,
@@ -15,6 +16,9 @@ from yuxi.storage.postgres.models_content import (
     ContentCoverJob,
     ContentCoverPosterTemplate,
     ContentTask,
+    ContentMaterialUsage,
+    ContentMaterialCategory,
+    ContentMaterialLibraryItem,
 )
 from yuxi.utils.datetime_utils import utc_now_naive
 
@@ -194,12 +198,54 @@ class ContentCoverRepository:
             query = query.with_for_update()
         return (await self.db.execute(query)).scalar_one_or_none()
 
+    @staticmethod
+    def asset_access(owner_uid: str, allow_material_use: bool):
+        own = ContentCoverAsset.owner_uid == owner_uid
+        if not allow_material_use:
+            return own
+        from yuxi.repositories.material_library_repository import MaterialLibraryRepository
+
+        shared = (
+            select(ContentMaterialLibraryItem.id)
+            .join(
+                ContentMaterialCategory,
+                MaterialLibraryRepository.category_join(),
+            )
+            .where(
+                ContentMaterialLibraryItem.asset_id == ContentCoverAsset.id,
+                ContentMaterialLibraryItem.deleted_at.is_(None),
+                ContentMaterialLibraryItem.status == "enabled",
+                ContentMaterialCategory.visibility == "enterprise",
+            )
+            .correlate(ContentCoverAsset)
+            .exists()
+        )
+        used = (
+            select(ContentMaterialUsage.asset_id)
+            .where(
+                ContentMaterialUsage.asset_id == ContentCoverAsset.id,
+                ContentMaterialUsage.user_uid == owner_uid,
+            )
+            .correlate(ContentCoverAsset)
+            .exists()
+        )
+        return or_(own, shared, used)
+
+    async def retain_material_use(self, asset_ids: list[str], owner_uid: str):
+        # 调用方已校验所选素材，仍在这里校验可读权限，不能凭任意 ID 建立授权。
+        assets = await self.get_assets_for_user(list(set(asset_ids)), owner_uid, allow_material_use=True)
+        if len(assets) != len(set(asset_ids)):
+            raise ValueError("素材不存在或无权使用")
+        values = [{"asset_id": asset.id, "user_uid": owner_uid} for asset in assets if asset.owner_uid != owner_uid]
+        if values:
+            await self.db.execute(pg_insert(ContentMaterialUsage).values(values).on_conflict_do_nothing())
+
     async def get_asset_for_user(
-        self, asset_id: str, owner_uid: str, *, for_update: bool = False
+        self, asset_id: str, owner_uid: str, *, for_update: bool = False, allow_material_use: bool = False
     ) -> ContentCoverAsset | None:
         query = select(ContentCoverAsset).where(
             ContentCoverAsset.id == asset_id,
-            ContentCoverAsset.owner_uid == owner_uid,
+            self.asset_access(owner_uid, allow_material_use),
             ContentCoverAsset.deleted_at.is_(None),
         )
         if for_update:
@@ -212,12 +258,13 @@ class ContentCoverRepository:
         owner_uid: str,
         *,
         for_update: bool = False,
+        allow_material_use: bool = False,
     ) -> list[ContentCoverAsset]:
         if not asset_ids:
             return []
         query = select(ContentCoverAsset).where(
             ContentCoverAsset.id.in_(asset_ids),
-            ContentCoverAsset.owner_uid == owner_uid,
+            self.asset_access(owner_uid, allow_material_use),
             ContentCoverAsset.deleted_at.is_(None),
         )
         if for_update:

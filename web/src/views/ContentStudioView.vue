@@ -2,10 +2,13 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
+import ContentPhotoComposition from '@/components/content/ContentPhotoComposition.vue'
 import {
   ArrowLeft,
   BookOpenCheck,
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
   CircleAlert,
   Clock3,
   Copy,
@@ -14,7 +17,6 @@ import {
   Folder,
   FileText,
   FolderOpen,
-  History,
   Image,
   LayoutTemplate,
   LoaderCircle,
@@ -22,20 +24,19 @@ import {
   Play,
   RefreshCw,
   Save,
-  ScanText,
   Send,
-  Settings2,
   ShieldCheck,
   Sparkles,
   Tags,
-  UserRoundCog,
   WandSparkles,
   X,
   ZoomIn
 } from 'lucide-vue-next'
 import AgentInputArea from '@/components/AgentInputArea.vue'
+import ContentStudioToolbar from '@/components/content/ContentStudioToolbar.vue'
 import ContentOcrDrawer from '@/components/content/ContentOcrDrawer.vue'
 import ContentWorkflowStrategyPanel from '@/components/content/ContentWorkflowStrategyPanel.vue'
+import ContentStrategyDecision from '@/components/content/ContentStrategyDecision.vue'
 import XiaohongshuAccountPublishModal from '@/components/content/XiaohongshuAccountPublishModal.vue'
 import MarkdownPreview from '@/components/common/MarkdownPreview.vue'
 import { contentApi } from '@/apis/content_api'
@@ -51,7 +52,8 @@ import {
   buildContentNarrativeStream,
   buildKnowledgeEvidenceGroups,
   buildContentStrategyPresentation,
-  buildContentWorkflowGroups
+  buildContentWorkflowGroups,
+  findContentStrategyNarrativeAnchor
 } from '@/utils/contentWorkflowPresentation'
 
 const route = useRoute()
@@ -62,9 +64,10 @@ const userStore = useUserStore()
 const stage = ref(1)
 const creation = reactive({
   industry_template_id: '',
-  mode: window.matchMedia('(max-width: 800px)').matches ? 'quick' : 'quick',
-  creation_mode: 'original',
+  mode: 'pro',
+  creation_mode: 'viral_rewrite',
   content_goal: '',
+  content_type_code: undefined,
   name: ''
 })
 const formValues = reactive({})
@@ -73,11 +76,14 @@ const selectedTitleId = ref('')
 const selectedTitleFormulaCode = ref('')
 const selectedBodyFormulaCode = ref('')
 const selectedCoverAssetId = ref('')
+let autoResumedCoverKey = ''
 const confirmedEvidenceIds = ref([])
 const approvalNote = ref('')
 const modelSpec = ref('')
 const editor = reactive({ title: '', body: '', topics: [] })
 const aiEditInstruction = ref('')
+const pendingAiEdit = ref(null)
+const aiEditHistoryElement = ref(null)
 const versionDrawerOpen = ref(false)
 const resultDetailOpen = ref(false)
 const resultPreviewTab = ref('cover')
@@ -88,15 +94,50 @@ const expandedResultIds = ref(new Set())
 const ocrModalOpen = ref(false)
 const coverUrl = ref('')
 const coverLoading = ref(false)
+const resultVersionCoverUrls = ref({})
+const resultVersionCoverLoading = ref({})
+const resultGallerySourceUrls = ref({})
+const resultGallerySourceLoading = ref(false)
+const resultCompositionUrl = ref('')
+const resultCompositionLoading = ref(false)
+const resultGalleryIndex = ref(0)
 const coverCandidateUrls = ref({})
 const coverCandidatesLoading = ref(false)
+const coverCandidates = computed(() => {
+  const interrupt = store.interrupt
+  if (interrupt?.interrupt_type !== 'cover_selection') return []
+  // 历史中断的可选 ID 受旧审核过滤，使用当前任务实际生成成功的资产恢复选择。
+  const job = store.runAudit?.external_wait
+  const assetIds = job?.status === 'succeeded'
+    ? job.result?.asset_ids || []
+    : interrupt.asset_ids || []
+  return assetIds.map(assetId => ({ assetId }))
+})
+const coverSelectionAllowed = computed(() =>
+  coverCandidates.value.some(item => item.assetId === selectedCoverAssetId.value)
+)
 const materialGalleries = ref([])
+const photoLayouts = ref([])
 const activeGalleryId = ref('')
 const galleryImages = ref([])
 const galleryModalOpen = ref(false)
-const pendingImageItemId = ref('')
+const pendingImageItems = ref([])
 const posterTemplates = ref([])
 const selectedImageItemId = ref('')
+const photoComposition = ref(null)
+const compositionSlotIndex = ref(null)
+const compositionInsertIndexes = computed(() => {
+  if (compositionSlotIndex.value === null || !photoComposition.value) return []
+  return [
+    compositionSlotIndex.value,
+    ...photoComposition.value.slots
+      .map((slot, index) => ({ slot, index }))
+      .filter(({ slot, index }) => index !== compositionSlotIndex.value && !slot.image_item_id)
+      .map(({ index }) => index)
+  ]
+})
+const pendingImageLimit = computed(() => compositionSlotIndex.value === null ? 9 : compositionInsertIndexes.value.length)
+let compositionPreviewTimer = null
 const selectedImageGalleryId = ref('')
 const selectedImageSummary = ref(null)
 const selectedImagePreviewUrl = ref('')
@@ -121,7 +162,8 @@ const hycanvasFields = reactive({})
 const hycanvasCreating = ref(false)
 const hycanvasDesign = ref(null)
 const hycanvasImageFile = ref(null)
-const workflowStreamElement = ref(null)
+const studioPageElement = ref(null)
+const followWorkflowOutput = ref(true)
 const accumulatedWorkflowNarrative = ref([])
 const streamedWorkflowNarrative = ref('')
 const posterTemplateSyncIntervalMs = 10_000
@@ -129,6 +171,9 @@ let draftSaveTimer = null
 let posterTemplateSyncTimer = null
 let workflowNarrativeTimer = null
 let coverLoadGeneration = 0
+let resultVersionCoverGeneration = 0
+let resultGalleryLoadGeneration = 0
+let resultCompositionGeneration = 0
 let coverCandidateLoadGeneration = 0
 let materialPreviewGeneration = 0
 let selectedImagePreviewGeneration = 0
@@ -144,7 +189,9 @@ const activeMaterialGalleryParent = computed(() => (
   materialGalleryMap.value.get(activeMaterialGallery.value?.parent_id) || null
 ))
 const activeMaterialGalleryChildren = computed(() => (
-  materialGalleries.value.filter((item) => item.parent_id === activeGalleryId.value)
+  activeGalleryId.value
+    ? materialGalleries.value.filter((item) => item.parent_id === activeGalleryId.value)
+    : rootMaterialGalleries.value
 ))
 const activeMaterialGalleryPath = computed(() => (
   activeMaterialGalleryParent.value
@@ -159,14 +206,78 @@ const selectedHyCanvasTemplate = computed(() =>
   hycanvasTemplates.value.find((item) => item.id === selectedHyCanvasTemplateId.value) || null
 )
 const hasViralReference = computed(() => hasSelectedViralReference(store.artifact))
+const resultVisualMaterial = computed(() => (
+  store.artifact?.runtime_config_snapshot?.visual_material ||
+  store.task?.runtime_config_snapshot?.visual_material ||
+  store.task?.brief?.visual_material ||
+  {}
+))
+const resultPhotoComposition = computed(() => {
+  const composition = resultVisualMaterial.value?.photo_composition
+  return composition?.slots?.length ? composition : null
+})
+const resultGallerySourceIds = computed(() => {
+  if (resultPhotoComposition.value) {
+    return [...new Set(resultPhotoComposition.value.slots.map(slot => slot.image_item_id).filter(Boolean))]
+  }
+  const visual = resultVisualMaterial.value
+  const selectedIds = visual.photo_composition?.slots
+    ?.map(slot => slot.image_item_id)
+    .filter(Boolean) || [visual.image_item_id].filter(Boolean)
+  const uniqueIds = [...new Set(selectedIds)]
+  return store.artifact?.cover_asset_id
+    ? uniqueIds.filter(id => id !== visual.image_item_id)
+    : uniqueIds
+})
+const resultGalleryItems = computed(() => {
+  const items = []
+  if (store.artifact?.cover_asset_id) {
+    items.push({
+      id: `cover:${store.artifact.cover_asset_id}`,
+      label: '生成封面',
+      url: coverUrl.value,
+      loading: coverLoading.value
+    })
+  }
+  if (resultPhotoComposition.value) {
+    items.push({
+      id: 'composition',
+      label: '图片组合',
+      url: resultCompositionUrl.value,
+      loading: resultCompositionLoading.value
+    })
+  } else {
+    resultGallerySourceIds.value.forEach((id, index) => {
+      items.push({
+        id: `material:${id}`,
+        label: `内容图片 ${index + 1}`,
+        url: resultGallerySourceUrls.value[id] || '',
+        loading: resultGallerySourceLoading.value && !resultGallerySourceUrls.value[id]
+      })
+    })
+  }
+  return items
+})
+const currentResultGalleryItem = computed(() => resultGalleryItems.value[resultGalleryIndex.value] || null)
+
 
 watch(
   () => store.artifact?.id,
   () => {
     resultPreviewTab.value = 'cover'
+    resultGalleryIndex.value = 0
+    pendingAiEdit.value = null
     viralReference.value = null
   }
 )
+
+watch(resultDetailOpen, open => {
+  if (open) resultGalleryIndex.value = 0
+})
+
+watch(() => resultGalleryItems.value.length, count => {
+  if (resultGalleryIndex.value >= count) resultGalleryIndex.value = Math.max(0, count - 1)
+})
 
 const suggestedHyCanvasValue = (field) => {
   const label = field.label || ''
@@ -280,30 +391,31 @@ const createHyCanvasDesign = async () => {
   }
 }
 
-const testFormDefaults = {
-  decoration: {
-    brand_name: '杭州栖居空间设计',
-    audience: ['杭州准备改善型装修的三口之家'],
-    pain: ['89㎡空间收纳不足', '厨房动线拥挤', '担心预算失控'],
-    advantage: ['设计施工一体化', '节点验收留档', '主材报价透明'],
-    project_type: '三室两厅一卫',
-    area: '89㎡',
-    budget: '硬装预算18万元',
-    duration: '预计工期90天',
-    craft_and_materials:
-      '全屋定制柜采用ENF级板材，水电管线分色布置，防水完成后进行48小时闭水试验，各节点验收后留存影像记录。',
-    owner_pain:
-      '入户和餐厅缺少集中收纳，厨房操作台不足，儿童房需要同时满足学习与储物。',
-    project_result:
-      '现场复尺后通过玄关柜、餐边柜和儿童房组合柜增加12㎡收纳空间，厨房动线调整为洗、切、炒顺序。'
-  }
-}
-
 const taskId = computed(() => route.params.taskId)
+const creationTemplates = computed(() => store.templates.filter((item) => item.slug === 'decoration'))
 const selectedTemplate = computed(() =>
   store.templates.find((item) => item.id === creation.industry_template_id)
 )
 const selectedIndustrySlug = computed(() => store.template?.slug || selectedTemplate.value?.slug || '')
+const needsContentDirection = computed(() => selectedTemplate.value?.strategy_mode === 'direction_scoped')
+const selectedIndustryPack = computed(() => (store.bootstrap?.industry_packs || []).find(item => item.slug === selectedIndustrySlug.value && item.status === 'published'))
+const scopedDirectionRules = computed(() => (store.ruleBundle?.combination_rules || []).filter((item) => {
+  const industryScope = item.industry_scope || []
+  const goalScope = item.content_goal_codes || []
+  return item.enabled !== false
+    && (!industryScope.length || industryScope.includes(selectedIndustrySlug.value))
+    && (!goalScope.length || goalScope.includes(creation.content_goal))
+}))
+const scopedDirectionCodes = computed(() => new Set(
+  scopedDirectionRules.value.flatMap(item => item.content_type_codes || [])
+))
+const directionOptions = computed(() => (store.ruleBundle?.content_types || [])
+  .filter(item => item.enabled !== false && (
+    scopedDirectionCodes.value.size
+      ? scopedDirectionCodes.value.has(item.code)
+      : (item.supported_goals || []).includes(creation.content_goal)
+  ))
+  .map(item => ({ ...item, name: selectedIndustryPack.value?.content_type_aliases?.[item.code] || item.name })))
 const activeFields = computed(() => {
   if (!store.task) {
     if (!selectedTemplate.value) return []
@@ -381,6 +493,10 @@ const workflowStrategyPresentation = computed(() =>
     store.artifact?.strategy_snapshot || store.task?.strategy || {}
   )
 )
+const workflowEvidenceOnlyPresentation = computed(() => ({
+  ...workflowStrategyPresentation.value,
+  formulaCodes: []
+}))
 const workflowEvidenceUsageSnapshot = computed(() => {
   const persisted = store.artifact?.evidence_usage_snapshot
   if (persisted?.items?.length) return persisted
@@ -404,6 +520,23 @@ const activeWorkflowNarrative = computed(() =>
 const activeWorkflowNarrativeText = computed(() =>
   accumulatedWorkflowNarrative.value.join('\n\n')
 )
+const workflowStrategyNarrativeAnchor = ref(null)
+const workflowStrategyPanelVisible = computed(
+  () =>
+    workflowStrategyPresentation.value.formulaCodes.length > 0 &&
+    workflowStrategyNarrativeAnchor.value !== null &&
+    streamedWorkflowNarrative.value.length >= workflowStrategyNarrativeAnchor.value
+)
+const streamedWorkflowNarrativeBeforeStrategy = computed(() => {
+  const anchor = workflowStrategyNarrativeAnchor.value
+  if (anchor === null) return streamedWorkflowNarrative.value
+  return streamedWorkflowNarrative.value.slice(0, anchor)
+})
+const streamedWorkflowNarrativeAfterStrategy = computed(() => {
+  const anchor = workflowStrategyNarrativeAnchor.value
+  if (anchor === null || streamedWorkflowNarrative.value.length <= anchor) return ''
+  return streamedWorkflowNarrative.value.slice(anchor).trimStart()
+})
 const workflowNarrativeActive = computed(
   () =>
     streamedWorkflowNarrative.value.length < activeWorkflowNarrativeText.value.length ||
@@ -452,8 +585,8 @@ const aiEditReady = computed(
 const aiEditPlaceholder = computed(() =>
   aiEditReady.value ? '告诉 AI 需要怎样调整标题、正文或话题' : '工作流成功完成后才能修改内容'
 )
-const aiEditHistory = computed(() =>
-  [...store.versions]
+const aiEditHistory = computed(() => {
+  const history = [...store.versions]
     .reverse()
     .flatMap((version) => {
       const metadata = (version.edit_diff_snapshot || []).find((item) => item.type === 'ai_edit')
@@ -467,7 +600,23 @@ const aiEditHistory = computed(() =>
         }
       ]
     })
-)
+  if (pendingAiEdit.value) {
+    history.push(
+      {
+        id: `${pendingAiEdit.value.id}-user`,
+        role: 'user',
+        content: pendingAiEdit.value.instruction
+      },
+      {
+        id: `${pendingAiEdit.value.id}-assistant`,
+        role: 'assistant',
+        status: pendingAiEdit.value.status,
+        content: pendingAiEdit.value.message
+      }
+    )
+  }
+  return history
+})
 const completionResults = computed(() => {
   const versions = [...store.versions]
   if (
@@ -504,6 +653,12 @@ const resultLocation = computed(() => {
   return String(value || '').trim()
 })
 const resultTime = (item) => formatDateTime(item.created_at || store.task?.updated_at)
+const resultCoverUrl = (item) => (
+  item.isCurrent ? coverUrl.value : resultVersionCoverUrls.value[item.id] || ''
+)
+const resultCoverLoading = (item) => (
+  item.isCurrent ? coverLoading.value : Boolean(resultVersionCoverLoading.value[item.id])
+)
 const isResultExpanded = (id) => expandedResultIds.value.has(id)
 const toggleResultExpanded = (id) => {
   const next = new Set(expandedResultIds.value)
@@ -551,12 +706,9 @@ const initializeFormValues = () => {
   const hasSavedValues = Object.values(saved).some(
     (value) => value !== undefined && value !== null && value !== '' && (!Array.isArray(value) || value.length)
   )
-  const defaults = hasSavedValues
-    ? {}
-    : testFormDefaults[store.template?.slug || selectedTemplate.value?.slug] || {}
   activeFields.value.forEach((field) => {
-    if (hasSavedValues && saved[field.key] !== undefined) formValues[field.key] = saved[field.key]
-    else if (defaults[field.key] !== undefined) formValues[field.key] = defaults[field.key]
+    if (field.type === 'channel') formValues[field.key] = store.task?.channel_profile_version_id || ''
+    else if (hasSavedValues && saved[field.key] !== undefined) formValues[field.key] = saved[field.key]
     else if (field.type === 'tags') formValues[field.key] = []
     else formValues[field.key] = ''
   })
@@ -597,7 +749,10 @@ const loadHyCanvasCompositePreview = async (imageItemId, templateId) => {
   if (hycanvasCompositePreviewUrl.value) URL.revokeObjectURL(hycanvasCompositePreviewUrl.value)
   hycanvasCompositePreviewUrl.value = ''
   hycanvasCompositePreviewLoading.value = Boolean(imageItemId && templateId)
-  if (!imageItemId || !templateId) return
+  if (!imageItemId || !templateId) {
+    hycanvasCompositePreviewLoading.value = false
+    return
+  }
 
   try {
     const file = await contentApi.getHyCanvasCompositePreview(templateId, imageItemId)
@@ -630,6 +785,7 @@ const initializeVisualSelection = () => {
   selectedPosterTemplateId.value =
     store.task?.selected_poster_template_id || saved.poster_template_id || ''
   selectedHyCanvasTemplateId.value = saved.hycanvas_template_id || ''
+  photoComposition.value = saved.photo_composition || null
 }
 
 const loadGalleryImages = async () => {
@@ -690,21 +846,84 @@ const loadGalleryImages = async () => {
 }
 
 const openGallery = async (galleryId) => {
+  const openingModal = !galleryModalOpen.value
   activeGalleryId.value = galleryId
-  pendingImageItemId.value = selectedImageItemId.value
+  if (openingModal) {
+    const selectedIds = compositionSlotIndex.value === null
+      ? photoComposition.value?.slots.map(slot => slot.image_item_id).filter(Boolean) || [selectedImageItemId.value].filter(Boolean)
+      : [photoComposition.value.slots[compositionSlotIndex.value].image_item_id].filter(Boolean)
+    pendingImageItems.value = [...new Set(selectedIds)].map(id => (
+      id === selectedImageItemId.value && selectedImageSummary.value
+        ? selectedImageSummary.value
+        : { id }
+    ))
+  }
   galleryModalOpen.value = true
   await loadGalleryImages()
 }
 
-const confirmGalleryImage = () => {
-  selectedImageItemId.value = pendingImageItemId.value
-  const selectedItem = galleryImages.value.find((item) => item.id === pendingImageItemId.value)
-  if (selectedItem) {
-    selectedImageGalleryId.value = activeGalleryId.value
-    selectedImageSummary.value = selectedItem
-  } else if (!pendingImageItemId.value) {
+const togglePendingImage = (item) => {
+  const index = pendingImageItems.value.findIndex(selected => selected.id === item.id)
+  if (index !== -1) {
+    pendingImageItems.value = pendingImageItems.value.filter(selected => selected.id !== item.id)
+    return
+  }
+  if (pendingImageItems.value.length >= pendingImageLimit.value) {
+    message.warning(`当前最多选择 ${pendingImageLimit.value} 张图片`)
+    return
+  }
+  pendingImageItems.value = [...pendingImageItems.value, item]
+}
+
+const confirmGalleryImages = () => {
+  if (compositionSlotIndex.value !== null) {
+    const targetIndexes = compositionInsertIndexes.value
+    const replacesPrimary = targetIndexes.some(index => photoComposition.value.slots[index].image_item_id === selectedImageItemId.value)
+    const nextSlots = photoComposition.value.slots.map((slot, index) => {
+      const selectedIndex = targetIndexes.indexOf(index)
+      if (selectedIndex === -1) return slot
+      const selectedId = pendingImageItems.value[selectedIndex]?.id || null
+      return { image_item_id: selectedId, focal_x: 0.5, focal_y: 0.5 }
+    })
+    photoComposition.value = { ...photoComposition.value, slots: nextSlots }
+    if (replacesPrimary && !nextSlots.some(slot => slot.image_item_id === selectedImageItemId.value)) {
+      selectedImageItemId.value = nextSlots.find(slot => slot.image_item_id)?.image_item_id || ''
+      if (!selectedImageItemId.value) photoComposition.value = null
+    }
+    compositionSlotIndex.value = null
+    galleryModalOpen.value = false
+    return
+  }
+  const selectedItems = pendingImageItems.value
+  const primaryItem = selectedItems[0]
+  selectedImageItemId.value = primaryItem?.id || ''
+  if (primaryItem) {
+    selectedImageGalleryId.value = primaryItem.category || selectedImageGalleryId.value
+    selectedImageSummary.value = primaryItem.name
+      ? primaryItem
+      : primaryItem.id === selectedImageSummary.value?.id ? selectedImageSummary.value : null
+  } else {
     selectedImageGalleryId.value = ''
     selectedImageSummary.value = null
+  }
+  if (selectedItems.length > 1) {
+    const currentSlots = new Map(
+      (photoComposition.value?.slots || [])
+        .filter(slot => slot.image_item_id)
+        .map(slot => [slot.image_item_id, slot])
+    )
+    const layout = photoLayouts.value
+      .filter(item => item.cells.length >= selectedItems.length)
+      .sort((left, right) => left.cells.length - right.cells.length)[0]
+    photoComposition.value = {
+      layout_id: layout.id,
+      slots: layout.cells.map((_, index) => {
+        const imageItemId = selectedItems[index]?.id || null
+        return currentSlots.get(imageItemId) || { image_item_id: imageItemId, focal_x: 0.5, focal_y: 0.5 }
+      })
+    }
+  } else {
+    photoComposition.value = null
   }
   galleryModalOpen.value = false
 }
@@ -713,7 +932,14 @@ const clearSelectedGalleryImage = () => {
   selectedImageItemId.value = ''
   selectedImageGalleryId.value = ''
   selectedImageSummary.value = null
+  photoComposition.value = null
 }
+
+const selectCompositionImage = (index) => {
+  compositionSlotIndex.value = index
+  void openGallery('')
+}
+watch(galleryModalOpen, open => { if (!open) compositionSlotIndex.value = null })
 
 const listAllMaterialPosterTemplates = async () => {
   const templates = []
@@ -795,7 +1021,7 @@ const refreshPosterTemplates = async ({ notifySelectionReset = true } = {}) => {
     if (
       selectedPosterTemplateId.value &&
       !nextTemplates.some(
-        (item) => item.poster_template_id === selectedPosterTemplateId.value && item.selectable
+        (item) => item.poster_template_id === selectedPosterTemplateId.value
       )
     ) {
       selectedPosterTemplateId.value = ''
@@ -818,11 +1044,13 @@ const loadVisualMaterials = async () => {
   if (!store.task) return
   materialSelectorLoading.value = true
   try {
-    const [galleryResponse] = await Promise.all([
+    const [galleryResponse, layoutResponse] = await Promise.all([
       materialLibraryApi.listGalleries(selectedIndustrySlug.value),
+      contentApi.getPhotoLayouts(),
       loadHyCanvasTemplates()
     ])
     materialGalleries.value = galleryResponse.galleries || []
+    photoLayouts.value = layoutResponse.layouts || []
     const savedCategoryId =
       store.task?.runtime_config_snapshot?.visual_material?.image_category_id ||
       store.task?.brief?.visual_material?.image_category_id
@@ -845,6 +1073,17 @@ const syncEditor = () => {
   editor.topics = [...(store.artifact?.topics || [])]
 }
 
+const trackWorkflowScroll = () => {
+  const page = studioPageElement.value
+  followWorkflowOutput.value = page.scrollHeight - page.scrollTop - page.clientHeight <= 80
+}
+
+const scrollWorkflowToEnd = () => {
+  if (studioPageElement.value && followWorkflowOutput.value) {
+    studioPageElement.value.scrollTop = studioPageElement.value.scrollHeight
+  }
+}
+
 watch(
   () => store.task,
   (task) => {
@@ -862,9 +1101,7 @@ watch(
     void store.loadVersions()
     if (wasCompleted !== false) return
     await nextTick()
-    if (workflowStreamElement.value) {
-      workflowStreamElement.value.scrollTop = workflowStreamElement.value.scrollHeight
-    }
+    scrollWorkflowToEnd()
   },
   { immediate: true }
 )
@@ -873,8 +1110,10 @@ watch(
   taskId,
   () => {
     window.clearTimeout(workflowNarrativeTimer)
+    followWorkflowOutput.value = true
     accumulatedWorkflowNarrative.value = []
     streamedWorkflowNarrative.value = ''
+    workflowStrategyNarrativeAnchor.value = null
   }
 )
 
@@ -898,11 +1137,7 @@ watch(
     window.clearTimeout(workflowNarrativeTimer)
     if (completed) {
       streamedWorkflowNarrative.value = targetText
-      void nextTick(() => {
-        if (workflowStreamElement.value) {
-          workflowStreamElement.value.scrollTop = workflowStreamElement.value.scrollHeight
-        }
-      })
+      void nextTick(scrollWorkflowToEnd)
       return
     }
     if (!targetText.startsWith(streamedWorkflowNarrative.value)) {
@@ -917,9 +1152,7 @@ watch(
         streamedWorkflowNarrative.value.length + chunkSize
       )
       await nextTick()
-      if (workflowStreamElement.value) {
-        workflowStreamElement.value.scrollTop = workflowStreamElement.value.scrollHeight
-      }
+      scrollWorkflowToEnd()
       workflowNarrativeTimer = window.setTimeout(appendChunk, 18)
     }
     void appendChunk()
@@ -938,11 +1171,36 @@ watch(
     confirmedEvidenceIds.value = ['high_risk_facts', 'strategy_product_facts'].includes(
       interrupt?.interrupt_type
     )
-      ? [...(interrupt.evidence_ids || [])]
+      ? (interrupt.node_id === 'confirm_strategy_prices' ? [] : [...(interrupt.evidence_ids || [])])
       : []
     approvalNote.value = ''
   },
   { deep: true }
+)
+
+watch(
+  () => coverCandidates.value.map((item) => item.assetId).join(','),
+  async (assetKey) => {
+    const interrupt = store.interrupt
+    if (interrupt?.interrupt_type !== 'cover_selection') return
+    const assetIds = assetKey ? assetKey.split(',').filter(Boolean) : []
+    if (assetIds.length !== 1) return
+    const resumeKey = `${interrupt.run_id}:${assetIds[0]}`
+    if (autoResumedCoverKey === resumeKey) return
+    autoResumedCoverKey = resumeKey
+    try {
+      await store.resumeRun({
+        run_id: interrupt.run_id,
+        node_id: interrupt.node_id,
+        expected_state_version: interrupt.expected_state_version,
+        asset_id: assetIds[0]
+      })
+    } catch (error) {
+      autoResumedCoverKey = ''
+      message.error(error.message || '自动确认封面失败')
+    }
+  },
+  { immediate: true }
 )
 
 watch(
@@ -975,10 +1233,184 @@ watch(
 )
 
 watch(
-  () =>
-    store.interrupt?.interrupt_type === 'cover_selection'
-      ? (store.interrupt.asset_ids || []).join('|')
-      : '',
+  [workflowStrategyPresentation, activeWorkflowNarrativeText, workflowNarrativeActivities],
+  ([presentation, narrativeText, activities]) => {
+    if (
+      workflowStrategyNarrativeAnchor.value === null &&
+      presentation.formulaCodes.length
+    ) {
+      workflowStrategyNarrativeAnchor.value =
+        findContentStrategyNarrativeAnchor(
+          activities,
+          workflowNarrativeCodeLabels.value
+        ) ?? narrativeText.length
+    }
+  },
+  { immediate: true, flush: 'post' }
+)
+
+watch(
+  () => completionResults.value
+    .filter(item => !item.isCurrent && item.cover_asset_id)
+    .map(item => `${item.id}:${item.cover_asset_id}`)
+    .join('|'),
+  async () => {
+    const generation = ++resultVersionCoverGeneration
+    Object.values(resultVersionCoverUrls.value).filter(Boolean).forEach(URL.revokeObjectURL)
+    resultVersionCoverUrls.value = {}
+    resultVersionCoverLoading.value = {}
+
+    const items = completionResults.value.filter(item => !item.isCurrent && item.cover_asset_id)
+    if (!items.length) return
+
+    resultVersionCoverLoading.value = Object.fromEntries(items.map(item => [item.id, true]))
+    const entries = await Promise.all(items.map(async item => {
+      try {
+        const response = await contentApi.getCoverAssetFile(item.cover_asset_id)
+        return [item.id, URL.createObjectURL(await response.blob())]
+      } catch {
+        return [item.id, '']
+      }
+    }))
+
+    if (generation !== resultVersionCoverGeneration) {
+      entries.map(([, url]) => url).filter(Boolean).forEach(URL.revokeObjectURL)
+      return
+    }
+    resultVersionCoverUrls.value = Object.fromEntries(entries)
+    resultVersionCoverLoading.value = Object.fromEntries(items.map(item => [item.id, false]))
+  },
+  { immediate: true }
+)
+
+watch(
+  () => resultGallerySourceIds.value.join('|'),
+  async () => {
+    const generation = ++resultGalleryLoadGeneration
+    Object.values(resultGallerySourceUrls.value).filter(Boolean).forEach(URL.revokeObjectURL)
+    resultGallerySourceUrls.value = {}
+    const ids = resultGallerySourceIds.value
+    if (!ids.length) {
+      resultGallerySourceLoading.value = false
+      return
+    }
+    resultGallerySourceLoading.value = true
+    const entries = await Promise.all(ids.map(async id => {
+      try {
+        const response = await materialLibraryApi.getItemThumbnail(id)
+        return [id, URL.createObjectURL(await response.blob())]
+      } catch {
+        return [id, '']
+      }
+    }))
+    if (generation !== resultGalleryLoadGeneration) {
+      entries.map(([, url]) => url).filter(Boolean).forEach(URL.revokeObjectURL)
+      return
+    }
+    resultGallerySourceUrls.value = Object.fromEntries(entries)
+    resultGallerySourceLoading.value = false
+  },
+  { immediate: true }
+)
+
+const loadCompositionImage = (url) => new Promise((resolve, reject) => {
+  const image = new window.Image()
+  image.onload = () => resolve(image)
+  image.onerror = reject
+  image.src = url
+})
+
+const renderResultComposition = async (composition, sourceUrls) => {
+  const slots = composition?.slots || []
+  const cols = 2
+  const rows = Math.max(1, Math.ceil(slots.length / cols))
+  const gap = Math.max(0, Number(composition?.gap) || 0)
+  const images = await Promise.all(slots.map(slot => {
+    const url = sourceUrls[slot.image_item_id]
+    return url ? loadCompositionImage(url) : null
+  }))
+  const canvasWidth = 1200
+  const trackWidth = (canvasWidth - gap) / cols
+  const trackHeight = trackWidth
+  const canvasHeight = Math.max(1, Math.round(trackHeight * rows + gap * (rows - 1)))
+  const canvas = document.createElement('canvas')
+  canvas.width = canvasWidth
+  canvas.height = canvasHeight
+  const context = canvas.getContext('2d')
+  if (!context) throw new Error('无法创建组合图片预览')
+  context.fillStyle = '#f5f6f8'
+  context.fillRect(0, 0, canvasWidth, canvasHeight)
+
+  slots.forEach((slot, index) => {
+    const image = images[index]
+    if (!image) return
+    const x = (index % cols) * (trackWidth + gap)
+    const y = Math.floor(index / cols) * (trackHeight + gap)
+    const width = trackWidth
+    const height = trackHeight
+    const scale = Math.max(width / image.naturalWidth, height / image.naturalHeight)
+    const drawWidth = image.naturalWidth * scale
+    const drawHeight = image.naturalHeight * scale
+    const focalX = Math.min(1, Math.max(0, Number(slot.focal_x) || 0.5))
+    const focalY = Math.min(1, Math.max(0, Number(slot.focal_y) || 0.5))
+    const offsetX = (width - drawWidth) * focalX
+    const offsetY = (height - drawHeight) * focalY
+    context.save()
+    context.beginPath()
+    context.rect(x, y, width, height)
+    context.clip()
+    context.drawImage(image, x + offsetX, y + offsetY, drawWidth, drawHeight)
+    context.restore()
+  })
+  return new Promise((resolve, reject) => {
+    canvas.toBlob(blob => {
+      if (!blob) {
+        reject(new Error('组合图片生成失败'))
+        return
+      }
+      resolve(URL.createObjectURL(blob))
+    }, 'image/png')
+  })
+}
+
+watch(
+  () => [
+    JSON.stringify(resultPhotoComposition.value || null),
+    resultGallerySourceIds.value.join('|'),
+    ...resultGallerySourceIds.value.map(id => resultGallerySourceUrls.value[id] || '')
+  ].join('|'),
+  async () => {
+    const generation = ++resultCompositionGeneration
+    if (resultCompositionUrl.value) URL.revokeObjectURL(resultCompositionUrl.value)
+    resultCompositionUrl.value = ''
+    const composition = resultPhotoComposition.value
+    if (!composition) {
+      resultCompositionLoading.value = false
+      return
+    }
+    if (resultGallerySourceLoading.value || resultGallerySourceIds.value.some(id => !resultGallerySourceUrls.value[id])) {
+      resultCompositionLoading.value = true
+      return
+    }
+    resultCompositionLoading.value = true
+    try {
+      const nextUrl = await renderResultComposition(composition, resultGallerySourceUrls.value)
+      if (generation !== resultCompositionGeneration) {
+        URL.revokeObjectURL(nextUrl)
+        return
+      }
+      resultCompositionUrl.value = nextUrl
+    } catch (error) {
+      if (generation === resultCompositionGeneration) message.warning(error.message || '图片组合预览生成失败')
+    } finally {
+      if (generation === resultCompositionGeneration) resultCompositionLoading.value = false
+    }
+  },
+  { immediate: true }
+)
+
+watch(
+  () => coverCandidates.value.map(item => item.assetId).join('|'),
   async (assetKey) => {
     const generation = ++coverCandidateLoadGeneration
     Object.values(coverCandidateUrls.value).forEach((url) => URL.revokeObjectURL(url))
@@ -1013,16 +1445,24 @@ watch(
   () => creation.industry_template_id,
   () => {
     const template = selectedTemplate.value
+    creation.content_type_code = undefined
     if (template && !creation.content_goal) creation.content_goal = template.default_goal
     if (!store.task) initializeFormValues()
   }
 )
 
 watch(selectedHyCanvasTemplateId, initializeHyCanvasFields)
+watch(directionOptions, (options) => {
+  if (!options.some((item) => item.code === creation.content_type_code)) creation.content_type_code = undefined
+})
 watch(selectedImageItemId, (itemId) => void loadSelectedImagePreview(itemId))
 watch(
   [selectedImageItemId, selectedHyCanvasTemplateId],
-  ([imageItemId, templateId]) => void loadHyCanvasCompositePreview(imageItemId, templateId)
+  ([imageItemId, templateId]) => {
+    window.clearTimeout(compositionPreviewTimer)
+    compositionPreviewTimer = window.setTimeout(() => void loadHyCanvasCompositePreview(imageItemId, templateId), 350)
+  },
+  { deep: true }
 )
 watch(
   () => store.artifact?.hycanvas_design_snapshot,
@@ -1091,7 +1531,7 @@ onMounted(async () => {
       }
     } else {
       store.resetCurrentTask()
-      creation.industry_template_id = store.templates[0]?.id || ''
+      creation.industry_template_id = creationTemplates.value[0]?.id || ''
       creation.content_goal = selectedTemplate.value?.default_goal || 'acquire'
       initializeFormValues()
     }
@@ -1102,11 +1542,15 @@ onMounted(async () => {
 
 const createTask = async () => {
   if (!creation.industry_template_id || !creation.content_goal) {
-    message.warning('请选择行业模板和内容目标')
+    message.warning('装修与家居模板尚未就绪，请刷新后重试')
+    return
+  }
+  if (needsContentDirection.value && !creation.content_type_code) {
+    message.warning('请选择创作类型')
     return
   }
   try {
-    const task = await store.createTask({ ...creation })
+    const task = await store.createTask({ ...creation, creation_mode: 'viral_rewrite' })
     await router.replace(`/content/tasks/${task.id}`)
     initializeFormValues()
     initializeVisualSelection()
@@ -1118,25 +1562,22 @@ const createTask = async () => {
 }
 
 const buildBrief = () => ({
-  brand: { name: formValues.brand_name || '' },
-  audience: formValues.audience || [],
-  business_variables: Object.fromEntries(
-    Object.entries(formValues).filter(
-      ([key]) =>
-        !['brand_name', 'audience', 'persona', 'required_terms', 'forbidden_terms'].includes(key)
-    )
-  ),
-  persona: formValues.persona ? { description: formValues.persona } : {},
-  required_terms: formValues.required_terms || [],
-  forbidden_terms: formValues.forbidden_terms || [],
+  user_request: String(formValues.user_request || '').trim(),
+  brand: {},
+  audience: [],
+  business_variables: {},
+  persona: {},
+  required_terms: [],
+  forbidden_terms: [],
   attachments: [],
   locked_fields: [],
-  form_values: { ...formValues },
+  form_values: { user_request: String(formValues.user_request || '').trim() },
   visual_material: selectedImageItemId.value || selectedHyCanvasTemplateId.value
     ? {
         image_item_id: selectedImageItemId.value || null,
         poster_template_id: null,
-        hycanvas_template_id: selectedHyCanvasTemplateId.value
+        hycanvas_template_id: selectedHyCanvasTemplateId.value,
+        photo_composition: photoComposition.value
       }
     : null
 })
@@ -1150,14 +1591,18 @@ const scheduleBriefSave = () => {
 }
 
 watch(formValues, scheduleBriefSave, { deep: true })
-watch([selectedImageItemId, selectedHyCanvasTemplateId], scheduleBriefSave)
+watch([selectedImageItemId, selectedHyCanvasTemplateId, photoComposition], scheduleBriefSave, { deep: true })
 onBeforeUnmount(() => {
   window.clearTimeout(draftSaveTimer)
+  window.clearTimeout(compositionPreviewTimer)
   window.clearTimeout(workflowNarrativeTimer)
   window.clearInterval(posterTemplateSyncTimer)
   window.removeEventListener('focus', syncPosterTemplatesWhenVisible)
   document.removeEventListener('visibilitychange', syncPosterTemplatesWhenVisible)
   coverLoadGeneration += 1
+  resultVersionCoverGeneration += 1
+  resultGalleryLoadGeneration += 1
+  resultCompositionGeneration += 1
   coverCandidateLoadGeneration += 1
   materialPreviewGeneration += 1
   selectedImagePreviewGeneration += 1
@@ -1165,6 +1610,9 @@ onBeforeUnmount(() => {
   posterPreviewGeneration += 1
   hycanvasTemplateLoadGeneration += 1
   if (coverUrl.value) URL.revokeObjectURL(coverUrl.value)
+  Object.values(resultVersionCoverUrls.value).filter(Boolean).forEach(URL.revokeObjectURL)
+  Object.values(resultGallerySourceUrls.value).filter(Boolean).forEach(URL.revokeObjectURL)
+  if (resultCompositionUrl.value) URL.revokeObjectURL(resultCompositionUrl.value)
   Object.values(coverCandidateUrls.value).forEach((url) => URL.revokeObjectURL(url))
   revokePreviewUrls(materialImageUrls.value)
   if (selectedImagePreviewUrl.value) URL.revokeObjectURL(selectedImagePreviewUrl.value)
@@ -1176,8 +1624,12 @@ onBeforeUnmount(() => {
 })
 
 const compileBrief = async () => {
-  if (!selectedImageItemId.value) {
-    message.warning('请选择一张图库图片作为封面主图')
+  if (!String(formValues.user_request || '').trim()) {
+    message.warning('请填写内容需求')
+    return
+  }
+  if (photoComposition.value?.slots.some(slot => !slot.image_item_id)) {
+    message.warning('请填满图片组合的所有位置')
     return
   }
   if (!selectedHyCanvasTemplateId.value) {
@@ -1190,7 +1642,10 @@ const compileBrief = async () => {
     stage.value = 2
     message.success('业务简报已形成，可启动 V3 内容工作流')
   } catch (error) {
-    message.error(error.message || '请补充必填业务信息')
+    const missingFields = error.response?.data?.detail?.error?.fields
+    message.error(missingFields?.length
+      ? `请补充：${missingFields.map(field => field.label || field.field).join('、')}`
+      : error.message || '请补充必填业务信息')
   }
 }
 
@@ -1254,7 +1709,7 @@ const submitHumanReview = async () => {
       return
     }
     if (store.interrupt?.interrupt_type === 'cover_selection') {
-      if (!selectedCoverAssetId.value) {
+      if (!coverSelectionAllowed.value) {
         message.warning('请选择一张封面')
         return
       }
@@ -1298,12 +1753,27 @@ const saveArtifact = async () => {
   }
 }
 
+const scrollAiEditHistoryToEnd = () => {
+  void nextTick(() => {
+    aiEditHistoryElement.value?.lastElementChild?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+  })
+}
+
 const submitAiEdit = async () => {
   const instruction = aiEditInstruction.value.trim()
   if (!instruction || !aiEditReady.value || store.loading.refining) return
+  const pending = {
+    id: `ai-edit-${Date.now()}`,
+    instruction,
+    status: 'running',
+    message: '正在根据你的要求修改内容...'
+  }
+  aiEditInstruction.value = ''
+  pendingAiEdit.value = pending
+  scrollAiEditHistoryToEnd()
   try {
     const response = await store.aiEditArtifact(instruction, modelSpec.value)
-    aiEditInstruction.value = ''
+    pendingAiEdit.value = null
     syncEditor()
     message.success(response.reply)
   } catch (error) {
@@ -1311,7 +1781,12 @@ const submitAiEdit = async () => {
       await store.loadTask(store.task.id)
       syncEditor()
     }
-    message.error(error.message || 'AI 修改内容失败')
+    const errorMessage = error.message || 'AI 修改内容失败'
+    pendingAiEdit.value = { ...pending, status: 'failed', message: `修改失败：${errorMessage}` }
+    aiEditInstruction.value = instruction
+    message.error(errorMessage)
+  } finally {
+    scrollAiEditHistoryToEnd()
   }
 }
 
@@ -1328,6 +1803,14 @@ const copyResultText = async (value, label) => {
   } catch {
     message.error(`${label}复制失败，请稍后重试`)
   }
+}
+
+const showPreviousResultImage = () => {
+  resultGalleryIndex.value = Math.max(0, resultGalleryIndex.value - 1)
+}
+
+const showNextResultImage = () => {
+  resultGalleryIndex.value = Math.min(resultGalleryItems.value.length - 1, resultGalleryIndex.value + 1)
 }
 
 const openViralReference = async () => {
@@ -1414,28 +1897,27 @@ const openVersions = async () => {
 </script>
 
 <template>
-  <div class="content-studio-page">
+  <div
+    ref="studioPageElement"
+    class="content-studio-page"
+    :class="{ 'studio-production': stage === 2 }"
+    @scroll.passive="trackWorkflowScroll"
+  >
     <header class="studio-header">
       <div>
         <div class="header-kicker">Yuxi Content Strategy Studio</div>
         <h1>{{ store.task?.name || '新建内容任务' }}</h1>
         <p>规则、事实和知识同源，关键节点由人确认。</p>
       </div>
-      <div class="header-actions">
-        <a-button @click="router.push('/content/accounts')"><UserRoundCog :size="16" />账号管理</a-button>
-        <a-button
-          :disabled="!store.task"
-          :title="store.task ? '上传图片并使用 RapidOCR 识别' : '请先创建内容任务'"
-          @click="ocrModalOpen = true"
-        ><ScanText :size="16" />图片识别</a-button>
-        <a-button @click="router.push('/content/history')"><History :size="16" />生产历史</a-button>
-        <a-button v-if="userStore.isAdmin" @click="router.push('/content/admin/rules')">
-          <Settings2 :size="16" />创作规则库
-        </a-button>
-      </div>
     </header>
 
     <main v-if="!store.loading.bootstrap" class="studio-main">
+      <ContentStudioToolbar
+        v-if="stage !== 2 || (!store.currentRun && !store.interrupt)"
+        :has-task="Boolean(store.task)"
+        :is-admin="userStore.isAdmin"
+        @recognize-image="ocrModalOpen = true"
+      />
       <section v-if="stage === 1" class="stage-panel">
         <div class="panel-heading">
           <div><span>阶段 1</span><h2>业务素材与事实简报</h2></div>
@@ -1444,38 +1926,20 @@ const openVersions = async () => {
 
         <template v-if="!store.task">
           <div class="setup-grid">
-            <label class="field-block">
-              <span>使用模式</span>
-              <a-segmented v-model:value="creation.mode" :options="[{ label: '简化版', value: 'quick' }, { label: '专业版', value: 'pro' }]" />
-              <small>简化版由 V3 自动锁定公式；专业版会在人工节点确认公式对。</small>
-            </label>
-            <label class="field-block">
-              <span>创作模式</span>
-              <a-segmented
-                v-model:value="creation.creation_mode"
-                :options="[
-                  { label: '原创模式', value: 'original' },
-                  { label: '爆款仿写', value: 'viral_rewrite' }
-                ]"
-              />
-              <small v-if="creation.creation_mode === 'viral_rewrite'">
-                系统会从爆款库选择一篇最匹配内容，只仿写结构，业务事实仍来自真实知识库。
-              </small>
-              <small v-else>根据锁定公式原创内容，并使用真实知识库补充业务事实。</small>
-            </label>
-            <label class="field-block">
-              <span>内容目标</span>
-              <a-select v-model:value="creation.content_goal" placeholder="请选择内容目标">
-                <a-select-option v-for="goal in store.contentGoals" :key="goal.code" :value="goal.code">
-                  {{ goal.name }} · {{ goal.description }}
-                </a-select-option>
-              </a-select>
-            </label>
+            <div class="field-block">
+              <span id="creation-mode-label">创作模式</span>
+              <div class="creation-mode-options" role="status">
+                <span class="creation-mode-card selected">爆款仿写</span>
+              </div>
+              <small>系统比较已准备的完整文章参考，复用选中结构，业务事实来自本次真实资料。</small>
+            </div>
+            <p v-if="selectedTemplate?.blueprint_first" class="auto-strategy-hint">选择创作类型并填写资料后，系统自动匹配参考结构与创作方式。</p>
+            <p v-else-if="selectedTemplate && !selectedTemplate.blueprint_first">根据本次资料评分选择该行业的公式和创作手法。</p>
           </div>
 
           <div class="template-grid">
             <button
-              v-for="item in store.templates"
+              v-for="item in creationTemplates"
               :key="item.id"
               type="button"
               class="template-card"
@@ -1484,8 +1948,16 @@ const openVersions = async () => {
             >
               <strong>{{ item.name }}</strong>
               <span>{{ item.description }}</span>
-              <small>默认目标：{{ store.contentGoals.find((goal) => goal.code === item.default_goal)?.name }}</small>
             </button>
+          </div>
+
+          <div v-if="needsContentDirection" class="field-block creation-type-field">
+            <span id="creation-type-label">创作类型</span>
+            <a-radio-group v-model:value="creation.content_type_code" aria-labelledby="creation-type-label">
+              <a-radio-button v-for="item in directionOptions" :key="item.code" :value="item.code">
+                {{ item.name }}
+              </a-radio-button>
+            </a-radio-group>
           </div>
 
           <div class="stage-actions">
@@ -1501,52 +1973,29 @@ const openVersions = async () => {
               <div class="mode-row">
                 <span class="mode-badge">{{ isQuickMode ? '简化版' : '专业版' }}</span>
                 <span class="mode-badge">
-                  {{ store.task?.runtime_config_snapshot?.creation_mode === 'viral_rewrite' ? '爆款仿写' : '原创模式' }}
+                  爆款仿写
                 </span>
                 <span>{{ store.template?.name }}</span>
                 <small v-if="saveStatusLabel" :class="{ 'save-error': store.saveStatus === 'error' }">{{ saveStatusLabel }}</small>
               </div>
               <div class="dynamic-form">
-                <label v-for="field in activeFields" :key="field.key" class="field-block">
-                  <span>{{ field.label }}<em v-if="field.required">*</em></span>
-                  <a-input
-                    v-if="field.type === 'text'"
-                    v-model:value="formValues[field.key]"
-                    :placeholder="field.placeholder || `请输入${field.label}`"
-                  />
+                <label class="field-block">
+                  <span>内容需求</span>
                   <a-textarea
-                    v-else-if="field.type === 'textarea'"
-                    v-model:value="formValues[field.key]"
-                    :rows="3"
-                    :placeholder="field.placeholder || `请输入${field.label}`"
-                  />
-                  <a-select
-                    v-else-if="field.type === 'tags'"
-                    v-model:value="formValues[field.key]"
-                    mode="tags"
-                    :token-separators="[',', '，']"
-                    :placeholder="`输入${field.label}后回车`"
+                    v-model:value="formValues.user_request"
+                    :rows="6"
+                    placeholder="请直接描述想要生成的内容、业务信息和特殊要求"
                   />
                 </label>
               </div>
             </div>
-            <aside class="facts-preview">
-              <BookOpenCheck :size="22" />
-              <h3>事实优先</h3>
-              <p>提交后系统会形成 ContentBrief，并把人工输入标准化为带来源的 EvidenceBundle。</p>
-              <ul>
-                <li>数字和结果必须可验证</li>
-                <li>知识库由内容调研 Agent 统一配置</li>
-                <li>规则组合不通过 RAG 判断</li>
-              </ul>
-            </aside>
           </div>
           <section class="visual-material-card">
             <div class="visual-material-heading">
               <div>
                 <span class="section-kicker">视觉素材</span>
                 <h3>选择图库与封面模板</h3>
-                <p>图库图片将作为 HyCanvas 封面主图；内容生成并审核通过后，系统会按所选模板生成可继续编辑的封面。</p>
+                <p>可选图库图片作为 HyCanvas 封面主图；内容生成并审核通过后，系统会按所选模板生成可继续编辑的封面。</p>
               </div>
               <a-button @click="router.push('/materials/images')">
                 <FolderOpen :size="15" />管理素材库
@@ -1556,8 +2005,8 @@ const openVersions = async () => {
             <a-spin :spinning="materialSelectorLoading">
               <div class="material-selector-block">
                 <div class="material-selector-title">
-                  <div><Image :size="18" /><strong>选择图库图片</strong><em>必选 · 单选</em></div>
-                  <small>从当前账号的图库中选择一张已启用图片，作为 HyCanvas 封面主图。</small>
+                  <div><Image :size="18" /><strong>选择图库图片</strong><em>可选 · 多选</em></div>
+                  <small>如需使用图库素材可选择，首张图片作为封面原图，最多可同时选择 9 张。</small>
                 </div>
                 <div v-if="rootMaterialGalleries.length" class="gallery-folder-grid" aria-label="素材图库">
                   <button
@@ -1579,6 +2028,7 @@ const openVersions = async () => {
                   </button>
                 </div>
                 <a-empty v-else description="素材库中还没有图库" />
+                <ContentPhotoComposition v-model="photoComposition" v-model:primary-image-id="selectedImageItemId" :layouts="photoLayouts" @select="selectCompositionImage" />
                 <div v-if="selectedImageItemId" class="selected-gallery-image">
                   <div class="selected-gallery-preview-grid" aria-label="封面预览">
                     <div class="selected-gallery-preview-card">
@@ -1711,43 +2161,64 @@ const openVersions = async () => {
         >
           <template v-if="workflowCompleted">
             <div class="completion-left completion-conversation">
-              <div ref="workflowStreamElement" class="workflow-stream">
+              <div class="workflow-stream">
                 <section class="codex-workflow-status completed" aria-live="polite">
                   <div class="workflow-narrative completion-narrative">
-                    <div v-if="streamedWorkflowNarrative" class="workflow-narrative-copy-wrap">
-                      <MarkdownPreview compact :content="streamedWorkflowNarrative" />
+                    <div v-if="streamedWorkflowNarrativeBeforeStrategy" class="workflow-narrative-copy-wrap">
+                      <MarkdownPreview compact :content="streamedWorkflowNarrativeBeforeStrategy" />
                     </div>
                     <ContentWorkflowStrategyPanel
+                      v-if="workflowStrategyPanelVisible"
                       :presentation="workflowStrategyPresentation"
+                      :evidence-groups="[]"
+                    />
+                    <div v-if="streamedWorkflowNarrativeAfterStrategy" class="workflow-narrative-copy-wrap">
+                      <MarkdownPreview compact :content="streamedWorkflowNarrativeAfterStrategy" />
+                    </div>
+                    <ContentWorkflowStrategyPanel
+                      :presentation="workflowEvidenceOnlyPresentation"
                       :evidence-groups="workflowEvidenceGroups"
                     />
+                    <ContentStrategyDecision :task-id="store.task?.id" :run-status="workflowRunStatus" :field-labels="evidenceFieldLabels" />
                     <div class="workflow-complete-line">
                       <CheckCircle2 :size="16" />
                       <strong>内容生成完成</strong>
                     </div>
                   </div>
                 </section>
-                <div v-if="aiEditHistory.length" class="ai-edit-history" aria-live="polite">
-                  <div
-                    v-for="item in aiEditHistory"
-                    :key="item.id"
-                    class="ai-edit-message"
-                    :class="item.role"
-                  >
-                    {{ item.content }}
-                  </div>
+              </div>
+              <div ref="aiEditHistoryElement" v-if="aiEditHistory.length" class="ai-edit-history" aria-live="polite">
+                <div
+                  v-for="item in aiEditHistory"
+                  :key="item.id"
+                  class="ai-edit-message"
+                  :class="[item.role, item.status]"
+                >
+                  <template v-if="item.status === 'running'">
+                    <LoaderCircle class="spin" :size="15" />
+                    <span>{{ item.content }}</span>
+                  </template>
+                  <template v-else>{{ item.content }}</template>
                 </div>
               </div>
               <section class="workflow-chat-panel" aria-label="AI 修改内容">
                 <AgentInputArea
                   v-model="aiEditInstruction"
-                  :is-loading="store.loading.refining"
-                  :disabled="!aiEditReady"
-                  :send-button-disabled="!aiEditReady || !aiEditInstruction.trim()"
-                  :placeholder="aiEditPlaceholder"
+                  :disabled="!aiEditReady || store.loading.refining"
+                  :send-button-disabled="!aiEditReady || store.loading.refining || !aiEditInstruction.trim()"
+                  :placeholder="store.loading.refining ? 'AI 正在执行修改，请稍候' : aiEditPlaceholder"
                   @send="submitAiEdit"
                   @keydown="handleAiEditKeydown"
-                />
+                >
+                  <template #toolbar>
+                    <ContentStudioToolbar :has-task="Boolean(store.task)" :is-admin="userStore.isAdmin" @recognize-image="ocrModalOpen = true" />
+                  </template>
+                  <template #actions-right-extra>
+                    <span v-if="store.loading.refining" class="ai-edit-running" role="status">
+                      <LoaderCircle class="spin" :size="15" />正在执行修改
+                    </span>
+                  </template>
+                </AgentInputArea>
               </section>
             </div>
 
@@ -1790,14 +2261,14 @@ const openVersions = async () => {
                     </div>
                     <div class="completion-result-media">
                       <img
-                        v-if="item.isCurrent && coverUrl"
+                        v-if="resultCoverUrl(item)"
                         class="completion-result-cover"
-                        :src="coverUrl"
-                        alt="当前内容封面"
+                        :src="resultCoverUrl(item)"
+                        :alt="`${item.isCurrent ? '当前' : '历史'}内容封面`"
                       />
                       <div v-else class="completion-result-cover-placeholder">
                         <Image :size="20" />
-                        <span>{{ item.isCurrent && coverLoading ? '封面加载中' : '暂无封面' }}</span>
+                        <span>{{ resultCoverLoading(item) ? '封面加载中' : '暂无封面' }}</span>
                       </div>
                     </div>
                   </div>
@@ -1814,7 +2285,7 @@ const openVersions = async () => {
           </template>
 
           <template v-else>
-            <div ref="workflowStreamElement" class="workflow-stream">
+            <div class="workflow-stream">
             <Transition name="workflow-list" mode="out-in">
               <section
                 v-if="activeWorkflowGroup"
@@ -1836,13 +2307,19 @@ const openVersions = async () => {
                   </span>
                 </div>
                 <div class="workflow-narrative" aria-live="polite" aria-atomic="false">
-                  <div v-if="streamedWorkflowNarrative" class="workflow-narrative-copy-wrap">
-                    <MarkdownPreview compact :content="streamedWorkflowNarrative" />
-                    <span
-                      v-if="workflowNarrativeActive"
-                      class="workflow-thinking-indicator"
-                      role="status"
-                    >
+                  <div v-if="streamedWorkflowNarrativeBeforeStrategy" class="workflow-narrative-copy-wrap">
+                    <MarkdownPreview compact :content="streamedWorkflowNarrativeBeforeStrategy" />
+                  </div>
+                  <ContentWorkflowStrategyPanel
+                    v-if="workflowStrategyPanelVisible"
+                    :presentation="workflowStrategyPresentation"
+                    :evidence-groups="[]"
+                  />
+                  <div v-if="streamedWorkflowNarrativeAfterStrategy" class="workflow-narrative-copy-wrap">
+                    <MarkdownPreview compact :content="streamedWorkflowNarrativeAfterStrategy" />
+                  </div>
+                  <div v-if="workflowNarrativeActive && streamedWorkflowNarrative" class="workflow-thinking-row">
+                    <span class="workflow-thinking-indicator" role="status">
                       <LoaderCircle class="spin" :size="14" aria-hidden="true" />
                       <span>正在思考</span>
                       <span class="workflow-thinking-dots" aria-hidden="true">
@@ -1850,15 +2327,16 @@ const openVersions = async () => {
                       </span>
                     </span>
                   </div>
-                  <div v-else class="workflow-awaiting-event">
+                  <div v-else-if="!streamedWorkflowNarrative" class="workflow-awaiting-event">
                     <LoaderCircle class="spin" :size="15" />
                     <span>正在分析现有资料，稍后会在这里持续输出有效信息…</span>
                   </div>
                   <ContentWorkflowStrategyPanel
-                    :presentation="workflowStrategyPresentation"
+                    :presentation="workflowEvidenceOnlyPresentation"
                     :evidence-groups="workflowEvidenceGroups"
                   />
                 </div>
+                  <ContentStrategyDecision :task-id="store.task?.id" :run-status="workflowRunStatus" :field-labels="evidenceFieldLabels" />
               </section>
             </Transition>
 
@@ -1896,10 +2374,15 @@ const openVersions = async () => {
             <div class="human-heading"><ShieldCheck :size="20" /><div><h3>确认关键事实</h3><p>价格、优惠、效果或高风险表达必须逐项确认后才能进入冻结证据并用于生成。</p></div></div>
             <a-checkbox-group v-model:value="confirmedEvidenceIds" class="fact-options">
               <a-checkbox v-for="item in store.interrupt.evidence_ids" :key="item" :value="item">
-                <strong>{{ evidenceReferenceText(item) }}</strong>
+                <strong>{{ store.interrupt.node_id === 'confirm_strategy_prices' ? evidenceItemsById.get(item)?.value : evidenceReferenceText(item) }}</strong>
+                <div v-if="store.interrupt.node_id === 'confirm_strategy_prices'">
+                  <p>{{ evidenceItemsById.get(item)?.metadata?.price_basis === 'standard_unit_price' ? '标准单价参考，不代表本项目实际成交费用' : '本项目报价资料' }}</p>
+                  <p>范围：{{ evidenceItemsById.get(item)?.metadata?.scope }} · 单位：{{ evidenceItemsById.get(item)?.metadata?.unit }}</p>
+                  <p>来源：{{ evidenceItemsById.get(item)?.metadata?.document_name || evidenceItemsById.get(item)?.metadata?.filename || evidenceItemsById.get(item)?.source_id }}</p>
+                </div>
               </a-checkbox>
             </a-checkbox-group>
-            <a-button type="primary" @click="submitHumanReview">确认选中事实并继续</a-button>
+            <a-button type="primary" :disabled="store.interrupt.node_id === 'confirm_strategy_prices' && confirmedEvidenceIds.length !== store.interrupt.evidence_ids.length" @click="submitHumanReview">确认选中事实并继续</a-button>
           </div>
 
           <div v-else-if="store.interrupt?.interrupt_type === 'formula_selection'" class="human-review-card">
@@ -1947,23 +2430,22 @@ const openVersions = async () => {
           </div>
 
           <div v-else-if="store.interrupt?.interrupt_type === 'cover_selection'" class="human-review-card">
-            <div class="human-heading"><Send :size="20" /><div><h3>选择最终封面</h3><p>只可从通过视觉审核的资产中选择。</p></div></div>
+            <div class="human-heading"><Send :size="20" /><div><h3>选择最终封面</h3><p>选择生成的封面，确认后保存。</p></div></div>
             <a-radio-group v-model:value="selectedCoverAssetId" class="title-options cover-options">
-              <a-radio v-for="(assetId, index) in store.interrupt.asset_ids" :key="assetId" :value="assetId">
+              <a-radio v-for="(candidate, index) in coverCandidates" :key="candidate.assetId" :value="candidate.assetId">
                 <div class="cover-option">
                   <div class="cover-candidate-preview">
-                    <img v-if="coverCandidateUrls[assetId]" :src="coverCandidateUrls[assetId]" :alt="`封面候选 ${index + 1}`" />
+                    <img v-if="coverCandidateUrls[candidate.assetId]" :src="coverCandidateUrls[candidate.assetId]" :alt="`封面候选 ${index + 1}`" />
                     <div v-else class="cover-candidate-placeholder">
                       <LoaderCircle v-if="coverCandidatesLoading" class="spin" :size="22" />
                       <span v-else>封面暂时无法预览</span>
                     </div>
                   </div>
                   <strong>封面候选 {{ index + 1 }}</strong>
-                  <span>{{ assetId }}</span>
                 </div>
               </a-radio>
             </a-radio-group>
-            <a-button type="primary" @click="submitHumanReview">确认封面并保存</a-button>
+            <a-button type="primary" :disabled="!coverSelectionAllowed" @click="submitHumanReview">确认封面并保存</a-button>
           </div>
 
           <div v-else-if="store.interrupt?.interrupt_type === 'external_wait'" class="running-card external-wait-card">
@@ -2014,7 +2496,11 @@ const openVersions = async () => {
               disabled
               send-button-disabled
               :placeholder="aiEditPlaceholder"
-            />
+            >
+              <template #toolbar>
+                <ContentStudioToolbar :has-task="Boolean(store.task)" :is-admin="userStore.isAdmin" @recognize-image="ocrModalOpen = true" />
+              </template>
+            </AgentInputArea>
             <p>流程执行完成后，可在这里要求 AI 修改标题、正文或话题。</p>
           </section>
           </template>
@@ -2179,7 +2665,10 @@ const openVersions = async () => {
               </button>
             </div>
           </div>
-          <div class="result-detail-cover-frame">
+          <div
+            class="result-detail-cover-frame"
+            :class="{ 'is-composition': currentResultGalleryItem?.id === 'composition' }"
+          >
             <div v-if="resultPreviewTab === 'viral-reference'" class="result-detail-viral-reference">
               <div v-if="viralReferenceLoading" class="result-detail-cover-state">
                 <LoaderCircle class="spin" :size="24" />
@@ -2203,15 +2692,47 @@ const openVersions = async () => {
                 <div class="result-detail-viral-body">{{ viralReference.content }}</div>
               </template>
             </div>
-            <div v-else-if="coverLoading" class="result-detail-cover-state">
-              <LoaderCircle class="spin" :size="24" />
-              <span>正在加载封面</span>
-            </div>
-            <img v-else-if="coverUrl" :src="coverUrl" alt="当前内容封面" />
-            <div v-else class="result-detail-cover-state empty">
-              <Image :size="30" />
-              <strong>暂无封面</strong>
-              <span>当前内容没有绑定封面，仍可继续发布。</span>
+            <div v-else class="result-detail-carousel">
+              <div v-if="currentResultGalleryItem?.loading" class="result-detail-cover-state">
+                <LoaderCircle class="spin" :size="24" />
+                <span>正在加载图片</span>
+              </div>
+              <img
+                v-else-if="currentResultGalleryItem?.url"
+                :class="{ 'is-composition': currentResultGalleryItem.id === 'composition' }"
+                :src="currentResultGalleryItem.url"
+                :alt="currentResultGalleryItem.label"
+              />
+              <div v-else class="result-detail-cover-state empty">
+                <Image :size="30" />
+                <strong>{{ currentResultGalleryItem ? '图片暂时无法预览' : '暂无封面' }}</strong>
+                <span>{{ currentResultGalleryItem ? '请稍后刷新重试。' : '当前内容没有绑定封面，仍可继续发布。' }}</span>
+              </div>
+              <template v-if="resultGalleryItems.length > 1">
+                <button
+                  type="button"
+                  class="result-detail-carousel-arrow previous"
+                  :disabled="resultGalleryIndex === 0"
+                  aria-label="查看上一张图片"
+                  title="上一张"
+                  @click="showPreviousResultImage"
+                >
+                  <ChevronLeft :size="22" />
+                </button>
+                <button
+                  type="button"
+                  class="result-detail-carousel-arrow next"
+                  :disabled="resultGalleryIndex === resultGalleryItems.length - 1"
+                  aria-label="查看下一张图片"
+                  title="下一张"
+                  @click="showNextResultImage"
+                >
+                  <ChevronRight :size="22" />
+                </button>
+                <span class="result-detail-carousel-count">
+                  {{ resultGalleryIndex + 1 }} / {{ resultGalleryItems.length }}
+                </span>
+              </template>
             </div>
           </div>
         </section>
@@ -2305,16 +2826,16 @@ const openVersions = async () => {
     >
       <div class="gallery-modal-content">
         <button
-          v-if="activeMaterialGalleryParent"
+          v-if="activeGalleryId"
           type="button"
           class="gallery-modal-back"
-          @click="openGallery(activeMaterialGalleryParent.id)"
+          @click="openGallery(activeMaterialGalleryParent?.id || '')"
         >
-          <ArrowLeft :size="15" />返回 {{ activeMaterialGalleryParent.name }}
+          <ArrowLeft :size="15" />返回 {{ activeMaterialGalleryParent?.name || '全部图库' }}
         </button>
         <section v-if="activeMaterialGalleryChildren.length" class="gallery-modal-folders">
           <div class="gallery-modal-section-title">
-            <strong>二级图库</strong>
+            <strong>{{ activeGalleryId ? '二级图库' : '选择图库' }}</strong>
             <small>选择所属图库后查看其中的图片</small>
           </div>
           <div class="gallery-folder-grid">
@@ -2336,8 +2857,8 @@ const openVersions = async () => {
           </div>
         </section>
         <div class="gallery-modal-heading">
-          <p>{{ activeMaterialGalleryChildren.length ? '当前一级图库中的图片' : '从当前图库中选择一张图片；选择将在点击“确认选择”后保存到业务简报。' }}</p>
-          <span>{{ galleryImages.length }} 张图片</span>
+          <p>{{ activeMaterialGalleryChildren.length ? '当前一级图库中的图片' : compositionSlotIndex === null ? '选择图片后统一确认，第一张为封面原图。' : '可多选图片，从当前位置开始依次填入空位。' }}</p>
+          <span>已选 {{ pendingImageItems.length }} 张 · 最多 {{ pendingImageLimit }} 张 · 共 {{ galleryImages.length }} 张</span>
         </div>
         <div v-if="galleryImagesLoading" class="material-loading-row">
           <LoaderCircle class="spin" :size="20" />正在加载当前图库
@@ -2348,27 +2869,27 @@ const openVersions = async () => {
             :key="item.id"
             type="button"
             class="image-choice"
-            :class="{ selected: pendingImageItemId === item.id }"
-            :aria-pressed="pendingImageItemId === item.id"
-            @click="pendingImageItemId = item.id"
+            :class="{ selected: pendingImageItems.some(selected => selected.id === item.id) }"
+            :aria-pressed="pendingImageItems.some(selected => selected.id === item.id)"
+            @click="togglePendingImage(item)"
           >
             <span class="choice-preview">
               <img v-if="materialImageUrls[item.id]" :src="materialImageUrls[item.id]" :alt="item.name" />
               <Image v-else :size="22" />
-              <CheckCircle2 v-if="pendingImageItemId === item.id" class="choice-check" :size="20" />
+              <CheckCircle2 v-if="pendingImageItems.some(selected => selected.id === item.id)" class="choice-check" :size="20" />
             </span>
             <strong :title="item.name">{{ item.name }}</strong>
           </button>
         </div>
         <a-empty v-else description="当前文件夹暂无可用图片" />
         <div class="gallery-modal-actions">
-          <a-button v-if="pendingImageItemId" type="link" danger @click="pendingImageItemId = ''">
+          <a-button v-if="pendingImageItems.length" type="link" danger @click="pendingImageItems = []">
             清除选择
           </a-button>
           <span />
           <a-button @click="galleryModalOpen = false">取消</a-button>
-          <a-button type="primary" :loading="galleryImagesLoading" @click="confirmGalleryImage">
-            确认选择
+          <a-button type="primary" :loading="galleryImagesLoading" @click="confirmGalleryImages">
+            确认选择<span v-if="pendingImageItems.length">（{{ pendingImageItems.length }}）</span>
           </a-button>
         </div>
       </div>
@@ -2427,10 +2948,13 @@ const openVersions = async () => {
 }
 
 .header-kicker { color: var(--main-700); font-size: 12px; font-weight: 600; }
-.header-actions { display: flex; gap: 8px; flex-wrap: wrap; }
-.header-actions :deep(.ant-btn), .panel-heading :deep(.ant-btn), .stage-actions :deep(.ant-btn), .editor-actions :deep(.ant-btn) { display: inline-flex; align-items: center; gap: 6px; }
+.panel-heading :deep(.ant-btn), .stage-actions :deep(.ant-btn), .editor-actions :deep(.ant-btn) { display: inline-flex; align-items: center; gap: 6px; }
 
 .studio-main { max-width: 1180px; margin: 18px auto 0; }
+.studio-production {
+  padding-bottom: 0;
+  .studio-header, .studio-main { max-width: none; }
+}
 .stage-panel { background: var(--gray-0); border: 1px solid var(--gray-150); border-radius: 8px; padding: 24px; }
 .panel-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; margin-bottom: 22px; }
 .panel-heading span { color: var(--main-700); font-size: 12px; font-weight: 600; }
@@ -2439,8 +2963,13 @@ const openVersions = async () => {
 
 .setup-grid, .brief-layout, .review-layout { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(280px, 0.8fr); gap: 20px; }
 .run-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; }
-.active-run-layout { width: 100%; max-width: 900px; height: max(560px, calc(100vh - 280px)); margin: 0 auto; display: flex; flex-direction: column; gap: 0; }
+.active-run-layout { width: 100%; max-width: 1100px; min-height: calc(100vh - 210px); margin: 0 auto; display: flex; flex-direction: column; gap: 0; }
 .setup-grid { grid-template-columns: 1fr 1fr; margin-bottom: 20px; }
+.creation-type-field {
+  margin-top: 24px;
+  :deep(.ant-radio-group) { display: flex; flex-wrap: wrap; gap: 8px; }
+}
+
 .template-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
 .template-card { min-height: 116px; padding: 16px; display: flex; flex-direction: column; gap: 7px; text-align: left; border: 1px solid var(--gray-150); border-radius: 8px; background: var(--gray-0); color: var(--color-text); cursor: pointer; }
 .template-card:hover { border-color: var(--main-300); background: var(--main-10); }
@@ -2456,6 +2985,12 @@ const openVersions = async () => {
 .field-block > span { font-size: 13px; font-weight: 600; }
 .field-block em { margin-left: 3px; color: var(--color-error-700); font-style: normal; }
 .field-block small { color: var(--color-text-tertiary); }
+.creation-mode-options { display: flex; gap: 12px; }
+.creation-mode-card { position: relative; display: flex; align-items: center; justify-content: center; width: 112px; min-height: 64px; border: 1px solid var(--gray-200); border-radius: 8px; background: var(--gray-0); cursor: pointer; }
+.creation-mode-card input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.creation-mode-card:hover { border-color: var(--color-info-500); }
+.creation-mode-card.selected { border-color: var(--color-info-500); background: var(--color-info-50); color: var(--color-info-700); font-weight: 600; }
+.creation-mode-card:has(input:focus-visible) { outline: 2px solid var(--color-info-500); outline-offset: 2px; }
 .mode-row { display: flex; align-items: center; gap: 8px; color: var(--color-text-secondary); }
 .mode-row small { margin-left: auto; }
 .mode-row .save-error { color: var(--color-error-600); }
@@ -2544,16 +3079,19 @@ const openVersions = async () => {
 .generation-start p { color: var(--color-text-secondary); }
 .generation-start :deep(.ant-input) { max-width: 500px; }
 .completion-stage { padding: 0; border: 0; background: transparent; }
-.completion-layout { grid-template-columns: minmax(0, 1.65fr) minmax(300px, 0.85fr); align-items: start; }
-.completion-left { min-width: 0; overflow: hidden; border: 1px solid var(--gray-150); border-radius: 8px; background: var(--gray-0); }
-.completion-conversation { height: max(560px, calc(100vh - 280px)); display: flex; flex-direction: column; }
+.completion-layout { grid-template-columns: minmax(0, 1fr) 394px; gap: 24px; align-items: start; }
+.completion-left { min-width: 0; border: 1px solid var(--gray-150); border-radius: 8px; background: var(--gray-0); }
+.completion-conversation { height: calc(100vh - 180px); min-height: 560px; display: flex; flex-direction: column; overflow: hidden; }
 .completion-narrative { margin-top: 0; }
 .workflow-complete-line { display: flex; align-items: center; gap: 8px; margin-top: 20px; color: var(--color-success-700); }
 .workflow-complete-line strong { color: var(--color-text); font-size: 14px; }
-.ai-edit-history { display: flex; flex-direction: column; gap: 8px; margin: 22px 27px 0; }
+.ai-edit-history { flex: 0 0 auto; max-height: 150px; display: flex; flex-direction: column; gap: 8px; margin: 12px 27px 0; overflow-y: auto; overscroll-behavior: contain; }
 .ai-edit-message { max-width: 78%; padding: 8px 10px; border-radius: 8px; color: var(--color-text); background: var(--gray-0); font-size: 12px; line-height: 1.55; overflow-wrap: anywhere; }
 .ai-edit-message.user { align-self: flex-end; color: var(--main-700); background: var(--main-30); }
 .ai-edit-message.assistant { align-self: flex-start; border: 1px solid var(--gray-150); }
+.ai-edit-message.assistant.running { display: inline-flex; align-items: center; gap: 7px; color: var(--color-info-700); background: var(--color-info-50); border-color: var(--color-info-100); }
+.ai-edit-message.assistant.failed { color: var(--color-error-700); background: var(--color-error-50); border-color: var(--color-error-100); }
+.ai-edit-running { display: inline-flex; align-items: center; gap: 6px; color: var(--color-info-700); font-size: 12px; white-space: nowrap; }
 .completion-results { min-width: 0; display: flex; flex-direction: column; gap: 12px; padding: 0 12px 12px; overflow: hidden; border: 1px solid var(--gray-150); border-radius: 8px; background: var(--gray-0); }
 .completion-results-heading { min-height: 56px; display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 -12px 4px; padding: 0 14px; border-bottom: 1px solid var(--gray-150); }
 .completion-results-heading > div { display: flex; align-items: center; gap: 8px; }
@@ -2585,8 +3123,8 @@ const openVersions = async () => {
 .completion-result-actions :deep(.ant-btn-primary) { border-color: var(--color-info-500); background: var(--color-info-500); box-shadow: none; }
 .completion-result-actions :deep(.ant-btn-primary:hover) { border-color: var(--color-info-700); background: var(--color-info-700); }
 .completion-version-button { grid-column: 1 / -1; }
-.result-detail-layout { height: calc(100vh - 190px); min-height: 600px; max-height: 820px; display: grid; grid-template-columns: minmax(320px, 0.9fr) minmax(0, 1.1fr); overflow: hidden; border: 1px solid var(--gray-150); border-radius: 8px; }
-.result-detail-cover { min-width: 0; display: flex; flex-direction: column; padding: 20px; background: var(--gray-25); border-right: 1px solid var(--gray-150); }
+.result-detail-layout { height: calc(100dvh - 190px); min-height: 0; max-height: 820px; display: grid; grid-template-rows: minmax(0, 1fr); grid-template-columns: minmax(320px, 0.9fr) minmax(0, 1.1fr); overflow: hidden; border: 1px solid var(--gray-150); border-radius: 8px; }
+.result-detail-cover { min-width: 0; min-height: 0; display: flex; flex-direction: column; padding: 20px; background: var(--gray-25); border-right: 1px solid var(--gray-150); }
 .result-detail-section-heading { min-height: 32px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .result-detail-section-heading > div { min-width: 0; display: flex; align-items: center; gap: 7px; }
 .result-detail-section-heading svg { flex: 0 0 auto; color: var(--main-700); }
@@ -2597,8 +3135,19 @@ const openVersions = async () => {
 .result-detail-cover-tabs button.active { background: var(--color-bg-container); color: var(--main-700); box-shadow: 0 1px 4px var(--shadow-1); font-weight: 600; }
 .result-detail-cover-tabs button:not(.active):hover:not(:disabled) { color: var(--main-700); background: var(--main-50); }
 .result-detail-cover-tabs button:disabled { cursor: not-allowed; opacity: 0.42; }
-.result-detail-cover-frame { min-height: 0; flex: 1; display: flex; align-items: center; justify-content: center; margin-top: 12px; overflow: hidden; }
+.result-detail-cover-frame { position: relative; min-height: 0; flex: 1; display: flex; align-items: center; justify-content: center; margin-top: 12px; overflow: hidden; }
 .result-detail-cover-frame img { display: block; width: min(100%, 400px); max-height: 100%; aspect-ratio: 3 / 4; border-radius: 6px; object-fit: contain; background: var(--gray-100); }
+.result-detail-cover-frame.is-composition { align-items: flex-start; overflow-y: auto; overscroll-behavior: contain; }
+.result-detail-cover-frame.is-composition .result-detail-carousel { min-height: 100%; height: auto; align-items: flex-start; padding: 0 0 44px; box-sizing: border-box; }
+.result-detail-cover-frame.is-composition img.is-composition { width: 100%; max-width: none; max-height: none; aspect-ratio: auto; height: auto; flex: 0 0 auto; }
+.result-detail-carousel { position: relative; width: 100%; height: 100%; min-height: 0; display: flex; align-items: center; justify-content: center; }
+.result-detail-carousel-arrow { position: absolute; top: 50%; z-index: 1; width: 38px; height: 38px; padding: 0; display: grid; place-items: center; border: 1px solid var(--gray-200); border-radius: 50%; color: var(--color-text); background: var(--gray-0); box-shadow: 0 2px 8px var(--shadow-2); cursor: pointer; transform: translateY(-50%); }
+.result-detail-carousel-arrow.previous { left: 8px; }
+.result-detail-carousel-arrow.next { right: 8px; }
+.result-detail-carousel-arrow:hover:not(:disabled) { border-color: var(--main-color); color: var(--main-700); background: var(--main-50); }
+.result-detail-carousel-arrow:focus-visible { outline: 2px solid var(--main-color); outline-offset: 2px; }
+.result-detail-carousel-arrow:disabled { cursor: not-allowed; opacity: 0.35; }
+.result-detail-carousel-count { position: absolute; bottom: 10px; left: 50%; padding: 3px 9px; border: 1px solid var(--gray-200); border-radius: 999px; color: var(--color-text-secondary); background: var(--gray-0); font-size: 12px; line-height: 1.4; transform: translateX(-50%); }
 .result-detail-cover-state { min-height: 240px; width: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: var(--color-text-secondary); text-align: center; }
 .result-detail-cover-state.empty span { max-width: 240px; color: var(--color-text-tertiary); font-size: 12px; line-height: 1.6; }
 .result-detail-content { min-width: 0; min-height: 0; height: 100%; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; overflow: hidden; padding: 0 22px; background: var(--gray-0); }
@@ -2624,7 +3173,8 @@ const openVersions = async () => {
 .result-detail-viral-meta strong { min-width: 0; overflow: hidden; color: var(--color-text); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .result-detail-viral-meta :deep(.ant-btn) { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 4px; color: var(--main-700); }
 .result-detail-viral-body { min-height: 0; flex: 1; padding: 16px; overflow-y: auto; color: var(--color-text); font-size: 13px; line-height: 1.85; white-space: pre-wrap; overflow-wrap: anywhere; }
-.workflow-stream { min-width: 0; min-height: 0; flex: 1; padding: 8px 18px 28px; overflow-y: auto; overscroll-behavior: contain; scroll-behavior: smooth; }
+.workflow-stream { min-width: 0; min-height: 0; flex: 1 1 auto; padding: 16px 24px 28px; overflow-y: auto; overscroll-behavior: contain; }
+.completion-conversation > .ai-edit-history { flex: 0 0 auto; }
 .codex-workflow-status { min-width: 0; padding: 4px 0 10px; }
 .codex-workflow-heading { min-height: 52px; display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 10px; }
 .codex-workflow-icon { display: inline-flex; color: var(--color-text-tertiary); }
@@ -2632,11 +3182,13 @@ const openVersions = async () => {
 .codex-workflow-status.failed .codex-workflow-icon { color: var(--color-error-700); }
 .codex-workflow-copy { min-width: 0; }
 .codex-workflow-copy strong { color: var(--color-text); font-size: 14px; line-height: 1.4; }
-.workflow-narrative { min-width: 0; max-width: 760px; margin: 8px 0 0 27px; }
+.workflow-narrative { min-width: 0; max-width: 1100px; margin: 8px auto 0; }
 .workflow-narrative :deep(.yk-markdown-preview ul) { display: block; margin: 6px 0 12px; padding-left: 20px; }
 .workflow-narrative :deep(.yk-markdown-preview ul > li) { min-height: 0; margin: 0; padding: 0; line-height: 1.65; }
 .workflow-narrative :deep(.yk-markdown-preview ul > li + li) { margin-top: 2px; }
 .workflow-narrative :deep(.yk-markdown-preview ul > li > p) { display: inline; margin: 0; padding: 0; line-height: inherit; }
+.workflow-thinking-row { margin-top: 10px; }
+.workflow-thinking-row .workflow-thinking-indicator { margin-left: 0; }
 .workflow-thinking-indicator { display: inline-flex; align-items: center; gap: 5px; margin-left: 8px; color: var(--color-info-700); font-size: 12px; line-height: 1; vertical-align: 0.05em; white-space: nowrap; }
 .workflow-thinking-indicator > svg { flex: 0 0 auto; }
 .workflow-thinking-dots { display: inline-flex; align-items: center; gap: 2px; height: 12px; }
@@ -2651,7 +3203,7 @@ const openVersions = async () => {
 .workflow-list-enter-active, .workflow-list-leave-active { transition: opacity 0.2s ease, transform 0.2s ease; }
 .workflow-list-enter-from { opacity: 0; transform: translateY(6px); }
 .workflow-list-leave-to { opacity: 0; transform: translateY(-6px); }
-.workflow-chat-panel { flex: 0 0 auto; padding: 8px 18px 0; background: var(--gray-0); }
+.workflow-chat-panel { position: sticky; bottom: 0; z-index: 2; flex: 0 0 auto; padding: 12px 18px; border-radius: 0 0 8px 8px; background: var(--gray-0); }
 .workflow-chat-panel > p { margin: 6px 0 0; color: var(--color-text-tertiary); font-size: 11px; line-height: 1.5; text-align: center; }
 .human-review-card, .running-card { align-self: start; }
 .failure-card { color: var(--color-error-700); background: var(--color-error-50); }
@@ -2687,11 +3239,12 @@ const openVersions = async () => {
 .approval-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
 .title-options strong, .title-options span { display: block; }
 .title-options span { margin-top: 3px; color: var(--color-text-tertiary); font-size: 12px; }
-.cover-options :deep(.ant-radio-wrapper) { align-items: center; }
+.cover-options :deep(.ant-radio-wrapper) { align-items: flex-start; max-width: 400px; }
+.cover-option { color: var(--color-text); }
 .cover-options :deep(.ant-radio + span) { min-width: 0; flex: 1; }
 .cover-option { display: grid; gap: 4px; min-width: 0; }
 .cover-candidate-preview { width: 100%; margin-bottom: 7px; overflow: hidden; border-radius: 8px; background: var(--gray-25); }
-.cover-candidate-preview img { display: block; width: 100%; aspect-ratio: 3 / 4; object-fit: cover; }
+.cover-candidate-preview img { display: block; width: 100%; aspect-ratio: 3 / 4; object-fit: contain; }
 .cover-candidate-placeholder { min-height: 220px; display: flex; align-items: center; justify-content: center; color: var(--color-text-tertiary); }
 .cover-option > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .running-card { display: flex; flex-direction: column; align-items: center; text-align: center; }
@@ -2741,12 +3294,15 @@ const openVersions = async () => {
 .spin { animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
+@media (max-width: 1100px) {
+  .completion-layout { grid-template-columns: 1fr; }
+}
+
 @media (max-width: 900px) {
   .studio-header, .panel-heading { flex-direction: column; }
   .setup-grid, .brief-layout, .review-layout { grid-template-columns: 1fr; }
-  .completion-layout { grid-template-columns: 1fr; }
-  .result-detail-layout { height: auto; min-height: 0; max-height: calc(100vh - 210px); grid-template-columns: 1fr; overflow-y: auto; }
-  .result-detail-cover { min-height: 420px; border-right: 0; border-bottom: 1px solid var(--gray-150); }
+  .result-detail-layout { height: auto; min-height: 0; max-height: calc(100dvh - 210px); grid-template-columns: 1fr; grid-template-rows: auto auto; overflow-y: auto; }
+  .result-detail-cover { height: 420px; min-height: 0; border-right: 0; border-bottom: 1px solid var(--gray-150); }
   .result-detail-content { height: auto; display: block; overflow: visible; }
   .result-detail-body-section { overflow: visible; }
   .result-detail-body { padding-right: 0; overflow: visible; }
@@ -2756,18 +3312,17 @@ const openVersions = async () => {
 @media (max-width: 600px) {
   .content-studio-page { padding-top: 14px; }
   .stage-panel { padding: 16px; }
-  .active-run-layout { height: max(520px, calc(100vh - 230px)); }
-  .workflow-stream, .workflow-chat-panel { padding-left: 0; padding-right: 0; }
+  .workflow-stream, .workflow-chat-panel { padding-left: 12px; padding-right: 12px; }
   .workflow-narrative { margin-left: 0; }
   .completion-stage { padding: 0; }
   .ai-edit-message { max-width: 92%; }
-  .result-detail-cover { min-height: 340px; padding: 16px; }
+  .result-detail-cover { height: 340px; padding: 16px; }
   .result-detail-content { padding: 0 16px; }
   .result-detail-footer :deep(.ant-btn) { min-width: 0; flex: 1; }
   .template-grid, .dynamic-form { grid-template-columns: 1fr; }
   .hycanvas-template-grid, .hycanvas-fields { grid-template-columns: 1fr; }
   .dynamic-form .field-block { grid-column: auto; }
-  .header-actions, .stage-actions, .stage-actions.split, .editor-actions { width: 100%; flex-direction: column; }
+  .stage-actions, .stage-actions.split, .editor-actions { width: 100%; flex-direction: column; }
   .visual-material-heading, .material-selector-title { flex-direction: column; }
   .material-selector-title small { text-align: left; }
   .selected-gallery-image { flex-wrap: wrap; }
@@ -2781,6 +3336,6 @@ const openVersions = async () => {
   .workflow-group summary { grid-template-columns: auto minmax(0, 1fr) auto; gap: 9px; padding: 11px; }
   .workflow-group-progress { display: none; }
   .workflow-group-copy small { white-space: normal; }
-  .header-actions :deep(.ant-btn), .stage-actions :deep(.ant-btn), .editor-actions :deep(.ant-btn) { width: 100%; justify-content: center; }
+  .stage-actions :deep(.ant-btn), .editor-actions :deep(.ant-btn) { width: 100%; justify-content: center; }
 }
 </style>

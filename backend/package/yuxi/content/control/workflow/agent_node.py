@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
+from dataclasses import replace
 from typing import Any
 
 from sqlalchemy import select
@@ -14,6 +16,8 @@ from yuxi.storage.postgres.models_business import User
 from yuxi.storage.postgres.models_content import ContentNodeRun, ContentTask
 
 PROHIBITED_ACTIONS = {
+    "research_strategy_prices": ("只检索价格库", "不得把标准单价转换为本项目成交金额", "不得代替人工确认"),
+    "reselect_creation_strategy": ("不得再次查询知识库", "不得把标准单价映射为实际成交明细", "不生成正文"),
     "select_creation_strategy": ("不提交规则库外的组合组、创作手法或公式", "不编造事实", "不生成正文"),
     "analyze_and_select_direction": ("不锁定组合组", "不选公式", "不修改工作流"),
     "analyze_content_value": ("不锁定组合组", "不选公式", "不修改工作流"),
@@ -48,6 +52,8 @@ PROHIBITED_ACTIONS = {
 class AgentNodeResultMapper:
     @staticmethod
     def to_state(node_id: str, result: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
+        if node_id in {"select_creation_strategy", "reselect_creation_strategy"} and "strategy" in result:
+            return {"joint_strategy_decision": result, "strategy_selection": result["strategy"]}
         if node_id == "select_creation_strategy":
             return {
                 "selected_angle": {
@@ -114,6 +120,8 @@ class AgentNodeResultMapper:
             return {"evidence_collection": result}
         if node_id == "collect_business_rule_evidence":
             return {"business_rule_evidence_collection": result}
+        if node_id == "research_strategy_prices":
+            return {"strategy_price_evidence_collection": result}
         if node_id == "collect_price_evidence":
             return {"price_evidence_collection": result}
         if node_id == "collect_compliance_evidence":
@@ -204,6 +212,27 @@ class AgentNodeHandler:
         if node_run is None or task is None or user is None:
             raise ValueError("Agent 节点缺少任务、用户或节点 Run")
 
+        if node["id"] == "research_strategy_prices" and not (
+            (state.get("joint_strategy_decision") or {}).get("price_research_questions")
+        ):
+            return {"strategy_price_evidence_collection": {
+                "evidence_items": [], "citations": [], "unresolved_questions": [],
+                "skipped": True, "skip_reason": "策略未发现需要检索的报价缺口",
+            }}
+        if node["id"] == "reselect_creation_strategy" and (
+            state["strategy_price_evidence_collection"].get("skipped")
+        ):
+            return {"joint_strategy_decision": state["joint_strategy_decision"],
+                    "strategy_selection": state["strategy_selection"]}
+        if node["id"] == "collect_price_evidence" and (
+            state.get("strategy_price_evidence_collection") is not None
+            and not state["strategy_price_evidence_collection"].get("skipped")
+        ):
+            return {"price_evidence_collection": {
+                "evidence_items": [], "citations": [], "unresolved_questions": [],
+                "skipped": True, "skip_reason": "策略锁定前已完成本次价格检索，证据已合并",
+            }}
+
         research_result_fields = {
             "collect_business_rule_evidence": "business_rule_evidence_collection",
             "collect_price_evidence": "price_evidence_collection",
@@ -222,19 +251,6 @@ class AgentNodeHandler:
                     "unresolved_questions": [],
                     "skipped": True,
                     "skip_reason": "当前策略所需变量与证据已完整，无需重复调研",
-                }
-            }
-
-        if node["id"] == "semantic_review" and not bool(
-            (state.get("runtime_config_snapshot") or {}).get("strict_semantic_review")
-        ):
-            return {
-                "review_report": {
-                    "status": "passed",
-                    "checks": [],
-                    "evidence_conflicts": [],
-                    "skipped": True,
-                    "skip_reason": "普通首稿已通过确定性校验，语义审核仅在严格审核模式下执行",
                 }
             }
 
@@ -290,6 +306,10 @@ class AgentNodeHandler:
         visual_material = (state.get("runtime_config_snapshot") or {}).get("visual_material") or {}
         required_source_asset_ids = [visual_material["image_asset_id"]] if visual_material.get("image_asset_id") else []
         locked_values = {
+            "require_emoji_review": node["id"] == "semantic_review",
+            "require_persona_review": node["id"] == "semantic_review",
+            "require_composition_review": node["id"] == "semantic_review"
+            and bool((state.get("strategy_snapshot") or {}).get("direction_blueprint")),
             "creation_mode": (state.get("runtime_config_snapshot") or {}).get("creation_mode", "original"),
             "selected_title": (state.get("selected_title") or {}).get("text"),
             "source_asset_ids": [
@@ -300,19 +320,64 @@ class AgentNodeHandler:
             "visual_plan_hash": (state.get("visual_plan") or {}).get("plan_hash"),
             "state_version": int(state.get("state_version") or 0),
         }
+        blocked_review_codes = {
+            item.get("code") for item in (state.get("review_report") or {}).get("checks", [])
+            if item.get("status") == "blocked"
+        }
+        if (
+            node["id"] == "generate_content"
+            and (state.get("validation_report") or {}).get("status") in {"passed", "warning"}
+            and blocked_review_codes
+            and blocked_review_codes <= {"EMOJI_COVERAGE", "EMOJI_APPROPRIATENESS", "EMOJI_RESTRICTIONS"}
+        ):
+            locked_values["emoji_repair_body"] = state["content_draft"]["body"]
+        if (
+            node["id"] == "generate_content"
+            and (state.get("validation_report") or {}).get("status") in {"passed", "warning"}
+            and blocked_review_codes & {"PERSONA_OPENING", "PERSONA_CLOSING"}
+            and blocked_review_codes <= {
+                "PERSONA_OPENING", "PERSONA_CLOSING", "EMOJI_COVERAGE",
+                "EMOJI_APPROPRIATENESS", "EMOJI_RESTRICTIONS",
+            }
+        ):
+            paragraphs = [part.strip() for part in re.split(r"\n\s*\n", state["content_draft"]["body"]) if part.strip()]
+            locked_values["persona_repair_middle"] = paragraphs[1:-1]
+        assembly_state = state
         if node["id"] == "plan_visuals":
+            from yuxi.content.control.visual_template_fields import missing_required_template_fields
+
             limits: dict[str, int] = {}
+            allowed_template_fields: dict[str, dict[str, int]] = {}
             for field in visual_material.get("hycanvas_fillable_fields") or []:
                 role = str(field.get("semanticRole") or "")
                 if role == "label" or role not in {"title", "subtitle", "body_excerpt"}:
                     continue
-                max_chars = (field.get("constraints") or {}).get("maxChars")
+                constraints = field.get("constraints") or {}
+                field_key = str(field.get("key") or field.get("label") or "").strip()
+                if field_key:
+                    allowed_template_fields[field_key] = {
+                        key: value
+                        for key in ("maxChars", "maxCharsPerLine", "maxLines")
+                        if isinstance((value := constraints.get(key)), int) and value > 0
+                    }
+                max_chars = constraints.get("maxChars")
                 if isinstance(max_chars, int) and max_chars > 0:
                     limits[role] = min(limits.get(role, max_chars), max_chars)
             locked_values["visual_text_max_chars"] = limits
+            locked_values["allowed_visual_template_fields"] = allowed_template_fields
+            required_template_fields = missing_required_template_fields(
+                visual_material.get("hycanvas_fillable_fields") or [], task.brief_json or {}
+            )
+            locked_values["required_visual_template_fields"] = required_template_fields
+            runtime_snapshot = dict(state.get("runtime_config_snapshot") or {})
+            runtime_snapshot["visual_material"] = {
+                **visual_material,
+                "required_template_field_repairs": required_template_fields,
+            }
+            assembly_state = {**state, "runtime_config_snapshot": runtime_snapshot}
         if node["id"] == "submit_cover_job":
             locked_values["visual_plan"] = state.get("visual_plan") or {}
-        assembly = ContentNodeInputAssembler.build(node=node, state=state)
+        assembly = ContentNodeInputAssembler.build(node=node, state=assembly_state)
         domain_context = ContractDomainContext.from_governance(
             match_decision_snapshot=state.get("match_decision_snapshot") or {},
             formula_selection_snapshot=state.get("formula_selection_snapshot") or {},
@@ -323,6 +388,10 @@ class AgentNodeHandler:
             strategy_snapshot=state.get("strategy_snapshot") or {},
             viral_candidate_collection=state.get("viral_candidate_collection") or {},
         )
+        required_skills = tuple(node["required_skills"])
+        if node["output_contract"] in {"JointStrategyDecisionV1", "JointStrategyDecisionV2"}:
+            domain_context = replace(domain_context, joint_strategy_input=assembly.payload)
+            required_skills = (*required_skills, state["strategy_candidates"]["selection_skill"])
         delegation = AgentDelegationService(db)
         delegated = await delegation.execute(
             AgentDelegationRequest(
@@ -331,7 +400,7 @@ class AgentNodeHandler:
                 node_run=node_run,
                 user=user,
                 agent_slug=node["agent_slug"],
-                required_skills=tuple(node["required_skills"]),
+                required_skills=required_skills,
                 input_contract=assembly.contract_name,
                 input_payload=assembly.payload,
                 input_snapshot_hash=assembly.snapshot_hash,
@@ -357,6 +426,7 @@ class AgentNodeHandler:
                 max_chunks_per_knowledge_base=int(node.get("max_chunks_per_knowledge_base") or 0),
                 max_chars_per_knowledge_chunk=int(node.get("max_chars_per_knowledge_chunk") or 0),
                 prohibited_actions=PROHIBITED_ACTIONS.get(node["id"], ()),
+                model_spec=state.get("model_spec"),
             )
         )
         mapped = AgentNodeResultMapper.to_state(node["id"], delegated.output, state)

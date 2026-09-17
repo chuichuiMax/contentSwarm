@@ -45,6 +45,12 @@ class ContentWorkflowState(TypedDict, total=False):
     resume_parent_run_id: str | None
     task_mode: str
     value_analysis: dict[str, Any]
+    strategy_candidates: dict[str, Any]
+    strategy_catalog: dict[str, Any]
+    reference_candidates: list[dict[str, Any]]
+    reference_search_queries: list[str]
+    strategy_price_evidence_collection: dict[str, Any]
+    joint_strategy_decision: dict[str, Any]
     strategy_selection: dict[str, Any]
     match_decision_snapshot: dict[str, Any]
     strategy_explanation: dict[str, Any]

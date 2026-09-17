@@ -13,6 +13,13 @@ SOURCE_METADATA = {
     "source_revision": "8月11日修改",
 }
 
+FOREMAN_SOURCE_METADATA = {
+    "document": "装修工长 AI 小红书内容生成逻辑",
+    "section": "正文模式库、内容组合公式、创作前判断逻辑",
+    "url": "https://fycrbjmor5.feishu.cn/wiki/Cb5Kw0RI2i1N7lkn7oVcp00Injh",
+    "captured_at": "2026-09-11",
+}
+
 
 DECORATION_BODY_CALLING: dict[str, dict[str, Any]] = {
     "C01": {
@@ -208,7 +215,123 @@ DECORATION_BODY_CALLING: dict[str, dict[str, Any]] = {
 }
 
 
+def _foreman_calling(
+    formula_name: str,
+    structure: list[str],
+    lexicon_calls: list[str],
+    *,
+    variation_rule: str,
+) -> dict[str, Any]:
+    return {
+        "formula_name": formula_name,
+        "lexicon_calls": lexicon_calls,
+        "sections": [
+            {
+                "id": f"section_{index}",
+                "name": name,
+                "instruction": name,
+                "fill_rule": "事实只取自 ContentBrief 或 EvidenceBundle；词库仅用于表达。",
+                "lexicon_calls": lexicon_calls if index == 1 else [],
+                "fact_source": "lexicon_and_evidence" if index == 1 else "evidence",
+            }
+            for index, name in enumerate(structure, 1)
+        ],
+        "variants": [],
+        "variation_rule": variation_rule,
+        "reference_examples": [],
+    }
+
+
+DECORATION_BODY_CALLING.update(
+    {
+        "FRB01": _foreman_calling(
+            "价格营销型",
+            ["价格钩子", "案例信息", "真实报价", "费用解释", "相关人设优势", "结果或做事原则", "具体行动引导"],
+            ["body.budget_pain", "persona.service_contrast", "ending.quotation_cta"],
+            variation_rule="价格、报价类型、单位与包含范围必须同源；每篇只使用二至三项相关优势。",
+        ),
+        "FRB02": _foreman_calling(
+            "案例故事型",
+            [
+                "真实业主问题或当日现场",
+                "业主需求或现场任务",
+                "工长身份",
+                "解决方案",
+                "报价",
+                "施工过程",
+                "结果、反馈或当日进展",
+                "具体行动引导",
+            ],
+            ["body.old_house_pain", "body.renovation_advantage", "persona.delivery_endorsement", "ending.case_cta"],
+            variation_rule="只写真实案例或当日现场；日常工作没有独立正文结构时沿用本模式，不补造业主故事。",
+        ),
+        "FRB03": _foreman_calling(
+            "用户痛点型",
+            ["用户当前痛点", "真实案例背景", "对应解决方案", "真实报价", "相关人设优势", "具体行动引导"],
+            ["body.budget_pain", "body.quotation_chaos", "persona.service_contrast", "ending.quotation_cta"],
+            variation_rule="只选择与当前场景最相关的一个核心痛点和二至三项优势。",
+        ),
+        "FRB04": _foreman_calling(
+            "工艺专业型",
+            ["具体工艺问题", "关键施工标准", "工地实拍证据", "验收方式", "工长经验或做事原则", "具体行动引导"],
+            ["body.professional_answer", "persona.craftsman_advice", "ending.case_cta"],
+            variation_rule="围绕单一工艺问题展开；图片只证明画面可见的空间、阶段、工种与细节。",
+        ),
+        "FRB05": _foreman_calling(
+            "工长自荐型",
+            ["真实工长身份", "相关人设优势", "真实案例或做事证据", "结果或服务边界", "具体行动引导"],
+            ["persona.stance", "persona.core_advantage", "persona.delivery_endorsement", "ending.case_cta"],
+            variation_rule="人设只改变表达；每篇只使用二至三项与当前顾虑相关且可核验的优势。",
+        ),
+        "FRB06": _foreman_calling(
+            "项目单价型",
+            [
+                "项目单价钩子",
+                "项目分类",
+                "真实单项工价",
+                "适用条件和包含范围",
+                "常见项目说明",
+                "避坑或判断方法",
+                "具体行动引导",
+            ],
+            ["body.budget_pain", "body.professional_answer", "ending.quotation_cta"],
+            variation_rule="标准单价独立标注参考口径，不倒推本案工程量、成交价或结算价。",
+        ),
+        "FRB07": _foreman_calling(
+            "单价+面积型",
+            [
+                "真实案例信息",
+                "已确认面积",
+                "同口径单价",
+                "程序校验后的计算结果",
+                "重点施工项目",
+                "同口径总价",
+                "具体行动引导",
+            ],
+            ["body.budget_pain", "body.professional_answer", "ending.quotation_cta"],
+            variation_rule="面积、单价和总价仅在同一项目口径且程序校验通过时组合。",
+        ),
+        "FRB08": _foreman_calling(
+            "工种总价型",
+            ["真实总价钩子", "面积或户型", "各工种真实总价", "核心包含项", "预算解释", "具体行动引导"],
+            ["body.budget_pain", "body.professional_answer", "ending.quotation_cta"],
+            variation_rule="各工种金额必须来自同一报价，合计不一致或缺项时不补造。",
+        ),
+        "FRB09": _foreman_calling(
+            "人工+辅材型",
+            ["真实总价钩子", "人工合计", "辅材合计", "各工种真实拆分", "为什么这样花", "透明服务优势", "具体行动引导"],
+            ["body.quotation_chaos", "persona.service_contrast", "ending.quotation_cta"],
+            variation_rule="人工、辅材、工种拆分和总价必须同源且合计通过校验。",
+        ),
+    }
+)
+
+
 def get_decoration_body_calling(formula_code: str) -> dict[str, Any]:
     """返回可冻结进 StrategySnapshot 的正文调用规则。"""
 
     return deepcopy(DECORATION_BODY_CALLING[formula_code])
+
+
+def get_decoration_body_calling_source(formula_code: str) -> dict[str, Any]:
+    return deepcopy(FOREMAN_SOURCE_METADATA if formula_code.startswith("FRB") else SOURCE_METADATA)

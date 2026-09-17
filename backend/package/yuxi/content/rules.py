@@ -372,6 +372,47 @@ def brief_variable_map(brief: dict[str, Any]) -> dict[str, Any]:
     return variables
 
 
+def canonical_brief_facts(brief: dict[str, Any]) -> list[tuple[str, Any, tuple[str, ...]]]:
+    """仅合并已知同源字段别名；保留冲突值，不把运行配置转换为业务证据。"""
+    variables = brief_variable_map(brief)
+    controls = {"attachments", "required_terms", "forbidden_terms", "visual_material", "number"}
+    variables = {
+        key: value
+        for key, value in variables.items()
+        if key not in controls and not key.endswith("_version_id") and value not in (None, "", [], {})
+    }
+    if not any("emotion" in (brief.get(section) or {}) for section in ("business_variables", "form_values")):
+        variables.pop("emotion", None)
+    aliases = {
+        "product": "project_type",
+        "quantity": "area",
+        "price": "budget",
+        "process": "craft_and_materials",
+        "result": "project_result",
+        "pain_points": "owner_pain",
+        "advantages": "advantage",
+    }
+    grouped: dict[str, tuple[Any, list[str]]] = {}
+    original_fields = brief.get("form_values") or {}
+    for key, value in variables.items():
+        canonical = aliases.get(key, key)
+        if (
+            canonical not in variables
+            or variables[canonical] != value
+            or (key != canonical and (key in original_fields or canonical not in original_fields))
+        ):
+            canonical = key
+        if canonical not in grouped:
+            grouped[canonical] = (value, [canonical])
+        if key not in grouped[canonical][1]:
+            grouped[canonical][1].append(key)
+    text_values = " ".join(str(value) for value, _ in grouped.values())
+    numbers = list(dict.fromkeys(re.findall(r"\d+(?:\.\d+)?(?:%|元|天|周|月|年|个|次|㎡)?", text_values)))
+    if numbers:
+        grouped["number"] = (numbers, ["number"])
+    return [(key, value, tuple(codes)) for key, (value, codes) in grouped.items()]
+
+
 async def ensure_content_seed_data(db: AsyncSession) -> None:
     # API 与 Worker 会并行初始化，事务级锁避免重复写入同一版平台种子。
     await db.execute(

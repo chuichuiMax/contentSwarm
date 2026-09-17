@@ -268,7 +268,7 @@ async def _load_job_assets(
     source_ids = list(source_ids or [])
     async with pg_manager.get_async_session_context() as db:
         repo = ContentCoverRepository(db)
-        sources = await repo.get_assets_for_user(source_ids, job.owner_uid)
+        sources = await repo.get_assets_for_user(source_ids, job.owner_uid, allow_material_use=True)
         if len(sources) != len(source_ids):
             raise RuntimeError("封面任务引用的原图已不存在")
         template = None
@@ -327,10 +327,10 @@ async def _run_hycanvas(job: ContentCoverJob) -> tuple[list[bytes], dict[str, An
     from yuxi.services.hycanvas_service import HyCanvasClient
 
     sources, _, _ = await _load_job_assets(job)
-    if len(sources) != 1:
-        raise RuntimeError("HyCanvas 封面任务需要且仅需要一张图库主图")
-    source = sources[0]
     request = job.request_json or {}
+    if len(sources) != 1:
+        raise RuntimeError("单图封面需要一张图库主图")
+    source = sources[0]
     client = HyCanvasClient.from_env()
     image = (await _download_asset(source), source.content_type, source.original_file_name)
     design = await client.create_design(
@@ -646,7 +646,7 @@ async def _run_poster_billboard(job: ContentCoverJob) -> list[bytes]:
         raise PosterBillboardError("大字报任务缺少蒙版或产品区域快照")
     async with pg_manager.get_async_session_context() as db:
         repo = ContentCoverRepository(db)
-        product_asset = await repo.get_asset_for_user(product_asset_id, job.owner_uid)
+        product_asset = await repo.get_asset_for_user(product_asset_id, job.owner_uid, allow_material_use=True)
         template_asset = await repo.get_asset_for_user(template_asset_id, job.owner_uid)
     if product_asset is None or product_asset.role not in {"source", "library_image"}:
         raise PosterBillboardError("大字报任务引用的产品图已不存在")

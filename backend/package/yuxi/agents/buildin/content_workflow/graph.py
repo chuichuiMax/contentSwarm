@@ -288,8 +288,13 @@ class ContentWorkflowAgent(BaseAgent):
                 persisted = await db.get(type(node_run), node_run.id)
                 if persisted:
                     output_snapshot = {"updated_fields": sorted(result.keys())}
-                    if cache_key:
+                    if cache_key or node_id in {
+                        "select_creation_strategy", "lock_creation_strategy", "research_strategy_prices",
+                        "confirm_strategy_prices", "merge_strategy_prices", "reselect_creation_strategy",
+                    }:
                         output_snapshot["result"] = result
+                    if node_id == "prepare_strategy_candidates":
+                        output_snapshot["reference_search_queries"] = result.get("reference_search_queries", [])
                     if node_id == "validate_title_candidates":
                         output_snapshot["title_validation_report"] = result.get("title_validation_report") or {}
                     await repo.finish_node_run(
@@ -335,6 +340,9 @@ class ContentWorkflowAgent(BaseAgent):
         definition: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         node_type = node["type"]
+        # 保留历史工作流节点和 checkpoint 位置，但不再调用封面审核 Agent。
+        if node["id"] == "visual_review":
+            return {"visual_review": {"status": "skipped", "assets": [], "recommended_asset_id": None}}
         if node_type == "human_review":
             return await self._v3_human_review(node, state)
         if node_type == "revision_router":
@@ -443,6 +451,19 @@ class ContentWorkflowAgent(BaseAgent):
                 "state_version": state_version + 1,
                 "resume_parent_run_id": None,
             }
+
+        if node["id"] == "confirm_strategy_prices":
+            collection = dict(state["strategy_price_evidence_collection"])
+            items = collection.get("evidence_items") or []
+            if not items:
+                return {}
+            ids = {item["id"] for item in items}
+            answer = require_resume({"evidence_ids": sorted(ids), "evidence_items": items})
+            if set(answer.get("confirmed_evidence_ids") or []) != ids:
+                raise ValueError("检索报价必须逐项确认；标准单价的确认不代表本项目实际成交价")
+            collection["evidence_items"] = [{**item, "verified_status": "user_confirmed"} for item in items]
+            return {"strategy_price_evidence_collection": collection,
+                    "state_version": state_version + 1, "resume_parent_run_id": None}
 
         if interrupt_type == "high_risk_facts":
             collection = dict(state.get("evidence_collection") or {})
@@ -652,21 +673,27 @@ class ContentWorkflowAgent(BaseAgent):
             }
 
         if interrupt_type == "cover_selection":
-            review = state.get("visual_review") or {}
-            passed_ids = {
-                item["asset_id"] for item in review.get("assets") or [] if item.get("status") in {"passed", "warning"}
-            }
-            answer = require_resume({"asset_ids": sorted(passed_ids)})
+            cover_job = state.get("cover_job") or {}
+            asset_ids = list(cover_job.get("asset_ids") or [])
+            if cover_job.get("status") != "succeeded" or not asset_ids:
+                raise ValueError("封面生成成功后才能选择保存")
+            if len(asset_ids) == 1:
+                return {
+                    "selected_cover": {
+                        "asset_id": asset_ids[0],
+                        "cover_job_id": cover_job["cover_job_id"],
+                    },
+                    "state_version": state_version + 1,
+                    "resume_parent_run_id": None,
+                }
+            answer = require_resume({"asset_ids": asset_ids, "cover_job_id": cover_job["cover_job_id"]})
             asset_id = answer.get("asset_id")
-            if asset_id not in passed_ids:
-                raise ValueError("只能选择通过视觉审核的封面资产")
+            if asset_id not in asset_ids:
+                raise ValueError("只能选择本次生成的封面资产")
             return {
                 "selected_cover": {
                     "asset_id": asset_id,
-                    "cover_job_id": (state.get("cover_job") or {}).get("cover_job_id"),
-                    "review_status": next(
-                        item["status"] for item in review.get("assets") or [] if item.get("asset_id") == asset_id
-                    ),
+                    "cover_job_id": cover_job["cover_job_id"],
                 },
                 "state_version": state_version + 1,
                 "resume_parent_run_id": None,
@@ -797,11 +824,6 @@ class ContentWorkflowAgent(BaseAgent):
                 cover_repo = ContentCoverRepository(db)
                 cover_job = await cover_repo.get_job(str(cover_job_id or ""))
                 cover_asset = await cover_repo.get_asset(str(cover_asset_id or ""))
-                passed_ids = {
-                    item["asset_id"]
-                    for item in (state.get("visual_review") or {}).get("assets") or []
-                    if item.get("status") in {"passed", "warning"}
-                }
                 if (
                     cover_job is None
                     or cover_job.status != "succeeded"
@@ -810,9 +832,8 @@ class ContentWorkflowAgent(BaseAgent):
                     or cover_asset.owner_uid != state["uid"]
                     or cover_asset.role != "output"
                     or cover_asset.id not in ((cover_job.result_json or {}).get("asset_ids") or [])
-                    or cover_asset.id not in passed_ids
                 ):
-                    raise ValueError("ArtifactVersion 只能绑定本任务中通过视觉审核的 CoverJob 资产")
+                    raise ValueError("ArtifactVersion 只能绑定本任务生成成功的 CoverJob 输出资产")
                 hycanvas_design_snapshot = (cover_job.result_json or {}).get("hycanvas_design_snapshot") or {}
             artifact = await repo.get_artifact_for_task(task.id)
             if artifact is None:

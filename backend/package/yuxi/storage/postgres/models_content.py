@@ -36,6 +36,59 @@ class ContentRuleVersion(Base):
     __table_args__ = (UniqueConstraint("tenant_id", "version", name="uq_content_rule_versions_tenant_version"),)
 
 
+class ContentViralArticleVersion(Base):
+    """完整文章及其准备结果快照；同文件的不同文章独立版本化。"""
+
+    __tablename__ = "content_viral_article_versions"
+
+    id = Column(String(64), primary_key=True)
+    article_id = Column(String(64), nullable=False, index=True)
+    kb_id = Column(String(80), nullable=False, index=True)
+    file_id = Column(String(64), nullable=False, index=True)
+    industry_slug = Column(String(80), nullable=False, index=True)
+    source_hash = Column(String(64), nullable=False)
+    preparation_skill_hash = Column(String(64), nullable=False)
+    source_json = Column(JSON, nullable=False)
+    prepared_json = Column(JSON, nullable=False, default=dict)
+    status = Column(String(32), nullable=False, default="pending", index=True)
+    attempt = Column(Integer, nullable=False, default=1)
+    agent_run_id = Column(String(64), nullable=True)
+    error_message = Column(Text, nullable=True)
+    created_by = Column(String(64), nullable=False)
+    created_at = Column(DateTime, default=utc_now_naive)
+    updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
+
+    __table_args__ = (
+        UniqueConstraint("article_id", "source_hash", "preparation_skill_hash", name="uq_viral_article_preparation"),
+        CheckConstraint(
+            "status IN ('pending', 'running', 'ready', 'needs_review', 'failed', 'invalidated')",
+            name="ck_viral_asset_status",
+        ),
+    )
+
+
+class ContentViralFileJob(Base):
+    """文件自动识别任务；与文章资产分开，未识别出文章时仍可追踪问题。"""
+
+    __tablename__ = "content_viral_file_jobs"
+    id = Column(String(64), primary_key=True)
+    kb_id = Column(String(80), nullable=False, index=True)
+    file_id = Column(String(64), nullable=False, index=True)
+    filename = Column(String(512), nullable=False)
+    source_hash = Column(String(64), nullable=False)
+    file_version = Column(String(128), nullable=False)
+    skill_hash = Column(String(64), nullable=False)
+    input_json = Column(JSON, nullable=False)
+    result_json = Column(JSON, nullable=False, default=dict)
+    status = Column(String(32), nullable=False, default="pending", index=True)
+    attempt = Column(Integer, nullable=False, default=1)
+    agent_run_id = Column(String(64), nullable=True)
+    error_message = Column(Text, nullable=True)
+    created_by = Column(String(64), nullable=False)
+    created_at = Column(DateTime, default=utc_now_naive)
+    updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
+
+
 class CreationMethod(Base):
     __tablename__ = "content_creation_methods"
 
@@ -46,6 +99,7 @@ class CreationMethod(Base):
     code = Column(String(32), nullable=False)
     name = Column(String(80), nullable=False)
     method_type = Column(String(32), nullable=False, default="core")
+    industry_scope = Column(JSON, nullable=False, default=list)
     principle = Column(Text, nullable=False)
     suitable_scenes = Column(JSON, nullable=False, default=list)
     sentence_patterns = Column(JSON, nullable=False, default=list)
@@ -60,6 +114,7 @@ class CreationMethod(Base):
 
 class TitleFormula(Base):
     __tablename__ = "content_title_formulas"
+    source_content = Column(JSON, nullable=False, default=dict)
 
     id = Column(String(64), primary_key=True)
     version_id = Column(
@@ -69,6 +124,7 @@ class TitleFormula(Base):
     name = Column(String(120), nullable=False)
     suitable_scenes = Column(JSON, nullable=False, default=list)
     core_goal = Column(Text, nullable=False)
+    industry_scope = Column(JSON, nullable=False, default=list)
     reference_examples = Column(JSON, nullable=False, default=list)
     variable_schema = Column(JSON, nullable=False, default=list)
     compatible_methods = Column(JSON, nullable=False, default=list)
@@ -81,6 +137,7 @@ class TitleFormula(Base):
 
 class ContentFormula(Base):
     __tablename__ = "content_body_formulas"
+    source_content = Column(JSON, nullable=False, default=dict)
 
     id = Column(String(64), primary_key=True)
     version_id = Column(
@@ -89,6 +146,7 @@ class ContentFormula(Base):
     code = Column(String(32), nullable=False)
     name = Column(String(120), nullable=False)
     industry_aliases = Column(JSON, nullable=False, default=dict)
+    industry_scope = Column(JSON, nullable=False, default=list)
     compatible_methods = Column(JSON, nullable=False, default=list)
     suitable_scenes = Column(JSON, nullable=False, default=list)
     business_pains = Column(JSON, nullable=False, default=list)
@@ -983,6 +1041,62 @@ class ContentCoverImage2Setting(Base):
     updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
 
 
+class RemoteMaterialLibrarySetting(Base):
+    __tablename__ = "remote_material_library_settings"
+
+    id = Column(String(32), primary_key=True, default="global")
+    base_url = Column(String(500), nullable=False)
+    username = Column(String(255), nullable=False)
+    password = Column(String(500), nullable=False)
+    verification_status = Column(String(32), nullable=False, default="verified")
+    verified_at = Column(DateTime, nullable=True)
+    updated_by = Column(Integer, nullable=True)
+    created_at = Column(DateTime, default=utc_now_naive)
+    updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
+
+
+class RemoteMaterialSyncJob(Base):
+    __tablename__ = "remote_material_sync_jobs"
+
+    id = Column(String(64), primary_key=True)
+    owner_uid = Column(String(255), nullable=False, index=True)
+    tenant_id = Column(String(64), nullable=True, index=True)
+    requested_by = Column(Integer, nullable=False)
+    status = Column(String(32), nullable=False, default="queued", index=True)
+    phase = Column(String(32), nullable=False, default="queued")
+    progress = Column(Integer, nullable=False, default=0)
+    total_groups = Column(Integer, nullable=False, default=0)
+    processed_groups = Column(Integer, nullable=False, default=0)
+    total_assets = Column(Integer, nullable=False, default=0)
+    processed_assets = Column(Integer, nullable=False, default=0)
+    summary_json = Column(JSON, nullable=False, default=dict)
+    error_code = Column(String(80), nullable=True)
+    error_message = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=utc_now_naive, nullable=False, index=True)
+    started_at = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+    updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive, nullable=False)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "status": self.status,
+            "phase": self.phase,
+            "progress": self.progress,
+            "total_groups": self.total_groups,
+            "processed_groups": self.processed_groups,
+            "total_assets": self.total_assets,
+            "processed_assets": self.processed_assets,
+            "summary": self.summary_json or {},
+            "error_code": self.error_code,
+            "error_message": self.error_message,
+            "created_at": format_utc_datetime(self.created_at),
+            "started_at": format_utc_datetime(self.started_at),
+            "completed_at": format_utc_datetime(self.completed_at),
+            "updated_at": format_utc_datetime(self.updated_at),
+        }
+
+
 class ContentCoverAsset(Base):
     __tablename__ = "content_cover_assets"
 
@@ -1032,6 +1146,7 @@ class ContentMaterialLibraryItem(Base):
     asset_id = Column(String(64), ForeignKey("content_cover_assets.id", ondelete="CASCADE"), nullable=False, index=True)
     material_type = Column(String(32), nullable=False, index=True)
     display_name = Column(String(255), nullable=False)
+    category_owner_uid = Column(String(255), nullable=True)
     category = Column(String(80), nullable=False, default="未分类", index=True)
     tags_json = Column(JSON, nullable=False, default=list)
     status = Column(String(32), nullable=False, default="enabled", index=True)
@@ -1063,6 +1178,7 @@ class ContentMaterialLibraryItem(Base):
         return {
             "id": self.id,
             "asset_id": self.asset_id,
+            "uploaded_by": self.owner_uid,
             "material_type": self.material_type,
             "name": self.display_name,
             "category": self.category,
@@ -1071,6 +1187,15 @@ class ContentMaterialLibraryItem(Base):
             "created_at": format_utc_datetime(self.created_at),
             "updated_at": format_utc_datetime(self.updated_at),
         }
+
+
+class ContentMaterialUsage(Base):
+    """已授权用于创作的原图引用；下架图库不破坏既有任务。"""
+
+    __tablename__ = "content_material_usages"
+    asset_id = Column(String(64), ForeignKey("content_cover_assets.id", ondelete="RESTRICT"), primary_key=True)
+    user_uid = Column(String(255), primary_key=True)
+    created_at = Column(DateTime, default=utc_now_naive)
 
 
 class ContentMaterialCategory(Base):
@@ -1082,6 +1207,7 @@ class ContentMaterialCategory(Base):
     material_type = Column(String(32), primary_key=True, index=True)
     id = Column(String(64), primary_key=True)
     tenant_id = Column(String(64), nullable=True, index=True)
+    visibility = Column(String(20), nullable=False, default="private", server_default="private")
     parent_id = Column(String(64), nullable=True, index=True)
     industry_slug = Column(String(80), nullable=False, default="uncategorized", index=True)
     name = Column(String(80), nullable=False)
@@ -1124,6 +1250,8 @@ class ContentMaterialCategory(Base):
         return {
             "id": self.id,
             "code": self.id,
+            "visibility": self.visibility or "private",
+            "owner_uid": self.owner_uid,
             "material_type": self.material_type,
             "parent_id": self.parent_id,
             "level": 2 if self.parent_id else 1,
@@ -1318,6 +1446,190 @@ class ContentReviewRecord(Base):
     checks = Column(JSON, nullable=False, default=list)
     reviewer_uid = Column(String(64), nullable=True)
     created_at = Column(DateTime, default=utc_now_naive)
+
+
+class ImageDesignClient(Base):
+    """图片设计客户档案；输入图片仍归属素材库，任务和结果按客户归档。"""
+
+    __tablename__ = "image_design_clients"
+
+    id = Column(String(64), primary_key=True)
+    owner_uid = Column(String(255), nullable=False, index=True)
+    tenant_id = Column(String(64), nullable=True, index=True)
+    name = Column(String(120), nullable=False)
+    created_at = Column(DateTime, default=utc_now_naive, nullable=False)
+    updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive, nullable=False)
+    deleted_at = Column(DateTime, nullable=True, index=True)
+
+    __table_args__ = (UniqueConstraint("owner_uid", "name", name="uq_image_design_clients_owner_name"),)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "name": self.name,
+            "created_at": format_utc_datetime(self.created_at),
+            "updated_at": format_utc_datetime(self.updated_at),
+        }
+
+
+class ImageDesignAnalysis(Base):
+    """A role-specific, model-versioned visual analysis of one immutable material asset."""
+
+    __tablename__ = "image_design_analyses"
+
+    id = Column(String(64), primary_key=True)
+    owner_uid = Column(String(255), nullable=False, index=True)
+    material_item_id = Column(String(64), nullable=False, index=True)
+    asset_sha256 = Column(String(64), nullable=False, index=True)
+    analysis_role = Column(String(32), nullable=False, index=True)
+    schema_version = Column(Integer, nullable=False)
+    model_spec = Column(String(255), nullable=False)
+    cache_key = Column(String(64), nullable=False)
+    status = Column(String(32), nullable=False, default="running", index=True)
+    result_json = Column(JSON, nullable=False, default=dict)
+    error_code = Column(String(80), nullable=True)
+    error_message = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=utc_now_naive, nullable=False)
+    updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("owner_uid", "cache_key", name="uq_image_design_analyses_owner_cache"),
+        Index("idx_image_design_analyses_material_role", "owner_uid", "material_item_id", "analysis_role"),
+    )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "material_item_id": self.material_item_id,
+            "asset_sha256": self.asset_sha256,
+            "role": self.analysis_role,
+            "schema_version": self.schema_version,
+            "model_spec": self.model_spec,
+            "status": self.status,
+            "result": self.result_json or {},
+            "error_code": self.error_code,
+            "error_message": self.error_message,
+            "created_at": format_utc_datetime(self.created_at),
+            "updated_at": format_utc_datetime(self.updated_at),
+        }
+
+
+class ImageDesignRefinement(Base):
+    """Server-verifiable semantic snapshot and compiled prompt plan."""
+
+    __tablename__ = "image_design_refinements"
+
+    id = Column(String(64), primary_key=True)
+    owner_uid = Column(String(255), nullable=False, index=True)
+    workflow = Column(String(32), nullable=False, index=True)
+    workflow_version = Column(Integer, nullable=False)
+    input_fingerprint = Column(String(64), nullable=False, index=True)
+    request_json = Column(JSON, nullable=False, default=dict)
+    analysis_ids_json = Column(JSON, nullable=False, default=list)
+    plan_json = Column(JSON, nullable=False, default=dict)
+    compiled_prompt = Column(Text, nullable=False)
+    coverage_json = Column(JSON, nullable=False, default=dict)
+    conflicts_json = Column(JSON, nullable=False, default=list)
+    model_spec = Column(String(255), nullable=False)
+    status = Column(String(32), nullable=False, default="completed", index=True)
+    created_at = Column(DateTime, default=utc_now_naive, nullable=False, index=True)
+    updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive, nullable=False)
+
+    __table_args__ = (Index("idx_image_design_refinements_owner_created", "owner_uid", "created_at"),)
+
+    def to_dict(self) -> dict[str, Any]:
+        plan = self.plan_json or {}
+        return {
+            "id": self.id,
+            "workflow": self.workflow,
+            "workflow_version": self.workflow_version,
+            "input_fingerprint": self.input_fingerprint,
+            "analysis_ids": self.analysis_ids_json or [],
+            "plan": plan,
+            "compiled_prompt": self.compiled_prompt,
+            "coverage": self.coverage_json or {},
+            "conflicts": self.conflicts_json or [],
+            "warnings": plan.get("warnings") or [],
+            "model_spec": self.model_spec,
+            "status": self.status,
+            "created_at": format_utc_datetime(self.created_at),
+            "updated_at": format_utc_datetime(self.updated_at),
+        }
+
+
+class ImageDesignJob(Base):
+    """图片设计的异步任务和输入快照，不复用封面任务的业务语义。"""
+
+    __tablename__ = "image_design_jobs"
+
+    id = Column(String(64), primary_key=True)
+    owner_uid = Column(String(255), nullable=False, index=True)
+    tenant_id = Column(String(64), nullable=True, index=True)
+    client_id = Column(String(64), nullable=True, index=True)
+    workflow = Column(String(32), nullable=False, index=True)
+    status = Column(String(32), nullable=False, default="queued", index=True)
+    provider_task_ids_json = Column(JSON, nullable=False, default=list)
+    request_json = Column(JSON, nullable=False, default=dict)
+    result_json = Column(JSON, nullable=False, default=dict)
+    error_code = Column(String(80), nullable=True)
+    error_message = Column(Text, nullable=True)
+    progress = Column(Integer, nullable=False, default=0)
+    idempotency_key = Column(String(128), nullable=False)
+    created_at = Column(DateTime, default=utc_now_naive, nullable=False, index=True)
+    started_at = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+    updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("owner_uid", "idempotency_key", name="uq_image_design_jobs_owner_idempotency"),
+        Index("idx_image_design_jobs_owner_created", "owner_uid", "created_at"),
+    )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "client_id": self.client_id,
+            "workflow": self.workflow,
+            "status": self.status,
+            "provider_task_ids": self.provider_task_ids_json or [],
+            "request": self.request_json or {},
+            "result": self.result_json or {},
+            "error_code": self.error_code,
+            "error_message": self.error_message,
+            "progress": self.progress,
+            "created_at": format_utc_datetime(self.created_at),
+            "started_at": format_utc_datetime(self.started_at),
+            "completed_at": format_utc_datetime(self.completed_at),
+            "updated_at": format_utc_datetime(self.updated_at),
+        }
+
+
+class ImageDesignShowcase(Base):
+    """管理员维护的精选案例提示词，图片复用素材库目录项。"""
+
+    __tablename__ = "image_design_showcases"
+
+    id = Column(String(64), primary_key=True)
+    owner_uid = Column(String(255), nullable=False, index=True)
+    title = Column(String(160), nullable=False)
+    category = Column(String(80), nullable=False, index=True)
+    style_text = Column(Text, nullable=False)
+    image_material_id = Column(String(64), nullable=False, index=True)
+    enabled = Column(Boolean, nullable=False, default=True, index=True)
+    created_at = Column(DateTime, default=utc_now_naive, nullable=False)
+    updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive, nullable=False)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "title": self.title,
+            "category": self.category,
+            "style_text": self.style_text,
+            "image_material_id": self.image_material_id,
+            "enabled": bool(self.enabled),
+            "created_at": format_utc_datetime(self.created_at),
+            "updated_at": format_utc_datetime(self.updated_at),
+        }
 
 
 class XiaohongshuAccount(Base):

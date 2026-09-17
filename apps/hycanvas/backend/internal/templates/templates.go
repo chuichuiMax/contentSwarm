@@ -399,9 +399,11 @@ func normalizeTemplateTypography(file map[string]any, fields []any) error {
 			return ErrBadRequest
 		}
 		runSnapshots := []any{}
+		paragraphSnapshots := []any{}
 		paragraphAlign := ""
 		for _, paragraphRaw := range asArr(node["content"]) {
 			paragraph := asObj(paragraphRaw)
+			paragraphRuns := []any{}
 			if paragraphAlign == "" {
 				paragraphAlign = asStr(asObj(paragraph["style"])["align"])
 			}
@@ -433,14 +435,25 @@ func normalizeTemplateTypography(file map[string]any, fields []any) error {
 					snapshot["lineHeight"] = value
 				}
 				runSnapshots = append(runSnapshots, snapshot)
+				paragraphRuns = append(paragraphRuns, map[string]any{"style": deepCloneValue(style)})
 			}
+			paragraphSnapshots = append(paragraphSnapshots, map[string]any{
+				"style": deepCloneValue(asObj(paragraph["style"])),
+				"runs":  paragraphRuns,
+			})
 		}
 		if len(runSnapshots) == 0 {
 			return ErrBadRequest
 		}
-		typography := map[string]any{"runs": runSnapshots}
+		typography := map[string]any{"runs": runSnapshots, "paragraphs": paragraphSnapshots}
 		if paragraphAlign != "" {
 			typography["paragraphAlign"] = paragraphAlign
+		}
+		if box := asObj(node["box"]); box != nil {
+			typography["box"] = deepCloneValue(box)
+		}
+		if effects, ok := node["textEffects"].([]any); ok {
+			typography["textEffects"] = deepCloneValue(effects)
 		}
 		field["typography"] = typography
 	}
@@ -516,11 +529,11 @@ func (s *Service) SaveAsTemplate(ctx context.Context, userID string, in SaveInpu
 			tags = []string{}
 		}
 	}
-	var wsPtr *string
-	if visibility != "public" {
-		ws := in.WorkspaceID
-		wsPtr = &ws
-	}
+	// Visibility controls who can use the template. WorkspaceID records which
+	// workspace owns its collection, including public templates, so selecting
+	// "everyone" does not make the template disappear from that category.
+	ws := in.WorkspaceID
+	wsPtr := &ws
 	row, err := s.createRow(ctx, createTemplateInput{
 		ownerID: userID, workspaceID: wsPtr, title: in.Title, category: nilIfEmpty(category),
 		tags: tags, file: fileRaw, thumbnail: nilIfEmpty(in.Thumbnail), visibility: visibility,
@@ -605,6 +618,32 @@ type Collection struct {
 	Name        string `json:"name"`
 }
 
+// Category groups the templates assigned to one workspace collection for
+// consumers that need the complete categorized catalog in one request.
+type Category struct {
+	ID        string           `json:"id"`
+	Name      string           `json:"name"`
+	Templates []PublicTemplate `json:"templates"`
+}
+
+type PublicCategory struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+type PublicTemplate struct {
+	ID             string         `json:"id"`
+	Title          string         `json:"title"`
+	Categories     []string       `json:"categories"`
+	Tags           []string       `json:"tags"`
+	Format         map[string]any `json:"format"`
+	PageCount      int            `json:"pageCount"`
+	PreviewURLs    []string       `json:"previewUrls"`
+	FillableFields []any          `json:"fillableFields"`
+	CreatedAt      string         `json:"createdAt"`
+	UpdatedAt      string         `json:"updatedAt"`
+}
+
 func (s *Service) CreateCollection(ctx context.Context, userID, workspaceID, name string) (Collection, error) {
 	if err := s.access.AssertMember(ctx, userID, workspaceID, "member"); err != nil {
 		return Collection{}, ErrForbidden
@@ -629,6 +668,83 @@ func (s *Service) ListCollections(ctx context.Context, userID, workspaceID strin
 		out = append(out, Collection{ID: r.ID, WorkspaceID: r.WorkspaceID, Name: r.Name})
 	}
 	return out, nil
+}
+
+func (s *Service) PublicCategorizedCatalog(ctx context.Context) ([]Category, error) {
+	rows, err := s.listAllCollections(ctx)
+	if err != nil {
+		return nil, err
+	}
+	categories := make([]Category, 0, len(rows))
+	for _, collection := range rows {
+		templateRows, err := s.listCollectionRows(ctx, collection.ID)
+		if err != nil {
+			return nil, err
+		}
+		templates := make([]PublicTemplate, 0, len(templateRows))
+		for _, row := range templateRows {
+			template := rowToTemplate(row)
+			templates = append(templates, PublicTemplate{
+				ID: template.ID, Title: template.Title, Categories: template.Categories, Tags: template.Tags,
+				Format: template.Format, PageCount: template.PageCount, PreviewURLs: template.PreviewURLs,
+				FillableFields: template.FillableFields, CreatedAt: template.CreatedAt, UpdatedAt: template.UpdatedAt,
+			})
+		}
+		categories = append(categories, Category{ID: collection.ID, Name: collection.Name, Templates: templates})
+	}
+	return categories, nil
+}
+
+func (s *Service) PublicCategories(ctx context.Context) ([]PublicCategory, error) {
+	rows, err := s.listAllCollections(ctx)
+	if err != nil {
+		return nil, err
+	}
+	categories := make([]PublicCategory, 0, len(rows))
+	for _, row := range rows {
+		categories = append(categories, PublicCategory{ID: row.ID, Name: row.Name})
+	}
+	return categories, nil
+}
+
+func (s *Service) PublicTemplatesByCategory(ctx context.Context, categoryID string) ([]PublicTemplate, error) {
+	if _, err := s.getCollection(ctx, categoryID); err != nil {
+		return nil, err
+	}
+	return s.publicTemplatesForCategory(ctx, categoryID)
+}
+
+func (s *Service) PublicTemplatesByCategories(ctx context.Context, categoryIDs []string) ([]Category, error) {
+	categories := make([]Category, 0, len(categoryIDs))
+	for _, categoryID := range categoryIDs {
+		collection, err := s.getCollection(ctx, categoryID)
+		if err != nil {
+			return nil, err
+		}
+		templates, err := s.publicTemplatesForCategory(ctx, categoryID)
+		if err != nil {
+			return nil, err
+		}
+		categories = append(categories, Category{ID: collection.ID, Name: collection.Name, Templates: templates})
+	}
+	return categories, nil
+}
+
+func (s *Service) publicTemplatesForCategory(ctx context.Context, categoryID string) ([]PublicTemplate, error) {
+	rows, err := s.listCollectionRows(ctx, categoryID)
+	if err != nil {
+		return nil, err
+	}
+	templates := make([]PublicTemplate, 0, len(rows))
+	for _, row := range rows {
+		template := rowToTemplate(row)
+		templates = append(templates, PublicTemplate{
+			ID: template.ID, Title: template.Title, Categories: template.Categories, Tags: template.Tags,
+			Format: template.Format, PageCount: template.PageCount, PreviewURLs: template.PreviewURLs,
+			FillableFields: template.FillableFields, CreatedAt: template.CreatedAt, UpdatedAt: template.UpdatedAt,
+		})
+	}
+	return templates, nil
 }
 
 func (s *Service) DeleteCollection(ctx context.Context, userID, id string) error {

@@ -33,13 +33,16 @@ def _context(formula_code: str) -> ContractDomainContext:
 
 
 def test_body_calling_catalog_covers_all_formulas_and_five_source_columns() -> None:
-    assert set(DECORATION_BODY_CALLING) == {"C01", "C02", "C03", "C04"}
+    assert set(DECORATION_BODY_CALLING) == {
+        *{f"C{index:02d}" for index in range(1, 5)},
+        *{f"FRB{index:02d}" for index in range(1, 10)},
+    }
     for calling in DECORATION_BODY_CALLING.values():
         assert calling["formula_name"]
         assert calling["lexicon_calls"]
         assert calling["sections"]
         assert all(section["fill_rule"] for section in calling["sections"])
-        assert calling["reference_examples"]
+        assert "reference_examples" in calling
 
 
 def test_outline_must_follow_body_calling_section_order_and_choose_one_variant() -> None:
@@ -84,7 +87,10 @@ def test_formula_without_variants_rejects_extra_variant() -> None:
 
 
 def test_formula_lexicon_requirements_cover_all_title_formulas_and_locked_body_formula() -> None:
-    assert set(TITLE_FORMULA_LEXICON_CODES) == {f"T{index:02d}" for index in range(1, 8)}
+    assert set(TITLE_FORMULA_LEXICON_CODES) == {
+        *{f"T{index:02d}" for index in range(1, 8)},
+        *{f"FRT{index:02d}" for index in range(1, 13)},
+    }
     requirements = get_formula_lexicon_requirements("T01", "C02")
     assert [item["filename"] for item in requirements["title"]] == [
         "人群定位资料库-人群词库.txt",
@@ -96,6 +102,10 @@ def test_formula_lexicon_requirements_cover_all_title_formulas_and_locked_body_f
         "人设价值资料库-落地背书词库.txt",
         "结尾引导资料库-案例引导词库.txt",
     ]
+
+    foreman = get_formula_lexicon_requirements("FRT07", "FRB06")
+    assert foreman["title"]
+    assert foreman["body"]
 
 
 def test_generated_content_must_report_formula_lexicon_usage() -> None:

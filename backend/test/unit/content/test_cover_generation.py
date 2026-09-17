@@ -1114,6 +1114,28 @@ async def test_image2_retries_rate_limit_with_same_idempotency_key():
 
 
 @pytest.mark.asyncio
+async def test_image2_retries_network_error_for_idempotent_generation():
+    calls = 0
+    encoded = base64.b64encode(_image("#887766")).decode()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls < 3:
+            raise httpx.ConnectError("temporary outage", request=request)
+        return httpx.Response(200, json={"data": [{"b64_json": encoded}]})
+
+    async with _client(handler) as client:
+        result = await client.submit(
+            Image2Request(mode="text_to_image", prompt="封面", size="1080x1440"),
+            idempotency_key="cover-network-retry",
+        )
+
+    assert result.status == "completed"
+    assert calls == 3
+
+
+@pytest.mark.asyncio
 async def test_image2_post_500_is_retryable_but_not_automatically_resubmitted():
     calls = 0
 

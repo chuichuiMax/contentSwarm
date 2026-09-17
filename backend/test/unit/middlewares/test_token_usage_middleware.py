@@ -25,6 +25,43 @@ def test_content_token_budget_counts_generated_tokens_not_input_context() -> Non
     assert context._content_node_tokens_used == 4
 
 
+def test_content_token_budget_excludes_hidden_reasoning_tokens() -> None:
+    context = SimpleNamespace(_content_node_token_budget=5)
+    request = SimpleNamespace(runtime=SimpleNamespace(context=context))
+
+    TokenUsageMiddleware._enforce_content_token_budget(
+        request,
+        {
+            "model_usage": {
+                "input_tokens": 1000,
+                "output_tokens": 12004,
+                "total_tokens": 13004,
+                "output_token_details": {"reasoning": 12000},
+            },
+        },
+    )
+
+    assert context._content_node_tokens_used == 4
+
+
+def test_content_token_budget_still_rejects_visible_output_over_limit() -> None:
+    context = SimpleNamespace(_content_node_token_budget=5)
+    request = SimpleNamespace(runtime=SimpleNamespace(context=context))
+
+    with pytest.raises(RuntimeError, match="Token 使用超过节点预算"):
+        TokenUsageMiddleware._enforce_content_token_budget(
+            request,
+            {
+                "model_usage": {
+                    "output_tokens": 12006,
+                    "output_token_details": {"reasoning": 12000},
+                },
+            },
+        )
+
+    assert context._content_node_tokens_used == 6
+
+
 @pytest.mark.asyncio
 async def test_token_usage_middleware_records_request_and_state_tokens() -> None:
     middleware = TokenUsageMiddleware()
@@ -54,7 +91,12 @@ async def test_token_usage_middleware_records_request_and_state_tokens() -> None
             result=[
                 AIMessage(
                     content="answer",
-                    usage_metadata={"input_tokens": 12, "output_tokens": 5, "total_tokens": 17},
+                    usage_metadata={
+                        "input_tokens": 12,
+                        "output_tokens": 5,
+                        "total_tokens": 17,
+                        "output_token_details": {"reasoning": 3},
+                    },
                 )
             ]
         )
@@ -75,7 +117,12 @@ async def test_token_usage_middleware_records_request_and_state_tokens() -> None
     assert token_usage["remaining_context_tokens"] == 2000 - token_usage["llm_input_tokens"]
     assert token_usage["summary_trigger_tokens"] == 2048
     assert "summary_keep_tokens" not in token_usage
-    assert token_usage["model_usage"] == {"input_tokens": 12, "output_tokens": 5, "total_tokens": 17}
+    assert token_usage["model_usage"] == {
+        "input_tokens": 12,
+        "output_tokens": 5,
+        "total_tokens": 17,
+        "output_token_details": {"reasoning": 3},
+    }
     assert token_usage["estimate"] is True
 
 

@@ -6,18 +6,92 @@ from sqlalchemy import func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from yuxi.storage.postgres.models_business import User
 from yuxi.storage.postgres.models_content import (
     ContentCoverAsset,
     ContentCoverPosterTemplate,
     ContentMaterialCategory,
     ContentMaterialLibraryItem,
     ContentTask,
+    RemoteMaterialLibrarySetting,
 )
+from yuxi.utils.datetime_utils import utc_now_naive
 
 
 class MaterialLibraryRepository:
-    def __init__(self, db: AsyncSession):
+    def __init__(self, db: AsyncSession, *, include_shared: bool = False):
         self.db = db
+        self.include_shared = include_shared
+
+    async def get_remote_setting(self, *, for_update: bool = False) -> RemoteMaterialLibrarySetting | None:
+        query = select(RemoteMaterialLibrarySetting).where(RemoteMaterialLibrarySetting.id == "global")
+        if for_update:
+            query = query.with_for_update()
+        return (await self.db.execute(query)).scalar_one_or_none()
+
+    async def upsert_remote_setting(
+        self,
+        *,
+        base_url: str,
+        username: str,
+        password: str,
+        verification_status: str,
+        verified_at,
+        updated_by: int | None,
+    ) -> RemoteMaterialLibrarySetting:
+        setting = await self.get_remote_setting(for_update=True)
+        if setting is None:
+            setting = RemoteMaterialLibrarySetting(
+                id="global",
+                base_url=base_url,
+                username=username,
+                password=password,
+                verification_status=verification_status,
+                verified_at=verified_at,
+                updated_by=updated_by,
+            )
+            self.db.add(setting)
+        else:
+            setting.base_url = base_url
+            setting.username = username
+            setting.password = password
+            setting.verification_status = verification_status
+            setting.verified_at = verified_at
+            setting.updated_by = updated_by
+            setting.updated_at = utc_now_naive()
+        await self.db.flush()
+        return setting
+
+    def category_access(self, owner_uid: str):
+        own = ContentMaterialCategory.owner_uid == owner_uid
+        if not self.include_shared:
+            return own
+        return or_(own, ContentMaterialCategory.visibility == "enterprise")
+
+    @staticmethod
+    def category_join():
+        return (
+            (
+                ContentMaterialCategory.owner_uid
+                == func.coalesce(ContentMaterialLibraryItem.category_owner_uid, ContentMaterialLibraryItem.owner_uid)
+            )
+            & (ContentMaterialCategory.id == ContentMaterialLibraryItem.category)
+            & (ContentMaterialCategory.material_type == ContentMaterialLibraryItem.material_type)
+            & ContentMaterialCategory.deleted_at.is_(None)
+        )
+
+    def item_access(self, owner_uid: str):
+        if not self.include_shared:
+            return ContentMaterialLibraryItem.owner_uid == owner_uid
+        return (
+            select(ContentMaterialCategory.id)
+            .where(
+                self.category_join(),
+                self.category_access(owner_uid),
+            )
+            .correlate(ContentMaterialLibraryItem)
+            .exists()
+        )
 
     async def create_item(self, **values: Any) -> ContentMaterialLibraryItem:
         item = ContentMaterialLibraryItem(**values)
@@ -40,7 +114,7 @@ class MaterialLibraryRepository:
                 await self.db.execute(
                     select(ContentMaterialCategory)
                     .where(
-                        ContentMaterialCategory.owner_uid == owner_uid,
+                        self.category_access(owner_uid),
                         ContentMaterialCategory.material_type == material_type,
                         ContentMaterialCategory.deleted_at.is_(None),
                     )
@@ -58,13 +132,13 @@ class MaterialLibraryRepository:
         for_update: bool = False,
     ) -> ContentMaterialCategory | None:
         query = select(ContentMaterialCategory).where(
-            ContentMaterialCategory.owner_uid == owner_uid,
+            self.category_access(owner_uid),
             ContentMaterialCategory.material_type == material_type,
             ContentMaterialCategory.id == category_id,
             ContentMaterialCategory.deleted_at.is_(None),
         )
         if for_update:
-            query = query.with_for_update()
+            query = query.with_for_update().execution_options(populate_existing=True)
         return (await self.db.execute(query)).scalar_one_or_none()
 
     async def list_child_categories(
@@ -78,7 +152,7 @@ class MaterialLibraryRepository:
                 await self.db.execute(
                     select(ContentMaterialCategory)
                     .where(
-                        ContentMaterialCategory.owner_uid == owner_uid,
+                        self.category_access(owner_uid),
                         ContentMaterialCategory.material_type == material_type,
                         ContentMaterialCategory.parent_id == parent_id,
                         ContentMaterialCategory.deleted_at.is_(None),
@@ -93,7 +167,7 @@ class MaterialLibraryRepository:
     ) -> ContentMaterialLibraryItem | None:
         query = select(ContentMaterialLibraryItem).where(
             ContentMaterialLibraryItem.id == item_id,
-            ContentMaterialLibraryItem.owner_uid == owner_uid,
+            self.item_access(owner_uid),
             ContentMaterialLibraryItem.deleted_at.is_(None),
         )
         if for_update:
@@ -121,7 +195,7 @@ class MaterialLibraryRepository:
             (
                 await self.db.execute(
                     select(ContentMaterialLibraryItem).where(
-                        ContentMaterialLibraryItem.owner_uid == owner_uid,
+                        self.item_access(owner_uid),
                         ContentMaterialLibraryItem.asset_id.in_(asset_ids),
                         ContentMaterialLibraryItem.deleted_at.is_(None),
                     )
@@ -147,21 +221,24 @@ class MaterialLibraryRepository:
         owner_uid: str,
         *,
         material_type: str,
-        category: str | None,
+        category_ids: list[str] | None,
         status: str | None,
         query_text: str | None,
         page: int,
         page_size: int,
         sort: str = "newest",
+        scope: str | None = None,
     ) -> tuple[list[tuple[ContentMaterialLibraryItem, ContentCoverAsset, ContentMaterialCategory]], int]:
         filters = [
-            ContentMaterialLibraryItem.owner_uid == owner_uid,
+            self.item_access(owner_uid),
             ContentMaterialLibraryItem.material_type == material_type,
             ContentMaterialLibraryItem.deleted_at.is_(None),
             ContentCoverAsset.deleted_at.is_(None),
         ]
-        if category:
-            filters.append(ContentMaterialLibraryItem.category == category)
+        if scope:
+            filters.append(ContentMaterialCategory.visibility == scope)
+        if category_ids:
+            filters.append(ContentMaterialLibraryItem.category.in_(category_ids))
         if status:
             filters.append(ContentMaterialLibraryItem.status == status)
         if query_text:
@@ -176,10 +253,7 @@ class MaterialLibraryRepository:
             ContentCoverAsset, ContentCoverAsset.id == ContentMaterialLibraryItem.asset_id
         ).join(
             ContentMaterialCategory,
-            (ContentMaterialCategory.owner_uid == ContentMaterialLibraryItem.owner_uid)
-            & (ContentMaterialCategory.material_type == ContentMaterialLibraryItem.material_type)
-            & (ContentMaterialCategory.id == ContentMaterialLibraryItem.category)
-            & ContentMaterialCategory.deleted_at.is_(None),
+            self.category_join(),
         )
         total = int(
             (
@@ -205,12 +279,17 @@ class MaterialLibraryRepository:
         ).all()
         return list(rows), total
 
+    async def uploader_names(self, owner_uids: list[str]) -> dict[str, str]:
+        rows = await self.db.execute(select(User.uid, User.username).where(User.uid.in_(owner_uids)))
+        return dict(rows.all())
+
     async def category_summaries(
         self, owner_uid: str, *, material_type: str
     ) -> dict[str, tuple[int, ContentMaterialLibraryItem | None]]:
         filters = [
-            ContentMaterialLibraryItem.owner_uid == owner_uid,
+            self.item_access(owner_uid),
             ContentMaterialLibraryItem.material_type == material_type,
+            ContentMaterialLibraryItem.status == "enabled",
             ContentMaterialLibraryItem.deleted_at.is_(None),
             ContentCoverAsset.deleted_at.is_(None),
         ]
@@ -241,7 +320,7 @@ class MaterialLibraryRepository:
             (
                 await self.db.execute(
                     select(func.count(ContentMaterialLibraryItem.id)).where(
-                        ContentMaterialLibraryItem.owner_uid == owner_uid,
+                        self.item_access(owner_uid),
                         ContentMaterialLibraryItem.material_type == material_type,
                         ContentMaterialLibraryItem.category == category_id,
                         ContentMaterialLibraryItem.deleted_at.is_(None),
@@ -256,16 +335,17 @@ class MaterialLibraryRepository:
         material_type: str,
         source_category_id: str,
         target_category_id: str,
+        target_owner_uid: str | None = None,
     ) -> None:
         await self.db.execute(
             update(ContentMaterialLibraryItem)
             .where(
-                ContentMaterialLibraryItem.owner_uid == owner_uid,
+                self.item_access(owner_uid),
                 ContentMaterialLibraryItem.material_type == material_type,
                 ContentMaterialLibraryItem.category == source_category_id,
                 ContentMaterialLibraryItem.deleted_at.is_(None),
             )
-            .values(category=target_category_id)
+            .values(category=target_category_id, category_owner_uid=target_owner_uid or owner_uid)
         )
         if material_type == "cover_template":
             await self.db.execute(
@@ -288,12 +368,28 @@ class MaterialLibraryRepository:
         await self.db.execute(
             update(ContentMaterialCategory)
             .where(
-                ContentMaterialCategory.owner_uid == owner_uid,
+                self.category_access(owner_uid),
                 ContentMaterialCategory.material_type == material_type,
                 ContentMaterialCategory.parent_id == parent_id,
                 ContentMaterialCategory.deleted_at.is_(None),
             )
             .values(industry_slug=industry_slug)
+        )
+
+    async def category_items(self, category: ContentMaterialCategory):
+        return list(
+            (
+                await self.db.execute(
+                    select(ContentMaterialLibraryItem).where(
+                        func.coalesce(
+                            ContentMaterialLibraryItem.category_owner_uid, ContentMaterialLibraryItem.owner_uid
+                        )
+                        == category.owner_uid,
+                        ContentMaterialLibraryItem.material_type == category.material_type,
+                        ContentMaterialLibraryItem.category == category.id,
+                    )
+                )
+            ).scalars()
         )
 
     async def normalize_orphan_categories(
@@ -306,10 +402,13 @@ class MaterialLibraryRepository:
         await self.db.execute(
             update(ContentMaterialLibraryItem)
             .where(
-                ContentMaterialLibraryItem.owner_uid == owner_uid,
+                self.item_access(owner_uid),
                 ContentMaterialLibraryItem.material_type == material_type,
                 ContentMaterialLibraryItem.deleted_at.is_(None),
-                ContentMaterialLibraryItem.category.not_in(active_category_ids),
+                ~select(ContentMaterialCategory.id)
+                .where(self.category_join())
+                .correlate(ContentMaterialLibraryItem)
+                .exists(),
             )
             .values(category=fallback_category_id)
         )
@@ -333,6 +432,12 @@ class MaterialLibraryRepository:
         if for_update:
             query = query.with_for_update()
         return (await self.db.execute(query)).scalar_one_or_none()
+
+    async def asset_was_shared(self, asset_id: str) -> bool:
+        return bool((await self.db.execute(select(ContentMaterialLibraryItem.id).where(
+            ContentMaterialLibraryItem.asset_id == asset_id,
+            ContentMaterialLibraryItem.metadata_json["ever_shared"].as_boolean().is_(True),
+        ).limit(1))).scalar_one_or_none())
 
     async def get_poster_template_by_asset(self, asset_id: str) -> ContentCoverPosterTemplate | None:
         return (

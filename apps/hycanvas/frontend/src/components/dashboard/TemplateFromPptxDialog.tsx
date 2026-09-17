@@ -17,6 +17,7 @@ import { Input } from "@/components/ui/Input";
 import { useToast } from "@/components/ui/Toast";
 import { userMessage } from "@/lib/errors";
 import { tr } from "@/lib/i18n";
+import { TemplateCollectionPicker } from "./TemplateCollectionPicker";
 
 const THUMB_W = 168;
 const THUMB_H = 96;
@@ -63,6 +64,7 @@ export function TemplateFromPptxDialog({ open, onClose, workspaceId, onSaved }: 
   const [saving, setSaving] = useState(false);
   const [result, setResult] = useState<PptxTemplateResult | null>(null);
   const [title, setTitle] = useState("");
+  const [collectionId, setCollectionId] = useState("");
 
   async function pick(files: FileList | null) {
     const f = files?.[0];
@@ -84,7 +86,7 @@ export function TemplateFromPptxDialog({ open, onClose, workspaceId, onSaved }: 
   }
 
   async function save() {
-    if (!result || !workspaceId || saving || !title.trim()) return;
+    if (!result || !workspaceId || saving || !title.trim() || !collectionId) return;
     setSaving(true);
     try {
       await oc.saveAsTemplate({
@@ -94,6 +96,7 @@ export function TemplateFromPptxDialog({ open, onClose, workspaceId, onSaved }: 
         category: "presentations",
         tags: ["pptx", "imported"],
         visibility: "workspace",
+        collectionId,
       });
       toast.success(tr("dashboard.template_created_from_pptx"));
       setResult(null);
@@ -165,9 +168,10 @@ export function TemplateFromPptxDialog({ open, onClose, workspaceId, onSaved }: 
               </ul>
             )}
 
-            <div className="flex items-center gap-2">
-              <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder={tr("dashboard.template_name")} aria-label={tr("dashboard.template_name")} maxLength={120} className="h-9 flex-1" />
-              <Button size="sm" onClick={() => void save()} disabled={saving || !title.trim() || !workspaceId}>
+            <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder={tr("dashboard.template_name")} aria-label={tr("dashboard.template_name")} maxLength={120} className="h-9" />
+            <TemplateCollectionPicker workspaceId={workspaceId} value={collectionId} onChange={(id) => setCollectionId(id)} />
+            <div className="flex justify-end">
+              <Button size="sm" onClick={() => void save()} disabled={saving || !title.trim() || !workspaceId || !collectionId}>
                 {saving ? tr("dashboard.saving_template") : tr("dashboard.save_as_workspace_template")}
               </Button>
             </div>

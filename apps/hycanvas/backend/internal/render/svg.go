@@ -431,7 +431,7 @@ func (c *svgCtx) textBody(node map[string]any) string {
 			if size == 0 {
 				size = 16
 			}
-			lineHeight = math.Max(lineHeight, size*1.2)
+			lineHeight = math.Max(lineHeight, runLineHeight(style, size))
 			family := "sans-serif"
 			if f := asStr(style["fontFamily"]); f != "" {
 				family = f
@@ -441,8 +441,31 @@ func (c *svgCtx) textBody(node map[string]any) string {
 			if p.opacity < 1 {
 				fo = ` fill-opacity="` + num(p.opacity) + `"`
 			}
-			paraText.WriteString(asStr(ro["text"]))
-			tspans.WriteString(`<tspan font-family="` + esc(family) + `" font-size="` + num(size) + `" fill="` + p.ref + `"` + fo + `>` + esc(asStr(ro["text"])) + `</tspan>`)
+			displayText := runText(ro, style)
+			paraText.WriteString(displayText)
+			attrs := ` font-family="` + esc(family) + `" font-size="` + num(size) + `" font-weight="` + fmt.Sprintf("%d", effectiveFontWeight(style)) + `"`
+			if effectiveFontItalic(style) {
+				attrs += ` font-style="italic"`
+			}
+			if asStr(style["case"]) == "smallcaps" {
+				attrs += ` font-variant="small-caps"`
+			}
+			if spacing := asNum(style["letterSpacing"]); spacing != 0 {
+				attrs += ` letter-spacing="` + num(spacing) + `"`
+			}
+			decorations := []string{}
+			for _, decoration := range asArr(style["decoration"]) {
+				switch asStr(decoration) {
+				case "underline":
+					decorations = append(decorations, "underline")
+				case "strikethrough":
+					decorations = append(decorations, "line-through")
+				}
+			}
+			if len(decorations) > 0 {
+				attrs += ` text-decoration="` + strings.Join(decorations, " ") + `"`
+			}
+			tspans.WriteString(`<tspan` + attrs + ` fill="` + p.ref + `"` + fo + `>` + esc(displayText) + `</tspan>`)
 		}
 		if lineHeight == 0 {
 			lineHeight = 16 * 1.2

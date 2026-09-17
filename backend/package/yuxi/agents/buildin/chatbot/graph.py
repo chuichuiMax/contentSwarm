@@ -28,6 +28,7 @@ from yuxi.agents.toolkits.service import resolve_configured_runtime_tools
 from .context import ChatBotContext
 from .prompt import TODO_MID_PROMPT, build_prompt_with_context
 from .state import ChatBotState
+from yuxi.agents.middlewares.model_call_timeout import retryable_content_model_error
 
 
 async def _build_middlewares(context):
@@ -39,7 +40,12 @@ async def _build_middlewares(context):
             ContentNodeResultMiddleware(),
             ModelRetryMiddleware(
                 max_retries=getattr(context, "model_retry_times", 2),
-                retry_on=lambda exc: not isinstance(exc, ContentTokenBudgetExceeded),
+                retry_on=(
+                    retryable_content_model_error
+                    if getattr(context, "_content_max_model_calls", None)
+                    else lambda exc: not isinstance(exc, ContentTokenBudgetExceeded)
+                ),
+                **({"initial_delay": 3} if getattr(context, "_content_max_model_calls", None) else {}),
                 on_failure="error",
             ),
         ]
@@ -104,10 +110,12 @@ class ChatbotAgent(BaseAgent):
 
     async def get_graph(self, context=None, **kwargs):
 
-        context = await prepare_agent_runtime_context(
-            context or self.context_schema(),
-            context_schema=self.context_schema,
-        )
+        # 委托服务已完成授权并冻结正文运行范围，不能再次展开为通用 Agent 配置。
+        if not getattr(context, "_content_runtime_prepared", False):
+            context = await prepare_agent_runtime_context(
+                context or self.context_schema(),
+                context_schema=self.context_schema,
+            )
 
         # 使用 create_agent 创建智能体
         model_spec = resolve_chat_model_spec(context.model)
@@ -118,8 +126,12 @@ class ChatbotAgent(BaseAgent):
 
             tools = [tool for tool in tools if tool.name != "submit_content_node_result"]
             tools.append(build_content_result_tool(result_collector))
+        reasoning_effort = getattr(context, "reasoning_effort", None)
+        model_kwargs = {"reasoning_effort": reasoning_effort} if reasoning_effort else {}
+        if getattr(context, "_content_max_model_calls", None):
+            model_kwargs.update(max_retries=0, streaming=True)
         graph = create_agent(
-            model=load_chat_model(fully_specified_name=model_spec),
+            model=load_chat_model(fully_specified_name=model_spec, **model_kwargs),
             tools=tools,
             system_prompt=build_prompt_with_context(context),
             middleware=await _build_middlewares(context),

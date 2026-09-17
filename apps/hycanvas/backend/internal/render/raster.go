@@ -40,6 +40,7 @@ import (
 	"image/png"
 	"math"
 	"strings"
+	"unicode"
 
 	xdraw "golang.org/x/image/draw"
 	"golang.org/x/image/font"
@@ -462,16 +463,21 @@ func (rc *rctx) rasterImage(m mat, node map[string]any) {
 		oy := dst.Min.Y + (dst.Dy()-fh)/2
 		xdraw.CatmullRom.Scale(canvas, image.Rect(ox, oy, ox+fw, oy+fh), img, sb, xdraw.Over, nil)
 	} else {
-		// cover: center-crop the source to the box aspect, then scale to fill.
+		// Match the editor's normalized focal point when cropping to cover.
+		fx, fy := 0.5, 0.5
+		if focal := asObj(node["focalPoint"]); focal != nil {
+			fx, fy = asNum(focal["x"]), asNum(focal["y"])
+		}
+
 		dstAspect := float64(dst.Dx()) / float64(dst.Dy())
 		var crop image.Rectangle
 		if float64(sw)/float64(sh) > dstAspect {
 			cw := int(float64(sh) * dstAspect)
-			x0 := sb.Min.X + (sw-cw)/2
+			x0 := sb.Min.X + int(math.Max(0, math.Min(float64(sw-cw), fx*float64(sw-cw))))
 			crop = image.Rect(x0, sb.Min.Y, x0+cw, sb.Max.Y)
 		} else {
 			ch := int(float64(sw) / dstAspect)
-			y0 := sb.Min.Y + (sh-ch)/2
+			y0 := sb.Min.Y + int(math.Max(0, math.Min(float64(sh-ch), fy*float64(sh-ch))))
 			crop = image.Rect(sb.Min.X, y0, sb.Max.X, y0+ch)
 		}
 		xdraw.CatmullRom.Scale(canvas, dst, img, crop, xdraw.Over, nil)
@@ -682,6 +688,19 @@ func runText(ro, style map[string]any) string {
 		return strings.ToUpper(text)
 	case "lower":
 		return strings.ToLower(text)
+	case "title":
+		start := true
+		return strings.Map(func(r rune) rune {
+			if unicode.IsLetter(r) {
+				if start {
+					start = false
+					return unicode.ToUpper(r)
+				}
+				return r
+			}
+			start = true
+			return r
+		}, text)
 	}
 	return text
 }
@@ -754,7 +773,7 @@ func (rc *rctx) rasterText(m mat, node map[string]any) {
 			text = ShapeArabic(text, 0, 0)
 		}
 		fam := asStr(style["fontFamily"])
-		wght := int(asNum(asObj(style["axes"])["wght"]))
+		wght := effectiveFontWeight(style)
 		size := asNum(style["fontSize"])
 		if size == 0 {
 			size = 16
@@ -791,7 +810,7 @@ func (rc *rctx) rasterText(m mat, node map[string]any) {
 		}
 		// Registered real fonts win (glyph-true export); otherwise the embedded
 		// fallback keeps text legible and positioned.
-		fnt := lookupFont(asStr(style["fontFamily"]), int(asNum(asObj(style["axes"])["wght"])))
+		fnt := lookupFont(asStr(style["fontFamily"]), effectiveFontWeight(style))
 		if fnt == nil {
 			fnt = rc.font
 		}
@@ -947,7 +966,7 @@ func (rc *rctx) rasterText(m mat, node map[string]any) {
 			src := image.NewUniform(rasterColor(col, rc.alpha))
 			ls := asNum(sg.style["letterSpacing"])
 			fam := asStr(sg.style["fontFamily"])
-			wght := int(asNum(asObj(sg.style["axes"])["wght"]))
+			wght := effectiveFontWeight(sg.style)
 			size := asNum(sg.style["fontSize"])
 			if size == 0 {
 				size = 16

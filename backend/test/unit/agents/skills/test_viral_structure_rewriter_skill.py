@@ -7,7 +7,7 @@ def test_viral_structure_rewriter_matches_reference_emoji_distribution():
     spec = next(item for item in BUILTIN_SKILLS if item.slug == "viral-structure-rewriter")
     skill_text = (Path(spec.source_dir) / "SKILL.md").read_text(encoding="utf-8")
 
-    assert spec.version == "1.5.0"
+    assert spec.version == "1.8.0"
     assert "叙事分散型" in skill_text
     assert "清单连续型" in skill_text
     assert "混合型" in skill_text

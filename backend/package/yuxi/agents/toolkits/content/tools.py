@@ -48,6 +48,8 @@ class RuleBundleInput(BaseModel):
 def _filter_strategy_rule_bundle(
     bundle: dict[str, Any], *, industry_slug: str, content_type_code: str
 ) -> dict[str, Any]:
+    from yuxi.content.industry_matrix import resolve_industry_formula
+
     rules = [
         item
         for item in bundle.get("combination_rules") or []
@@ -79,8 +81,33 @@ def _filter_strategy_rule_bundle(
     return {
         **bundle,
         "methods": [item for item in bundle.get("methods") or [] if item.get("code") in method_codes],
-        "title_formulas": [item for item in bundle.get("title_formulas") or [] if item.get("code") in title_codes],
-        "content_formulas": [item for item in bundle.get("content_formulas") or [] if item.get("code") in body_codes],
+        "title_formulas": [
+            resolve_industry_formula(
+                item,
+                industry_slug=industry_slug,
+                scenario="；".join(
+                    rule.get("scenario_description", "")
+                    for rule in rules
+                    if item.get("code")
+                    in (rule.get("title_formula_candidate_codes") or rule.get("title_formula_codes") or [])
+                ),
+            )
+            for item in bundle.get("title_formulas") or []
+            if item.get("code") in title_codes
+        ],
+        "content_formulas": [
+            resolve_industry_formula(
+                item,
+                industry_slug=industry_slug,
+                scenario="；".join(
+                    rule.get("scenario_description", "")
+                    for rule in rules
+                    if item.get("code") in (rule.get("body_formula_candidate_codes") or [])
+                ),
+            )
+            for item in bundle.get("content_formulas") or []
+            if item.get("code") in body_codes
+        ],
         "combination_rules": rules,
     }
 
@@ -89,8 +116,93 @@ class TaskFactsInput(BaseModel):
     task_id: str
 
 
+@tool(category="buildin", tags=["内容生产", "规则"], display_name="读取行业策略候选", args_schema=TaskFactsInput)
+async def get_strategy_candidates(task_id: str, runtime: ToolRuntime = None) -> dict[str, Any]:
+    """读取任务锁定行业/方向的公式及独立手法候选，返回 Skill 评分规则，不代替 Agent 选择。"""
+    from yuxi.content.control.strategy.recommend_v3 import StrategyPreviewActor
+    from yuxi.content.infrastructure.postgres.strategy_preview_repository import PostgresStrategyPreviewRepository
+
+    runtime = _effective_runtime(runtime)
+    uid = _runtime_uid(runtime)
+    context = getattr(runtime, "context", None)
+    active_task_id = getattr(context, "_content_task_id", None)
+    if active_task_id and str(active_task_id) != task_id:
+        raise ValueError("只能读取当前内容任务的策略候选")
+    async with pg_manager.get_async_session_context() as db:
+        user = (await db.execute(select(User).where(User.uid == uid, User.is_deleted == 0))).scalar_one_or_none()
+        if user is None:
+            raise ValueError("当前用户不存在")
+        result = await PostgresStrategyPreviewRepository(db).load_candidates(
+            task_id=task_id,
+            actor=StrategyPreviewActor(
+                uid=uid, role=user.role,
+                tenant_id=str(user.department_id) if user.department_id is not None else None,
+            ),
+        )
+    return result
+
+
 class TaskOCRInput(BaseModel):
     task_id: str = Field(description="需要读取 OCR 结果的内容任务 ID")
+
+
+@tool
+async def search_viral_reference_cards(task_id: str, query: str, runtime: ToolRuntime = None) -> dict[str, Any]:
+    """在任务行业及受管 Agent 的知识库范围内检索已准备的完整文章参考卡，不返回原文分块。"""
+    from yuxi.services.agent_runtime_service import resolve_agent_runtime_context
+    from yuxi.services.content_viral_assets import search_ready_viral_assets
+    from yuxi.content.infrastructure.postgres.strategy_preview_repository import PostgresStrategyPreviewRepository
+    from yuxi.content.model.strategy import load_selection_policy
+
+    runtime = _effective_runtime(runtime)
+    uid = _runtime_uid(runtime)
+    context = getattr(runtime, "context", None)
+    active = getattr(context, "_content_task_id", None)
+    if active and active != task_id:
+        raise ValueError("只能检索当前任务的参考")
+    async with pg_manager.get_async_session_context() as db:
+        user = (await db.execute(select(User).where(User.uid == uid, User.is_deleted == 0))).scalar_one()
+        task = await ContentRepository(db).get_task_for_user(task_id, user)
+        if task is None:
+            raise ValueError("内容任务不存在")
+        policy = (task.runtime_config_snapshot_json or {}).get("selection_policy_snapshot") or load_selection_policy()
+        calls = getattr(context, "_prepared_reference_searches", 0)
+        if calls >= policy["max_reference_searches"]:
+            raise ValueError("已达到本次参考卡检索次数上限")
+        if context is not None:
+            context._prepared_reference_searches = calls + 1
+        managed = await resolve_agent_runtime_context(db=db, user=user, bound_agent_id="content-joint-strategy-agent")
+        industry, _ = await PostgresStrategyPreviewRepository(db)._industry_context(task)
+        items = await search_ready_viral_assets(
+            db, user, industry_slug=industry, query=query,
+            kb_ids=list(managed.knowledges or []), limit=policy["reference_candidate_limit"],
+        )
+        await db.commit()
+        return {"items": items, "query": query}
+
+
+@tool
+async def read_viral_reference(asset_id: str, runtime: ToolRuntime = None) -> dict[str, Any]:
+    """按资产版本读取已准备蓝图及完整原文，重新检查原文版本和访问权限。"""
+    from yuxi.services.agent_runtime_service import resolve_agent_runtime_context
+    from yuxi.services.content_viral_assets import check_asset_source, preparation_skill_hash, require_asset
+    from yuxi.repositories.viral_asset_repository import asset_dict
+
+    runtime = _effective_runtime(runtime)
+    async with pg_manager.get_async_session_context() as db:
+        user = (await db.execute(
+            select(User).where(User.uid == _runtime_uid(runtime), User.is_deleted == 0)
+        )).scalar_one()
+        managed = await resolve_agent_runtime_context(db=db, user=user, bound_agent_id="content-joint-strategy-agent")
+        asset = await require_asset(db, user, asset_id)
+        if asset.kb_id not in (managed.knowledges or []):
+            raise ValueError("资产不在当前 Agent 知识库范围内")
+        if (
+            asset.status != "ready" or not await check_asset_source(db, asset)
+            or asset.preparation_skill_hash != preparation_skill_hash()
+        ):
+            raise ValueError("参考资产已失效或尚未准备完成")
+        return asset_dict(asset, include_source=True)
 
 
 class NormalizeEvidenceInput(BaseModel):
@@ -134,32 +246,32 @@ def _hycanvas_template_fields(
     *,
     visual_text: list[str],
     brief: dict[str, Any],
+    template_fields: dict[str, str] | None = None,
 ) -> dict[str, str]:
     """Resolve author-declared template semantics from locked content inputs."""
-    form_values = brief.get("form_values") or {}
-    brand = brief.get("brand") or {}
+    from yuxi.content.control.visual_template_fields import template_fact_sources
+
+    template_fields = template_fields or {}
     sources = {
         "title": visual_text[0] if visual_text else "",
         "subtitle": visual_text[1] if len(visual_text) > 1 else "",
         "body_excerpt": visual_text[1] if len(visual_text) > 1 else (visual_text[0] if visual_text else ""),
-        "project_name": form_values.get("project_name") or form_values.get("community_name") or "",
-        "project_name_en": form_values.get("project_name_en") or form_values.get("community_name_en") or "",
-        "project_area": form_values.get("project_area") or form_values.get("area") or form_values.get("area_sqm") or "",
-        "designer": form_values.get("designer") or form_values.get("designer_name") or "",
-        "completion_year": form_values.get("completion_year") or form_values.get("year") or "",
-        "brand_name": brand.get("name") or form_values.get("brand_name") or "",
+        **template_fact_sources(brief),
     }
     fields: dict[str, str] = {}
     for field in declarations:
         if field.get("kind") != "text" or not field.get("label"):
             continue
         label = str(field["label"])
+        field_key = str(field.get("key") or label)
         role = str(field.get("semanticRole") or "")
         if role == "label":
             continue
-        value = str(sources.get(role) or "").strip()
+        value = str(template_fields.get(field_key) or sources.get(role) or "").strip()
         if not role:
-            if "副标题" in label:
+            if field_key in template_fields:
+                value = str(template_fields[field_key]).strip()
+            elif "副标题" in label:
                 value = sources["subtitle"]
             elif "标题" in label or "语录" in label:
                 value = sources["title"]
@@ -173,7 +285,7 @@ def _hycanvas_template_fields(
             value = match.group(0) if match else ""
         constraints = field.get("constraints") or {}
         if constraints.get("required") and not value:
-            raise ValueError(f"封面模板必填字段“{label}”在事实简报中没有对应内容")
+            raise ValueError(f"封面模板必填字段“{label}”未完成自动适配")
         max_chars = constraints.get("maxChars")
         if isinstance(max_chars, int) and max_chars > 0 and len(value.replace("\n", "")) > max_chars:
             raise ValueError(f"封面字段“{label}”超过模板限制的 {max_chars} 个字符")
@@ -195,7 +307,7 @@ def _hycanvas_template_fields(
                 )
             except ValueError as exc:
                 raise ValueError(f"封面字段“{label}”超过模板限制的 {max_lines} 行") from exc
-        fields[label] = value
+        fields[field_key] = value
     return fields
 
 
@@ -487,6 +599,7 @@ async def create_content_cover_job(
             fields = _hycanvas_template_fields(
                 fillable_fields,
                 visual_text=text,
+                template_fields=visual_plan.template_fields,
                 brief=task.brief_json or {},
             )
             image_field_label = None

@@ -2,6 +2,7 @@ export const CONTENT_WORKFLOW_NODE_LABELS = {
   compile_runtime_snapshot: '冻结运行配置',
   ingest_real_materials: '导入真实素材',
   normalize_evidence: '规范化证据',
+  prepare_strategy_candidates: '准备行业公式与文章参考卡',
   select_creation_strategy: 'Agent 匹配创作手法与公式',
   lock_creation_strategy: '固定规则校验并锁定策略',
   load_formula_lexicons: '加载公式必选词库',
@@ -18,6 +19,10 @@ export const CONTENT_WORKFLOW_NODE_LABELS = {
   collect_viral_candidates: '爆款候选检索 Agent',
   select_viral_reference: '爆款匹配与结构解析 Agent',
   merge_research_evidence: '汇总并校验调研证据',
+  research_strategy_prices: '检索报价明细',
+  confirm_strategy_prices: '确认引用报价',
+  merge_strategy_prices: '合并报价证据',
+  reselect_creation_strategy: '补证后复评策略',
   confirm_high_risk_facts: '人工确认高风险事实',
   freeze_evidence_bundle: '冻结证据包',
   prepare_formula_selection: '校验有效公式对',
@@ -63,6 +68,9 @@ export const formatContentRevisionTarget = (nodeId) =>
   CONTENT_WORKFLOW_NODE_LABELS[nodeId] || '内容生成节点'
 
 const RUNTIME_EVENT_PRESENTATION = {
+  'content.model.started': { status: 'running', label: '模型调用' },
+  'content.model.progress': { status: 'running', label: '模型正在返回内容' },
+  'content.model.completed': { status: 'completed', label: '模型调用结束' },
   'content.agent.started': { status: 'running', label: 'Agent 开始执行' },
   'content.agent.completed': { status: 'completed', label: 'Agent 执行完成' },
   'content.agent.failed': { status: 'failed', label: 'Agent 执行失败' },
@@ -77,11 +85,16 @@ const RUNTIME_EVENT_PRESENTATION = {
 }
 
 const runtimeEventDetail = (eventType, payload) => {
+  if (eventType.startsWith('content.model.')) {
+    return [`第 ${payload.call_number || 1} 次调用`, payload.message || payload.status]
+      .filter(Boolean).join(' · ')
+  }
   if (eventType.startsWith('content.agent.')) return payload.agent_slug || '内容 Agent'
   if (eventType === 'content.skill.activated') {
     return [payload.skill_slug, payload.skill_version].filter(Boolean).join(' · ')
   }
   if (eventType.startsWith('content.tool.')) {
+    if (payload.message || payload.error_message) return payload.message || payload.error_message
     const detail = [payload.tool_name, payload.output_contract].filter(Boolean).join(' · ')
     return payload.error_type ? `${detail} · ${payload.error_type}` : detail
   }
@@ -120,7 +133,9 @@ export const buildContentRuntimeTimeline = (runEvents = [], auditEvents = []) =>
         id: `runtime-${event.run_id || 'run'}-${event.seq || index}`,
         nodeId: event.payload?.node_id || '',
         eventType: event.event_type,
-        status: presentation.status,
+        status: event.event_type === 'content.model.completed' && event.payload?.status !== 'completed'
+          ? (event.payload?.status === 'cancelled' ? 'cancelled' : 'failed')
+          : presentation.status,
         label: presentation.label,
         detail: runtimeEventDetail(event.event_type, event.payload || {}),
         nodeLabel: CONTENT_WORKFLOW_NODE_LABELS[event.payload?.node_id] || event.payload?.node_id || '',
@@ -437,7 +452,7 @@ const outputNarratives = (preview) => {
   const draft = preview.draft || preview.content_draft || {}
   const body =
     preview.polished_body || preview.body || (typeof draft === 'string' ? draft : draft.body)
-  if (body) add(`正文内容：${normalizeNarrativeText(body, 1200)}`)
+  if (body) lines.push(`**正文内容**\n\n${normalizeNarrativeMarkdown(body, Infinity)}`)
 
   const topics = asTextList(preview.topics || draft.topics, 10)
   if (topics.length) add(`建议话题：${topics.map((item) => (item.startsWith('#') ? item : `#${item}`)).join(' ')}`)
@@ -462,9 +477,9 @@ const outputNarratives = (preview) => {
 export const buildContentNarrativeStream = (activities = [], codeLabels = {}) => {
   const lines = []
   const seen = new Set()
-  const add = (id, text, tone = 'normal', preserveMarkdown = false) => {
+  const add = (id, text, tone = 'normal', preserveMarkdown = false, maxLength = 1400) => {
     const normalized = explainNarrativeCodes(
-      preserveMarkdown ? normalizeNarrativeMarkdown(text, 1400) : normalizeNarrativeText(text, 1400),
+      preserveMarkdown ? normalizeNarrativeMarkdown(text, maxLength) : normalizeNarrativeText(text, maxLength),
       codeLabels
     )
     if (!normalized || seen.has(normalized)) return
@@ -473,6 +488,11 @@ export const buildContentNarrativeStream = (activities = [], codeLabels = {}) =>
   }
 
   for (const activity of activities) {
+    if (activity.nodeId === 'visual_review') continue
+    if (activity.eventType === 'content.model.started' || activity.eventType === 'content.model.progress') {
+      add(activity.id, activity.detail, 'normal')
+      continue
+    }
     if (activity.status === 'failed') {
       add(activity.id, `执行遇到问题：${activity.detail || '当前内容未能继续生成。'}`, 'error')
       continue
@@ -508,7 +528,7 @@ export const buildContentNarrativeStream = (activities = [], codeLabels = {}) =>
     }
     if (activity.outputPreview) {
       outputNarratives(activity.outputPreview).forEach((text, index) =>
-        add(`${activity.id}-output-${index}`, text, 'result')
+        add(`${activity.id}-output-${index}`, text, 'result', true, Infinity)
       )
     }
   }
@@ -613,6 +633,18 @@ export const buildContentStrategyPresentation = (
   }
 }
 
+export const findContentStrategyNarrativeAnchor = (activities = [], codeLabels = {}) => {
+  for (let index = 0; index < activities.length; index += 1) {
+    const prefix = activities.slice(0, index + 1)
+    if (buildContentStrategyPresentation(prefix, codeLabels).formulaCodes.length) {
+      return buildContentNarrativeStream(prefix, codeLabels)
+        .map((item) => item.text)
+        .join('\n\n').length
+    }
+  }
+  return null
+}
+
 export const buildContentEvidenceUsageSnapshot = (generatedContent = {}) => {
   const usagesByEvidence = new Map()
   const addUsage = (evidenceId, usage) => {
@@ -713,6 +745,10 @@ export const CONTENT_WORKFLOW_GROUPS = [
     description: 'Agent 一次选择创作手法与公式，固定规则负责校验锁定',
     nodes: [
       'select_creation_strategy',
+      'research_strategy_prices',
+      'confirm_strategy_prices',
+      'merge_strategy_prices',
+      'reselect_creation_strategy',
       'lock_creation_strategy',
       'load_formula_lexicons',
       'collect_business_rule_evidence',
@@ -729,6 +765,11 @@ export const CONTENT_WORKFLOW_GROUPS = [
         id: 'select_creation_strategy',
         label: 'Agent 匹配创作手法、标题公式和正文公式',
         nodes: ['select_creation_strategy']
+      },
+      {
+        id: 'strategy_price_recovery',
+        label: '检索、确认报价并复评策略',
+        nodes: ['research_strategy_prices', 'confirm_strategy_prices', 'merge_strategy_prices', 'reselect_creation_strategy']
       },
       {
         id: 'lock_creation_strategy',
@@ -845,10 +886,18 @@ export const buildContentWorkflowGroups = (runEvents = [], auditEvents = []) => 
     !eventByNode.has('select_creation_strategy') &&
     ['analyze_content_value', 'select_content_direction', 'explain_strategy'].some((id) => eventByNode.has(id))
   const groups = CONTENT_WORKFLOW_GROUPS.map((group) => {
-    const steps =
+    let steps =
       group.id === 'strategy' && usesLegacyStrategy
         ? LEGACY_STRATEGY_STEPS
         : group.steps || group.nodes.map((id) => ({ id, label: CONTENT_WORKFLOW_NODE_LABELS[id], nodes: [id] }))
+    if (group.id === 'strategy' && eventByNode.has('prepare_strategy_candidates')) {
+      steps = [
+        { id: 'prepare_strategy_candidates', label: '装配行业公式与已准备参考卡', nodes: ['prepare_strategy_candidates'] },
+        ...steps.filter(step => !['collect_viral_candidates', 'select_viral_reference'].includes(step.id)).map(step =>
+          step.id === 'select_creation_strategy' ? { ...step, label: 'Agent 联合选择公式、手法和参考' } : step
+        )
+      ]
+    }
     const nodes = steps.map((step) => {
       const activities = runtimeTimeline.filter((item) => step.nodes.includes(item.nodeId))
       return {

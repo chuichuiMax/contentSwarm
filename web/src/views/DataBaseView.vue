@@ -74,6 +74,12 @@
           <a-input v-model:value="newDatabase.name" placeholder="如：产品库（将自动添加博云前缀）" />
         </div>
 
+        <div class="form-section">
+          <h3 class="section-title">爆款创作类型</h3>
+          <a-select v-model:value="newDatabase.viral_content_type" :options="CREATION_TYPE_OPTIONS" allow-clear placeholder="普通资料库不绑定；爆款库请选择一个类型" style="width: 100%" />
+          <p>每个爆款知识库只对应一种创作类型，请上传该类型的完整参考文章。</p>
+        </div>
+
         <div v-if="selectedKbTypeInfo?.requires_embedding_model" class="form-grid two-columns">
           <div class="form-section compact-section">
             <h3 class="section-title">嵌入模型</h3>
@@ -244,6 +250,7 @@ import ExtensionCardGrid from '@/components/extensions/ExtensionCardGrid.vue'
 import InfoCard from '@/components/shared/InfoCard.vue'
 import dayjs, { parseToShanghai } from '@/utils/time'
 import { getKbTypeLabel, getKbTypeIcon, getKbTypeColor, kbUtils } from '@/utils/kb_utils'
+import { CREATION_TYPE_OPTIONS, CREATION_TYPE_NAMES } from '@/utils/content_creation_types'
 import { CHUNK_PRESET_OPTIONS, getChunkPresetDescription } from '@/utils/chunk_presets'
 
 const EmbeddingModelSelector = defineAsyncComponent(
@@ -313,6 +320,7 @@ const createEmptyDatabaseForm = () => ({
   kb_type: '',
   storage: '',
   chunk_preset_id: 'general',
+  viral_content_type: undefined,
   additional_params: {}
 })
 
@@ -420,7 +428,7 @@ const buildRequestData = () => {
     database_name: newDatabase.name.trim(),
     description: newDatabase.description?.trim() || '',
     kb_type: newDatabase.kb_type,
-    additional_params: {}
+    additional_params: { viral_content_type: newDatabase.viral_content_type || null }
   }
 
   if (selectedKbTypeInfo.value?.requires_embedding_model) {
@@ -509,6 +517,8 @@ const cardTags = (database) => {
       color: 'blue'
     })
   }
+  const creationType = CREATION_TYPE_NAMES[database.additional_params?.viral_content_type]
+  if (creationType) tags.push({ name: `爆款 · ${creationType}`, color: 'purple' })
   return tags
 }
 

@@ -418,7 +418,7 @@ async def _create_poster_editor_background(
     product_asset_id = str(request.get("product_asset_id") or "")
     repo = ContentCoverRepository(db)
     template_asset = await repo.get_asset_for_user(template_asset_id, _owner_uid(user))
-    product_asset = await repo.get_asset_for_user(product_asset_id, _owner_uid(user))
+    product_asset = await repo.get_asset_for_user(product_asset_id, _owner_uid(user), allow_material_use=True)
     if template_asset is None or product_asset is None:
         raise _error(409, "COVER_EDITOR_SOURCE_MISSING", "结构化封面的模板或产品素材已不存在")
 
@@ -1170,7 +1170,7 @@ async def delete_poster_template(db: AsyncSession, user: User, template_id: str)
 
 
 async def get_cover_asset_file(db: AsyncSession, user: User, asset_id: str) -> tuple[bytes, str, str]:
-    item = await ContentCoverRepository(db).get_asset_for_user(asset_id, _owner_uid(user))
+    item = await ContentCoverRepository(db).get_asset_for_user(asset_id, _owner_uid(user), allow_material_use=True)
     if item is None:
         raise _error(404, "COVER_ASSET_NOT_FOUND", "封面素材不存在")
     try:
@@ -1186,6 +1186,8 @@ async def delete_cover_asset(db: AsyncSession, user: User, asset_id: str) -> dic
     item = await repo.get_asset_for_user(asset_id, owner_uid, for_update=True)
     if item is None:
         raise _error(404, "COVER_ASSET_NOT_FOUND", "封面素材不存在")
+    if await MaterialLibraryRepository(db).asset_was_shared(item.id):
+        raise _error(409, "MATERIAL_SHARED_FILE_RETAINED", "共享素材请从素材库下架，原图需保留供已有作品使用")
     if item.role == "output":
         raise _error(409, "COVER_OUTPUT_DELETE_FORBIDDEN", "生成结果需通过任务历史保留，不能单独删除")
     if item.role == "poster_template":
@@ -1258,6 +1260,11 @@ async def _create_job(
     existing = await repo.get_job_by_idempotency(owner_uid, idempotency_key)
     if existing:
         return existing, True
+    source_ids = request.get("asset_ids") if mode == "compose" else request.get("source_asset_ids")
+    if source_ids:
+        await repo.retain_material_use(list(source_ids), owner_uid)
+    if request.get("product_asset_id"):
+        await repo.retain_material_use([request["product_asset_id"]], owner_uid)
     try:
         job = await repo.create_job(
             id=f"ccj_{uuid.uuid4().hex}",
@@ -1458,6 +1465,7 @@ async def create_cover_compose_job(db: AsyncSession, user: User, payload: CoverC
         payload.asset_ids,
         _owner_uid(user),
         for_update=True,
+        allow_material_use=True,
     )
     if len(assets) != len(payload.asset_ids) or any(item.role not in {"source", "library_image"} for item in assets):
         raise _error(422, "COVER_SOURCE_ASSET_INVALID", "拼图素材不存在或角色不正确")
@@ -1489,7 +1497,9 @@ async def create_hycanvas_cover_job(
     idempotency_key: str,
     parameters: dict[str, Any],
 ) -> dict[str, Any]:
-    source = await ContentCoverRepository(db).get_asset_for_user(source_asset_id, _owner_uid(user))
+    source = await ContentCoverRepository(db).get_asset_for_user(
+        source_asset_id, _owner_uid(user), allow_material_use=True
+    )
     if source is None or source.role not in {"source", "library_image"}:
         raise _error(422, "COVER_SOURCE_ASSET_INVALID", "HyCanvas 主图不存在或角色不正确")
     job, deduplicated = await _create_job(
@@ -1508,7 +1518,7 @@ async def create_hycanvas_cover_job(
             "image_field_label": image_field_label,
             "size": "1080x1440",
             "parameters": parameters,
-            "processing_version": "hycanvas-v2-background-material",
+            "processing_version": "hycanvas-v3-original-cover-background",
         },
     )
     return {"job": serialize_job(job), "deduplicated": deduplicated}
@@ -1564,7 +1574,9 @@ async def _resolve_poster_context(
     template_asset = await repo.get_asset_for_user(template_record.asset_id, owner_uid, for_update=for_update)
     if template_asset is None or template_asset.role != "poster_template":
         raise _error(409, "POSTER_TEMPLATE_ASSET_MISSING", "大字报蒙版原始文件不存在")
-    product_asset = await repo.get_asset_for_user(product_asset_id, owner_uid, for_update=for_update)
+    product_asset = await repo.get_asset_for_user(
+        product_asset_id, owner_uid, for_update=for_update, allow_material_use=True
+    )
     if product_asset is None or product_asset.role not in {"source", "library_image"}:
         raise _error(422, "POSTER_PRODUCT_ASSET_INVALID", "产品图片不存在或素材角色不正确")
     return template_record, template_asset, product_asset
@@ -1736,7 +1748,9 @@ async def create_cover_generate_job(db: AsyncSession, user: User, payload: Cover
         raise _error(503, "IMAGE2_NOT_CONFIGURED", "image2 中转站尚未配置") from exc
     repo = ContentCoverRepository(db)
     owner_uid = _owner_uid(user)
-    source_assets = await repo.get_assets_for_user(payload.source_asset_ids, owner_uid, for_update=True)
+    source_assets = await repo.get_assets_for_user(
+        payload.source_asset_ids, owner_uid, for_update=True, allow_material_use=True
+    )
     if len(source_assets) != len(payload.source_asset_ids) or any(
         item.role not in {"source", "library_image"} for item in source_assets
     ):
@@ -1853,7 +1867,7 @@ async def preview_template_replication_plan(
     repo = ContentCoverRepository(db)
     owner_uid = _owner_uid(user)
     template = await repo.get_asset_for_user(payload.template_asset_id, owner_uid)
-    source = await repo.get_asset_for_user(payload.source_asset_id, owner_uid)
+    source = await repo.get_asset_for_user(payload.source_asset_id, owner_uid, allow_material_use=True)
     if template is None or template.role != "template":
         raise _error(422, "COVER_TEMPLATE_ASSET_INVALID", "模板图不存在或角色不正确")
     if source is None or source.role != "source":

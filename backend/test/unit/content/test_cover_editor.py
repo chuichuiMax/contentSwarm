@@ -286,8 +286,9 @@ async def test_editor_background_uses_saved_snapshot_without_running_ocr(monkeyp
         def __init__(self, db):
             del db
 
-        async def get_asset_for_user(self, asset_id, owner_uid):
+        async def get_asset_for_user(self, asset_id, owner_uid, *, allow_material_use=False):
             del owner_uid
+            assert allow_material_use is (asset_id == "product")
             return {"template": template_asset, "product": product_asset}.get(asset_id)
 
         async def create_asset(self, **kwargs):

@@ -6,7 +6,7 @@ from yuxi.agents.skills.buildin import BUILTIN_SKILLS
 def test_humanizer_skill_is_registered_with_required_resources():
     spec = next(item for item in BUILTIN_SKILLS if item.slug == "humanizer-zh")
 
-    assert spec.version == "1.0.0"
+    assert spec.version == "1.3.0"
     assert spec.tool_dependencies == ()
     assert spec.mcp_dependencies == ()
     assert (spec.source_dir / "SKILL.md").is_file()
@@ -16,3 +16,5 @@ def test_humanizer_skill_is_registered_with_required_resources():
     skill_content = (spec.source_dir / "SKILL.md").read_text(encoding="utf-8")
     assert skill_content.startswith("---\nname: humanizer-zh\n")
     assert "不得凭空增加案例、数据、用户反馈、引语、来源或个人经历" in skill_content
+    assert "同一次生成调用内的静默编辑阶段" in skill_content
+    assert "GeneratedContentResultV1" in skill_content

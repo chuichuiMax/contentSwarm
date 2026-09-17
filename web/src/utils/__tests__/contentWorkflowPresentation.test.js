@@ -13,15 +13,42 @@ import {
   buildFormulaPresentation,
   buildContentRuntimeTimeline,
   buildContentWorkflowGroups,
+  findContentStrategyNarrativeAnchor,
   formatElapsedDuration
 } from '../contentWorkflowPresentation.js'
 
 assert.deepEqual(buildContentNarrativeCodeLabels(null), {})
 
+const modelTimeoutTimeline = buildContentRuntimeTimeline([], [{
+  event_type: 'content.model.completed',
+  payload: { node_id: 'generate_content', call_number: 1, status: 'timeout', duration_ms: 120000 }
+}, {
+  event_type: 'content.model.started',
+  payload: { node_id: 'generate_content', call_number: 2, message: '正在恢复或修正当前节点，已保留上游结果' }
+}])
+assert.equal(modelTimeoutTimeline[0].status, 'failed')
+assert.equal(modelTimeoutTimeline[1].status, 'running')
+assert.ok(modelTimeoutTimeline[1].detail.includes('第 2 次调用'))
+assert.ok(buildContentNarrativeStream(modelTimeoutTimeline).some(
+  (item) => item.text.includes('第 2 次调用') && item.text.includes('已保留上游结果')
+))
+
+const rejectedResultTimeline = buildContentRuntimeTimeline([], [{
+  event_type: 'content.tool.failed',
+  payload: {
+    tool_name: 'submit_content_node_result',
+    output_contract: 'JointStrategyDecisionV1',
+    error_type: 'ContractDomainValidationError',
+    message: '评分引用了不存在的输入字段: content_brief.business_variables.emotion'
+  }
+}])
+assert.ok(rejectedResultTimeline[0].detail.includes('评分引用了不存在的输入字段: content_brief.business_variables.emotion'))
+assert.ok(!rejectedResultTimeline[0].detail.includes('ContractDomainValidationError'))
+
 const groupedNodeIds = CONTENT_WORKFLOW_GROUPS.flatMap((group) => group.nodes)
 assert.equal(CONTENT_WORKFLOW_GROUPS.length, 5)
-assert.equal(groupedNodeIds.length, 26)
-assert.equal(new Set(groupedNodeIds).size, 26)
+assert.equal(groupedNodeIds.length, 30)
+assert.equal(new Set(groupedNodeIds).size, 30)
 assert.ok(groupedNodeIds.every((nodeId) => CONTENT_WORKFLOW_NODE_LABELS[nodeId]))
 assert.equal(CONTENT_WORKFLOW_NODE_LABELS.load_formula_lexicons, '加载公式必选词库')
 assert.deepEqual(CONTENT_WORKFLOW_GROUPS.at(-1).nodes, [
@@ -48,7 +75,14 @@ assert.equal(groups[1].isOpen, true)
 assert.equal(groups[1].currentNode.id, 'select_creation_strategy')
 assert.equal(groups[1].currentText, '当前：Agent 匹配创作手法、标题公式和正文公式')
 assert.equal(groups[1].completedCount, 0)
-assert.equal(groups[1].totalCount, 9)
+assert.equal(groups[1].totalCount, 10)
+
+const priceRecoveryGroup = buildContentWorkflowGroups([
+  { node_id: 'research_strategy_prices', status: 'completed' },
+  { node_id: 'confirm_strategy_prices', status: 'waiting_human' }
+])[1]
+assert.equal(priceRecoveryGroup.status, 'running')
+assert.equal(priceRecoveryGroup.currentNode.id, 'strategy_price_recovery')
 
 const parallelResearchGroups = buildContentWorkflowGroups([
   { node_id: 'collect_business_rule_evidence', status: 'completed' },
@@ -239,7 +273,7 @@ assert.deepEqual(
   [
     '标题已生成：89㎡三居这样改，多出12㎡收纳空间',
     '正文将依次说明：说明原户型痛点；展示改造结果。',
-    '正文内容：入户与餐厅缺少集中收纳，通过玄关柜和餐边柜重新组织动线。',
+    '**正文内容**\n\n入户与餐厅缺少集中收纳，通过玄关柜和餐边柜重新组织动线。',
     '建议话题：#杭州装修 #收纳设计'
   ]
 )
@@ -283,7 +317,7 @@ const cumulativeNarrativeText = cumulativeNarrative.map((item) => item.text).joi
 assert.match(cumulativeNarrativeText, /杭州装修案例.*3 条相关资料/)
 assert.match(cumulativeNarrativeText, /识别出的内容价值.*收纳焦虑/)
 assert.match(cumulativeNarrativeText, /标题已生成：89㎡三居这样改/)
-assert.match(cumulativeNarrativeText, /正文内容：入户与餐厅缺少集中收纳/)
+assert.match(cumulativeNarrativeText, /\*\*正文内容\*\*\n\n入户与餐厅缺少集中收纳/)
 assert.match(cumulativeNarrativeText, /已完成 6 项规则检查.*没有发现阻断问题/)
 assert.ok(!/Skill|工具调用|content-strategy-agent/.test(cumulativeNarrativeText))
 
@@ -386,6 +420,42 @@ assert.deepEqual(strategyPresentation.rows[2], {
   type: '场景增强',
   purpose: '补充真实场景，增强内容代入感'
 })
+const strategyAnchorActivities = [
+  {
+    id: 'before-strategy',
+    nodeId: 'select_creation_strategy',
+    eventType: 'content.agent.started',
+    status: 'running'
+  },
+  {
+    id: 'strategy-result',
+    nodeId: 'select_creation_strategy',
+    eventType: 'content.agent.completed',
+    status: 'completed',
+    outputPreview: {
+      selected_direction_code: 'CT01',
+      creation_method_codes: ['S01'],
+      title_formula_code: 'T01',
+      body_formula_code: 'C02'
+    }
+  },
+  {
+    id: 'after-strategy',
+    nodeId: 'collect_business_rule_evidence',
+    eventType: 'content.agent.started',
+    status: 'running'
+  }
+]
+const strategyAnchor = findContentStrategyNarrativeAnchor(strategyAnchorActivities, codeLabels)
+const strategyAnchoredNarrative = buildContentNarrativeStream(strategyAnchorActivities, codeLabels)
+  .map((item) => item.text)
+  .join('\n\n')
+assert.equal(
+  strategyAnchoredNarrative.slice(0, strategyAnchor),
+  '正在结合目标受众、业务优势和现有证据，判断最值得表达的内容方向。'
+)
+assert.match(strategyAnchoredNarrative.slice(strategyAnchor), /正在检索与当前主题/)
+assert.equal(findContentStrategyNarrativeAnchor([], codeLabels), null)
 assert.equal(
   buildContentStrategyPresentation([], codeLabels, {
     content_direction: 'CT01',
@@ -606,3 +676,12 @@ assert.deepEqual(persistedSkillSummary.skills[0], {
 assert.equal(formatElapsedDuration(141000), '2分21秒')
 
 console.log('contentWorkflowPresentation: all assertions passed')
+
+const jointGroups = buildContentWorkflowGroups([
+  { node_id: 'prepare_strategy_candidates', status: 'completed' },
+  { node_id: 'select_creation_strategy', status: 'completed' },
+  { node_id: 'lock_creation_strategy', status: 'completed' }
+])
+const jointStrategy = jointGroups.find(group => group.id === 'strategy')
+assert.ok(jointStrategy)
+assert.ok(!jointStrategy.nodes.some(node => ['collect_viral_candidates', 'select_viral_reference'].includes(node.id)))

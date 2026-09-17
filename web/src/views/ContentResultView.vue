@@ -24,6 +24,8 @@ import { contentApi } from '@/apis/content_api'
 import { buildFormulaPresentation } from '@/utils/contentWorkflowPresentation'
 import { formatDateTime } from '@/utils/time'
 
+const props = defineProps({ taskId: { type: String, default: '' } })
+
 const route = useRoute()
 const router = useRouter()
 
@@ -36,7 +38,7 @@ const runAudit = ref(null)
 const distributionOpen = ref(false)
 const coverUrl = ref('')
 
-const taskId = computed(() => route.params.taskId)
+const taskId = computed(() => props.taskId || route.params.taskId)
 const review = computed(() => artifact.value?.review_snapshot || task.value?.review || {})
 const reviewChecks = computed(() => review.value.checks || [])
 const evidenceItems = computed(() => artifact.value?.evidence_snapshot?.items || [])

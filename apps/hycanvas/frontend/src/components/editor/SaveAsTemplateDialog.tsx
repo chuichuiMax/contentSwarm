@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/Button";
 import { tr } from "@/lib/i18n";
 import { templateTagForZone, templateZoneFromMeta } from "@/lib/templateZones";
 import { createDesignThumbnail } from "@/lib/designThumbnail";
+import { TemplateCollectionPicker } from "@/components/dashboard/TemplateCollectionPicker";
 
 const visibilities = (): { value: TemplateVisibility; label: string; hint: string }[] => [
   { value: "private", label: tr("editor.only_me"), hint: tr("editor.visible_only_to_you") },
@@ -66,6 +67,7 @@ export function SaveAsTemplateDialog({
   const zoneTag = templateTagForZone(templateZone);
   const [title, setTitle] = useState(docTitle);
   const [category, setCategory] = useState(zoneTag ?? "");
+  const [collectionId, setCollectionId] = useState("");
   const [visibility, setVisibility] = useState<TemplateVisibility>("workspace");
   const [busy, setBusy] = useState(false);
   const doc = useEditor((s) => s.doc);
@@ -73,9 +75,11 @@ export function SaveAsTemplateDialog({
   const [fillableFields, setFillableFields] = useState<FillableFieldSummary[]>(() =>
     (doc.meta as { brandEditableFields?: FillableFieldSummary[] } | undefined)?.brandEditableFields ?? [],
   );
-  const fieldsValid = fillableFields.length > 0 && fillableFields.every((field) =>
+  const availableNodeIds = useMemo(() => new Set(availableTextNodes.map((node) => node.id)), [availableTextNodes]);
+  const selectedFields = fillableFields.filter((field) => availableNodeIds.has(field.nodeId));
+  const fieldsValid = selectedFields.every((field) =>
     Boolean(field.label.trim() && field.key?.trim() && field.semanticRole && (field.constraints?.maxChars ?? 0) > 0),
-  ) && new Set(fillableFields.map((field) => field.key)).size === fillableFields.length;
+  ) && new Set(selectedFields.map((field) => field.key)).size === selectedFields.length;
 
   function toggleField(nodeId: string, text: string) {
     setFillableFields((current) => current.some((field) => field.nodeId === nodeId)
@@ -106,12 +110,23 @@ export function SaveAsTemplateDialog({
 
   async function save() {
     if (!workspaceId || !title.trim() || !fieldsValid) {
-      if (!fieldsValid) toast.error("请至少选择一个文字字段，并完整填写字段名称、唯一编码、语义和最大字数。");
+      if (!workspaceId) toast.error("工作区信息尚未加载完成，请关闭弹窗后重新打开。");
+      else if (!title.trim()) toast.error("请填写模板名称。");
+      else if (!fieldsValid) toast.error("请完整填写已选择的文字字段名称、唯一编码、语义和最大字数。");
       return;
     }
     setBusy(true);
     try {
       const file = useEditor.getState().doc;
+      let selectedCollectionId = collectionId;
+      if (!selectedCollectionId && category.trim()) {
+        const collection = await oc.createTemplateCollection(workspaceId, category.trim());
+        selectedCollectionId = collection.id;
+      }
+      if (!selectedCollectionId) {
+        toast.error("请选择模板分类，或先新建一个分类。");
+        return;
+      }
       await oc.saveAsTemplate({
         workspaceId,
         // Loading by designId can race autosave and capture an older style.
@@ -120,11 +135,12 @@ export function SaveAsTemplateDialog({
         category: category.trim() || undefined,
         tags: zoneTag ? [zoneTag] : undefined,
         visibility,
-        fillableFields,
+        collectionId: selectedCollectionId,
+        fillableFields: selectedFields.length > 0 ? selectedFields : undefined,
         thumbnail: createDesignThumbnail(file),
       });
-      useEditor.getState().setDocMeta({ brandEditableFields: fillableFields });
-      await onSaved?.(fillableFields);
+      useEditor.getState().setDocMeta({ brandEditableFields: selectedFields });
+      await onSaved?.(selectedFields);
       toast.success(tr("editor.saved_as_template"));
       onClose();
     } catch {
@@ -153,7 +169,7 @@ export function SaveAsTemplateDialog({
           />
         </label>
         <label className="flex flex-col gap-1.5">
-          <span className="text-sm font-medium text-neutral-700">{tr("editor.category_optional")}</span>
+          <span className="text-sm font-medium text-neutral-700">标签（可选）</span>
           <input
             value={category}
             onChange={(e) => setCategory(e.target.value)}
@@ -161,6 +177,7 @@ export function SaveAsTemplateDialog({
             className="h-11 rounded-xl border border-neutral-200 bg-surface px-3.5 text-sm text-neutral-900 outline-none transition focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
           />
         </label>
+        <TemplateCollectionPicker workspaceId={workspaceId} value={collectionId} onChange={(id) => setCollectionId(id)} />
         <fieldset className="flex flex-col gap-1.5">
           <span className="text-sm font-medium text-neutral-700">{tr("editor.who_can_use_it")}</span>
           <div className="flex flex-col gap-1.5">
@@ -213,7 +230,7 @@ export function SaveAsTemplateDialog({
           <Button type="button" variant="secondary" size="sm" onClick={onClose}>
             {tr("editor.cancel")}
           </Button>
-          <Button type="submit" size="sm" disabled={busy || !title.trim() || !workspaceId || !fieldsValid}>
+          <Button type="submit" size="sm" disabled={busy}>
             {busy ? tr("editor.saving") : tr("editor.save_template")}
           </Button>
         </div>

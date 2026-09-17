@@ -35,6 +35,8 @@ description: 将中文 AI 初稿、营销文案、文章、报告、邮件和社
 
 默认只给改写后的完整文本。用户要求审阅、对比或解释时，再附简短修改说明；不要输出冗长评分表。若原文缺少支撑关键断言的信息，保留事实边界并指出需要补证据的位置。
 
+在 Yuxi `generate_content` 节点中，本 Skill 是同一次生成调用内的静默编辑阶段：先完成标题、正文和排版，再去除机械腔；此节点不读取 references 或调用 read_file，编辑与最终表达检查共用一次自检，不循环重写；不得另起一次模型调用，不得输出改写说明，并继续严格提交节点要求的 `GeneratedContentResultV1`。已有换行、信息块、Emoji 语义锚点、公式结构、Evidence ID 和 `paragraph_evidence` 必须保留。情绪共鸣、人物判断、不同数据类别与事项条目的功能型 Emoji 不属于需要删除的装饰；不能为了“专业”“克制”删回仅剩场景、确认和私信图标。只删除无关或同一锚点重复的符号，交给 `content-human-expression` 在同一次调用中做最终功能覆盖检查。
+
 ## 来源
 
 本 Skill 根据 Humanizer-zh 的写作模式整理并适配 Yuxi。许可和归属见 `references/LICENSE-Humanizer-zh.txt`。

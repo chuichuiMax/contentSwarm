@@ -12,6 +12,28 @@ from typing import Any, Literal
 from langchain_core.tools import StructuredTool, ToolException
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
+from yuxi.content.model.contracts.joint_strategy import (
+    JointStrategyInputV1,
+    JointStrategyDecisionV1,
+    JointStrategyDecisionV2,
+    ReevaluateJointStrategyInputV1,
+    StrategySnapshotV2,
+    validate_joint_strategy,
+)
+from yuxi.content.model.contracts.strategy import SelectStrategyInputV2, StrategyDecisionV2, validate_strategy_decision
+from yuxi.content.model.viral_document import ViralDocumentResultV1, validate_document_result
+from yuxi.content.model.viral_assets import (
+    ViralArticleSource,
+    ViralAssetPreparationInputV1,
+    ViralAssetPreparationResultV1,
+    validate_prepared_asset,
+)
+
+
+def text_without_emoji_spacing(text: str) -> str:
+    """表情定点回修比较：保留文字、数字、单位、标点和编号。"""
+    return re.sub(r"[\U0001F000-\U0001FAFF\u2600-\u27BF\u2B05-\u2B07\u200d\ufe0e\ufe0f]|\s", "", text)
+
 
 class StrictContract(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
@@ -59,6 +81,36 @@ class ContentAgentNodeInputV2(StrictContract):
     node_responsibility: str
     prohibited_actions: list[str]
     output_json_schema: dict[str, Any]
+
+
+class JointStrategyPromptV1(StrictContract):
+    """策略专用模型视图，输出继续对完整输入执行原有业务校验。"""
+
+    content_brief: dict[str, Any]
+    evidence_bundle: dict[str, Any]
+    strategy_candidates: dict[str, Any]
+    runtime_config_snapshot: dict[str, Any]
+    channel_profile: dict[str, Any]
+    persona_profile: dict[str, Any]
+    reference_candidates: list[dict[str, Any]] | None = None
+    strategy_price_evidence_collection: dict[str, Any] | None = None
+
+
+class GenerateContentPromptV1(StrictContract):
+    """从已校验完整输入投影的模型视图，不能替代服务端冻结快照校验。"""
+
+    content_brief: dict[str, Any]
+    strategy_snapshot: dict[str, Any]
+    formula_lexicon_bundle: dict[str, Any]
+    evidence_bundle: dict[str, Any]
+    channel_profile: dict[str, Any]
+    persona_profile: dict[str, Any]
+    runtime_config_snapshot: dict[str, Any]
+    validation_report: dict[str, Any] | None = None
+    review_report: dict[str, Any] | None = None
+    selected_title: dict[str, Any] | None = None
+    content_outline: dict[str, Any] | None = None
+    content_draft: dict[str, Any] | None = None
 
 
 class AnalyzeContentValueInputV1(StrictContract):
@@ -135,6 +187,13 @@ class CollectBusinessRuleEvidenceInputV1(CollectSelectedStrategyEvidenceInputV1)
     pass
 
 
+class ResearchStrategyPricesInputV1(StrictContract):
+    content_brief: dict[str, Any] = Field(min_length=1)
+    evidence_bundle: dict[str, Any] = Field(min_length=1)
+    joint_strategy_decision: JointStrategyDecisionV2
+    runtime_config_snapshot: dict[str, Any]
+
+
 class CollectPriceEvidenceInputV1(StrictContract):
     content_brief: dict[str, Any] = Field(min_length=1)
     strategy_snapshot: dict[str, Any] = Field(min_length=1)
@@ -172,6 +231,7 @@ class RankFormulaCandidatesInputV2(StrictContract):
 
 class StrategySnapshotV1(StrictContract):
     content_direction: str = Field(min_length=1)
+    direction_blueprint: dict[str, Any] | None = None
     selected_group_id: str = Field(min_length=1)
     creation_methods: list[str] = Field(min_length=1)
     creation_method_definitions: list[dict[str, Any]] = Field(min_length=1)
@@ -185,6 +245,8 @@ class StrategySnapshotV1(StrictContract):
     @model_validator(mode="after")
     def verify_snapshot_hash(self) -> StrategySnapshotV1:
         payload = self.model_dump(mode="json", exclude={"snapshot_hash"})
+        if payload.get("direction_blueprint") is None:
+            payload.pop("direction_blueprint")
         canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         expected = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
         if self.snapshot_hash != expected:
@@ -210,7 +272,7 @@ class ProductMaterialRequirementsV1(StrictContract):
 
 class CollectStrategyProductEvidenceInputV1(StrictContract):
     content_brief: dict[str, Any] = Field(min_length=1)
-    strategy_snapshot: StrategySnapshotV1
+    strategy_snapshot: StrategySnapshotV1 | StrategySnapshotV2
     product_material_requirements: ProductMaterialRequirementsV1
     evidence_bundle: dict[str, Any] = Field(min_length=1)
     channel_profile: dict[str, Any]
@@ -244,7 +306,7 @@ class ProductEvidencePackV1(StrictContract):
 
 class ProductEvidenceBoundInputV1(StrictContract):
     content_brief: dict[str, Any] = Field(min_length=1)
-    strategy_snapshot: StrategySnapshotV1
+    strategy_snapshot: StrategySnapshotV1 | StrategySnapshotV2
     product_evidence_pack: ProductEvidencePackV1
     evidence_bundle: dict[str, Any] = Field(min_length=1)
     channel_profile: dict[str, Any]
@@ -307,7 +369,7 @@ class PersonaStylePolishInputV1(GenerateBodyInputV1):
 
 class GenerateContentInputV1(StrictContract):
     content_brief: dict[str, Any] = Field(min_length=1)
-    strategy_snapshot: StrategySnapshotV1
+    strategy_snapshot: StrategySnapshotV1 | StrategySnapshotV2
     formula_lexicon_bundle: dict[str, Any] = Field(min_length=1)
     evidence_bundle: dict[str, Any] = Field(min_length=1)
     channel_profile: dict[str, Any]
@@ -328,9 +390,23 @@ class GenerateContentInputV1(StrictContract):
             raise ValueError("标题词库包必须匹配锁定标题公式")
         if bundle.get("body_formula_code") != body_formula_code:
             raise ValueError("正文词库包必须匹配锁定正文公式")
-        if title_formula_code in {f"T{index:02d}" for index in range(1, 8)} and body_formula_code in {
-            f"C{index:02d}" for index in range(1, 5)
-        }:
+        decoration = (
+            not isinstance(self.strategy_snapshot, StrategySnapshotV2)
+            or self.strategy_snapshot.industry_slug == "decoration"
+        )
+        if (
+            decoration
+            and title_formula_code
+            in {
+                *{f"T{index:02d}" for index in range(1, 8)},
+                *{f"FRT{index:02d}" for index in range(1, 13)},
+            }
+            and body_formula_code
+            in {
+                *{f"C{index:02d}" for index in range(1, 5)},
+                *{f"FRB{index:02d}" for index in range(1, 10)},
+            }
+        ):
             if bundle.get("required") is not True:
                 raise ValueError("装修标题和正文公式必须经过必选词库加载路径")
         if bundle.get("required") is True:
@@ -350,8 +426,11 @@ class GenerateContentInputV1(StrictContract):
 
 
 class SemanticReviewInputV1(StrictContract):
+    review_scope: Literal["emoji", "expression", "full"] = "full"
+    channel_profile: dict[str, Any] = Field(default_factory=dict)
+    persona_profile: dict[str, Any] = Field(default_factory=dict)
     content_brief: dict[str, Any] = Field(min_length=1)
-    strategy_snapshot: StrategySnapshotV1
+    strategy_snapshot: StrategySnapshotV1 | StrategySnapshotV2
     selected_title: dict[str, Any] = Field(min_length=1)
     content_outline: dict[str, Any] = Field(min_length=1)
     content_draft: dict[str, Any] = Field(min_length=1)
@@ -364,7 +443,7 @@ class SemanticReviewInputV1(StrictContract):
 class PlanVisualsInputV1(StrictContract):
     selected_title: dict[str, Any] = Field(min_length=1)
     content_draft: dict[str, Any] = Field(min_length=1)
-    strategy_snapshot: StrategySnapshotV1
+    strategy_snapshot: StrategySnapshotV1 | StrategySnapshotV2
     evidence_bundle: dict[str, Any] = Field(min_length=1)
     media_evidence_items: list[dict[str, Any]]
     artifact_version: dict[str, Any] = Field(min_length=1)
@@ -410,6 +489,11 @@ INPUT_CONTRACT_REGISTRY: dict[str, type[StrictContract]] = {
         AnalyzeContentValueInputV1,
         AnalyzeAndSelectDirectionInputV1,
         SelectCreationStrategyInputV1,
+        SelectStrategyInputV2,
+        JointStrategyInputV1,
+        ReevaluateJointStrategyInputV1,
+        ResearchStrategyPricesInputV1,
+        ViralAssetPreparationInputV1,
         SelectContentDirectionInputV1,
         ExplainStrategyInputV1,
         CollectMissingEvidenceInputV1,
@@ -429,6 +513,8 @@ INPUT_CONTRACT_REGISTRY: dict[str, type[StrictContract]] = {
         GenerateBodyInputV1,
         PersonaStylePolishInputV1,
         GenerateContentInputV1,
+        GenerateContentPromptV1,
+        JointStrategyPromptV1,
         SemanticReviewInputV1,
         PlanVisualsInputV1,
         SubmitCoverJobInputV1,
@@ -505,6 +591,47 @@ class BusinessRuleEvidenceCollectionResultV1(EvidenceCollectionResultV1):
 
 class PriceEvidenceCollectionResultV1(EvidenceCollectionResultV1):
     pass
+
+
+class StrategyPriceEvidenceDraftV1(EvidenceDraftV1):
+    value: str = Field(
+        min_length=1,
+        max_length=400,
+        description="一条报价的城市、项目、单价或金额、单位和来源注明的包含范围；不转抄整表",
+    )
+    # 来源版本由提交器按实际检索内容生成，Agent 不需要计算哈希。
+    source_hash: str = ""
+    source_version: str = ""
+    metadata: dict[str, Any] = Field(
+        json_schema_extra={
+            "required": ["material_type", "price_basis", "scope", "unit", "integration_instruction"],
+            "properties": {
+                "material_type": {"const": "price"},
+                "price_basis": {"enum": ["standard_unit_price", "project_quote"]},
+                "scope": {"type": "string"},
+                "unit": {"type": "string"},
+                "integration_instruction": {"type": "string"},
+            },
+        }
+    )
+
+
+class StrategyPriceEvidenceResultV1(PriceEvidenceCollectionResultV1):
+    """锁定策略前的检索事实，不宣称已经匹配写作公式或得到用户授权。"""
+
+    evidence_items: list[StrategyPriceEvidenceDraftV1] = Field(max_length=8)
+
+    @model_validator(mode="after")
+    def validate_price_evidence(self):
+        for item in self.evidence_items:
+            if item.source_type != "knowledge_base" or item.verified_status != "retrieved":
+                raise ValueError("报价补证只能提交本次检索资料，不得代替人工确认")
+            if item.metadata.get("price_basis") not in {"standard_unit_price", "project_quote"}:
+                raise ValueError("报价必须区分标准单价与项目报价")
+            for key in ("scope", "unit", "integration_instruction"):
+                if not str(item.metadata.get(key) or "").strip():
+                    raise ValueError(f"报价缺少 {key}")
+        return self
 
 
 class ComplianceEvidenceCollectionResultV1(EvidenceCollectionResultV1):
@@ -672,6 +799,7 @@ class VisualPlanResultV1(StrictContract):
     size: VisualSizeV1
     safe_area: SafeAreaV1
     text: list[str]
+    template_fields: dict[str, str] = Field(default_factory=dict)
     source_asset_ids: list[str]
     mode: Literal["template", "generated", "mixed"]
     risks: list[str]
@@ -703,11 +831,17 @@ CONTRACT_REGISTRY: dict[str, type[StrictContract]] = {
         ContentValueResultV1,
         ContentDirectionDecisionResultV1,
         CreationStrategySelectionResultV1,
+        StrategyDecisionV2,
+        JointStrategyDecisionV1,
+        JointStrategyDecisionV2,
+        ViralAssetPreparationResultV1,
+        ViralDocumentResultV1,
         DirectionSelectionResultV1,
         StrategyExplanationResultV1,
         EvidenceCollectionResultV1,
         BusinessRuleEvidenceCollectionResultV1,
         PriceEvidenceCollectionResultV1,
+        StrategyPriceEvidenceResultV1,
         ComplianceEvidenceCollectionResultV1,
         ViralCandidateCollectionResultV1,
         ViralReferenceSelectionResultV1,
@@ -750,6 +884,17 @@ def _extract_supported_numbers(value: Any) -> set[str]:
 
 @dataclass(frozen=True, slots=True)
 class ContractDomainContext:
+    require_emoji_review: bool = False
+    require_persona_review: bool = False
+    require_composition_review: bool = False
+    emoji_repair_body: str | None = None
+    persona_repair_middle: tuple[str, ...] = ()
+    joint_strategy_input: dict[str, Any] = field(default_factory=dict)
+    viral_source: dict[str, Any] = field(default_factory=dict)
+    viral_document: dict[str, Any] = field(default_factory=dict)
+    strategy_candidates: dict[str, Any] = field(default_factory=dict)
+    strategy_brief: dict[str, Any] = field(default_factory=dict)
+    strategy_evidence: dict[str, Any] = field(default_factory=dict)
     locked_group_id: str | None = None
     title_formula_pool: frozenset[str] = frozenset()
     body_formula_pool: frozenset[str] = frozenset()
@@ -776,6 +921,8 @@ class ContractDomainContext:
     selected_viral_reference_ids: tuple[str, ...] = ()
     viral_candidate_ids: frozenset[str] = frozenset()
     visual_text_max_chars: dict[str, int] = field(default_factory=dict)
+    allowed_visual_template_fields: dict[str, dict[str, int]] = field(default_factory=dict)
+    required_visual_template_fields: dict[str, dict[str, int]] = field(default_factory=dict)
 
     @classmethod
     def from_node_input(cls, node_input: ContentAgentNodeInputV1) -> ContractDomainContext:
@@ -842,6 +989,11 @@ class ContractDomainContext:
             if isinstance(requirement, dict) and requirement.get("requirement_id")
         ]
         return cls(
+            require_emoji_review=bool(locks.get("require_emoji_review")),
+            require_persona_review=bool(locks.get("require_persona_review")),
+            require_composition_review=bool(locks.get("require_composition_review")),
+            emoji_repair_body=locks.get("emoji_repair_body"),
+            persona_repair_middle=tuple(locks.get("persona_repair_middle") or ()),
             locked_group_id=match.get("selected_group_id") or formula.get("combination_group_id"),
             title_formula_pool=frozenset(
                 match.get("eligible_title_formula_codes") or formula.get("eligible_title_formula_codes") or []
@@ -913,6 +1065,16 @@ class ContractDomainContext:
                 for key, value in (locks.get("visual_text_max_chars") or {}).items()
                 if str(key) in {"title", "subtitle", "body_excerpt"} and isinstance(value, int) and value > 0
             },
+            allowed_visual_template_fields={
+                str(label): dict(constraints)
+                for label, constraints in (locks.get("allowed_visual_template_fields") or {}).items()
+                if isinstance(constraints, dict)
+            },
+            required_visual_template_fields={
+                str(label): dict(constraints)
+                for label, constraints in (locks.get("required_visual_template_fields") or {}).items()
+                if isinstance(constraints, dict)
+            },
             viral_candidate_ids=frozenset(
                 str(item["id"])
                 for item in (viral_candidate_collection or {}).get("evidence_items") or []
@@ -937,7 +1099,12 @@ def get_input_contract_model(name: str) -> type[StrictContract]:
 
 def _require_member(value: str, allowed: frozenset[str], field_path: str) -> None:
     if value not in allowed:
-        raise ContractDomainValidationError("unknown_id", field_path, f"{field_path} 不在锁定候选范围内: {value}")
+        candidates = "、".join(sorted(allowed))
+        raise ContractDomainValidationError(
+            "unknown_id",
+            field_path,
+            f"{field_path} 不在锁定候选范围内: {value}；请逐字使用以下候选之一：{candidates}",
+        )
 
 
 def _require_equal(value: str | None, locked: str | None, field_path: str) -> None:
@@ -1034,7 +1201,34 @@ def validate_content_node_result(
     context: ContractDomainContext,
 ) -> StrictContract:
     result = get_contract_model(contract_name).model_validate(payload)
-    if isinstance(result, ContentValueResultV1):
+    if isinstance(result, JointStrategyDecisionV1):
+        try:
+            result = validate_joint_strategy(payload, context.joint_strategy_input)
+        except (ValueError, KeyError) as exc:
+            raise ContractDomainValidationError("joint_strategy_invalid", "strategy", str(exc)) from exc
+    elif isinstance(result, ViralDocumentResultV1):
+        try:
+            result = validate_document_result(result.model_dump(), context.viral_document)
+        except ValueError as exc:
+            raise ContractDomainValidationError("viral_document_invalid", "articles", str(exc)) from exc
+    elif isinstance(result, ViralAssetPreparationResultV1):
+        try:
+            result = validate_prepared_asset(payload, ViralArticleSource.model_validate(context.viral_source))
+        except ValueError as exc:
+            raise ContractDomainValidationError("viral_asset_invalid", "reference_blueprint", str(exc)) from exc
+    elif isinstance(result, StrategyDecisionV2):
+        if not context.strategy_candidates:
+            raise ContractDomainValidationError("strategy_scope_missing", "strategy_candidates", "缺少锁定行业策略候选")
+        try:
+            result = validate_strategy_decision(
+                payload,
+                context.strategy_candidates,
+                content_brief=context.strategy_brief,
+                evidence_bundle=context.strategy_evidence,
+            )
+        except ValueError as exc:
+            raise ContractDomainValidationError("strategy_decision_invalid", "strategy_selection", str(exc)) from exc
+    elif isinstance(result, ContentValueResultV1):
         _validate_evidence_ids(result.evidence_ids, "any", context, "evidence_ids")
         for index, item in enumerate(result.direction_candidates):
             _validate_evidence_ids(item.evidence_ids, "any", context, f"direction_candidates.{index}.evidence_ids")
@@ -1080,6 +1274,7 @@ def validate_content_node_result(
             article_usages = set(item.allowed_usage) & {"title", "body"}
             if (
                 item.source_type == "knowledge_base"
+                and not isinstance(result, StrategyPriceEvidenceResultV1)
                 and article_usages
                 and material_type not in {"viral_example", "platform_rule", "compliance_rule", "forbidden_term"}
             ):
@@ -1448,6 +1643,50 @@ def validate_content_node_result(
             _validate_evidence_ids(item.evidence_ids, "body", context, f"paragraph_evidence.{index}.evidence_ids")
         _validate_numbers("\n".join([result.body, *result.topics]), context, "body", "body")
     elif isinstance(result, GeneratedContentResultV1):
+        if context.persona_repair_middle:
+            _require_equal(result.title.text, context.locked_title, "title.text")
+            paragraphs = [part.strip() for part in re.split(r"\n\s*\n", result.draft.body) if part.strip()]
+            middle = tuple(text_without_emoji_spacing(part) for part in paragraphs[1:-1])
+            expected = tuple(text_without_emoji_spacing(part) for part in context.persona_repair_middle)
+            if middle != expected:
+                raise ContractDomainValidationError(
+                    "persona_repair_changed_middle", "draft.body",
+                    "首尾人设回修只能改首段和末段；中间各段必须逐字保留、保持顺序和分段，仅允许调整 Emoji 和空格",
+                )
+        if context.emoji_repair_body is not None:
+            _require_equal(result.title.text, context.locked_title, "title.text")
+            if text_without_emoji_spacing(result.draft.body) != text_without_emoji_spacing(context.emoji_repair_body):
+                raise ContractDomainValidationError(
+                    "emoji_repair_changed_text", "draft.body",
+                    "仅表情回修不得改动原文字、数字、单位、标点和顺序，只调整 Emoji 和空格",
+                )
+        # 同一错误引用可能出现在多个段落；一次反馈全部位置，避免逐处消耗纠错额度。
+        evidence_fields = [("title.evidence_ids", "title", result.title.evidence_ids)]
+        evidence_fields.extend(
+            (f"outline.sections.{index}.evidence_ids", "body", item.evidence_ids)
+            for index, item in enumerate(result.outline.sections)
+        )
+        evidence_fields.extend(
+            (f"draft.paragraph_evidence.{index}.evidence_ids", "body", item.evidence_ids)
+            for index, item in enumerate(result.draft.paragraph_evidence)
+        )
+        errors = []
+        for path, usage, ids in evidence_fields:
+            unknown = sorted(set(ids) - context.allowed_evidence_by_usage.get(usage, frozenset()))
+            if unknown:
+                errors.append(f"{path}: {', '.join(unknown)}")
+        if errors:
+            allowed = {
+                usage: sorted(context.allowed_evidence_by_usage.get(usage, frozenset())) for usage in ("title", "body")
+            }
+            raise ContractDomainValidationError(
+                "evidence_forbidden",
+                "evidence_ids",
+                "以下位置引用了未授权 Evidence ID，请一次修正全部位置，逐字复制对应事实的 ID，不得猜测或缩写："
+                + "; ".join(errors)
+                + "；允许的 ID 按用途列出："
+                + json.dumps(allowed, ensure_ascii=False),
+            )
         if context.creation_mode == "viral_rewrite":
             if len(context.selected_viral_reference_ids) != 1:
                 raise ContractDomainValidationError(
@@ -1457,15 +1696,10 @@ def validate_content_node_result(
                 )
         _validate_formula_lexicon_usage(result, context)
         _require_equal(result.title.formula_code, context.locked_title_formula_code, "title.formula_code")
-        _validate_evidence_ids(result.title.evidence_ids, "title", context, "title.evidence_ids")
         _validate_numbers(result.title.text, context, "title.text", "title")
         _require_equal(result.outline.body_formula_code, context.locked_body_formula_code, "outline.body_formula_code")
         _validate_outline_calling_contract(result.outline, context)
-        for index, item in enumerate(result.outline.sections):
-            _validate_evidence_ids(item.evidence_ids, "body", context, f"outline.sections.{index}.evidence_ids")
         _require_equal(result.draft.body_formula_code, context.locked_body_formula_code, "draft.body_formula_code")
-        for index, item in enumerate(result.draft.paragraph_evidence):
-            _validate_evidence_ids(item.evidence_ids, "body", context, f"draft.paragraph_evidence.{index}.evidence_ids")
         _validate_numbers("\n".join([result.draft.body, *result.draft.topics]), context, "draft.body", "body")
     elif isinstance(result, PersonaPolishResultV1):
         for index, item in enumerate(result.preserved_fact_checks):
@@ -1476,6 +1710,29 @@ def validate_content_node_result(
                 )
         _validate_numbers(result.polished_body, context, "polished_body", "body")
     elif isinstance(result, ContentReviewResultV1):
+        if context.require_emoji_review or context.require_persona_review or context.require_composition_review:
+            required = set()
+            if context.require_emoji_review:
+                required.update({"EMOJI_COVERAGE", "EMOJI_APPROPRIATENESS", "EMOJI_RESTRICTIONS"})
+            if context.require_persona_review:
+                required.update({"PERSONA_OPENING", "PERSONA_CLOSING", "PERSONA_GROUNDING"})
+            if context.require_composition_review:
+                required.update({"CREATION_TYPE_ALIGNMENT", "COMPOSITION_ALIGNMENT"})
+            missing = required - {item.code for item in result.checks}
+            if missing:
+                raise ContractDomainValidationError(
+                    "emoji_review_missing", "checks", "必须逐项审核表情与人设并记录结果: " + ", ".join(sorted(missing))
+                )
+            for index, item in enumerate(result.checks):
+                if item.code in required and item.status == "warning":
+                    raise ContractDomainValidationError(
+                        "emoji_review_status", f"checks.{index}.status",
+                        "表达检查必须明确 passed 或 blocked，不以 warning 放行",
+                    )
+                if item.code in required and item.status == "blocked" and (not item.suggestion or not item.location):
+                    raise ContractDomainValidationError(
+                        "emoji_repair_missing", f"checks.{index}", "表达阻断必须指出具体原文位置和定点修正建议"
+                    )
         for index, item in enumerate(result.checks):
             _validate_evidence_ids(item.evidence_ids, "any", context, f"checks.{index}.evidence_ids")
     elif isinstance(result, VisualPlanResultV1):
@@ -1489,7 +1746,65 @@ def validate_content_node_result(
         for index, asset_id in enumerate(result.source_asset_ids):
             _require_member(asset_id, context.allowed_asset_ids, f"source_asset_ids.{index}")
         _validate_evidence_ids(result.evidence_ids, "visual", context, "evidence_ids")
-        _validate_numbers("\n".join(result.text), context, "text", "visual")
+        _validate_numbers("\n".join([*result.text, *result.template_fields.values()]), context, "text", "visual")
+        allowed_template_fields = {
+            **context.allowed_visual_template_fields,
+            **context.required_visual_template_fields,
+        }
+        unexpected_template_fields = set(result.template_fields) - set(allowed_template_fields)
+        if unexpected_template_fields:
+            label = sorted(unexpected_template_fields)[0]
+            raise ContractDomainValidationError(
+                "visual_template_field_not_authorized",
+                f"template_fields.{label}",
+                "视觉方案只能填写服务端授权的叙事字段或缺失必填字段，不得改动其他模板文字",
+            )
+        missing_narrative_fields = set(context.allowed_visual_template_fields) - set(result.template_fields)
+        if missing_narrative_fields:
+            label = sorted(missing_narrative_fields)[0]
+            raise ContractDomainValidationError(
+                "visual_template_field_missing",
+                f"template_fields.{label}",
+                f"封面叙事字段“{label}”必须单独生成文案，不能复用其他字段的文字",
+            )
+        for label, constraints in allowed_template_fields.items():
+            value = result.template_fields.get(label, "").strip()
+            if not value:
+                raise ContractDomainValidationError(
+                    "visual_template_field_missing",
+                    f"template_fields.{label}",
+                    f"封面字段“{label}”必须生成有依据且不重复的短句",
+                )
+            unsupported_claim = next(
+                (term for term in ("免费", "保证", "保价", "最低", "第一", "省钱", "零风险") if term in value),
+                None,
+            )
+            if unsupported_claim:
+                raise ContractDomainValidationError(
+                    "visual_template_claim_unsupported",
+                    f"template_fields.{label}",
+                    f"封面补写文案不得沿用无事实依据的承诺词“{unsupported_claim}”，请改为中性描述",
+                )
+            max_chars = constraints.get("maxChars")
+            if max_chars and len(value.replace("\n", "")) > max_chars:
+                raise ContractDomainValidationError(
+                    "visual_text_too_long",
+                    f"template_fields.{label}",
+                    f"封面字段“{label}”最多 {max_chars} 个字符，请缩短后重新提交视觉方案",
+                )
+        normalized_template_text: dict[str, str] = {}
+        for label, value in result.template_fields.items():
+            normalized = re.sub(r"[\W_]+", "", value, flags=re.UNICODE).casefold()
+            if not normalized:
+                continue
+            previous_label = normalized_template_text.get(normalized)
+            if previous_label:
+                raise ContractDomainValidationError(
+                    "visual_text_duplicate",
+                    f"template_fields.{label}",
+                    f"封面字段“{label}”与“{previous_label}”内容重复，请改写为不同的信息点",
+                )
+            normalized_template_text[normalized] = label
         role_indexes = {"title": 0, "subtitle": 1, "body_excerpt": 1}
         for role, max_chars in context.visual_text_max_chars.items():
             index = role_indexes[role]
@@ -1531,6 +1846,7 @@ class ContentNodeResultCollector:
             "ProductEvidenceCollectionResultV1",
             "BusinessRuleEvidenceCollectionResultV1",
             "PriceEvidenceCollectionResultV1",
+            "StrategyPriceEvidenceResultV1",
             "ComplianceEvidenceCollectionResultV1",
             "ViralCandidateCollectionResultV1",
         }
@@ -1555,6 +1871,16 @@ class ContentNodeResultCollector:
                     "知识库 Evidence 的 source_id 必须等于本节点唯一检索结果 ID",
                 )
             item["metadata"] = {**(item.get("metadata") or {}), **matches[0]["metadata"]}
+            if self.contract_name == "StrategyPriceEvidenceResultV1":
+                content = matches[0]["content"]
+                if not content.strip():
+                    raise ContractDomainValidationError(
+                        "knowledge_content_empty",
+                        f"evidence_items.{index}.source_id",
+                        "检索来源文本不能为空",
+                    )
+                item["source_hash"] = hashlib.sha256(content.encode("utf-8")).hexdigest()
+                item["source_version"] = item["source_hash"]
         return normalized
 
     async def submit(self, **payload: Any) -> dict[str, Any]:
@@ -1598,6 +1924,7 @@ class ContentNodeResultCollector:
                 "EvidenceCollectionResultV1": {"价格库", "品牌知识库", "平台规则", "爆款库"},
                 "BusinessRuleEvidenceCollectionResultV1": {"品牌知识库", "平台规则"},
                 "PriceEvidenceCollectionResultV1": {"价格库"},
+                "StrategyPriceEvidenceResultV1": {"价格库"},
                 "ComplianceEvidenceCollectionResultV1": {"封禁词库"},
                 "ViralCandidateCollectionResultV1": {"爆款库"},
             }.get(self.contract_name)

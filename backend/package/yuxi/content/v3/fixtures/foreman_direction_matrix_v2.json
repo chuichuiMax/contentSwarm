@@ -1,0 +1,332 @@
+{
+  "schema_version": 2,
+  "industry_slug": "decoration",
+  "source": {
+    "document": "装修工长一级内容方向组合表",
+    "captured_at": "2026-09-11",
+    "catalog_revision": "foreman-direction-matrix-v2",
+    "section": "选题类型、内容类型、层级组合、词组组合"
+  },
+  "groups": [
+    {
+      "id": "FRG01",
+      "enabled": true,
+      "schema_version": 3,
+      "content_goal_codes": [],
+      "content_type_codes": ["CT01"],
+      "industry_scope": ["decoration"],
+      "combination_type": "single",
+      "method_members": [{"method_code": "FRM05", "role": "primary", "order": 1}],
+      "title_formula_candidate_codes": ["FRT06", "FRT12"],
+      "body_formula_candidate_codes": ["FRB05"],
+      "scenario_description": "一级方向自我介绍，按表格固定执行完整七层结构和对应词组抽取规则",
+      "required_variable_codes": [],
+      "required_evidence_types": [],
+      "priority": 900,
+      "conditions": {},
+      "hard_conditions": {"unsupported_numbers": "block", "max_persona_advantages": 3, "title_claim_body_alignment": true},
+      "score_weights": {"variable_coverage": 2, "evidence_coverage": 3},
+      "source_metadata": {
+        "source_row": 1,
+        "topic_type": "自我介绍",
+        "content_direction_name": "自我介绍",
+        "composition_blueprint": {
+          "content_type": "自我介绍",
+          "layer_sequence": [
+            {"order": 1, "code": "persona", "name": "人设层"},
+            {"order": 2, "code": "business", "name": "业务层"},
+            {"order": 3, "code": "content_purpose", "name": "内容目的"},
+            {"order": 4, "code": "user_value", "name": "用户价值"},
+            {"order": 5, "code": "content_structure", "name": "内容结构"},
+            {"order": 6, "code": "evidence", "name": "证据层"},
+            {"order": 7, "code": "conversion", "name": "转化层"}
+          ],
+          "phrase_composition": [
+            {"layer_code": "persona", "selection": "all", "min_groups": 1, "max_groups": null, "allowed_groups": [], "source": "persona_profile"},
+            {"layer_code": "business", "selection": "random", "min_groups": 3, "max_groups": 5, "allowed_groups": [], "source": "business_layer"},
+            {"layer_code": "content_purpose", "selection": "fixed", "min_groups": 1, "max_groups": 1, "allowed_groups": ["自我介绍"], "source": "rule"},
+            {"layer_code": "user_value", "selection": "random", "min_groups": 1, "max_groups": 2, "allowed_groups": ["案例", "工艺", "避坑", "方案", "预算"], "source": "user_value_layer"},
+            {"layer_code": "content_structure", "selection": "all", "min_groups": 1, "max_groups": null, "allowed_groups": [], "source": "body_formula"},
+            {"layer_code": "evidence", "selection": "random", "min_groups": 3, "max_groups": 3, "allowed_groups": [], "source": "evidence_layer"},
+            {"layer_code": "conversion", "selection": "random", "min_groups": 2, "max_groups": 2, "allowed_groups": [], "source": "conversion_layer"}
+          ]
+        }
+      },
+      "recommendation_reason": "自我介绍仅使用本行固定组合，不与报价、工艺或日常方向混选"
+    },
+    {
+      "id": "FRG02",
+      "enabled": true,
+      "schema_version": 3,
+      "content_goal_codes": [],
+      "content_type_codes": ["CT02"],
+      "industry_scope": ["decoration"],
+      "combination_type": "single",
+      "method_members": [{"method_code": "FRM06", "role": "primary", "order": 1}],
+      "title_formula_candidate_codes": ["FRT07", "FRT08"],
+      "body_formula_candidate_codes": ["FRB06"],
+      "scenario_description": "价格营销下的项目单价，内容词组固定为人工单价，不调用证据层",
+      "required_variable_codes": ["product", "price", "quote_type"],
+      "required_evidence_types": [],
+      "priority": 890,
+      "conditions": {"price_available": true},
+      "hard_conditions": {"unsupported_numbers": "block", "price_basis_required": true, "title_claim_body_alignment": true},
+      "score_weights": {"variable_coverage": 2, "evidence_coverage": 3},
+      "source_metadata": {
+        "source_row": 2,
+        "topic_type": "价格营销",
+        "content_direction_name": "项目单价",
+        "composition_blueprint": {
+          "content_type": "项目单价",
+          "layer_sequence": [
+            {"order": 1, "code": "persona", "name": "人设层"},
+            {"order": 2, "code": "business", "name": "业务层"},
+            {"order": 3, "code": "content_purpose", "name": "内容目的"},
+            {"order": 4, "code": "user_value", "name": "用户价值"},
+            {"order": 5, "code": "content_structure", "name": "内容结构"},
+            {"order": 6, "code": "conversion", "name": "转化层"}
+          ],
+          "phrase_composition": [
+            {"layer_code": "persona", "selection": "random", "min_groups": 3, "max_groups": 5, "allowed_groups": [], "source": "persona_profile"},
+            {"layer_code": "business", "selection": "random", "min_groups": 1, "max_groups": 1, "allowed_groups": [], "source": "business_layer"},
+            {"layer_code": "content_purpose", "selection": "fixed", "min_groups": 1, "max_groups": 1, "allowed_groups": ["人工单价"], "source": "rule"},
+            {"layer_code": "user_value", "selection": "fixed", "min_groups": 1, "max_groups": 1, "allowed_groups": ["价格参考"], "source": "user_value_layer"},
+            {"layer_code": "content_structure", "selection": "all", "min_groups": 1, "max_groups": null, "allowed_groups": [], "source": "body_formula"},
+            {"layer_code": "conversion", "selection": "random", "min_groups": 2, "max_groups": 2, "allowed_groups": [], "source": "conversion_layer"}
+          ]
+        }
+      },
+      "recommendation_reason": "项目单价仅使用人工单价和价格参考组合"
+    },
+    {
+      "id": "FRG03",
+      "enabled": true,
+      "schema_version": 3,
+      "content_goal_codes": [],
+      "content_type_codes": ["CT03"],
+      "industry_scope": ["decoration"],
+      "combination_type": "single",
+      "method_members": [{"method_code": "FRM07", "role": "primary", "order": 1}],
+      "title_formula_candidate_codes": ["FRT01", "FRT02", "FRT03", "FRT04", "FRT05", "FRT06", "FRT09", "FRT10"],
+      "body_formula_candidate_codes": ["FRB07"],
+      "scenario_description": "价格营销下的单价+面积，按同一项目口径输出施工报价与真实报价证据",
+      "required_variable_codes": ["product", "quantity", "price", "quote_type"],
+      "required_evidence_types": [],
+      "priority": 880,
+      "conditions": {"price_available": true},
+      "hard_conditions": {"unsupported_numbers": "block", "deterministic_calculation_required": true, "quote_type_required_if_price": true, "title_claim_body_alignment": true},
+      "score_weights": {"variable_coverage": 2, "evidence_coverage": 3},
+      "source_metadata": {
+        "source_row": 3,
+        "topic_type": "价格营销",
+        "content_direction_name": "单价+面积",
+        "composition_blueprint": {
+          "content_type": "单价+面积",
+          "layer_sequence": [
+            {"order": 1, "code": "persona", "name": "人设层"},
+            {"order": 2, "code": "business", "name": "业务层"},
+            {"order": 3, "code": "content_purpose", "name": "内容目的"},
+            {"order": 4, "code": "user_value", "name": "用户价值"},
+            {"order": 5, "code": "content_structure", "name": "内容结构"},
+            {"order": 6, "code": "evidence", "name": "证据层"},
+            {"order": 7, "code": "conversion", "name": "转化层"}
+          ],
+          "phrase_composition": [
+            {"layer_code": "persona", "selection": "random", "min_groups": 3, "max_groups": 5, "allowed_groups": [], "source": "persona_profile"},
+            {"layer_code": "business", "selection": "random", "min_groups": 1, "max_groups": 1, "allowed_groups": [], "source": "business_layer"},
+            {"layer_code": "content_purpose", "selection": "fixed", "min_groups": 1, "max_groups": 1, "allowed_groups": ["施工报价"], "source": "rule"},
+            {"layer_code": "user_value", "selection": "random", "min_groups": 1, "max_groups": 1, "allowed_groups": ["价格参考", "案例", "预算"], "source": "user_value_layer"},
+            {"layer_code": "content_structure", "selection": "all", "min_groups": 1, "max_groups": null, "allowed_groups": [], "source": "body_formula"},
+            {"layer_code": "evidence", "selection": "fixed", "min_groups": 1, "max_groups": 1, "allowed_groups": ["真实报价"], "source": "evidence_layer"},
+            {"layer_code": "conversion", "selection": "random", "min_groups": 2, "max_groups": 2, "allowed_groups": [], "source": "conversion_layer"}
+          ]
+        }
+      },
+      "recommendation_reason": "单价+面积仅使用施工报价、一个用户价值组和真实报价证据"
+    },
+    {
+      "id": "FRG04",
+      "enabled": true,
+      "schema_version": 3,
+      "content_goal_codes": [],
+      "content_type_codes": ["CT04"],
+      "industry_scope": ["decoration"],
+      "combination_type": "single",
+      "method_members": [{"method_code": "FRM08", "role": "primary", "order": 1}],
+      "title_formula_candidate_codes": ["FRT01", "FRT02", "FRT03", "FRT04", "FRT05", "FRT06", "FRT09", "FRT10"],
+      "body_formula_candidate_codes": ["FRB08"],
+      "scenario_description": "价格营销下的工种总价，按同一报价输出施工报价与真实报价证据",
+      "required_variable_codes": ["product", "price", "quote_type"],
+      "required_evidence_types": [],
+      "priority": 870,
+      "conditions": {"price_available": true},
+      "hard_conditions": {"unsupported_numbers": "block", "sum_validation_required": true, "quote_type_required_if_price": true, "title_claim_body_alignment": true},
+      "score_weights": {"variable_coverage": 2, "evidence_coverage": 3},
+      "source_metadata": {
+        "source_row": 4,
+        "topic_type": "价格营销",
+        "content_direction_name": "工种总价",
+        "composition_blueprint": {
+          "content_type": "工种总价",
+          "layer_sequence": [
+            {"order": 1, "code": "persona", "name": "人设层"},
+            {"order": 2, "code": "business", "name": "业务层"},
+            {"order": 3, "code": "content_purpose", "name": "内容目的"},
+            {"order": 4, "code": "user_value", "name": "用户价值"},
+            {"order": 5, "code": "content_structure", "name": "内容结构"},
+            {"order": 6, "code": "evidence", "name": "证据层"},
+            {"order": 7, "code": "conversion", "name": "转化层"}
+          ],
+          "phrase_composition": [
+            {"layer_code": "persona", "selection": "random", "min_groups": 3, "max_groups": 5, "allowed_groups": [], "source": "persona_profile"},
+            {"layer_code": "business", "selection": "random", "min_groups": 1, "max_groups": 1, "allowed_groups": [], "source": "business_layer"},
+            {"layer_code": "content_purpose", "selection": "fixed", "min_groups": 1, "max_groups": 1, "allowed_groups": ["施工报价"], "source": "rule"},
+            {"layer_code": "user_value", "selection": "random", "min_groups": 1, "max_groups": 1, "allowed_groups": ["价格参考", "案例", "预算"], "source": "user_value_layer"},
+            {"layer_code": "content_structure", "selection": "all", "min_groups": 1, "max_groups": null, "allowed_groups": [], "source": "body_formula"},
+            {"layer_code": "evidence", "selection": "fixed", "min_groups": 1, "max_groups": 1, "allowed_groups": ["真实报价"], "source": "evidence_layer"},
+            {"layer_code": "conversion", "selection": "random", "min_groups": 2, "max_groups": 2, "allowed_groups": [], "source": "conversion_layer"}
+          ]
+        }
+      },
+      "recommendation_reason": "工种总价仅使用施工报价、一个用户价值组和真实报价证据"
+    },
+    {
+      "id": "FRG05",
+      "enabled": true,
+      "schema_version": 3,
+      "content_goal_codes": [],
+      "content_type_codes": ["CT05"],
+      "industry_scope": ["decoration"],
+      "combination_type": "single",
+      "method_members": [{"method_code": "FRM09", "role": "primary", "order": 1}],
+      "title_formula_candidate_codes": ["FRT01", "FRT02", "FRT03", "FRT04", "FRT05", "FRT06", "FRT09", "FRT10", "FRT11"],
+      "body_formula_candidate_codes": ["FRB09"],
+      "scenario_description": "价格营销下的人工+辅材，按同一报价输出施工报价与真实报价证据",
+      "required_variable_codes": ["product", "price", "process", "quote_type"],
+      "required_evidence_types": [],
+      "priority": 860,
+      "conditions": {"price_available": true},
+      "hard_conditions": {"unsupported_numbers": "block", "sum_validation_required": true, "quote_type_required_if_price": true, "max_persona_advantages": 3, "title_claim_body_alignment": true},
+      "score_weights": {"variable_coverage": 2, "evidence_coverage": 3},
+      "source_metadata": {
+        "source_row": 5,
+        "topic_type": "价格营销",
+        "content_direction_name": "人工+辅材",
+        "composition_blueprint": {
+          "content_type": "人工+辅材",
+          "layer_sequence": [
+            {"order": 1, "code": "persona", "name": "人设层"},
+            {"order": 2, "code": "business", "name": "业务层"},
+            {"order": 3, "code": "content_purpose", "name": "内容目的"},
+            {"order": 4, "code": "user_value", "name": "用户价值"},
+            {"order": 5, "code": "content_structure", "name": "内容结构"},
+            {"order": 6, "code": "evidence", "name": "证据层"},
+            {"order": 7, "code": "conversion", "name": "转化层"}
+          ],
+          "phrase_composition": [
+            {"layer_code": "persona", "selection": "random", "min_groups": 3, "max_groups": 5, "allowed_groups": [], "source": "persona_profile"},
+            {"layer_code": "business", "selection": "random", "min_groups": 1, "max_groups": 1, "allowed_groups": [], "source": "business_layer"},
+            {"layer_code": "content_purpose", "selection": "fixed", "min_groups": 1, "max_groups": 1, "allowed_groups": ["施工报价"], "source": "rule"},
+            {"layer_code": "user_value", "selection": "random", "min_groups": 1, "max_groups": 1, "allowed_groups": ["价格参考", "案例", "预算"], "source": "user_value_layer"},
+            {"layer_code": "content_structure", "selection": "all", "min_groups": 1, "max_groups": null, "allowed_groups": [], "source": "body_formula"},
+            {"layer_code": "evidence", "selection": "fixed", "min_groups": 1, "max_groups": 1, "allowed_groups": ["真实报价"], "source": "evidence_layer"},
+            {"layer_code": "conversion", "selection": "random", "min_groups": 2, "max_groups": 2, "allowed_groups": [], "source": "conversion_layer"}
+          ]
+        }
+      },
+      "recommendation_reason": "人工+辅材仅使用施工报价、一个用户价值组和真实报价证据"
+    },
+    {
+      "id": "FRG06",
+      "enabled": true,
+      "schema_version": 3,
+      "content_goal_codes": [],
+      "content_type_codes": ["CT06"],
+      "industry_scope": ["decoration"],
+      "combination_type": "single",
+      "method_members": [{"method_code": "FRM04", "role": "primary", "order": 1}],
+      "title_formula_candidate_codes": ["FRT05", "FRT08", "FRT12"],
+      "body_formula_candidate_codes": ["FRB04"],
+      "scenario_description": "工艺展示方向，固定使用工艺展示内容词组和工地照片/工艺节点证据",
+      "required_variable_codes": ["product", "process"],
+      "required_evidence_types": [],
+      "priority": 850,
+      "conditions": {},
+      "hard_conditions": {"unsupported_numbers": "block", "image_claims_visible_only": true, "title_claim_body_alignment": true},
+      "score_weights": {"variable_coverage": 2, "evidence_coverage": 3},
+      "source_metadata": {
+        "source_row": 6,
+        "topic_type": "工艺展示",
+        "content_direction_name": "工艺展示",
+        "composition_blueprint": {
+          "content_type": "工艺展示",
+          "layer_sequence": [
+            {"order": 1, "code": "persona", "name": "人设层"},
+            {"order": 2, "code": "business", "name": "业务层"},
+            {"order": 3, "code": "content_purpose", "name": "内容目的"},
+            {"order": 4, "code": "user_value", "name": "用户价值"},
+            {"order": 5, "code": "content_structure", "name": "内容结构"},
+            {"order": 6, "code": "evidence", "name": "证据层"},
+            {"order": 7, "code": "conversion", "name": "转化层"}
+          ],
+          "phrase_composition": [
+            {"layer_code": "persona", "selection": "random", "min_groups": 3, "max_groups": 5, "allowed_groups": [], "source": "persona_profile"},
+            {"layer_code": "business", "selection": "random", "min_groups": 1, "max_groups": 1, "allowed_groups": [], "source": "business_layer"},
+            {"layer_code": "content_purpose", "selection": "fixed", "min_groups": 1, "max_groups": 1, "allowed_groups": ["工艺展示"], "source": "rule"},
+            {"layer_code": "user_value", "selection": "random", "min_groups": 1, "max_groups": 1, "allowed_groups": ["避坑", "工艺", "案例"], "source": "user_value_layer"},
+            {"layer_code": "content_structure", "selection": "all", "min_groups": 1, "max_groups": null, "allowed_groups": [], "source": "body_formula"},
+            {"layer_code": "evidence", "selection": "available", "min_groups": 1, "max_groups": 2, "allowed_groups": ["工地照片", "工艺节点"], "source": "evidence_layer"},
+            {"layer_code": "conversion", "selection": "random", "min_groups": 2, "max_groups": 2, "allowed_groups": [], "source": "conversion_layer"}
+          ]
+        }
+      },
+      "recommendation_reason": "工艺展示仅使用一个避坑/工艺/案例价值组及可用现场证据"
+    },
+    {
+      "id": "FRG07",
+      "enabled": true,
+      "schema_version": 3,
+      "content_goal_codes": [],
+      "content_type_codes": ["CT07"],
+      "industry_scope": ["decoration"],
+      "combination_type": "single",
+      "method_members": [{"method_code": "FRM02", "role": "primary", "order": 1}],
+      "title_formula_candidate_codes": ["FRT06", "FRT12"],
+      "body_formula_candidate_codes": ["FRB02"],
+      "scenario_description": "日常工作方向，固定使用日常工作内容词组和工地照片/工艺节点证据",
+      "required_variable_codes": ["product", "process"],
+      "required_evidence_types": [],
+      "priority": 840,
+      "conditions": {},
+      "hard_conditions": {"unsupported_numbers": "block", "image_claims_visible_only": true, "max_persona_advantages": 3, "title_claim_body_alignment": true},
+      "score_weights": {"variable_coverage": 2, "evidence_coverage": 3},
+      "source_metadata": {
+        "source_row": 7,
+        "topic_type": "日常工作",
+        "content_direction_name": "日常工作",
+        "composition_blueprint": {
+          "content_type": "日常工作",
+          "layer_sequence": [
+            {"order": 1, "code": "persona", "name": "人设层"},
+            {"order": 2, "code": "business", "name": "业务层"},
+            {"order": 3, "code": "content_purpose", "name": "内容目的"},
+            {"order": 4, "code": "user_value", "name": "用户价值"},
+            {"order": 5, "code": "content_structure", "name": "内容结构"},
+            {"order": 6, "code": "evidence", "name": "证据层"},
+            {"order": 7, "code": "conversion", "name": "转化层"}
+          ],
+          "phrase_composition": [
+            {"layer_code": "persona", "selection": "random", "min_groups": 3, "max_groups": 5, "allowed_groups": [], "source": "persona_profile"},
+            {"layer_code": "business", "selection": "random", "min_groups": 1, "max_groups": 1, "allowed_groups": [], "source": "business_layer"},
+            {"layer_code": "content_purpose", "selection": "fixed", "min_groups": 1, "max_groups": 1, "allowed_groups": ["日常工作"], "source": "rule"},
+            {"layer_code": "user_value", "selection": "random", "min_groups": 1, "max_groups": 1, "allowed_groups": ["避坑", "工艺", "案例", "预算"], "source": "user_value_layer"},
+            {"layer_code": "content_structure", "selection": "all", "min_groups": 1, "max_groups": null, "allowed_groups": [], "source": "body_formula"},
+            {"layer_code": "evidence", "selection": "available", "min_groups": 1, "max_groups": 2, "allowed_groups": ["工地照片", "工艺节点"], "source": "evidence_layer"},
+            {"layer_code": "conversion", "selection": "random", "min_groups": 2, "max_groups": 2, "allowed_groups": [], "source": "conversion_layer"}
+          ]
+        }
+      },
+      "recommendation_reason": "日常工作仅使用一个避坑/工艺/案例/预算价值组及可用现场证据"
+    }
+  ]
+}

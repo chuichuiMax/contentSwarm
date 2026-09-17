@@ -75,7 +75,9 @@ func (s *Service) listRows(ctx context.Context, userID string, memberWS []string
 	args := []any{userID, memberWS}
 	if workspaceID != "" {
 		args = append(args, workspaceID)
-		q += ` AND "workspace_id" = $` + itoa(len(args))
+		q += ` AND ("workspace_id" = $` + itoa(len(args)) + `
+			OR (visibility = 'PUBLIC' AND "workspace_id" IS NULL AND "collection_id" IN (
+				SELECT id FROM "template_collections" WHERE "workspace_id" = $` + itoa(len(args)) + `)))`
 	}
 	if collectionID != "" {
 		args = append(args, collectionID)
@@ -94,6 +96,25 @@ func (s *Service) listRows(ctx context.Context, userID string, memberWS []string
 			return nil, err
 		}
 		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+func (s *Service) listCollectionRows(ctx context.Context, collectionID string) ([]TemplateRow, error) {
+	rows, err := s.db.Query(ctx, `SELECT `+tmplCols+` FROM "templates"
+		WHERE "collection_id" = $1
+		ORDER BY "updated_at" DESC`, collectionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]TemplateRow, 0)
+	for rows.Next() {
+		template, err := scanTemplate(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, template)
 	}
 	return out, rows.Err()
 }
@@ -173,6 +194,23 @@ func (s *Service) listCollections(ctx context.Context, workspaceID string) ([]co
 			return nil, err
 		}
 		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+func (s *Service) listAllCollections(ctx context.Context) ([]collectionRow, error) {
+	rows, err := s.db.Query(ctx, `SELECT id,"workspace_id",name FROM "template_collections" ORDER BY "created_at"`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]collectionRow, 0)
+	for rows.Next() {
+		var collection collectionRow
+		if err := rows.Scan(&collection.ID, &collection.WorkspaceID, &collection.Name); err != nil {
+			return nil, err
+		}
+		out = append(out, collection)
 	}
 	return out, rows.Err()
 }

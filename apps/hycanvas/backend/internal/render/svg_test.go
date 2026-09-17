@@ -96,6 +96,29 @@ func TestToSVGRotationMatrix(t *testing.T) {
 	}
 }
 
+func TestSVGTextCarriesTemplateTypography(t *testing.T) {
+	design := sampleDesign()
+	page := asObj(asArr(design["pages"])[0])
+	text := asObj(asArr(page["children"])[3])
+	run := asObj(asArr(asObj(asArr(text["content"])[0])["runs"])[0])
+	style := asObj(run["style"])
+	style["fontStyle"] = "ExtraBold Italic"
+	style["axes"] = map[string]any{"wght": 800.0}
+	style["letterSpacing"] = 2.5
+	style["decoration"] = []any{"underline", "strikethrough"}
+	style["case"] = "upper"
+
+	svg, err := ToSVG(design, 0)
+	if err != nil {
+		t.Fatalf("ToSVG: %v", err)
+	}
+	for _, want := range []string{`font-weight="800"`, `font-style="italic"`, `letter-spacing="2.5"`, `text-decoration="underline line-through"`, `HI &lt;THERE&gt;`} {
+		if !strings.Contains(svg, want) {
+			t.Errorf("SVG text style missing %q\n%s", want, svg)
+		}
+	}
+}
+
 // Effects parity (F38): the SVG export must carry the same blend modes and
 // shadows the raster path composites, instead of silently dropping them.
 func TestSVGEmitsBlendModeAndShadow(t *testing.T) {

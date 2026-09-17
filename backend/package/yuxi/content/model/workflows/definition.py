@@ -19,6 +19,13 @@ DEFAULT_CONTRACTS = {
     "AnalyzeContentValueInputV1",
     "AnalyzeAndSelectDirectionInputV1",
     "SelectCreationStrategyInputV1",
+    "SelectStrategyInputV2",
+    "JointStrategyInputV1",
+    "JointStrategyDecisionV1",
+    "JointStrategyDecisionV2",
+    "ReevaluateJointStrategyInputV1",
+    "ResearchStrategyPricesInputV1",
+    "StrategyPriceEvidenceResultV1",
     "SelectContentDirectionInputV1",
     "ExplainStrategyInputV1",
     "CollectMissingEvidenceInputV1",
@@ -45,6 +52,7 @@ DEFAULT_CONTRACTS = {
     "ContentValueResultV1",
     "ContentDirectionDecisionResultV1",
     "CreationStrategySelectionResultV1",
+    "StrategyDecisionV2",
     "DirectionSelectionResultV1",
     "StrategyExplanationResultV1",
     "EvidenceCollectionResultV1",
@@ -100,8 +108,9 @@ class WorkflowDefinitionPolicy:
                 raise ValueError(f"不支持的工作流节点类型: {node.get('type')}")
 
         cls._validate_dag(ids, edges)
-        cls._validate_v3_nodes(node_by_id, catalog)
-        cls._validate_v3_control_flow(edges)
+        joint = definition.get("selection_policy") in {"agent_skill_v1", "blueprint_first_v1"}
+        cls._validate_v3_nodes(node_by_id, catalog, joint=joint, price_recovery=bool(definition.get("price_recovery")))
+        cls._validate_v3_control_flow(edges, joint=joint, price_recovery=bool(definition.get("price_recovery")))
         cls._validate_revision_routes(definition.get("revision_routes") or [], node_by_id)
         cls._validate_runtime_limits(definition)
 
@@ -127,9 +136,25 @@ class WorkflowDefinitionPolicy:
             raise ValueError("工作流正常连线不能包含循环依赖")
 
     @classmethod
-    def _validate_v3_nodes(cls, node_by_id: dict[str, dict[str, Any]], catalog: WorkflowCatalog | None) -> None:
-        if len(node_by_id) != 26:
-            raise ValueError("V3.7 内容与封面工作流必须声明 26 个节点")
+    def _validate_v3_nodes(
+        cls, node_by_id: dict[str, dict[str, Any]], catalog: WorkflowCatalog | None,
+        *, joint: bool = False, price_recovery: bool = False,
+    ) -> None:
+        expected = 29 if joint and price_recovery else 25 if joint else 26
+        if len(node_by_id) != expected:
+            raise ValueError(f"内容与封面工作流必须声明 {expected} 个节点")
+        if joint:
+            selection = node_by_id.get("select_creation_strategy", {})
+            contract = "JointStrategyDecisionV2" if price_recovery else "JointStrategyDecisionV1"
+            if selection.get("type") != "agent" or selection.get("output_contract") != contract:
+                raise ValueError("联合策略必须使用 Agent 与新版本决策契约")
+            if node_by_id.get("prepare_strategy_candidates", {}).get("type") != "deterministic":
+                raise ValueError("联合策略必须先装配受限候选")
+        if price_recovery:
+            if not joint or node_by_id.get("confirm_strategy_prices", {}).get("type") != "human_review":
+                raise ValueError("报价补证必须经过人工确认")
+            if node_by_id.get("reselect_creation_strategy", {}).get("output_contract") != "JointStrategyDecisionV2":
+                raise ValueError("报价补证必须由策略 Agent 复评")
         missing_gates = sorted(V3_HUMAN_GATE_IDS - set(node_by_id))
         if missing_gates:
             raise ValueError(f"V3 工作流缺少必选人工关口: {', '.join(missing_gates)}")
@@ -158,7 +183,7 @@ class WorkflowDefinitionPolicy:
                 raise ValueError("只有 revise_if_needed 可以使用 revision_router 类型")
 
     @staticmethod
-    def _validate_v3_control_flow(edges: list[Any]) -> None:
+    def _validate_v3_control_flow(edges: list[Any], *, joint: bool = False, price_recovery: bool = False) -> None:
         edge_set = {tuple(edge) for edge in edges}
         required = {
             ("deterministic_validate", "revise_if_needed"),
@@ -177,6 +202,24 @@ class WorkflowDefinitionPolicy:
             ("merge_research_evidence", "confirm_high_risk_facts"),
             ("freeze_evidence_bundle", "generate_content"),
         }
+        if joint:
+            removed = {"collect_viral_candidates", "select_viral_reference"}
+            required = {edge for edge in required if not set(edge) & removed}
+            required.update({
+                ("normalize_evidence", "prepare_strategy_candidates"),
+                ("prepare_strategy_candidates", "select_creation_strategy"),
+                *((node, "merge_research_evidence") for node in (
+                    "collect_business_rule_evidence", "collect_price_evidence", "collect_compliance_evidence"
+                )),
+            })
+        if price_recovery:
+            bypass = ("select_creation_strategy", "lock_creation_strategy")
+            if bypass in edge_set:
+                raise ValueError("不得绕过报价补证直接锁定策略")
+            required.remove(bypass)
+            chain = ["select_creation_strategy", "research_strategy_prices", "confirm_strategy_prices",
+                     "merge_strategy_prices", "reselect_creation_strategy", "lock_creation_strategy"]
+            required.update(zip(chain, chain[1:]))
         if not required <= edge_set:
             raise ValueError("V3.7 工作流缺少策略锁定、并发调研汇总、爆款选择或固定回修链路")
         forbidden = {

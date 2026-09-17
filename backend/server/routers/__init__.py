@@ -19,6 +19,7 @@ from server.routers.workspace_router import workspace
 from server.routers.mention_router import mention_router
 from server.routers.content_router import content
 from server.routers.content_cover_router import content_covers
+from server.routers.image_design_router import image_design
 from server.routers.account_router import accounts
 from server.routers.employee_router import employees
 from server.routers.role_router import roles
@@ -26,6 +27,7 @@ from server.routers.content_type_router import content_types
 from server.routers.variable_router import content_variables
 from server.routers.mp_router import mp
 from server.routers.material_library_router import material_library
+from server.routers.dangjia_router import dangjia
 
 _LITE_MODE = os.environ.get("LITE_MODE", "").lower() in ("true", "1")
 
@@ -52,6 +54,7 @@ router.include_router(workspace)  # /api/workspace/* 用户个人工作区
 router.include_router(mention_router)  # /api/mention/* 提及文件搜索接口
 router.include_router(content)  # /api/content/* 通用内容策略工作台
 router.include_router(content_covers)  # /api/content/covers/* 封面生成
+router.include_router(image_design)  # /api/image-design/* 图片设计
 router.include_router(accounts)  # /api/accounts/* 内容发布账号管理
 router.include_router(employees)  # /api/employees/* 内容发布员工管理
 router.include_router(roles)  # /api/roles/* 内容发布角色与权限配置
@@ -59,6 +62,7 @@ router.include_router(content_types)  # /api/content-types/* 内容类型配置
 router.include_router(content_variables)  # /api/content-variables/* 变量配置
 router.include_router(material_library)  # /api/material-library/* 素材库
 router.include_router(mp)  # /api/mp/* 获客小程序
+router.include_router(dangjia)  # /api/dangjia/* 当家外部内容接入
 
 if not _LITE_MODE:
     from server.routers.graph_router import graph

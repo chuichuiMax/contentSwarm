@@ -1,0 +1,18 @@
+{
+  "version": "industry-selection-v1",
+  "industry_modes": {"decoration": "direction_scoped"},
+  "default_mode": "scored",
+  "mode_skills": {
+    "direction_scoped": "decoration-direction-formula-selector",
+    "scored": "industry-strategy-scorer"
+  },
+  "scoring": {
+    "method": {"weights": {"goal": 30, "material": 25, "audience_scene": 20, "channel": 15, "persona": 10}, "tie_break": ["material", "goal", "audience_scene", "channel", "persona"]},
+    "formula": {"weights": {"material": 30, "goal": 25, "audience_scene": 20, "channel": 15, "persona": 10}, "tie_break": ["material", "goal", "audience_scene", "channel", "persona"]},
+    "reference": {"weights": {"material": 30, "audience_scene": 25, "goal": 20, "strategy": 15, "channel": 10}, "tie_break": ["material", "audience_scene", "goal", "strategy", "channel"]}
+  },
+  "score_anchors": {"0": "无支持、未知或与输入冲突", "1": "仅宽泛相关", "2": "部分直接支持", "3": "大部分直接支持", "4": "直接充分支持"},
+  "formula_pair_weights": {"title": 50, "body": 50},
+  "reference_candidate_limit": 5,
+  "max_reference_searches": 2
+}

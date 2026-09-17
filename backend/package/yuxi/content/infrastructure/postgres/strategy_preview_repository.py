@@ -8,11 +8,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from yuxi.content.control.errors import ContentApplicationError
 from yuxi.content.control.strategy.recommend_v3 import StrategyPreviewActor, StrategyPreviewContext
 from yuxi.content.model.rules.engine import CombinationGroup
-from yuxi.content.v3.seed import DECORATION_INDUSTRY_PACK_V3_ID, PLATFORM_RULE_V3_ID
+from yuxi.content.v3.seed import DECORATION_INDUSTRY_PACK_V3_ID
+from yuxi.repositories.content_repository import ContentRepository
 from yuxi.storage.postgres.models_content import (
     ChannelProfile,
     ChannelProfileVersion,
-    ContentCombinationRule,
     ContentTask,
     IndustryContentPackVersion,
     IndustryTemplateVersion,
@@ -53,6 +53,39 @@ class PostgresStrategyPreviewRepository:
     def __init__(self, db: AsyncSession):
         self.db = db
 
+    async def _load_strategy_source(self, task_id, actor):
+        task = await ContentRepository(self.db).get_task(task_id)
+        if task is None or task.deleted_at is not None or not self._can_read(task, actor):
+            raise ContentApplicationError("CONTENT_TASK_NOT_FOUND", "内容任务不存在", "not_found")
+        industry_slug, _ = await self._industry_context(task)
+        bundle = await ContentRepository(self.db).get_rule_bundle(task.rule_version_id, include_disabled=True)
+        if bundle is None:
+            raise ContentApplicationError("CONTENT_RULE_VERSION_NOT_FOUND", "任务锁定规则版本不存在", "conflict")
+        return task, industry_slug, bundle
+
+    async def load_candidates(
+        self, *, task_id: str, actor: StrategyPreviewActor, auto_direction: bool = False
+    ) -> dict[str, Any]:
+        """读取完整规则引用，装配手动方向或自动蓝图选择所需的候选。"""
+        from yuxi.content.model.strategy import build_strategy_candidates
+
+        task, industry_slug, bundle = await self._load_strategy_source(task_id, actor)
+        from yuxi.content.v3.joint_workflow import BLUEPRINT_FIRST_WORKFLOW_IDS
+
+        auto_direction = auto_direction or task.workflow_version_id in BLUEPRINT_FIRST_WORKFLOW_IDS
+        try:
+            candidates = build_strategy_candidates(
+                bundle,
+                industry_slug=industry_slug,
+                direction_code=task.content_type_code,
+                auto_direction=auto_direction,
+                rule_version_id=task.rule_version_id,
+                policy=(task.runtime_config_snapshot_json or {}).get("selection_policy_snapshot"),
+            )
+        except ValueError as exc:
+            raise ContentApplicationError("CONTENT_STRATEGY_CANDIDATES_INVALID", str(exc), "conflict") from exc
+        return {"task_id": task.id, "creates_run": False, "strategy_candidates": candidates}
+
     async def load_context(
         self,
         *,
@@ -72,26 +105,28 @@ class PostgresStrategyPreviewRepository:
 
         industry_slug, industry_pack_version_id = await self._industry_context(task)
         channel_code = await self._channel_code(task.channel_profile_version_id)
-        rows = list(
-            (
-                await self.db.execute(
-                    select(ContentCombinationRule)
-                    .where(
-                        ContentCombinationRule.version_id == PLATFORM_RULE_V3_ID,
-                        ContentCombinationRule.schema_version == 3,
-                    )
-                    .order_by(ContentCombinationRule.priority.desc(), ContentCombinationRule.id)
-                )
-            ).scalars()
+        bundle = await ContentRepository(self.db).get_rule_bundle(task.rule_version_id)
+        groups = tuple(
+            CombinationGroup.from_mapping(
+                {
+                    **item,
+                    "code": item["id"],
+                    "content_direction_code": item["content_type_codes"][0],
+                    "content_direction_name": item["source_metadata"].get(
+                        "content_direction_name", item["content_type_codes"][0]
+                    ),
+                },
+                rule_version_id=task.rule_version_id,
+            )
+            for item in bundle["combination_rules"]
         )
-        groups = tuple(self._to_domain(row) for row in rows)
         selected_angle = task.selected_angle_json or {}
         content_direction_code = (
             requested_content_direction_code or task.content_type_code or selected_angle.get("content_type_code") or ""
         )
         return StrategyPreviewContext(
             task_id=task.id,
-            rule_version_id=PLATFORM_RULE_V3_ID,
+            rule_version_id=task.rule_version_id,
             industry_pack_version_id=industry_pack_version_id,
             channel_profile_version_id=task.channel_profile_version_id,
             content_direction_code=content_direction_code,
@@ -114,9 +149,7 @@ class PostgresStrategyPreviewRepository:
         if task.industry_pack_version_id:
             pack = await self.db.get(IndustryContentPackVersion, task.industry_pack_version_id)
             if pack is not None:
-                return pack.slug, (
-                    DECORATION_INDUSTRY_PACK_V3_ID if pack.slug == "decoration" else task.industry_pack_version_id
-                )
+                return pack.slug, task.industry_pack_version_id
         template = await self.db.get(IndustryTemplateVersion, task.industry_template_version_id)
         if template is not None:
             return template.slug, DECORATION_INDUSTRY_PACK_V3_ID if template.slug == "decoration" else None
@@ -133,29 +166,3 @@ class PostgresStrategyPreviewRepository:
             )
         ).scalar_one_or_none()
         return row
-
-    @staticmethod
-    def _to_domain(row: ContentCombinationRule) -> CombinationGroup:
-        direction_code = (row.content_type_codes or [""])[0]
-        return CombinationGroup.from_mapping(
-            {
-                "code": row.id,
-                "content_direction_code": direction_code,
-                "content_direction_name": direction_code,
-                "combination_type": row.combination_type,
-                "method_members": row.method_members or [],
-                "title_formula_candidate_codes": row.title_formula_candidate_codes or [],
-                "body_formula_candidate_codes": row.body_formula_candidate_codes or [],
-                "industry_scope": row.industry_scope or [],
-                "channel_scope": row.channel_scope or [],
-                "content_goal_codes": row.content_goal_codes or [],
-                "narrative_axis_codes": row.narrative_axis_codes or [],
-                "required_variable_codes": row.required_variable_codes or [],
-                "required_evidence_types": row.required_evidence_types or [],
-                "priority": row.priority,
-                "enabled": row.compatibility != "disabled",
-                "scenario_description": row.scenario_description,
-                "source_metadata": row.source_metadata or {},
-            },
-            rule_version_id=row.version_id,
-        )

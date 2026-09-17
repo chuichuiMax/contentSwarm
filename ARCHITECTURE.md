@@ -33,6 +33,7 @@ Yuxi 是一个面向 RAG、知识图谱和多智能体工作流的知识库平�
 - `knowledge` 是知识库和图谱领域。`KnowledgeBaseManager` 根据知识库类型分发到具体实现；`implementations` 放 Milvus、Dify 等知识库实现；`graphs` 放 Milvus 知识库图谱适配与构建服务；`chunking` 放文档分块策略。
 - `knowledge/parser` 是文档解析边界，统一封装 MinerU、PaddleX、RapidOCR、DeepSeek OCR 等解析实现。
 - `content_cover` 是内容封面领域的纯能力边界，维护版式声明、Pillow 渲染器、image2 中转站协议和输入输出类型；HTTP 编排放在 `content_cover_service`，异步执行放在 `content_cover_worker`，持久化查询放在 `content_cover_repository`。
+- `image_design` 是图片设计领域边界，维护工作流契约、素材视觉分析、确定性提示词编译、可追溯优化快照与 image2 生成任务；HTTP 适配放在 `image_design_router`，耗时生成由 ARQ Worker 执行，输入图片继续复用素材库资产。
 - `models` 封装 chat、embedding、rerank 模型适配；`config` 维护应用配置和内置模型信息；`utils` 放跨领域但足够通用的工具。
 
 测试代码放在 `backend/test`，按 `unit`、`integration`、`e2e` 分层组织。新增或修改后端行为时，测试应落在最能覆盖风险的那一层。
@@ -62,6 +63,8 @@ Yuxi 是一个面向 RAG、知识图谱和多智能体工作流的知识库平�
 7. 前端通过 SSE/轮询消费运行事件，渲染消息、工具调用、引用来源、产物卡片和文件预览。
 
 内容封面任务沿用相同的长任务边界：`/api/content/covers` 负责鉴权、上传和任务创建，ARQ Worker 执行确定性排版或 image2 提交/轮询，Postgres 保存任务及内容版本关联，MinIO 保存输入与输出图片，Redis Stream 向 `CoverGenerationView` 推送进度。小红书分发创建不可变快照时同时锁定当前封面对象。
+
+图片设计任务由 `/api/image-design` 校验工作流和素材归属，按素材哈希、分析角色、模型及 schema 版本复用视觉分析，再生成可验证的 PromptPlan 和不可变优化快照。生成接口只接受优化快照 ID 与渲染参数，Worker 从服务端快照编译最终提示词、调用 image2 并把结果保存到 MinIO/Postgres；`ImageDesignView` 轮询任务并展示可追溯结果。
 
 ## 架构不变量
 

@@ -363,6 +363,9 @@ export interface FillableFieldSummary {
       letterSpacing?: number;
       lineHeight?: number | { mode: "auto" | "multiple" | "absolute"; value: number };
     }>;
+    paragraphs?: Array<{ style: Record<string, unknown>; runs: Array<{ style: Record<string, unknown> }> }>;
+    box?: Record<string, unknown>;
+    textEffects?: unknown[];
   };
 }
 

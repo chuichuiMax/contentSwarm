@@ -38,6 +38,7 @@ SKILLS = {
     "content-body-generator",
     "viral-structure-rewriter",
     "viral-layout-formatter",
+    "humanizer-zh",
     "content-human-expression",
     "content-reviewer",
     "content-visual-planner",
@@ -172,6 +173,7 @@ def test_strategy_is_deterministic_and_generation_remains_one_agent_call():
         "content-body-generator",
         "viral-structure-rewriter",
         "viral-layout-formatter",
+        "humanizer-zh",
         "content-human-expression",
     ]
     assert node_ids.index("select_creation_strategy") < node_ids.index("lock_creation_strategy")
@@ -190,7 +192,7 @@ def test_strategy_is_deterministic_and_generation_remains_one_agent_call():
 
 
 @pytest.mark.unit
-def test_system_seed_upgrades_to_content_and_cover_version_13():
+def test_system_seed_upgrades_to_content_and_cover_version_14():
     stale = SimpleNamespace(
         created_by="system",
         schema_version=3,
@@ -200,7 +202,7 @@ def test_system_seed_upgrades_to_content_and_cover_version_13():
         output_schema={},
     )
     assert _upgrade_system_workflow_v3(stale) is True
-    assert stale.version == 13
+    assert stale.version == 14
     assert stale.definition_json == WORKFLOW_V3
 
 

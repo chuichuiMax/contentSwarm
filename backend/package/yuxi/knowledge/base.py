@@ -179,6 +179,9 @@ class KnowledgeBase(ABC):
     def normalize_additional_params(cls, additional_params: dict | None) -> dict:
         """规范化 additional_params，仅文档型知识库补充分块默认值。"""
         params = cls.validate_additional_params(additional_params)
+        content_type = params.get("viral_content_type")
+        if content_type is not None and content_type not in tuple(f"CT{i:02d}" for i in range(1, 8)):
+            raise ValueError("爆款知识库必须绑定一个有效创作类型（CT01～CT07）")
         if cls.apply_chunk_defaults:
             return ensure_chunk_defaults_in_additional_params(params)
         return params

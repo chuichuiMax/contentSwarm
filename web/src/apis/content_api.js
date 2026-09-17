@@ -10,12 +10,21 @@ const encodeQuery = (params = {}) => {
 }
 
 export const contentApi = {
+  listViralFileJobs: () => apiGet('/api/content/viral-file-jobs'),
+  prepareViralFiles: (payload) => apiPost('/api/content/viral-file-jobs', payload),
+  listViralAssets: (params) => apiGet(`/api/content/viral-assets${encodeQuery(params)}`),
+  importViralAssets: (payload) => apiPost('/api/content/viral-assets/import', payload),
+  getViralAsset: (assetId) => apiGet(`/api/content/viral-assets/${assetId}`),
+  retryViralAsset: (assetId) => apiPost(`/api/content/viral-assets/${assetId}/retry`),
   getBootstrap: () => apiGet('/api/content/bootstrap'),
   createTask: (payload) => apiPost('/api/content/tasks', payload),
   listTasks: (params) => apiGet(`/api/content/tasks${encodeQuery(params)}`),
   getTask: (taskId) => apiGet(`/api/content/tasks/${taskId}`),
+  getStrategyCandidates: (taskId) => apiGet(`/api/content/tasks/${taskId}/strategy/candidates`),
+  getStrategyDecision: (taskId) => apiGet(`/api/content/tasks/${taskId}/strategy/decision`),
   updateTask: (taskId, payload) => apiPatch(`/api/content/tasks/${taskId}`, payload),
   deleteTask: (taskId) => apiDelete(`/api/content/tasks/${taskId}`),
+  deleteTasks: (taskIds) => apiPost('/api/content/tasks/batch-delete', { task_ids: taskIds }),
   duplicateTask: (taskId) => apiPost(`/api/content/tasks/${taskId}/duplicate`),
   createOcrResult: (taskId, file) => {
     const form = new FormData()
@@ -38,6 +47,7 @@ export const contentApi = {
       true,
       'blob'
     ),
+  getPhotoLayouts: () => apiGet('/api/content/covers/photo-layouts'),
   getHyCanvasCompositePreview: (templateId, imageItemId) =>
     apiPost(
       `/api/content/covers/hycanvas/templates/${encodeURIComponent(templateId)}/preview.png`,

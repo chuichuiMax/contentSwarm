@@ -441,6 +441,30 @@ async def test_content_node_retries_once_when_provider_ignores_forced_result_too
     assert response.result[0].tool_calls[0]["name"] == "submit_content_node_result"
 
 
+def test_forced_result_submission_preserves_rejected_result_for_correction():
+    payload = {"strategy": {"direction_code": "CT01", "creation_method_codes": ["M04"]}}
+    messages = [
+        HumanMessage(content="节点输入"),
+        AIMessage(
+            content="", tool_calls=[{"id": "call-result", "name": "submit_content_node_result", "args": payload}]
+        ),
+        ToolMessage(
+            content="结果未通过结构校验，请修正后重新提交：reference Field required",
+            tool_call_id="call-result",
+            name="submit_content_node_result",
+            status="error",
+        ),
+    ]
+
+    sanitized = ContentNodeResultMiddleware._result_submission_messages(messages)
+
+    assert all(isinstance(message, HumanMessage) for message in sanitized)
+    correction = str(sanitized[-1].content)
+    assert json.dumps(payload, ensure_ascii=False) in correction
+    assert "reference Field required" in correction
+    assert "未通过校验" in correction
+
+
 def test_forced_result_submission_removes_historical_tool_call_scaffolding():
     messages = [
         HumanMessage(content="节点输入"),
@@ -1039,7 +1063,7 @@ async def test_delegation_creates_traceable_child_run_and_runtime_snapshot(monke
         return agent, FakeBackend()
 
     service._resolve_agent = fake_resolve
-    request = _delegation_request()
+    request = _delegation_request(model_spec="runtime-provider:runtime-model")
 
     result = await service.execute(request)
 
@@ -1053,6 +1077,7 @@ async def test_delegation_creates_traceable_child_run_and_runtime_snapshot(monke
     assert request.node_run.input_snapshot["input_snapshot_hash"] == "input-hash"
     assert request.node_run.delegated_agent_run_id == result.delegated_agent_run_id
     assert result.runtime_config_snapshot["agent"]["config_version"] == 4
+    assert result.runtime_config_snapshot["model"] == "runtime-provider:runtime-model"
     assert result.runtime_config_snapshot["skills"][0]["content_hash"] == "hash-2"
     assert result.runtime_config_snapshot["knowledges"] == []
     assert result.runtime_config_snapshot["tools"] == [
@@ -1131,6 +1156,7 @@ async def test_delegation_agent_resolution_fails_closed(monkeypatch, agent, acce
     [
         ("collect_business_rule_evidence", {"品牌知识库", "平台规则"}),
         ("collect_price_evidence", {"价格库"}),
+        ("research_strategy_prices", {"价格库"}),
         ("collect_compliance_evidence", {"封禁词库"}),
         ("collect_viral_candidates", {"爆款库"}),
     ],
@@ -1154,10 +1180,12 @@ def test_parallel_research_agents_receive_only_their_knowledge_scope(node_id, ex
 
 
 def test_formal_content_agent_catalog_and_conflict_policy():
-    assert len(CONTENT_AGENT_SPECS) == 12
+    assert len(CONTENT_AGENT_SPECS) == 14
     assert {item.slug for item in CONTENT_AGENT_SPECS} == {
         "content-strategy-agent",
         "content-research-agent",
+        "content-joint-strategy-agent",
+        "content-viral-asset-agent",
         "content-business-rule-research-agent",
         "content-price-research-agent",
         "content-compliance-research-agent",
@@ -1183,7 +1211,12 @@ def test_formal_content_agent_catalog_and_conflict_policy():
     assert research_spec.model_call_timeout_seconds == 60
     assert research_spec.model_retry_times == 1
     assert research_spec.config_version == 6
-    specialist_specs = [item for item in CONTENT_AGENT_SPECS if item.inherit_context_from == "content-research-agent"]
+    new_agents = {"content-joint-strategy-agent", "content-viral-asset-agent"}
+    specialist_specs = [
+        item
+        for item in CONTENT_AGENT_SPECS
+        if item.inherit_context_from == "content-research-agent" and item.slug not in new_agents
+    ]
     assert len(specialist_specs) == 5
     assert all(item.reasoning_effort == "low" for item in specialist_specs)
     assert all(item.model_call_timeout_seconds <= 65 for item in specialist_specs)
@@ -1197,6 +1230,12 @@ def test_formal_content_agent_catalog_and_conflict_policy():
     assert all(item.config_version >= 2 for item in specialist_specs)
     research_collectors = [item for item in specialist_specs if item.slug != "content-viral-selection-agent"]
     assert all(item.skill_tools == ("query_kb",) for item in research_collectors)
+    joint = next(item for item in CONTENT_AGENT_SPECS if item.slug == "content-joint-strategy-agent")
+    preparation = next(item for item in CONTENT_AGENT_SPECS if item.slug == "content-viral-asset-agent")
+    assert joint.reasoning_effort == preparation.reasoning_effort == "low"
+    assert joint.model_call_timeout_seconds == 65
+    assert preparation.model_call_timeout_seconds == 100
+    assert joint.skill_tools == preparation.skill_tools == ()
     generation_spec = next(item for item in CONTENT_AGENT_SPECS if item.slug == "content-generation-agent")
     assert generation_spec.skills == (
         "content-title-generator",
@@ -1204,9 +1243,11 @@ def test_formal_content_agent_catalog_and_conflict_policy():
         "content-body-generator",
         "viral-structure-rewriter",
         "viral-layout-formatter",
+        "humanizer-zh",
         "content-human-expression",
     )
-    assert generation_spec.config_version == 4
+    assert generation_spec.config_version == 6
+    assert generation_spec.reasoning_effort == "medium"
     spec = CONTENT_AGENT_SPECS[0]
     existing = Agent(
         slug=spec.slug,
@@ -1355,7 +1396,7 @@ def test_generation_agent_additive_migration_installs_viral_skills():
     )
 
     assert migrate_system_content_agent(existing, spec) is True
-    assert existing.config_version == 4
+    assert existing.config_version == 6
     assert existing.updated_by == "user-1"
     assert existing.config_json["context"]["model"] == "provider:user-model"
     assert set(existing.config_json["context"]["skills"]) == set(spec.skills)
@@ -1389,7 +1430,42 @@ def test_generation_agent_additive_migration_installs_viral_layout_formatter():
     )
 
     assert migrate_system_content_agent(existing, spec) is True
-    assert existing.config_version == 4
+    assert existing.config_version == 6
+    assert existing.updated_by == "user-1"
+    assert existing.config_json["context"]["model"] == "provider:user-model"
+    assert set(existing.config_json["context"]["skills"]) == {*spec.skills, "user-extra-skill"}
+
+
+def test_generation_agent_additive_migration_installs_humanizer_for_original_content():
+    spec = next(item for item in CONTENT_AGENT_SPECS if item.slug == "content-generation-agent")
+    existing = Agent(
+        slug=spec.slug,
+        backend_id="ChatbotAgent",
+        name=spec.name,
+        config_json={
+            "context": {
+                "skills": [
+                    "content-title-generator",
+                    "content-outline-builder",
+                    "content-body-generator",
+                    "viral-structure-rewriter",
+                    "viral-layout-formatter",
+                    "content-human-expression",
+                    "user-extra-skill",
+                ],
+                "skill_tool_allowlist": [],
+                "model": "provider:user-model",
+            }
+        },
+        enabled=True,
+        config_version=4,
+        is_subagent=False,
+        created_by="system",
+        updated_by="user-1",
+    )
+
+    assert migrate_system_content_agent(existing, spec) is True
+    assert existing.config_version == 6
     assert existing.updated_by == "user-1"
     assert existing.config_json["context"]["model"] == "provider:user-model"
     assert set(existing.config_json["context"]["skills"]) == {*spec.skills, "user-extra-skill"}
