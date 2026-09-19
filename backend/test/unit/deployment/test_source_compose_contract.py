@@ -50,9 +50,9 @@ def test_python_services_verify_locks_and_mount_source_read_only():
 def test_sandbox_verifies_requirements_and_mounts_application_read_only():
     sandbox = load_compose()["services"]["sandbox-provisioner"]
 
-    assert "${SOURCE_ROOT:?SOURCE_ROOT must be set}/docker/sandbox_provisioner/app.py:/app/app.py:ro" in sandbox[
-        "volumes"
-    ]
+    assert (
+        "${SOURCE_ROOT:?SOURCE_ROOT must be set}/docker/sandbox_provisioner/app.py:/app/app.py:ro" in sandbox["volumes"]
+    )
     assert (
         "${SOURCE_ROOT:?SOURCE_ROOT must be set}/docker/sandbox_provisioner/requirements.txt:"
         "/opt/source-locks/sandbox.requirements.txt:ro"
@@ -79,9 +79,7 @@ def test_external_config_and_data_roots_are_used():
     compose = load_compose()
 
     for name in ("api", "worker", "xhs-browser-gateway", "mineru-api"):
-        assert compose["services"][name]["env_file"] == [
-            "${CONFIG_ROOT:?CONFIG_ROOT must be set}/.env.prod"
-        ]
+        assert compose["services"][name]["env_file"] == ["${CONFIG_ROOT:?CONFIG_ROOT must be set}/.env.prod"]
 
     data_services = ("api", "worker", "xhs-browser-gateway", "sandbox-provisioner", "hycanvas-db", "hycanvas-app")
     data_services += ("graph", "etcd", "minio", "milvus", "postgres", "redis", "paddlex")
