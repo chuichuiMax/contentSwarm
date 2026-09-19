@@ -102,3 +102,19 @@ def test_optional_heavy_services_keep_all_profile():
 
     assert compose["services"]["mineru-api"]["profiles"] == ["all"]
     assert compose["services"]["paddlex"]["profiles"] == ["all"]
+
+
+def test_source_deployment_docs_cover_operational_workflows():
+    content = (ROOT / "docs/advanced/source-deployment.md").read_text(encoding="utf-8")
+
+    for required in (
+        "首次部署",
+        "日常更新",
+        "基础镜像升级",
+        "数据备份",
+        "回滚",
+        "--validate-only",
+        "git pull --ff-only",
+        "docker compose",
+    ):
+        assert required in content
