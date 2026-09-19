@@ -74,7 +74,7 @@ chmod 0600 /srv/contentswarm/config/.env.source /srv/contentswarm/config/.env.pr
 - 五个根目录全部写成服务器绝对路径。
 - 六个业务基础镜像变量使用已拉取的固定版本或 digest。
 - `APP_NETWORK_NAME` 与 `SANDBOX_DOCKER_NETWORK` 保持一致。
-- 填写 JWT、数据库、MinIO、HyCanvas、XHS Gateway 等随机生产密钥。
+- 填写 JWT、数据库、MinIO、HyCanvas、XHS Gateway 等随机生产密钥；`HYCANVAS_API_KEY` 必须以 `hyk_` 开头。
 - 填写 `CONTENTSWARM_PUBLIC_URL`、`HYCANVAS_PUBLIC_URL` 和端口。
 
 `.env.prod` 保存模型供应商、远程素材等完整业务配置。它由 API 和可选解析服务读取，不进入 Git。不要把真实密钥复制回 `.env.source.template` 或提交到仓库。

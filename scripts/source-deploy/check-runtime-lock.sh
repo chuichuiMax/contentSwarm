@@ -20,7 +20,7 @@ calculate_digest() {
       echo "缺少依赖锁文件: $lock_file" >&2
       return 1
     }
-    sha256sum "$lock_file" | awk '{print $1}'
+    sed 's/\r$//' "$lock_file" | sha256sum | awk '{print $1}'
   done | sha256sum | awk '{print $1}'
 }
 

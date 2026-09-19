@@ -36,6 +36,17 @@ def test_runtime_lock_round_trip_and_mismatch(tmp_path: Path):
     assert "基础镜像依赖摘要不匹配" in result.stderr
 
 
+def test_runtime_lock_digest_ignores_platform_line_endings(tmp_path: Path):
+    lock_file = tmp_path / "dependency.lock"
+    expected = tmp_path / "expected.sha256"
+    lock_file.write_bytes(b"package-a==1\r\npackage-b==2\r\n")
+
+    assert run_script("write", expected.as_posix(), lock_file.as_posix()).returncode == 0
+
+    lock_file.write_bytes(b"package-a==1\npackage-b==2\n")
+    assert run_script("verify", expected.as_posix(), lock_file.as_posix()).returncode == 0
+
+
 @pytest.mark.skipif(not os.environ.get("SOURCE_DEPLOY_API_IMAGE"), reason="未指定待验收的 API 基础镜像")
 def test_api_runtime_image_has_dependencies_but_no_business_source():
     image = os.environ["SOURCE_DEPLOY_API_IMAGE"]
