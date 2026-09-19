@@ -58,6 +58,7 @@ cache
 .codex
 .sisyphus
 .pytest_cache
+.deploy/
 
 *.secret*
 *.nogit*
