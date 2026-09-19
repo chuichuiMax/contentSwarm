@@ -143,7 +143,7 @@ bash scripts/source-deploy/deploy-source.sh --validate-only
 bash scripts/source-deploy/deploy-source.sh
 ```
 
-脚本顺序固定为：预检 → 记录旧状态 → 停止 API/Worker/Gateway/Sandbox → 切回配置分支 → `git pull --ff-only` → 校验依赖锁 → 构建版本化 Web/HyCanvas 产物 → 重建业务服务 → 健康检查 → 原子写入状态。
+脚本顺序固定为：预检 → 记录旧状态 → 停止 API/Worker/Gateway/Sandbox → 切回配置分支 → `git pull --ff-only` → 校验依赖锁 → 构建并校验版本化 Web/HyCanvas 产物 → 以 `--no-recreate` 保持持久化服务 → 分阶段重建业务服务 → 健康检查 → 原子写入状态。部署输出会记录旧/新 Git SHA、发布产物摘要、健康检查结果和最终容器状态，可直接归档到运维日志。
 
 如果运维已经明确执行过 `git pull --ff-only` 并核对了目标提交，可避免重复拉取：
 
@@ -197,7 +197,7 @@ $COMPOSE logs --tail 200 web
 $COMPOSE logs --tail 200 hycanvas-app hycanvas-init
 ```
 
-Builder 由 `docker compose run --rm` 执行，容器会被删除；完整构建输出保留在部署命令终端或外层日志系统中。运行日志不要写进 Git 工作区。
+Builder 与 `hycanvas-init` 均由 `docker compose run --rm` 执行，容器会在成功或失败后删除；完整构建输出保留在部署命令终端或外层日志系统中。运行日志不要写进 Git 工作区。
 
 ## 数据备份
 
@@ -218,7 +218,7 @@ Git 拉取、锁摘要校验、Builder 或健康检查失败后，只要部署�
 
 1. 切回部署前的精确 Git SHA。
 2. 把 `current` 恢复到旧发布产物。
-3. 重建旧业务服务并再次检查健康。
+3. 保持 PostgreSQL、Redis、MinIO、etcd、Milvus、Neo4j 和 HyCanvas PostgreSQL 容器不重建，分阶段重建旧业务服务并再次检查健康。
 4. 保留失败版本和非零退出码，防止外层系统把回滚成功误报成发布成功。
 
 显式回滚默认使用 `.deploy/source-deploy/current-state.env` 中的上一 SHA：

@@ -172,7 +172,7 @@ HyCanvas Runtime 基础镜像只包含 Debian Runtime、ffmpeg、CA 证书、cur
 4. 执行 `git pull --ff-only`，禁止隐式 merge。
 5. 校验基础镜像依赖摘要。
 6. 运行 `release-builder`。
-7. 重新创建 API、Worker、XHS Gateway、Sandbox Provisioner、Web 和 HyCanvas。
+7. 使用 `--no-recreate` 保持全部持久化服务，再以 `--no-deps --force-recreate` 分阶段重新创建 API、Worker、XHS Gateway、Sandbox Provisioner、Web 和 HyCanvas App；`hycanvas-init` 作为一次性任务执行并删除。
 8. 等待 API、Gateway、Worker、Web 和 HyCanvas 健康检查。
 9. 成功后记录当前 Git SHA；失败则执行回滚。
 
@@ -184,7 +184,7 @@ HyCanvas Runtime 基础镜像只包含 Debian Runtime、ffmpeg、CA 证书、cur
 
 1. Git 工作区切回部署前提交。
 2. `current` 恢复到 `previous` 发布产物。
-3. 重新创建直接挂载源码的 Python 服务和产物运行服务。
+3. 保持全部持久化服务不重建，重新创建直接挂载源码的 Python 服务和产物运行服务。
 4. 再次执行健康检查。
 5. 保留失败版本目录和日志用于排查，不自动删除。
 

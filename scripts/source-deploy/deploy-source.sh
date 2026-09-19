@@ -25,14 +25,29 @@ release_manifest_value() {
   sed -n "s/^${key}=//p" "$manifest"
 }
 
+tree_digest() {
+  local directory=$1
+  (
+    cd "$directory"
+    while IFS= read -r -d '' file; do
+      sha256sum "$file"
+    done < <(find . -type f -print0 | LC_ALL=C sort -z)
+  ) | sha256sum | awk '{print $1}'
+}
+
 validate_release() {
   local release_sha=$1
   local directory="$release_root/$release_sha"
+  local manifest="$directory/manifest.env"
   [[ "$release_sha" =~ ^[0-9a-f]{40,64}$ ]] || return 1
-  [[ -f "$directory/manifest.env" ]] || return 1
+  [[ -f "$manifest" ]] || return 1
   [[ -f "$directory/web-dist/index.html" ]] || return 1
   [[ -x "$directory/hycanvas" ]] || return 1
-  [[ "$(release_manifest_value GIT_SHA "$directory/manifest.env")" == "$release_sha" ]]
+  [[ "$(release_manifest_value FORMAT_VERSION "$manifest")" == "1" ]] || return 1
+  [[ "$(release_manifest_value GIT_SHA "$manifest")" == "$release_sha" ]] || return 1
+  [[ "$(release_manifest_value WEB_SHA256 "$manifest")" == "$(tree_digest "$directory/web-dist")" ]] \
+    || return 1
+  [[ "$(release_manifest_value HYCANVAS_SHA256 "$manifest")" == "$(sha256sum "$directory/hycanvas" | awk '{print $1}')" ]]
 }
 
 current_release() {
@@ -69,6 +84,7 @@ wait_for_health() {
       && compose exec -T worker sh -ec 'kill -0 1' >/dev/null \
       && curl -fsS "$web_health_url" >/dev/null \
       && curl -fsS "$hycanvas_health_url" >/dev/null; then
+      echo "健康检查通过: API Gateway Worker Web HyCanvas"
       return 0
     fi
     if ((attempt < health_attempts)); then
@@ -79,8 +95,11 @@ wait_for_health() {
 }
 
 recreate_business_services() {
-  compose up -d --force-recreate \
-    sandbox-provisioner xhs-browser-gateway hycanvas-db hycanvas-app hycanvas-init api worker web
+  compose up -d --no-recreate postgres redis minio etcd milvus graph hycanvas-db
+  compose up -d --wait --no-deps --force-recreate \
+    sandbox-provisioner xhs-browser-gateway hycanvas-app
+  compose run --rm --no-deps hycanvas-init
+  compose up -d --no-deps --force-recreate api worker web
 }
 
 write_state() {
@@ -127,7 +146,7 @@ api_health_url=${SOURCE_DEPLOY_API_HEALTH_URL:-http://127.0.0.1:${WEB_HOST_PORT:
 web_health_url=${SOURCE_DEPLOY_WEB_HEALTH_URL:-http://127.0.0.1:${WEB_HOST_PORT:-8090}/}
 hycanvas_health_url=${SOURCE_DEPLOY_HYCANVAS_HEALTH_URL:-http://127.0.0.1:${HYCANVAS_PORT:-8005}/healthz}
 
-for command_name in git docker curl sed readlink; do
+for command_name in git docker curl sed readlink sha256sum find sort awk; do
   command -v "$command_name" >/dev/null || fail "缺少部署命令: $command_name"
 done
 
@@ -203,6 +222,7 @@ if ! $no_pull; then
   git -C "$repo" pull --ff-only
 fi
 new_git_sha=$(git -C "$repo" rev-parse HEAD)
+echo "Git 更新: $old_git_sha -> $new_git_sha"
 
 compose run --rm --no-deps api bash /opt/source-deploy/check-runtime-lock.sh verify \
   /opt/runtime-locks/api.sha256 \
@@ -218,6 +238,8 @@ if ! validate_release "$new_release_sha"; then
   echo "新发布产物不完整: $new_release_sha" >&2
   false
 fi
+release_manifest="$release_root/$new_release_sha/manifest.env"
+echo "发布产物摘要: GIT_SHA=$new_release_sha WEB_SHA256=$(release_manifest_value WEB_SHA256 "$release_manifest") HYCANVAS_SHA256=$(release_manifest_value HYCANVAS_SHA256 "$release_manifest")"
 
 recreate_business_services
 if ! wait_for_health; then
@@ -225,6 +247,8 @@ if ! wait_for_health; then
   false
 fi
 write_state "$new_git_sha" "$old_git_sha" "$new_release_sha" "$old_release_sha"
+echo "容器状态:"
+compose ps
 
 state_changed=0
 trap - ERR

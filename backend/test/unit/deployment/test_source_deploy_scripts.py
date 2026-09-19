@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 import os
 from pathlib import Path
 import stat
@@ -45,10 +46,14 @@ def write_executable(path: Path, body: str) -> None:
 def write_release(release_root: Path, git_sha: str) -> None:
     version = release_root / git_sha
     (version / "web-dist").mkdir(parents=True)
-    (version / "web-dist/index.html").write_text(git_sha, encoding="utf-8")
+    index = version / "web-dist/index.html"
+    index.write_text(git_sha, encoding="utf-8")
     write_executable(version / "hycanvas", "#!/usr/bin/env sh\nexit 0\n")
+    web_line = f"{hashlib.sha256(index.read_bytes()).hexdigest()}  ./index.html\n"
+    web_sha = hashlib.sha256(web_line.encode()).hexdigest()
+    hycanvas_sha = hashlib.sha256((version / "hycanvas").read_bytes()).hexdigest()
     (version / "manifest.env").write_text(
-        f"FORMAT_VERSION=1\nGIT_SHA={git_sha}\n",
+        f"FORMAT_VERSION=1\nGIT_SHA={git_sha}\nWEB_SHA256={web_sha}\nHYCANVAS_SHA256={hycanvas_sha}\n",
         encoding="utf-8",
     )
 
@@ -107,7 +112,11 @@ if [[ "$*" == *" run --rm release-builder"* ]]; then
   printf '%s\n' "$sha" > "$SOURCE_DEPLOY_RELEASE_ROOT/$sha/web-dist/index.html"
   printf '#!/usr/bin/env sh\nexit 0\n' > "$SOURCE_DEPLOY_RELEASE_ROOT/$sha/hycanvas"
   chmod +x "$SOURCE_DEPLOY_RELEASE_ROOT/$sha/hycanvas"
-  printf 'FORMAT_VERSION=1\nGIT_SHA=%s\n' "$sha" > "$SOURCE_DEPLOY_RELEASE_ROOT/$sha/manifest.env"
+  web_sha=$(cd "$SOURCE_DEPLOY_RELEASE_ROOT/$sha/web-dist" \
+    && find . -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | awk '{print $1}')
+  hycanvas_sha=$(sha256sum "$SOURCE_DEPLOY_RELEASE_ROOT/$sha/hycanvas" | awk '{print $1}')
+  printf 'FORMAT_VERSION=1\nGIT_SHA=%s\nWEB_SHA256=%s\nHYCANVAS_SHA256=%s\n' \
+    "$sha" "$web_sha" "$hycanvas_sha" > "$SOURCE_DEPLOY_RELEASE_ROOT/$sha/manifest.env"
   if [[ -n "$old_target" && "$old_target" != "$sha" ]]; then
     ln -sfn "$old_target" "$SOURCE_DEPLOY_RELEASE_ROOT/previous"
   fi
@@ -215,7 +224,35 @@ def test_deploy_builds_before_recreating_runtime_services(tmp_path: Path):
     calls = docker_calls(workspace)
 
     assert result.returncode == 0, result.stderr
-    assert calls.index("run --rm release-builder") < calls.index("up -d --force-recreate")
+    assert calls.index("run --rm release-builder") < calls.index("up -d --wait --no-deps --force-recreate")
+
+
+def test_deploy_never_force_recreates_persistent_services(tmp_path: Path):
+    workspace = arrange_deploy_workspace(tmp_path)
+
+    result = run_script(workspace, DEPLOY_SCRIPT, "--no-pull")
+    calls = docker_calls(workspace).splitlines()
+
+    assert result.returncode == 0, result.stderr
+    assert any("up -d --no-recreate postgres redis minio etcd milvus graph hycanvas-db" in call for call in calls)
+    force_recreate_calls = [call for call in calls if "--force-recreate" in call]
+    for service in ("postgres", "redis", "minio", "etcd", "milvus", "graph", "hycanvas-db"):
+        assert all(service not in call.split() for call in force_recreate_calls)
+
+
+def test_successful_deploy_reports_release_and_health_evidence(tmp_path: Path):
+    workspace = arrange_deploy_workspace(tmp_path)
+
+    result = run_script(workspace, DEPLOY_SCRIPT)
+
+    assert result.returncode == 0, result.stderr
+    assert f"Git 更新: {workspace.old_sha} -> {workspace.new_sha}" in result.stdout
+    assert "发布产物摘要:" in result.stdout
+    assert "WEB_SHA256=" in result.stdout
+    assert "HYCANVAS_SHA256=" in result.stdout
+    assert "健康检查通过:" in result.stdout
+    assert "容器状态:" in result.stdout
+    assert " ps" in docker_calls(workspace)
 
 
 def test_successful_deploy_records_current_and_previous_commits(tmp_path: Path):
@@ -251,7 +288,7 @@ def test_health_failure_restores_git_release_and_old_state(tmp_path: Path):
     assert run_git(workspace.repo, "rev-parse", "HEAD") == workspace.old_sha
     assert os.readlink(workspace.release_root / "current") == workspace.old_sha
     assert state_values(workspace)["GIT_SHA"] == workspace.old_sha
-    assert docker_calls(workspace).count("up -d --force-recreate") == 2
+    assert docker_calls(workspace).count("up -d --wait --no-deps --force-recreate") == 2
 
 
 @pytest.mark.parametrize(
@@ -292,3 +329,22 @@ def test_explicit_rollback_restores_selected_release(tmp_path: Path):
     state = state_values(workspace)
     assert state["GIT_SHA"] == workspace.old_sha
     assert state["PREVIOUS_GIT_SHA"] == workspace.new_sha
+
+
+def test_explicit_rollback_rejects_tampered_release_before_stopping_services(tmp_path: Path):
+    workspace = arrange_deploy_workspace(tmp_path)
+    write_release(workspace.release_root, workspace.new_sha)
+    (workspace.release_root / workspace.old_sha / "web-dist/index.html").write_text("tampered", encoding="utf-8")
+    state_root = workspace.repo / ".deploy/source-deploy"
+    state_root.mkdir(parents=True)
+    (state_root / "current-state.env").write_text(
+        f"GIT_SHA={workspace.new_sha}\nPREVIOUS_GIT_SHA={workspace.old_sha}\nBRANCH=main\n"
+        f"RELEASE_SHA={workspace.new_sha}\nPREVIOUS_RELEASE_SHA={workspace.old_sha}\n",
+        encoding="utf-8",
+    )
+
+    result = run_script(workspace, ROLLBACK_SCRIPT)
+
+    assert result.returncode != 0
+    assert "缺少完整发布产物" in result.stderr
+    assert " stop " not in docker_calls(workspace)
