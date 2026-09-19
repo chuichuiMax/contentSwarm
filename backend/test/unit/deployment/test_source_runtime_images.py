@@ -23,6 +23,7 @@ def test_sandbox_runtime_has_dependencies_but_no_application():
         "SOURCE_DEPLOY_SANDBOX_IMAGE",
         "test ! -e /app/app.py; "
         "test ! -e /app/sandbox.env; "
+        "test -s /opt/runtime-locks/sandbox.sha256; "
         "command -v curl; "
         "python -c 'import docker, fastapi, kubernetes, uvicorn'",
     )
