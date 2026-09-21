@@ -1,5 +1,4 @@
-import { createBlankDesign, createNode, type DesignFile, type Node, type TextNode } from "@hc/schema";
-import { fromHex } from "@hc/color";
+import { createBlankDesign, type DesignFile, type Node, type TextNode } from "@hc/schema";
 import { fontFamilyStack } from "@hc/engine";
 import { buildCoverElement, type CoverElement } from "@/lib/coverElements";
 
@@ -7,8 +6,8 @@ export const XHS_EDITORIAL_ID = "xhs_left_editorial_v1";
 export const xhsEditorialDefault = {
   title: "旧房改造\n这些细节要注意",
   subtitle: "拆清项目，看懂每一笔人工费用",
-  tags: { primary: "长沙装修", secondary: "三室两厅" },
-  number: { value: "33341", unit: "元" },
+  tags: { primary: "", secondary: "" },
+  number: { value: "", unit: "" },
   footnote: "费用口径与施工范围，以实际方案为准",
 };
 export type XhsEditorialContent = typeof xhsEditorialDefault;
@@ -16,7 +15,7 @@ export type XhsLayoutError = { slotId: string; code: "REQUIRED" | "TEXT_OVERFLOW
 export type XhsLayoutResult = { success: true; file: DesignFile } | { success: false; errors: XhsLayoutError[] };
 
 type Measure = (text: string, fontSize: number, weight: number) => number;
-const colors = { title: "#16232D", subtitle: "#556577", blue: "#2D52B0", blueLight: "#EAF0FF", number: "#E94830", line: "#9AAFC5", footnote: "#718298" };
+const colors = { title: "#16232D", subtitle: "#556577", footnote: "#718298" };
 
 export function browserEditorialMeasure(): Measure {
   const context = document.createElement("canvas").getContext("2d")!;
@@ -50,10 +49,10 @@ function fit(text: string, slotId: string, maxWidth: number, maxLines: number, i
   return { slotId, code: "TEXT_OVERFLOW", message: `${slotId} 内容过长，请缩短文字` };
 }
 
-function textNode(slotId: string, elementType: "title" | "subtitle" | "tag" | "number", binding: string,
+function textNode(slotId: string, elementType: "title" | "subtitle", binding: string,
   lines: string[], x: number, y: number, width: number, height: number, size: number, weight: number, color: string, lineHeight: number): TextNode {
-  const names: Record<string, string> = { title: "主标题", subtitle: "副标题", footnote: "底部说明", tagPrimaryText: "顶部标签文字", tagSecondaryText: "次级标签文字", numberValue: "数字", numberUnit: "单位" };
-  const preset: CoverElement = { id: slotId, category: elementType === "title" ? "标题" : elementType === "tag" ? "标签" : elementType === "number" ? "数字" : "副标题",
+  const names: Record<string, string> = { title: "主标题", subtitle: "副标题", footnote: "底部说明" };
+  const preset: CoverElement = { id: slotId, category: elementType === "title" ? "标题" : "副标题",
     name: names[slotId] ?? slotId, lines, width, fontSize: size, weight, color };
   const node = buildCoverElement(preset, { width: 1080, height: 1440 }) as TextNode;
   node.transform = { ...node.transform, x, y };
@@ -62,18 +61,6 @@ function textNode(slotId: string, elementType: "title" | "subtitle" | "tag" | "n
   node.content.forEach((paragraph) => paragraph.runs.forEach((run) => { run.style.lineHeight = { mode: "absolute", value: lineHeight }; }));
   node.data = { ...node.data, layoutInstanceId: XHS_EDITORIAL_ID, layoutTemplateId: XHS_EDITORIAL_ID, slotId, elementType, binding, layoutMode: "auto" };
   return node;
-}
-
-function tagNode(slotId: "tagPrimary" | "tagSecondary", binding: string, value: string, x: number, y: number,
-  width: number, height: number, size: number, foreground: string, background: string): Node {
-  const name = slotId === "tagPrimary" ? "顶部标签" : "次级标签";
-  const backdrop = createNode("shape", { name: `${name}底色`, shape: "rect", size: { width, height },
-    cornerRadius: { topLeft: 28, topRight: 28, bottomRight: 28, bottomLeft: 28 },
-    fills: [{ type: "solid", color: fromHex(background)! }],
-    data: { layoutInstanceId: XHS_EDITORIAL_ID, layoutTemplateId: XHS_EDITORIAL_ID, slotId: `${slotId}Background`, elementType: "decoration", binding: "", layoutMode: "auto" } });
-  const label = textNode(`${slotId}Text`, "tag", binding, [value], 24, 0, width - 48, height, size, 700, foreground, height);
-  return createNode("group", { name, size: { width, height }, transform: { x, y, scaleX: 1, scaleY: 1, rotation: 0 }, children: [backdrop, label],
-    data: { layoutInstanceId: XHS_EDITORIAL_ID, layoutTemplateId: XHS_EDITORIAL_ID, slotId, elementType: "tag", binding, layoutMode: "auto" } });
 }
 
 export function buildXhsEditorialCover(content: XhsEditorialContent, measure: Measure): XhsLayoutResult {
@@ -88,28 +75,16 @@ export function buildXhsEditorialCover(content: XhsEditorialContent, measure: Me
   const footnote = content.footnote.trim();
   const fittedFootnote = footnote ? fit(footnote, "footnote", 888, 2, 28, 22, 400, measure) : null;
   if (fittedFootnote && "code" in fittedFootnote) errors.push(fittedFootnote);
-  const primary = content.tags.primary.trim();
-  const fittedPrimary = primary ? fit(primary, "tagPrimary", 372, 1, 40, 28, 700, measure) : null;
-  if (fittedPrimary && "code" in fittedPrimary) errors.push(fittedPrimary);
-  const secondary = content.tags.secondary.trim();
-  const fittedSecondary = secondary ? fit(secondary, "tagSecondary", 232, 1, 32, 24, 700, measure) : null;
-  if (fittedSecondary && "code" in fittedSecondary) errors.push(fittedSecondary);
   if (errors.length) return { success: false, errors };
   const main = fittedTitle as { lines: string[]; size: number };
   const sub = fittedSubtitle as { lines: string[]; size: number } | null;
   const foot = fittedFootnote as { lines: string[]; size: number } | null;
-  const tag1 = fittedPrimary as { lines: string[]; size: number } | null;
-  const tag2 = fittedSecondary as { lines: string[]; size: number } | null;
   const file = createBlankDesign({ width: 1080, height: 1440 });
-  file.title = "左对齐大标题 · 数字信息行";
+  file.title = "左对齐大标题";
   const page = file.pages[0];
   page.name = file.title;
   delete page.background;
   const nodes: Node[] = [];
-  if (tag1) {
-    const width = Math.min(420, Math.ceil(measure(primary, tag1.size, 700) + 48));
-    nodes.push(tagNode("tagPrimary", "tags.primary", primary, 96, 112, width, 64, tag1.size, "#FFFFFF", colors.blue));
-  }
   const titleHeight = main.lines.length * main.size * 1.2;
   nodes.push(textNode("title", "title", "title", main.lines, 96, 272, 888, titleHeight, main.size, 900, colors.title, main.size * 1.2));
   let nextY = 272 + titleHeight;
@@ -119,37 +94,7 @@ export function buildXhsEditorialCover(content: XhsEditorialContent, measure: Me
     nodes.push(textNode("subtitle", "subtitle", "subtitle", sub.lines, 96, nextY, 888, height, sub.size, 500, colors.subtitle, sub.size * (56 / 44)));
     nextY += height;
   }
-  const value = content.number.value.trim();
-  if (value || tag2) {
-    nextY += 56;
-    let numberSize = 88;
-    let numberWidth = value ? measure(value, numberSize, 900) + (content.number.unit.trim() ? 8 + measure(content.number.unit.trim(), 30, 600) : 0) : 0;
-    while (value && numberWidth > 888 && numberSize > 64) {
-      numberSize -= 2;
-      numberWidth = measure(value, numberSize, 900) + (content.number.unit.trim() ? 8 + measure(content.number.unit.trim(), 30, 600) : 0);
-    }
-    if (numberWidth > 888) errors.push({ slotId: "numberMain", code: "TEXT_OVERFLOW", message: "数字过长，请缩短" });
-    const tagWidth = tag2 ? Math.min(280, Math.ceil(measure(secondary, tag2.size, 700) + 48)) : 0;
-    const stacked = Boolean(value && tag2 && numberWidth + 48 + 3 + 40 + tagWidth > 888);
-    if (value) {
-      const valueWidth = measure(value, numberSize, 900);
-      const numberChildren: Node[] = [textNode("numberValue", "number", "number.value", [value], 0, 0, valueWidth, 112, numberSize, 900, colors.number, 112)];
-      if (content.number.unit.trim()) numberChildren.push(textNode("numberUnit", "number", "number.unit", [content.number.unit.trim()], valueWidth + 8, 0, numberWidth - valueWidth - 8, 112, 30, 600, colors.number, 112));
-      nodes.push(createNode("group", { name: "数字与单位", size: { width: numberWidth, height: 112 }, transform: { x: 96, y: nextY, scaleX: 1, scaleY: 1, rotation: 0 }, children: numberChildren,
-        data: { layoutInstanceId: XHS_EDITORIAL_ID, layoutTemplateId: XHS_EDITORIAL_ID, slotId: "numberMain", elementType: "number", binding: "number.value / number.unit", layoutMode: "auto" } }));
-    }
-    if (tag2) {
-      const tagX = value && !stacked ? 96 + numberWidth + 48 + 3 + 40 : 96;
-      const tagY = stacked ? nextY + 112 + 24 : nextY + 28;
-      nodes.push(tagNode("tagSecondary", "tags.secondary", secondary, tagX, tagY, tagWidth, 56, tag2.size, colors.blue, colors.blueLight));
-      if (value && !stacked) {
-        const line = createNode("shape", { name: "数字与标签分隔线", shape: "rect", size: { width: 3, height: 80 }, transform: { x: 96 + numberWidth + 48, y: nextY + 16, scaleX: 1, scaleY: 1, rotation: 0 }, fills: [{ type: "solid", color: fromHex(colors.line)! }], data: { layoutInstanceId: XHS_EDITORIAL_ID, layoutTemplateId: XHS_EDITORIAL_ID, slotId: "separator", elementType: "decoration", binding: "" } });
-        nodes.push(line);
-      }
-    }
-    nextY += stacked ? 192 : 112;
-  }
-  if (nextY > 1184) errors.push({ slotId: "numberMain", code: "FLOW_OVERFLOW", message: "正文超过底部安全范围，请缩短标题或说明" });
+  if (nextY > 1184) errors.push({ slotId: "subtitle", code: "FLOW_OVERFLOW", message: "正文超过底部安全范围，请缩短标题或说明" });
   if (foot) nodes.push(textNode("footnote", "subtitle", "footnote", foot.lines, 96, 1344 - foot.lines.length * foot.size * (40 / 28), 888, foot.lines.length * foot.size * (40 / 28), foot.size, 400, colors.footnote, foot.size * (40 / 28)));
   if (errors.length) return { success: false, errors };
   page.children = nodes;

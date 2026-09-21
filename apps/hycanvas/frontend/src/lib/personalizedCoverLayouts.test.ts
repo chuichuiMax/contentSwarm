@@ -23,6 +23,14 @@ describe("personalized cover layouts", () => {
     }
   });
 
+  it("omits numeric fields from every personalized automatic layout", () => {
+    for (const layout of personalizedCoverLayouts) {
+      const nodes = buildPersonalizedCoverLayout(layout).pages[0].children;
+      expect(nodes.some((node) => node.data?.binding === "project_area")).toBe(false);
+      expect(nodes.some((node) => node.data?.elementType === "number")).toBe(false);
+    }
+  });
+
   it("moves the template 3 content block while keeping its footer fixed", () => {
     const top = personalizedCoverLayouts.find((layout) => layout.id === "template-3-top-left")!;
     const bottom = personalizedCoverLayouts.find((layout) => layout.id === "template-3-bottom-right")!;

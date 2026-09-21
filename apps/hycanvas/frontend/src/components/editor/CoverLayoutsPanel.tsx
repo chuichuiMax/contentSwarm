@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createScene, renderScene, type CanvasLike } from "@hc/engine";
 import type { DesignFile } from "@hc/schema";
-import { buildBeforeAfterCover, buildCoverLayout, coverLayouts, coverStyleTemplates, coverCompositions, coverTitleCompositions, type CoverTitleComposition, type CoverComposition, type CoverBackground } from "@/lib/coverElements";
+import { buildBeforeAfterCover, buildCoverLayout, coverLayouts, coverStyleTemplates, coverTitleCompositions, type CoverTitleComposition, type CoverBackground } from "@/lib/coverElements";
 import { useEditor } from "@/store/editor";
 import { useToast } from "@/components/ui/Toast";
 
@@ -54,11 +54,7 @@ function LayoutPreview({ file, transparent = false }: { file: DesignFile; transp
 
 export function CoverLayoutsPanel() {
   const toast = useToast();
-  const [selectedComposition, setSelectedComposition] = useState<
-    { kind: "title"; id: CoverTitleComposition } | { kind: "summary"; id: CoverComposition }
-  >({ kind: "summary", id: "number-left" });
-  const titleComposition = selectedComposition.kind === "title" ? selectedComposition.id : undefined;
-  const composition = selectedComposition.kind === "summary" ? selectedComposition.id : undefined;
+  const [titleComposition, setTitleComposition] = useState<CoverTitleComposition>();
   const [scope, setScope] = useState("private");
   const [gallery, setGallery] = useState("");
   const [page, setPage] = useState(1);
@@ -135,9 +131,9 @@ export function CoverLayoutsPanel() {
   const visibleStyles = useMemo(() => styles.slice((stylePage - 1) * 8, stylePage * 8), [styles, stylePage]);
   const beforeAfterFile = useMemo(() => buildBeforeAfterCover(background, bottomBackground), [background, bottomBackground]);
   const options = useMemo(() => [
-    ...visibleStyles.map((style) => ({ id: style.id, name: style.name, description: `透明底 · ${style.category}与装饰可编辑`, file: buildCoverLayout("quote", background, 0.95, composition, titleComposition, "photo-center", style.id) })),
-    ...coverLayouts.map((layout) => ({ ...layout, file: buildCoverLayout(layout.id, background, 0.95, composition, titleComposition, "photo-center") })),
-  ], [background, composition, titleComposition, visibleStyles]);
+    ...visibleStyles.map((style) => ({ id: style.id, name: style.name, description: `透明底 · ${style.category}与装饰可编辑`, file: buildCoverLayout("quote", background, 0.95, titleComposition, "photo-center", style.id) })),
+    ...coverLayouts.map((layout) => ({ ...layout, file: buildCoverLayout(layout.id, background, 0.95, titleComposition, "photo-center") })),
+  ], [background, titleComposition, visibleStyles]);
   const personalizedOptions = useMemo(() => personalizedCoverLayouts
     .filter((layout) => {
       const curated = ["staircase", "center-focus", "diagonal"].includes(layout.composition);
@@ -172,21 +168,11 @@ export function CoverLayoutsPanel() {
       <fieldset className="space-y-2">
         <legend className="text-sm font-semibold">主标题与副标题组合</legend>
         <div className="grid grid-cols-2 gap-2">
-          {coverTitleCompositions.map((item) => <button key={item.id} type="button" aria-pressed={titleComposition === item.id} onClick={() => setSelectedComposition({ kind: "title", id: item.id })} className={`rounded-lg border p-2 text-center ${titleComposition === item.id ? "border-brand-500 bg-brand-50 text-brand-ink" : "border-neutral-200 text-neutral-600"}`}>
+          {coverTitleCompositions.map((item) => <button key={item.id} type="button" aria-pressed={titleComposition === item.id} onClick={() => setTitleComposition(item.id)} className={`rounded-lg border p-2 text-center ${titleComposition === item.id ? "border-brand-500 bg-brand-50 text-brand-ink" : "border-neutral-200 text-neutral-600"}`}>
             <span aria-hidden="true" className="flex h-12 items-center justify-center whitespace-pre-line text-sm font-semibold">{item.symbol}</span>
             <span className="text-xs">{item.name}</span>
           </button>)}
         </div>
-      </fieldset>
-      <fieldset className="space-y-2">
-        <legend className="text-sm font-semibold">数字与标签组合</legend>
-        <div className="grid grid-cols-2 gap-2">
-          {coverCompositions.map((item) => <button key={item.id} type="button" aria-pressed={composition === item.id} onClick={() => setSelectedComposition({ kind: "summary", id: item.id })} className={`rounded-lg border p-2 text-center ${composition === item.id ? "border-brand-500 bg-brand-50 text-brand-ink" : "border-neutral-200 text-neutral-600"}`}>
-            <span aria-hidden="true" className="flex h-12 items-center justify-center whitespace-pre-line text-sm font-semibold">{item.symbol}</span>
-            <span className="text-xs">{item.name}</span>
-          </button>)}
-        </div>
-        <p className="text-xs text-neutral-500">两组组合只选择一种；未选中的一组使用模板原始布局。下方模板同步预览，文字和单位均可编辑。</p>
       </fieldset>
       <div className="space-y-2">
         <div className="text-sm font-semibold">双图施工封面</div>
@@ -205,9 +191,9 @@ export function CoverLayoutsPanel() {
         <div className="flex gap-2">{(["全部", "标题", "副标题"] as const).map((category) => <button key={category} type="button" aria-pressed={styleCategory === category} onClick={() => { setStyleCategory(category); setStylePage(1); }} className={`rounded-md px-2 py-1 text-xs ${styleCategory === category ? "bg-brand-50 text-brand-ink" : "text-neutral-600"}`}>{category}</button>)}</div>
       </div>
       {editorialPreview && <div className="rounded-xl border border-brand-300 bg-brand-50 p-2">
-        <button type="button" className="w-full text-start" onClick={() => void applyEditorialTemplate()} aria-label="应用左对齐大标题 · 数字信息行模板">
+        <button type="button" className="w-full text-start" onClick={() => void applyEditorialTemplate()} aria-label="应用左对齐大标题模板">
           <LayoutPreview file={editorialPreview} transparent />
-          <span className="mt-2 block text-sm font-semibold">左对齐大标题 · 数字信息行</span>
+          <span className="mt-2 block text-sm font-semibold">左对齐大标题</span>
           <span className="block text-xs text-neutral-600">在当前封面排版，保留底图和独立素材</span>
         </button>
         <button type="button" className="mt-2 rounded-md border border-brand-300 px-2 py-1 text-xs text-brand-ink" onClick={() => void applyEditorialTemplate()}>重新排版（保留文案，恢复默认位置和字号）</button>
@@ -250,7 +236,7 @@ export function CoverLayoutsPanel() {
         </button>
       ))}</div>
       <div className="flex items-center justify-between text-xs"><button type="button" disabled={stylePage === 1} onClick={() => setStylePage(stylePage - 1)} className="disabled:opacity-40">上一页样式</button><span>{stylePage} / {stylePageCount}</span><button type="button" disabled={stylePage >= stylePageCount} onClick={() => setStylePage(stylePage + 1)} className="disabled:opacity-40">下一页样式</button></div>
-      <p className="text-xs leading-5 text-neutral-400">使用示例内容排版，请将价格、面积和服务信息替换为真实资料。</p>
+      <p className="text-xs leading-5 text-neutral-400">模板中的文字均可继续编辑。</p>
     </div>
   );
 }

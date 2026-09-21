@@ -194,9 +194,9 @@ export function buildCoverElement(preset: CoverElement, page: { width: number; h
 }
 
 export const coverLayouts = [
-  { id: "quote", name: "报价封面", description: "透明底 · 一个价格数字搭配一个户型标签" },
-  { id: "craft", name: "工艺清单", description: "透明底 · 双行标题配步骤序号，适合施工与避坑" },
-  { id: "service", name: "服务介绍", description: "透明底 · 突出身份、服务范围与面积信息" },
+  { id: "quote", name: "报价封面", description: "透明底 · 标题、副标题与说明文字可编辑" },
+  { id: "craft", name: "工艺清单", description: "透明底 · 双行标题与施工说明可编辑" },
+  { id: "service", name: "服务介绍", description: "透明底 · 身份标题与服务说明可编辑" },
 ] as const;
 
 export const coverStyleTemplates = coverElements.filter((item) => item.category === "标题" || item.category === "副标题");
@@ -204,27 +204,18 @@ export const coverStyleTemplates = coverElements.filter((item) => item.category 
 type CoverSlot = { element: string; x: number; y: number; lines?: string[]; fontSize?: number; width?: number; align?: CoverElement["align"] };
 const layoutSlots: Record<(typeof coverLayouts)[number]["id"], CoverSlot[]> = {
   quote: [
-    { element: "city", x: 72, y: 72 },
     { element: "two-line", x: 72, y: 264, lines: ["旧房改造", "人工费用参考"] },
     { element: "description", x: 72, y: 640, lines: ["拆清项目，看懂每一笔人工费用"] },
-    { element: "price", x: 72, y: 800 },
-    { element: "layout", x: 72, y: 1120 },
     { element: "supplement", x: 72, y: 1280 },
   ],
   craft: [
-    { element: "trade", x: 72, y: 72 },
     { element: "two-line", x: 72, y: 264 },
-    { element: "number", x: 72, y: 680 },
     { element: "description", x: 72, y: 944, lines: ["施工顺序、工艺细节、验收要点"] },
-    { element: "service", x: 72, y: 1104 },
     { element: "supplement", x: 72, y: 1280, lines: ["具体工艺与材料，按现场情况确认"] },
   ],
   service: [
-    { element: "city", x: 72, y: 72 },
     { element: "headline", x: 72, y: 280, lines: ["长沙装修工长"] },
     { element: "description", x: 72, y: 512, lines: ["把施工需求讲清楚，把每一步做扎实"] },
-    { element: "service", x: 72, y: 680 },
-    { element: "area", x: 72, y: 864 },
     { element: "supplement", x: 72, y: 1320, lines: ["城市、面积及服务内容均为示例，请按实际修改"] },
   ],
 };
@@ -232,38 +223,21 @@ const layoutSlots: Record<(typeof coverLayouts)[number]["id"], CoverSlot[]> = {
 // Keep the central 800 px free of text and masks so the photo stays visible.
 const photoSlots: Record<(typeof coverLayouts)[number]["id"], CoverSlot[]> = {
   quote: [
-    { element: "city", x: 64, y: 32, fontSize: 28, width: 220 },
     { element: "headline", x: 64, y: 132, fontSize: 64, lines: ["旧房改造 · 人工费用参考"] },
     { element: "description", x: 64, y: 252, fontSize: 28, lines: ["拆清项目，看懂每一笔人工费用"] },
-    { element: "price", x: 64, y: 1152, fontSize: 80, width: 510 },
-    { element: "layout", x: 592, y: 1168, fontSize: 28, width: 200 },
     { element: "supplement", x: 64, y: 1336, fontSize: 28 },
   ],
   craft: [
-    { element: "trade", x: 64, y: 32, fontSize: 28, width: 220 },
     { element: "headline", x: 64, y: 132, fontSize: 64, lines: ["旧房改造，这些细节要注意"] },
     { element: "description", x: 64, y: 252, fontSize: 28, lines: ["施工顺序、工艺细节、验收要点"] },
-    { element: "number", x: 64, y: 1152, fontSize: 80, width: 380 },
-    { element: "service", x: 520, y: 1168, fontSize: 28, width: 480 },
     { element: "supplement", x: 64, y: 1336, fontSize: 28, lines: ["具体工艺与材料，按现场情况确认"] },
   ],
   service: [
-    { element: "city", x: 64, y: 32, fontSize: 28, width: 220 },
     { element: "headline", x: 64, y: 132, fontSize: 64, lines: ["长沙装修工长"] },
     { element: "description", x: 64, y: 252, fontSize: 28, lines: ["把施工需求讲清楚，把每一步做扎实"] },
-    { element: "area", x: 64, y: 1152, fontSize: 80, width: 360 },
-    { element: "service", x: 520, y: 1152, fontSize: 28, width: 480 },
     { element: "supplement", x: 64, y: 1370, fontSize: 24, lines: ["城市、面积及服务内容均为示例，请按实际修改"] },
   ],
 };
-
-export const coverCompositions = [
-  { id: "number-left", name: "左数字 · 右标签", symbol: "123 │ 标签" },
-  { id: "number-right", name: "左标签 · 右数字", symbol: "标签 │ 123" },
-  { id: "number-top", name: "上数字 · 下标签", symbol: "123\n标签" },
-  { id: "number-bottom", name: "上标签 · 下数字", symbol: "标签\n123" },
-] as const;
-export type CoverComposition = (typeof coverCompositions)[number]["id"];
 
 export const coverTitleCompositions = [
   { id: "stacked", name: "主上副下", symbol: "主标题\n副标题" },
@@ -335,7 +309,7 @@ export function buildBeforeAfterCover(top?: CoverBackground, bottom?: CoverBackg
 }
 
 /** Native nodes with fixed layout slots; importing a page is one undoable action. */
-export function buildCoverLayout(id: (typeof coverLayouts)[number]["id"], background?: CoverBackground, maskOpacity = 0.95, composition?: CoverComposition, titleComposition?: CoverTitleComposition, titlePlacement: CoverTitlePlacement = "top", styleId?: string) {
+export function buildCoverLayout(id: (typeof coverLayouts)[number]["id"], background?: CoverBackground, maskOpacity = 0.95, titleComposition?: CoverTitleComposition, titlePlacement: CoverTitlePlacement = "top", styleId?: string) {
   const layout = coverLayouts.find((item) => item.id === id)!;
   const file = createBlankDesign({ width: 1080, height: 1440 });
   file.title = layout.name;
@@ -343,49 +317,10 @@ export function buildCoverLayout(id: (typeof coverLayouts)[number]["id"], backgr
   page.name = layout.name;
   delete page.background;
   let slots = (background ? photoSlots : layoutSlots)[id];
-  let separator: { x: number; y: number } | undefined;
-  if (composition) {
-    // Rearrange only the numeric summary and its labels; the photo/header stay fixed.
-    const summary = slots.filter((slot, index) =>
-      coverElements.some((preset) => preset.id === slot.element &&
-        (preset.category === "数字" || (index > 2 && preset.category === "标签"))));
-    const number = summary.find((slot) => ["price", "area", "number"].includes(slot.element))!;
-    const labels = summary.filter((slot) => slot !== number);
-    const y = Math.min(...summary.map((slot) => slot.y));
-    const vertical = composition === "number-top" || composition === "number-bottom";
-    const numberFirst = composition === "number-left" || composition === "number-top";
-    const labelWidths = labels.map((slot) => slot.element === "service" ? 440 : 220);
-    const labelWidth = labelWidths[0];
-    const numberWidth = 300;
-    const gap = 24;
-    const separatorWidth = 4;
-    const groupX = (1080 - numberWidth - labelWidth - gap * 2 - separatorWidth) / 2;
-    const numberSlot = { ...number, fontSize: 64, width: numberWidth,
-      x: vertical ? (1080 - numberWidth) / 2 : numberFirst ? groupX : groupX + labelWidth + gap * 2 + separatorWidth,
-      y: vertical ? y + (numberFirst ? 0 : 100) : y + 10 };
-    let labelX = (1080 - labelWidths.reduce((sum, width) => sum + width, 0) - (labels.length - 1) * gap) / 2;
-    const labelSlots = labels.map((slot, index) => {
-      const result = { ...slot, fontSize: 28, width: labelWidths[index],
-        x: vertical ? labelX : numberFirst ? groupX + numberWidth + gap * 2 + separatorWidth : groupX,
-        y: vertical ? y + (numberFirst ? 116 : 0) : y + 20 + index * 100 };
-      labelX += labelWidths[index] + gap;
-      return result;
-    });
-    if (!vertical) separator = {
-      x: groupX + (numberFirst ? numberWidth : labelWidth) + gap,
-      y: y + 32,
-    };
-    slots = slots.filter((slot) => !summary.includes(slot)).map((slot) =>
-      background && slot.element === "supplement" ? { ...slot, y: 1370, fontSize: 24 } : slot);
-    slots = [...slots, numberSlot, ...labelSlots];
-    const name = coverCompositions.find((item) => item.id === composition)!.name;
-    file.title = page.name = `${layout.name} · ${name}`;
-  }
   if (titleComposition) {
     slots = slots.map((slot) => {
       const preset = coverElements.find((item) => item.id === slot.element)!;
       const main = preset.category === "标题";
-      if (preset.category === "标签" && slot.y < 132) return { ...slot, x: 64, y: 32, fontSize: 28, width: 220 };
       if (!main && slot.element !== "description") return slot;
       const text = (slot.lines ?? preset.lines).join(" · ");
       if (titleComposition === "side-by-side") {
@@ -449,13 +384,6 @@ export function buildCoverLayout(id: (typeof coverLayouts)[number]["id"], backgr
     return node;
   });
   if (templateStyle) file.title = page.name = `${file.title} · ${templateStyle.name}`;
-  if (separator) page.children.push(createNode("shape", {
-    name: "数字与标签分隔线",
-    shape: "rect",
-    size: { width: 4, height: 76 },
-    transform: { x: separator.x, y: separator.y, scaleX: 1, scaleY: 1, rotation: 0 },
-    fills: [{ type: "solid", color: fromHex("#94a3b8")! }],
-  }));
   if (background) {
     const assetId = `cover-background-${background.id}`;
     file.assets.push({ id: assetId, kind: "image", url: background.url, mime: background.mime, checksum: "" });

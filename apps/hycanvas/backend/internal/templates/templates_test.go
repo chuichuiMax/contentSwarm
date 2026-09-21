@@ -64,7 +64,14 @@ func TestSystemCoverTemplatesAreSelectableAndFillable(t *testing.T) {
 		nodeIDs := map[string]bool{}
 		for _, page := range asArr(file["pages"]) {
 			for _, root := range asArr(asObj(page)["children"]) {
-				visitTree(asObj(root), func(node map[string]any) { nodeIDs[asStr(node["id"])] = true })
+				visitTree(asObj(root), func(node map[string]any) {
+					nodeIDs[asStr(node["id"])] = true
+					data := asObj(node["data"])
+					if contains([]string{"city", "layout", "trade", "service", "price", "area", "number"}, asStr(data["coverElementId"])) ||
+						contains([]string{"tag", "number"}, asStr(data["elementType"])) || asStr(node["name"]) == "数字与标签分隔线" {
+						t.Fatalf("system cover contains removed tag or number element in %s: %s", template.ID, asStr(node["name"]))
+					}
+				})
 			}
 		}
 		if len(template.FillableFields) == 0 {

@@ -24,10 +24,10 @@ const measure = (text, size) => [...text].reduce((sum, char) => sum + size * (/^
 const editorial = buildXhsEditorialCover(xhsEditorialDefault, measure);
 if (!editorial.success) throw new Error(`Editorial cover failed: ${editorial.errors[0].message}`);
 const source = [
-  ...coverStyleTemplates.map((style) => ({ id: style.id, title: style.name, file: buildCoverLayout('quote', undefined, 0.95, 'number-left', undefined, 'photo-center', style.id) })),
+  ...coverStyleTemplates.map((style) => ({ id: style.id, title: style.name, file: buildCoverLayout('quote', undefined, 0.95, undefined, 'photo-center', style.id) })),
   ...coverLayouts.map((layout) => ({ id: layout.id, title: layout.name, file: buildCoverLayout(layout.id) })),
   { id: 'before-after', title: '装修前后对比', file: buildBeforeAfterCover() },
-  { id: 'editorial', title: '左对齐大标题 · 数字信息行', file: editorial.file },
+  { id: 'editorial', title: '左对齐大标题', file: editorial.file },
 ];
 if (previousCrypto) Object.defineProperty(globalThis, 'crypto', previousCrypto);
 
