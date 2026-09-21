@@ -1,0 +1,69 @@
+{
+    "serialNo": "004",
+    "persona": {
+        "age": "40",
+        "workYears": "12",
+        "serviceCity": "广州",
+        "introduction": "在广州装修这行扎扎实实做了12年。做事踏实细心、注重细节，从不偷工减料、敷衍赶工，这些年一直坚持做本地工地，就是希望把每一个项目都跟好",
+        "skills": [
+            "工长",
+            "水电",
+            "泥瓦"
+        ],
+        "honors": {
+            "ownerRecommendCount": "10",
+            "servedSiteCount": "10"
+        },
+        "tone": "靠谱",
+        "serviceAdvantages": [
+            "决策快效率高",
+            "自有工人无转包"
+        ]
+    },
+    "requirementType": {
+        "typeName": "施工报价",
+        "quotationInfo": {
+            "houseArea": "135平",
+            "houseType": "四室二厅"
+        },
+        "prices": [
+            {
+                "format": "人工辅材",
+                "content": "总价：5.8w；拆除：2182；水电：人工5025；材料3166.8；泥瓦：人工12088；材料9462.9；木工：人工5763；材料2121.6；油漆：人工6158；材料3285.98"
+            }
+        ],
+        "titlePrice": {
+            "label": "人工辅材总价",
+            "displayText": "5.8w"
+        },
+        "mySite": "广州白云区"
+    },
+    "tags": [
+        "营销报价",
+        "旧房局改",
+        "泥瓦",
+        "中式风格"
+    ],
+    "images": [
+        {
+            "templateId": "1",
+            "objectKey": "f291b03265274e6a88941b1c8b95bd38.jpg",
+            "objectUrl": "https://dangjia-dev.obs.cn-south-1.myhuaweicloud.com/f291b03265274e6a88941b1c8b95bd38.jpg"
+        },
+        {
+            "templateId": "",
+            "objectKey": "5c8b589e816149b2b91ffbf21d6688d0.jpg",
+            "objectUrl": "https://dangjia-dev.obs.cn-south-1.myhuaweicloud.com/5c8b589e816149b2b91ffbf21d6688d0.jpg"
+        },
+        {
+            "templateId": "",
+            "objectKey": "b48ac650f362436e999dc904a1e3317d.jpg",
+            "objectUrl": "https://dangjia-dev.obs.cn-south-1.myhuaweicloud.com/b48ac650f362436e999dc904a1e3317d.jpg"
+        },
+        {
+            "templateId": "",
+            "objectKey": "6ec6c8d5dd034c03923ff0d47f2d3610.jpg",
+            "objectUrl": "https://dangjia-dev.obs.cn-south-1.myhuaweicloud.com/6ec6c8d5dd034c03923ff0d47f2d3610.jpg"
+        }
+    ]
+}

@@ -97,6 +97,20 @@ watch(
     form.source_content.variables ||= []
     form.source_content.emotion_lexicon ||= []
     form.source_content.method_combinations ||= []
+    form.source_content.slot_schema ||= []
+    if (props.type === 'combination_rules') {
+      form.source_metadata ||= {}
+      form.source_metadata.composition_blueprint ||= {}
+      form.source_metadata.composition_blueprint.layer_sequence ||= []
+      form.source_metadata.composition_blueprint.phrase_composition ||= []
+      for (const field of ['conditions', 'hard_conditions']) {
+        const source = form[field] || {}
+        form[`_${field}_complex`] = Object.fromEntries(Object.entries(source).filter(([, value]) => value !== null && typeof value === 'object'))
+        form[`_${field}_rows`] = Object.entries(source)
+          .filter(([, value]) => value === null || typeof value !== 'object')
+          .map(([key, value]) => ({ key, type: typeof value === 'boolean' ? 'boolean' : typeof value === 'number' ? 'number' : 'string', value }))
+      }
+    }
   },
   { immediate: true }
 )
@@ -134,10 +148,48 @@ const addStructureSection = () => form.structure_schema.push('')
 const removeStructureSection = (index) => {
   if (form.structure_schema.length > 1) form.structure_schema.splice(index, 1)
 }
+const addTitleSlot = () => form.source_content.slot_schema.push({
+  code: '', label: '', variable_codes: [], lexicon_codes: []
+})
+const removeTitleSlot = (index) => form.source_content.slot_schema.splice(index, 1)
+const addLayer = () => {
+  const layers = form.source_metadata.composition_blueprint.layer_sequence
+  layers.push({ order: layers.length + 1, code: '', name: '' })
+}
+const removeLayer = (index) => {
+  form.source_metadata.composition_blueprint.layer_sequence.splice(index, 1)
+  form.source_metadata.composition_blueprint.layer_sequence.forEach((item, itemIndex) => { item.order = itemIndex + 1 })
+}
+const addPhraseRule = () => form.source_metadata.composition_blueprint.phrase_composition.push({
+  layer_code: '', source: 'rule', selection: 'fixed', min_groups: 1, max_groups: 1,
+  allowed_groups: [], missing_behavior: 'block'
+})
+const removePhraseRule = (index) => form.source_metadata.composition_blueprint.phrase_composition.splice(index, 1)
+const addConstraint = (field) => form[`_${field}_rows`].push({ key: '', type: 'boolean', value: true })
+const removeConstraint = (field, index) => form[`_${field}_rows`].splice(index, 1)
+const changeConstraintType = (row) => {
+  row.value = row.type === 'boolean' ? true : row.type === 'number' ? 0 : ''
+}
+const constraintObject = (rows, complex) => Object.fromEntries([
+  ...Object.entries(complex || {}),
+  ...rows.filter(row => row.key.trim()).map(row => [row.key.trim(), row.value])
+])
 
 const submit = async () => {
   await formRef.value?.validate()
   const value = structuredClone(toRaw(form))
+  if (props.type === 'combination_rules') {
+    for (const field of ['conditions', 'hard_conditions']) {
+      const keys = value[`_${field}_rows`].map(row => row.key.trim()).filter(Boolean)
+      if (new Set(keys).size !== keys.length || keys.some(key => key in value[`_${field}_complex`])) {
+        message.error(`${field === 'conditions' ? '适用条件' : '硬约束'}的编码不能重复`)
+        return
+      }
+    }
+    value.conditions = constraintObject(value._conditions_rows, value._conditions_complex)
+    value.hard_conditions = constraintObject(value._hard_conditions_rows, value._hard_conditions_complex)
+    for (const key of ['_conditions_rows', '_conditions_complex', '_hard_conditions_rows', '_hard_conditions_complex']) delete value[key]
+  }
   if (value.code) value.code = value.code.trim().toUpperCase()
   if (value.structure_schema) {
     value.structure_schema = value.structure_schema.map((item) => item.trim()).filter(Boolean)
@@ -239,6 +291,21 @@ const submit = async () => {
         <a-form-item label="标题变量">
           <a-select v-model:value="form.variable_schema" mode="tags" placeholder="例如：audience、number、result" />
         </a-form-item>
+        <a-form-item label="标题槽位">
+          <div class="blueprint-list">
+            <div v-for="(slot, index) in form.source_content.slot_schema" :key="index" class="title-slot-card">
+              <div class="field-row">
+                <a-input v-model:value="slot.code" placeholder="槽位编码，例如 area_or_house_type" />
+                <a-input v-model:value="slot.label" placeholder="显示名称，例如 面积/房型" />
+              </div>
+              <a-select v-model:value="slot.variable_codes" mode="tags" placeholder="可选事实变量；同一行按 one-of 选择" />
+              <a-select v-model:value="slot.lexicon_codes" mode="tags" placeholder="可选标题词库；同一行按 one-of 选择" />
+              <button type="button" class="lucide-icon-btn phrase-remove" @click="removeTitleSlot(index)"><Trash2 :size="16" />删除本槽位</button>
+            </div>
+            <a-button block @click="addTitleSlot"><Plus :size="15" />添加标题槽位</a-button>
+          </div>
+          <p class="constraint-note">每一行是必填槽位；同一行中的变量和词库为“任选一个”，用于表达“面积/房型”这类公式。</p>
+        </a-form-item>
         <a-form-item label="参考示例">
           <a-textarea :value="(form.reference_examples || []).join('\n\n')" :rows="4" placeholder="每个案例用空行分隔" @update:value="form.reference_examples = $event.split(/\n\s*\n/).filter(Boolean)" />
         </a-form-item>
@@ -315,6 +382,80 @@ const submit = async () => {
           <a-textarea v-model:value="form.scenario_description" :rows="3" placeholder="说明该内容方向与手法组合的适用场景" />
         </a-form-item>
         <div class="field-row">
+          <a-form-item label="必需业务变量">
+            <a-select v-model:value="form.required_variable_codes" mode="tags" placeholder="例如 city、area、price" />
+          </a-form-item>
+          <a-form-item label="必需 Evidence 类型">
+            <a-select v-model:value="form.required_evidence_types" mode="tags" placeholder="例如 project_quote" />
+          </a-form-item>
+        </div>
+        <a-form-item label="适用条件">
+          <div class="blueprint-list">
+            <div v-for="(row, index) in form._conditions_rows" :key="index" class="constraint-row">
+              <a-input v-model:value="row.key" placeholder="条件编码，例如 price_available" />
+              <a-select v-model:value="row.type" @change="changeConstraintType(row)"><a-select-option value="boolean">是/否</a-select-option><a-select-option value="number">数字</a-select-option><a-select-option value="string">文本</a-select-option></a-select>
+              <a-switch v-if="row.type === 'boolean'" v-model:checked="row.value" />
+              <a-input-number v-else-if="row.type === 'number'" v-model:value="row.value" style="width: 100%" />
+              <a-input v-else v-model:value="row.value" />
+              <button type="button" class="lucide-icon-btn" @click="removeConstraint('conditions', index)"><Trash2 :size="16" /></button>
+            </div>
+            <p v-if="Object.keys(form._conditions_complex || {}).length" class="constraint-note">复合条件由系统保留，本表单只维护布尔、数字和文本条件。</p>
+            <a-button block @click="addConstraint('conditions')"><Plus :size="15" />添加适用条件</a-button>
+          </div>
+        </a-form-item>
+        <a-form-item label="硬约束">
+          <div class="blueprint-list">
+            <div v-for="(row, index) in form._hard_conditions_rows" :key="index" class="constraint-row">
+              <a-input v-model:value="row.key" placeholder="约束编码，例如 unsupported_numbers" />
+              <a-select v-model:value="row.type" @change="changeConstraintType(row)"><a-select-option value="boolean">是/否</a-select-option><a-select-option value="number">数字</a-select-option><a-select-option value="string">文本</a-select-option></a-select>
+              <a-switch v-if="row.type === 'boolean'" v-model:checked="row.value" />
+              <a-input-number v-else-if="row.type === 'number'" v-model:value="row.value" style="width: 100%" />
+              <a-input v-else v-model:value="row.value" />
+              <button type="button" class="lucide-icon-btn" @click="removeConstraint('hard_conditions', index)"><Trash2 :size="16" /></button>
+            </div>
+            <p v-if="Object.keys(form._hard_conditions_complex || {}).length" class="constraint-note">公式对等复合硬约束由系统保留，保存不会覆盖。</p>
+            <a-button block @click="addConstraint('hard_conditions')"><Plus :size="15" />添加硬约束</a-button>
+          </div>
+        </a-form-item>
+        <a-form-item label="层级顺序">
+          <div class="blueprint-list">
+            <div v-for="(layer, index) in form.source_metadata.composition_blueprint.layer_sequence" :key="index" class="blueprint-layer-row">
+              <a-input v-model:value="layer.code" placeholder="层级编码" />
+              <a-input v-model:value="layer.name" placeholder="层级名称" />
+              <button type="button" class="lucide-icon-btn" @click="removeLayer(index)"><Trash2 :size="16" /></button>
+            </div>
+            <a-button block @click="addLayer"><Plus :size="15" />添加层级</a-button>
+          </div>
+        </a-form-item>
+        <a-form-item label="词组组合">
+          <div class="blueprint-list">
+            <div v-for="(phraseRule, index) in form.source_metadata.composition_blueprint.phrase_composition" :key="index" class="phrase-rule-card">
+              <div class="field-row">
+                <a-input v-model:value="phraseRule.layer_code" placeholder="层级编码" />
+                <a-input v-model:value="phraseRule.source" placeholder="数据来源，例如 rule" />
+              </div>
+              <div class="phrase-rule-grid">
+                <a-select v-model:value="phraseRule.selection" placeholder="选择方式">
+                  <a-select-option value="fixed">fixed</a-select-option>
+                  <a-select-option value="all">all</a-select-option>
+                  <a-select-option value="random">random</a-select-option>
+                  <a-select-option value="available">available</a-select-option>
+                </a-select>
+                <a-input-number v-model:value="phraseRule.min_groups" :min="0" placeholder="最少组数" />
+                <a-input-number v-model:value="phraseRule.max_groups" :min="0" placeholder="最多组数" />
+                <a-select v-model:value="phraseRule.missing_behavior" placeholder="缺失处理">
+                  <a-select-option value="block">block</a-select-option>
+                  <a-select-option value="omit">omit</a-select-option>
+                  <a-select-option value="ask_user">ask_user</a-select-option>
+                </a-select>
+              </div>
+              <a-select v-model:value="phraseRule.allowed_groups" mode="tags" placeholder="允许词组，输入后回车" />
+              <button type="button" class="lucide-icon-btn phrase-remove" @click="removePhraseRule(index)"><Trash2 :size="16" />删除本条</button>
+            </div>
+            <a-button block @click="addPhraseRule"><Plus :size="15" />添加词组规则</a-button>
+          </div>
+        </a-form-item>
+        <div class="field-row">
           <a-form-item label="行业范围">
             <a-select v-model:value="form.industry_scope" mode="tags" placeholder="例如 decoration" />
           </a-form-item>
@@ -345,6 +486,15 @@ const submit = async () => {
 .structure-list > div > span { color: var(--color-text-secondary); text-align: center; }
 .structure-list button { border: 0; background: transparent; color: var(--color-text-secondary); }
 .structure-list button:not(:disabled):hover { color: var(--color-error-600); background: var(--color-error-50); }
+.blueprint-list { display: flex; flex-direction: column; gap: 10px; }
+.blueprint-layer-row { display: grid; grid-template-columns: 1fr 1fr 34px; gap: 8px; align-items: center; }
+.blueprint-list button { border: 0; background: transparent; color: var(--color-text-secondary); }
+.phrase-rule-card { position: relative; display: flex; flex-direction: column; gap: 8px; padding: 12px; border: 1px solid var(--color-border-secondary); border-radius: 8px; }
+.title-slot-card { display: flex; flex-direction: column; gap: 8px; padding: 12px; border: 1px solid var(--color-border-secondary); border-radius: 8px; }
+.phrase-rule-grid { display: grid; grid-template-columns: 1.2fr 1fr 1fr 1.2fr; gap: 8px; }
+.constraint-row { display: grid; grid-template-columns: 1.5fr 100px 1fr 34px; gap: 8px; align-items: center; }
+.constraint-note { margin: 0; color: var(--gray-600); font-size: 12px; }
+.phrase-remove { align-self: flex-end; display: inline-flex; gap: 4px; align-items: center; }
 .drawer-footer { display: flex; justify-content: flex-end; gap: 8px; }
-@media (max-width: 640px) { .field-row { grid-template-columns: 1fr; gap: 0; } }
+@media (max-width: 640px) { .field-row, .phrase-rule-grid { grid-template-columns: 1fr; gap: 8px; } }
 </style>

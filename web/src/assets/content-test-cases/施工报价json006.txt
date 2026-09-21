@@ -1,0 +1,69 @@
+{
+     "serialNo": "006",
+    "persona": {
+        "age": "40",
+        "workYears": "20",
+        "serviceCity": "长沙市",
+        "introduction": "我从事装修行业20年了，在长沙有自己的施工队，师傅手艺都很好、我服务了长沙很多工地，业主都特别满意我的手艺，我干活认真负责，做事踏实，有很多工地都可以去现场看，需要装修可以来对比",
+        "skills": [
+            "工长",
+            "水电",
+            "泥瓦"
+        ],
+        "honors": {
+            "ownerRecommendCount": "10",
+            "servedSiteCount": "10"
+        },
+        "tone": "有耐心",
+        "serviceAdvantages": [
+            "装修经验丰富",
+            "自有工人无转包"
+        ]
+    },
+    "requirementType": {
+        "typeName": "施工报价",
+        "quotationInfo": {
+            "houseArea": "80平",
+            "houseType": "二室二厅"
+        },
+        "prices": [
+            {
+                "format": "人工辅材",
+                "content": "总价：4w；拆除：1100；水电：人工5600；材料3665.5；泥瓦：人工8000；材料7462.9；木工：人工3000；材料2921.6；油漆：人工5400；材料3000.98"
+            }
+        ],
+        "titlePrice": {
+            "label": "人工辅材总价",
+            "displayText": "4w"
+        },
+        "mySite": "湖南省长沙市雨花区保利大都汇"
+    },
+    "tags": [
+        "营销报价",
+        "旧房重装",
+        "水电",
+        "现代风格"
+    ],
+    "images": [
+        {
+            "templateId": "1",
+            "objectKey": "f291b03265274e6a88941b1c8b95bd38.jpg",
+            "objectUrl": "https://dangjia-dev.obs.cn-south-1.myhuaweicloud.com/f291b03265274e6a88941b1c8b95bd38.jpg"
+        },
+        {
+            "templateId": "",
+            "objectKey": "5c8b589e816149b2b91ffbf21d6688d0.jpg",
+            "objectUrl": "https://dangjia-dev.obs.cn-south-1.myhuaweicloud.com/5c8b589e816149b2b91ffbf21d6688d0.jpg"
+        },
+        {
+            "templateId": "",
+            "objectKey": "b48ac650f362436e999dc904a1e3317d.jpg",
+            "objectUrl": "https://dangjia-dev.obs.cn-south-1.myhuaweicloud.com/b48ac650f362436e999dc904a1e3317d.jpg"
+        },
+        {
+            "templateId": "",
+            "objectKey": "6ec6c8d5dd034c03923ff0d47f2d3610.jpg",
+            "objectUrl": "https://dangjia-dev.obs.cn-south-1.myhuaweicloud.com/6ec6c8d5dd034c03923ff0d47f2d3610.jpg"
+        }
+    ]
+}
