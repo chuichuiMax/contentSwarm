@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -281,7 +282,198 @@ func fillTextFields(file map[string]any, declarations []any, values map[string]s
 	if len(remaining) > 0 {
 		return ErrBadRequest
 	}
+	adjustTextFieldFlow(file, declarations)
 	return nil
+}
+
+const titleSubtitleGap = 32.0
+
+// adjustTextFieldFlow keeps a vertically stacked subtitle below the rendered
+// height of an auto-growing title. Template coordinates remain authoritative
+// for short text; only content that grows past the authored title box moves the
+// subtitle. Both nodes are updated in the instantiated design, so the editor
+// and server export share the same layout.
+func adjustTextFieldFlow(file map[string]any, declarations []any) {
+	titleID, subtitleID := "", ""
+	for _, raw := range declarations {
+		field := asObj(raw)
+		if asStr(field["kind"]) != "text" {
+			continue
+		}
+		switch asStr(field["semanticRole"]) {
+		case "title":
+			titleID = asStr(field["nodeId"])
+		case "subtitle":
+			subtitleID = asStr(field["nodeId"])
+		}
+	}
+	if titleID == "" || subtitleID == "" {
+		return
+	}
+
+	for _, pageRaw := range asArr(file["pages"]) {
+		var title, subtitle map[string]any
+		for _, childRaw := range asArr(asObj(pageRaw)["children"]) {
+			child := asObj(childRaw)
+			switch asStr(child["id"]) {
+			case titleID:
+				title = child
+			case subtitleID:
+				subtitle = child
+			}
+		}
+		if asStr(title["type"]) != "text" || asStr(subtitle["type"]) != "text" {
+			continue
+		}
+		titleTransform, subtitleTransform := asObj(title["transform"]), asObj(subtitle["transform"])
+		if asNum(titleTransform["rotation"]) != 0 || asNum(subtitleTransform["rotation"]) != 0 {
+			continue
+		}
+		titleX, titleY := asNum(titleTransform["x"]), asNum(titleTransform["y"])
+		subtitleX, subtitleY := asNum(subtitleTransform["x"]), asNum(subtitleTransform["y"])
+		if subtitleY <= titleY {
+			continue
+		}
+		titleWidth := asNum(asObj(title["box"])["width"])
+		if titleWidth <= 0 {
+			titleWidth = asNum(asObj(title["size"])["width"])
+		}
+		subtitleWidth := asNum(asObj(subtitle["box"])["width"])
+		if subtitleWidth <= 0 {
+			subtitleWidth = asNum(asObj(subtitle["size"])["width"])
+		}
+		if titleX+titleWidth <= subtitleX || subtitleX+subtitleWidth <= titleX {
+			continue
+		}
+		box := asObj(title["box"])
+		if asStr(box["mode"]) != "autoHeight" {
+			continue
+		}
+		height := estimateAutoHeightText(title)
+		if height <= 0 {
+			continue
+		}
+		if current := asNum(box["height"]); height > current {
+			box["height"] = height
+			if size := asObj(title["size"]); size != nil {
+				size["height"] = height
+			}
+		}
+		if desiredY := titleY + height + titleSubtitleGap; desiredY > subtitleY {
+			subtitleTransform["y"] = desiredY
+		}
+	}
+}
+
+type templateTextChunk struct {
+	text       string
+	whitespace bool
+}
+
+func templateWrapChunks(text string) []templateTextChunk {
+	var chunks []templateTextChunk
+	var builder strings.Builder
+	whitespace, started := false, false
+	flush := func() {
+		if builder.Len() == 0 {
+			return
+		}
+		chunks = append(chunks, templateTextChunk{text: builder.String(), whitespace: whitespace})
+		builder.Reset()
+		started = false
+	}
+	for _, r := range text {
+		isWhitespace := unicode.IsSpace(r)
+		isBreakable := unicode.In(r, unicode.Han, unicode.Hiragana, unicode.Katakana, unicode.Hangul) || unicode.IsPunct(r)
+		if isBreakable {
+			flush()
+			chunks = append(chunks, templateTextChunk{text: string(r)})
+			continue
+		}
+		if started && isWhitespace != whitespace {
+			flush()
+		}
+		builder.WriteRune(r)
+		whitespace = isWhitespace
+		started = true
+	}
+	flush()
+	return chunks
+}
+
+func estimateAutoHeightText(node map[string]any) float64 {
+	box := asObj(node["box"])
+	padding := asObj(box["padding"])
+	contentWidth := asNum(box["width"]) - asNum(padding["l"]) - asNum(padding["r"])
+	if contentWidth <= 0 {
+		return 0
+	}
+	height := asNum(padding["t"]) + asNum(padding["b"])
+	for paragraphIndex, paragraphRaw := range asArr(node["content"]) {
+		paragraph := asObj(paragraphRaw)
+		paragraphStyle := asObj(paragraph["style"])
+		if paragraphIndex > 0 {
+			height += asNum(paragraphStyle["spaceBefore"])
+		}
+		lineWidth, lineHeight := 0.0, 0.0
+		flush := func() {
+			if lineHeight == 0 {
+				lineHeight = 16 * 1.2
+			}
+			height += lineHeight
+			lineWidth, lineHeight = 0, 0
+		}
+		for _, runRaw := range asArr(paragraph["runs"]) {
+			run := asObj(runRaw)
+			style := asObj(run["style"])
+			fontSize := asNum(style["fontSize"])
+			if fontSize <= 0 {
+				fontSize = 16
+			}
+			runHeight := estimatedLineHeight(style, fontSize)
+			letterSpacing := asNum(style["letterSpacing"])
+			for _, chunk := range templateWrapChunks(asStr(run["text"])) {
+				chunkWidth := 0.0
+				for _, r := range chunk.text {
+					advance := fontSize
+					if r == '\n' || r == '\r' {
+						advance = 0
+					} else if r <= unicode.MaxASCII {
+						advance = fontSize * 0.55
+					}
+					chunkWidth += advance + letterSpacing
+				}
+				if lineWidth > 0 && lineWidth+chunkWidth > contentWidth && !chunk.whitespace {
+					flush()
+				}
+				lineWidth += chunkWidth
+				if runHeight > lineHeight {
+					lineHeight = runHeight
+				}
+			}
+		}
+		flush()
+		height += asNum(paragraphStyle["spaceAfter"])
+	}
+	return height
+}
+
+func estimatedLineHeight(style map[string]any, fontSize float64) float64 {
+	if value := asNum(style["lineHeight"]); value > 0 {
+		return fontSize * value
+	}
+	lineHeight := asObj(style["lineHeight"])
+	switch asStr(lineHeight["mode"]) {
+	case "absolute":
+		if value := asNum(lineHeight["value"]); value > 0 {
+			return value
+		}
+	case "multiple":
+		if value := asNum(lineHeight["value"]); value > 0 {
+			return fontSize * value
+		}
+	}
+	return fontSize * 1.2
 }
 
 // restoreTemplateTypography makes the saved field contract authoritative at

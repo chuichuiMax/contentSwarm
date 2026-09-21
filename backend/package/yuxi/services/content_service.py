@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import json
 import uuid
 from copy import deepcopy
 from typing import Any
 
 from fastapi import HTTPException
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -76,6 +78,12 @@ def _require_v3_task(task: ContentTask | None) -> None:
             "CONTENT_LEGACY_TASK_READ_ONLY",
             "该任务由旧版内容工作流创建，仅保留历史查询；请新建 V3 任务继续生产",
             schema_version=schema_version,
+        )
+    if (task.runtime_config_snapshot_json or {}).get("creation_mode") != "viral_rewrite":
+        raise _content_error(
+            409,
+            "CONTENT_CREATION_MODE_UNSUPPORTED",
+            "原创任务已停止运行和编辑，仅保留历史查询",
         )
 
 
@@ -227,8 +235,19 @@ def validate_rule_bundle_for_publish(bundle: dict[str, Any]) -> dict[str, list[d
         return {"errors": errors, "warnings": warnings}
 
     valid_content_types = {item["code"] for item in bundle.get("content_types") or [] if item.get("enabled", True)}
+    deterministic_decoration_rules = any(
+        item.get("enabled", True)
+        and (not item.get("industry_scope") or "decoration" in item["industry_scope"])
+        and (item.get("source_metadata") or {}).get("composition_blueprint")
+        for item in combination_rules
+    )
+    enabled_direction_rules: dict[str, list[int]] = {code: [] for code in valid_content_types}
     for index, item in enumerate(combination_rules):
         path = f"combination_rules.{index}"
+        if item.get("enabled", True) and (not item.get("industry_scope") or "decoration" in item["industry_scope"]):
+            for code in item.get("content_type_codes") or []:
+                if code in enabled_direction_rules:
+                    enabled_direction_rules[code].append(index)
         if item.get("enabled", True) and (
             not any(
                 titles.get(code, {}).get("enabled", True) for code in item.get("title_formula_candidate_codes") or []
@@ -293,6 +312,62 @@ def validate_rule_bundle_for_publish(bundle: dict[str, Any]) -> dict[str, list[d
                 "V3 正文公式候选池为空或引用无效",
                 f"{path}.body_formula_candidate_codes",
             )
+        elif (
+            deterministic_decoration_rules
+            and item.get("enabled", True)
+            and (not item.get("industry_scope") or "decoration" in item["industry_scope"])
+            and len(item["body_formula_candidate_codes"]) != 1
+        ):
+            add_error(
+                "DETERMINISTIC_BODY_FORMULA_REQUIRED",
+                "装修确定性计划的组合规则必须只绑定一个正文公式",
+                f"{path}.body_formula_candidate_codes",
+            )
+        if (
+            deterministic_decoration_rules
+            and item.get("enabled", True)
+            and (not item.get("industry_scope") or "decoration" in item["industry_scope"])
+        ):
+            blueprint = (item.get("source_metadata") or {}).get("composition_blueprint") or {}
+            layers = blueprint.get("layer_sequence") or []
+            phrase_rules = blueprint.get("phrase_composition") or []
+            layer_codes = [layer.get("code") for layer in layers if isinstance(layer, dict)]
+            if (
+                not layers
+                or len(layer_codes) != len(layers)
+                or len(layer_codes) != len(set(layer_codes))
+                or [layer.get("order") for layer in layers] != list(range(1, len(layers) + 1))
+            ):
+                add_error(
+                    "DETERMINISTIC_BLUEPRINT_LAYERS_INVALID",
+                    "装修组合规则必须配置编码唯一、顺序连续的层级",
+                    f"{path}.source_metadata.composition_blueprint.layer_sequence",
+                )
+            for phrase_index, phrase_rule in enumerate(phrase_rules):
+                selection = phrase_rule.get("selection")
+                minimum = phrase_rule.get("min_groups")
+                maximum = phrase_rule.get("max_groups")
+                missing_behavior = phrase_rule.get("missing_behavior", "block")
+                if (
+                    phrase_rule.get("layer_code") not in layer_codes
+                    or selection not in {"fixed", "all", "random", "available"}
+                    or not isinstance(minimum, int)
+                    or minimum < 0
+                    or (maximum is not None and (not isinstance(maximum, int) or maximum < minimum))
+                    or missing_behavior not in {"block", "omit", "ask_user"}
+                ):
+                    add_error(
+                        "DETERMINISTIC_BLUEPRINT_PHRASE_INVALID",
+                        "词组组合的层级、选择方式、组数或缺失处理无效",
+                        f"{path}.source_metadata.composition_blueprint.phrase_composition.{phrase_index}",
+                    )
+    for code, indexes in sorted(enabled_direction_rules.items() if deterministic_decoration_rules else []):
+        if len(indexes) != 1:
+            add_error(
+                "DETERMINISTIC_DIRECTION_RULE_UNIQUE",
+                f"装修创作类型 {code} 必须且只能有一条已启用组合规则，当前为 {len(indexes)} 条",
+                "combination_rules",
+            )
     return {"errors": errors, "warnings": warnings}
 
 
@@ -319,31 +394,186 @@ def _brief_field_value(brief: dict[str, Any], key: str) -> Any:
     return (brief.get("business_variables") or {}).get(key)
 
 
+def _parse_content_studio_quote_case(
+    user_request: str,
+    *,
+    content_type_code: str | None,
+) -> dict[str, Any] | None:
+    """Convert a standardized Dangjia quote JSON into production facts and a trusted snapshot."""
+    try:
+        raw_payload = json.loads(user_request)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(raw_payload, dict):
+        return None
+    requirement = raw_payload.get("requirementType")
+    if not isinstance(requirement, dict) or str(requirement.get("typeName") or "").strip() != "施工报价":
+        return None
+
+    # Local import avoids a module cycle: Dangjia's HTTP orchestration calls this service.
+    from yuxi.services.dangjia_service import (
+        DangjiaContentCreate,
+        TRUSTED_QUOTE_SNAPSHOT_KEY,
+        _resolve_ct_code,
+        build_dangjia_form_values,
+        build_persona_description,
+        build_trusted_quote_snapshot,
+    )
+
+    try:
+        payload = DangjiaContentCreate.model_validate(raw_payload)
+    except ValidationError as exc:
+        first_error = exc.errors(include_url=False)[0]
+        path = ".".join(str(item) for item in first_error.get("loc") or ())
+        raise _content_error(
+            422,
+            "CONTENT_QUOTE_CASE_SCHEMA_INVALID",
+            f"施工报价案例不符合标准数据结构：{path or 'payload'} {first_error.get('msg') or ''}".strip(),
+        ) from exc
+    try:
+        resolved_content_type_code = _resolve_ct_code(payload.requirementType)
+    except HTTPException as exc:
+        error = exc.detail.get("error", {}) if isinstance(exc.detail, dict) else {}
+        raise _content_error(
+            exc.status_code,
+            str(error.get("code") or "CONTENT_QUOTE_CASE_INVALID"),
+            str(error.get("message") or "施工报价案例数据无效"),
+        ) from exc
+    if content_type_code != resolved_content_type_code:
+        raise _content_error(
+            422,
+            "CONTENT_QUOTE_TYPE_MISMATCH",
+            f"当前任务创作类型为 {content_type_code or '未选择'}，报价案例要求 {resolved_content_type_code}",
+            selected_content_type_code=content_type_code,
+            required_content_type_code=resolved_content_type_code,
+        )
+
+    form_values = build_dangjia_form_values(payload)
+    persona_fact = build_persona_description(payload.persona)
+    product = str(form_values.get("project_type") or "").strip()
+    quantity = str(form_values.get("area") or "").strip()
+    process = str(form_values.get("craft_and_materials") or "").strip()
+    location = str(form_values.get("location") or form_values.get("project_site") or "").strip()
+    quote_format = str(form_values.get("quote_format") or "").strip()
+    tags = [str(item).strip() for item in form_values.get("content_tags") or [] if str(item).strip()]
+    positioning = (
+        "旧房改造"
+        if any(token in tag for tag in tags for token in ("旧房", "老房", "二手房"))
+        else "同城装修"
+    )
+    canonical_house_type = next(
+        (
+            canonical
+            for aliases, canonical in (
+                (("一室", "一居", "单间"), "一居室"),
+                (("二室", "两室", "二居", "两居"), "两居室"),
+                (("三室", "三居"), "大三房"),
+            )
+            if any(alias in product for alias in aliases)
+        ),
+        product,
+    )
+    scene = " ".join(dict.fromkeys(item for item in (positioning, canonical_house_type, product) if item))
+    sanitized_user_request = (
+        f"{location + '，' if location else ''}{quantity}{product}，{quote_format}施工报价；"
+        "标题价格与报价明细已作为锁定事实保存。"
+    )
+    business_variables = {
+        "external_serial_no": form_values["external_serial_no"],
+        "external_source": "content_studio_case",
+        "location": location,
+        "scene": scene,
+        "product": product,
+        "quantity": quantity,
+        "process": process,
+        "pain": form_values["pain"],
+        "advantages": form_values["advantage"],
+        "persona_fact": persona_fact,
+        "project_site": form_values["project_site"],
+        "content_tags": form_values["content_tags"],
+        "quote_format": quote_format,
+        "type_name": form_values["type_name"],
+    }
+    business_variables = {
+        key: value for key, value in business_variables.items() if value not in (None, "", [], {})
+    }
+    trusted_snapshot = build_trusted_quote_snapshot(
+        payload,
+        content_type_code=resolved_content_type_code,
+    )
+    if trusted_snapshot is None:
+        raise _content_error(422, "CONTENT_QUOTE_CASE_INVALID", "施工报价案例缺少可信报价快照")
+    trusted_snapshot.update(
+        {
+            "ingestion_channel": "content_studio_case",
+            "sanitized_user_request": sanitized_user_request,
+        }
+    )
+    return {
+        "sanitized_user_request": sanitized_user_request,
+        "business_variables": business_variables,
+        "brand": {"name": form_values["brand_name"]},
+        "audience": form_values["audience"],
+        "persona": {"description": persona_fact},
+        "trusted_snapshot_key": TRUSTED_QUOTE_SNAPSHOT_KEY,
+        "trusted_snapshot": trusted_snapshot,
+    }
+
+
 def compile_content_brief(
     *, task: ContentTask, template: Any, brief: ContentBriefPayload
 ) -> tuple[dict[str, Any], list[dict[str, str]]]:
     raw = brief.model_dump()
     user_request = str(raw.get("user_request") or (raw.get("form_values") or {}).get("user_request") or "").strip()
+    content_type_code = getattr(task, "content_type_code", None)
     if user_request:
+        quote_case = _parse_content_studio_quote_case(user_request, content_type_code=content_type_code)
+        existing_snapshot = (getattr(task, "runtime_config_snapshot_json", None) or {}).get(
+            "trusted_external_material_snapshot"
+        )
+        if (
+            quote_case is None
+            and isinstance(existing_snapshot, dict)
+            and existing_snapshot.get("ingestion_channel") == "content_studio_case"
+            and existing_snapshot.get("sanitized_user_request") == user_request
+            and getattr(task, "brief_json", None)
+        ):
+            compiled = deepcopy(task.brief_json)
+            compiled["visual_material"] = raw.get("visual_material")
+            return compiled, []
+        quote_type = {
+            "CT02": "standard_unit_price",
+            "CT03": "standard_unit_price",
+            "CT04": "project_quote",
+            "CT05": "project_quote",
+        }.get(content_type_code)
+        normalized_user_request = (
+            quote_case["sanitized_user_request"] if quote_case is not None else user_request
+        )
+        normalized_variables = quote_case["business_variables"] if quote_case is not None else {}
         compiled = {
             "task_id": task.id,
             "industry": template.slug,
             "content_goal": task.content_goal,
-            "content_type_code": getattr(task, "content_type_code", None),
+            "content_type_code": content_type_code,
             "industry_pack_version_id": getattr(task, "industry_pack_version_id", None),
             "channel_profile_version_id": getattr(task, "channel_profile_version_id", None),
             "persona_profile_version_id": getattr(task, "persona_profile_version_id", None),
             "mode": task.mode,
-            "brand": {},
-            "audience": [],
-            "business_variables": {"user_request": user_request},
-            "persona": {},
+            "brand": quote_case["brand"] if quote_case is not None else {},
+            "audience": quote_case["audience"] if quote_case is not None else [],
+            "business_variables": {
+                "user_request": normalized_user_request,
+                **({"quote_type": quote_type} if quote_type and quote_case is None else {}),
+                **normalized_variables,
+            },
+            "persona": quote_case["persona"] if quote_case is not None else {},
             "required_terms": [],
             "forbidden_terms": [],
             "attachments": [],
             "locked_fields": [],
-            "user_request": user_request,
-            "form_values": {"user_request": user_request},
+            "user_request": normalized_user_request,
+            "form_values": {"user_request": normalized_user_request},
             "material_confirmations": [],
             "visual_material": raw.get("visual_material"),
         }
@@ -368,6 +598,14 @@ def compile_content_brief(
         business_variables["pain_points"] = business_variables["pain"]
     if business_variables.get("advantage") and not business_variables.get("advantages"):
         business_variables["advantages"] = business_variables["advantage"]
+    quote_type_by_content_type = {
+        "CT02": "standard_unit_price",
+        "CT03": "standard_unit_price",
+        "CT04": "project_quote",
+        "CT05": "project_quote",
+    }
+    if content_type_code in quote_type_by_content_type:
+        business_variables.setdefault("quote_type", quote_type_by_content_type[content_type_code])
     brand = dict(raw.get("brand") or {})
     if form_values.get("brand_name"):
         brand["name"] = form_values["brand_name"]
@@ -427,7 +665,16 @@ async def get_content_bootstrap(db: AsyncSession, user: User) -> dict[str, Any]:
 
     for template in templates:
         template["strategy_mode"] = policy["industry_modes"].get(template["slug"], policy["default_mode"])
-        template["blueprint_first"] = template["default_workflow_version_id"] in BLUEPRINT_FIRST_WORKFLOW_IDS
+        from yuxi.content.v3.joint_workflow import (
+            PLATFORM_WORKFLOW_DETERMINISTIC_PLAN_ID,
+            PLATFORM_WORKFLOW_STANDARDIZED_FACTORY_ID,
+        )
+
+        template["blueprint_first"] = template["default_workflow_version_id"] in {
+            *BLUEPRINT_FIRST_WORKFLOW_IDS,
+            PLATFORM_WORKFLOW_DETERMINISTIC_PLAN_ID,
+            PLATFORM_WORKFLOW_STANDARDIZED_FACTORY_ID,
+        }
     return {
         "industry_templates": templates,
         "content_goals": CONTENT_GOALS,
@@ -626,6 +873,24 @@ async def create_content_task(db: AsyncSession, user: User, payload: ContentTask
     schema_version = int((workflow_version.definition_json or {}).get("schema_version") or 1)
     if schema_version != 3:
         raise _content_error(409, "CONTENT_WORKFLOW_V3_REQUIRED", "新任务只能使用 V3 工作流")
+    from yuxi.content.v3.joint_workflow import (
+        PLATFORM_WORKFLOW_EXPRESSION_GUIDANCE_ID,
+        PLATFORM_WORKFLOW_DETERMINISTIC_PLAN_ID,
+        PLATFORM_WORKFLOW_MODULAR_AUTHOR_ID,
+        PLATFORM_WORKFLOW_PRICE_RECOVERY_ID,
+        PLATFORM_WORKFLOW_STANDARDIZED_FACTORY_ID,
+        PLATFORM_WORKFLOW_VIRAL_AUTHOR_ID,
+    )
+
+    if workflow_version.id not in {
+        PLATFORM_WORKFLOW_PRICE_RECOVERY_ID,
+        PLATFORM_WORKFLOW_VIRAL_AUTHOR_ID,
+        PLATFORM_WORKFLOW_MODULAR_AUTHOR_ID,
+        PLATFORM_WORKFLOW_EXPRESSION_GUIDANCE_ID,
+        PLATFORM_WORKFLOW_DETERMINISTIC_PLAN_ID,
+        PLATFORM_WORKFLOW_STANDARDIZED_FACTORY_ID,
+    }:
+        raise _content_error(409, "CONTENT_WORKFLOW_UPGRADE_REQUIRED", "新任务只能使用爆款仿写工作流")
 
     rule_version = await repo.get_published_rule_version(schema_version=schema_version)
     if rule_version is None:
@@ -644,10 +909,22 @@ async def create_content_task(db: AsyncSession, user: User, payload: ContentTask
     content_types = (bundle or {}).get("content_types") or []
     content_type_code = payload.content_type_code
     selection_policy = load_selection_policy()
-    joint = workflow_version.definition_json.get("selection_policy") in {"agent_skill_v1", "blueprint_first_v1"}
+    selection_policy_name = workflow_version.definition_json.get("selection_policy")
+    joint = selection_policy_name in {
+        "agent_skill_v1",
+        "blueprint_first_v1",
+        "modular_viral_author_v1",
+    }
+    deterministic_plan = selection_policy_name in {
+        "deterministic_creation_plan_v1",
+        "standardized_factory_v1",
+    }
     mode = selection_policy["industry_modes"].get(template.slug, selection_policy["default_mode"])
-    automatic = workflow_version.definition_json.get("selection_policy") == "blueprint_first_v1"
-    if joint and not automatic and mode == "direction_scoped" and not content_type_code:
+    automatic = workflow_version.definition_json.get("selection_policy") in {
+        "blueprint_first_v1",
+        "modular_viral_author_v1",
+    }
+    if (joint or deterministic_plan) and not automatic and mode == "direction_scoped" and not content_type_code:
         raise _content_error(422, "CONTENT_DIRECTION_REQUIRED", "请先选择本次内容方向")
     if content_types and (not automatic or content_type_code) and (not joint or mode == "direction_scoped"):
         type_map = {item["code"]: item for item in content_types}
@@ -660,10 +937,7 @@ async def create_content_task(db: AsyncSession, user: User, payload: ContentTask
         selected_type = type_map.get(content_type_code)
         if selected_type is None:
             raise _content_error(422, "CONTENT_TYPE_INVALID", "内容类型不存在或未发布")
-        if (
-            goal not in (selected_type.get("supported_goals") or [])
-            and content_type_code not in scoped_direction_codes
-        ):
+        if goal not in (selected_type.get("supported_goals") or []) and content_type_code not in scoped_direction_codes:
             raise _content_error(422, "CONTENT_TYPE_GOAL_MISMATCH", "内容类型不支持当前内容目标")
 
     industry_pack = await repo.get_published_industry_pack(template.slug, schema_version=3)
@@ -701,7 +975,11 @@ async def create_content_task(db: AsyncSession, user: User, payload: ContentTask
         "channel_profile_version_id": channel_profile_version_id,
         "content_type_code": content_type_code,
         "creation_mode": payload.creation_mode,
-        **({"selection_policy_snapshot": selection_policy, "strategy_mode": mode} if joint else {}),
+        **(
+            {"selection_policy_snapshot": selection_policy, "strategy_mode": mode}
+            if joint or deterministic_plan
+            else {}
+        ),
     }
     task = await repo.create_task(
         task_id=f"ct_{uuid.uuid4().hex}",
@@ -781,9 +1059,9 @@ async def update_content_task(db: AsyncSession, user: User, task_id: str, payloa
         raise _content_error(422, "CONTENT_GOAL_INVALID", "内容目标无效")
     next_goal = changes.get("content_goal", task.content_goal)
     next_type = changes.get("content_type_code", task.content_type_code)
-    direction_scoped = (
-        (task.runtime_config_snapshot_json or {}).get("strategy_mode", "direction_scoped") == "direction_scoped"
-    )
+    direction_scoped = (task.runtime_config_snapshot_json or {}).get(
+        "strategy_mode", "direction_scoped"
+    ) == "direction_scoped"
     if "content_type_code" in changes and direction_scoped:
         definition = await repo.get_content_type(task.rule_version_id, changes["content_type_code"])
         if definition is None:
@@ -906,16 +1184,36 @@ async def save_content_brief(
     template = await repo.get_template(task.industry_template_version_id)
     if template is None:
         raise _content_error(409, "CONTENT_TEMPLATE_VERSION_MISSING", "任务绑定的行业模板版本不存在")
+    raw_brief = brief.model_dump()
+    raw_user_request = str(
+        raw_brief.get("user_request") or (raw_brief.get("form_values") or {}).get("user_request") or ""
+    ).strip()
+    quote_case = (
+        _parse_content_studio_quote_case(raw_user_request, content_type_code=task.content_type_code)
+        if raw_user_request
+        else None
+    )
     compiled, missing = compile_content_brief(task=task, template=template, brief=brief)
     selection = brief.visual_material
     requested_image_item_id = selection.image_item_id if selection else None
     requested_poster_template_id = selection.poster_template_id if selection else None
     requested_hycanvas_template_id = selection.hycanvas_template_id if selection else None
-    if compile_now and requested_hycanvas_template_id and not requested_image_item_id:
+    requested_featured_cover_template_id = selection.featured_cover_template_id if selection else None
+    if requested_hycanvas_template_id and requested_featured_cover_template_id:
+        raise _content_error(
+            422,
+            "CONTENT_COVER_TEMPLATE_CONFLICT",
+            "内置封面与精选封面只能选择其一",
+        )
+    if (
+        compile_now
+        and (requested_hycanvas_template_id or requested_featured_cover_template_id)
+        and not requested_image_item_id
+    ):
         raise _content_error(
             422,
             "CONTENT_IMAGE_MATERIAL_REQUIRED",
-            "请选择一张图库图片作为 HyCanvas 封面主图",
+            "请选择一张图库图片作为封面背景图",
         )
     requested_composition = (
         selection.photo_composition.model_dump() if selection and selection.photo_composition else None
@@ -925,6 +1223,7 @@ async def save_content_brief(
         task.selected_image_item_id != requested_image_item_id
         or task.selected_poster_template_id != requested_poster_template_id
         or current_visual_material.get("hycanvas_template_id") != requested_hycanvas_template_id
+        or current_visual_material.get("featured_cover_template_id") != requested_featured_cover_template_id
         or current_visual_material.get("photo_composition") != requested_composition
     ):
         raise _content_error(
@@ -934,7 +1233,12 @@ async def save_content_brief(
         )
 
     visual_snapshot: dict[str, Any] | None = (
-        {} if requested_image_item_id or requested_poster_template_id or requested_hycanvas_template_id else None
+        {}
+        if requested_image_item_id
+        or requested_poster_template_id
+        or requested_hycanvas_template_id
+        or requested_featured_cover_template_id
+        else None
     )
     if requested_image_item_id:
         owner_uid = str(user.uid)
@@ -992,34 +1296,65 @@ async def save_content_brief(
     if requested_composition:
         from yuxi.services.content_photo_composition import resolve_photo_composition
 
-        if not requested_image_item_id or not requested_hycanvas_template_id:
+        if not requested_image_item_id or not (requested_hycanvas_template_id or requested_featured_cover_template_id):
             raise _content_error(422, "CONTENT_COMPOSITION_TEMPLATE_REQUIRED", "图片组合需要选择首图和封面模板")
         visual_snapshot["photo_composition"] = await resolve_photo_composition(
-            db, user, selection.photo_composition, requested_image_item_id, complete=compile_now,
+            db,
+            user,
+            selection.photo_composition,
+            requested_image_item_id,
+            complete=compile_now,
         )
-    if compile_now and requested_hycanvas_template_id:
+    if compile_now and (requested_hycanvas_template_id or requested_featured_cover_template_id):
         from yuxi.services.hycanvas_service import HyCanvasClient
 
         template_catalog = await HyCanvasClient.from_env().list_xiaohongshu_templates()
-        hycanvas_template = next(
-            (item for item in template_catalog["templates"] if item["id"] == requested_hycanvas_template_id),
-            None,
-        )
-        if hycanvas_template is None:
-            raise _content_error(
-                422,
-                "CONTENT_HYCANVAS_TEMPLATE_INVALID",
-                "所选 HyCanvas 小红书模板不存在或不可用",
+        catalog_by_id = {item["id"]: item for item in template_catalog["templates"]}
+        if requested_hycanvas_template_id:
+            hycanvas_template = catalog_by_id.get(requested_hycanvas_template_id)
+            if hycanvas_template is None or hycanvas_template.get("zone") != "builtin":
+                raise _content_error(
+                    422,
+                    "CONTENT_HYCANVAS_TEMPLATE_INVALID",
+                    "所选内置封面模板不存在或不可用",
+                )
+            visual_snapshot.update(
+                {
+                    "hycanvas_template_id": hycanvas_template["id"],
+                    "hycanvas_template_title": hycanvas_template["title"],
+                    "hycanvas_fillable_fields": hycanvas_template["fillable_fields"],
+                }
             )
-        visual_snapshot.update(
-            {
-                "hycanvas_template_id": hycanvas_template["id"],
-                "hycanvas_template_title": hycanvas_template["title"],
-                "hycanvas_fillable_fields": hycanvas_template["fillable_fields"],
-            }
-        )
+        if requested_featured_cover_template_id:
+            featured_template = catalog_by_id.get(requested_featured_cover_template_id)
+            if featured_template is None or featured_template.get("zone") != "featured":
+                raise _content_error(
+                    422,
+                    "CONTENT_FEATURED_COVER_TEMPLATE_INVALID",
+                    "所选精选封面不存在或不可用",
+                )
+            visual_snapshot.update(
+                {
+                    "featured_cover_template_id": featured_template["id"],
+                    "featured_cover_template_title": featured_template["title"],
+                }
+            )
     task.selected_image_item_id = requested_image_item_id
     task.selected_poster_template_id = requested_poster_template_id
+    runtime_snapshot = dict(task.runtime_config_snapshot_json or {})
+    trusted_snapshot_key = "trusted_external_material_snapshot"
+    if quote_case is not None:
+        trusted_snapshot_key = quote_case["trusted_snapshot_key"]
+        runtime_snapshot[trusted_snapshot_key] = quote_case["trusted_snapshot"]
+    else:
+        existing_quote_snapshot = runtime_snapshot.get(trusted_snapshot_key)
+        if (
+            isinstance(existing_quote_snapshot, dict)
+            and existing_quote_snapshot.get("ingestion_channel") == "content_studio_case"
+            and existing_quote_snapshot.get("sanitized_user_request") != raw_user_request
+        ):
+            runtime_snapshot.pop(trusted_snapshot_key, None)
+    task.runtime_config_snapshot_json = runtime_snapshot
     compiled["visual_material"] = (
         {
             "image_item_id": visual_snapshot.get("image_item_id"),
@@ -1030,6 +1365,8 @@ async def save_content_brief(
             "poster_template_name": visual_snapshot.get("poster_template_name"),
             "hycanvas_template_id": requested_hycanvas_template_id,
             "hycanvas_template_title": visual_snapshot.get("hycanvas_template_title"),
+            "featured_cover_template_id": requested_featured_cover_template_id,
+            "featured_cover_template_title": visual_snapshot.get("featured_cover_template_title"),
             "photo_composition": requested_composition,
         }
         if visual_snapshot
@@ -1049,7 +1386,7 @@ async def save_content_brief(
         )
     if compile_now:
         task.runtime_config_snapshot_json = {
-            **(task.runtime_config_snapshot_json or {}),
+            **runtime_snapshot,
             "visual_material": visual_snapshot,
         }
         task.evidence_json = normalize_manual_evidence(task.id, compiled)
@@ -1104,7 +1441,7 @@ async def _enqueue_content_run(
         "rule_version_id": task.rule_version_id,
     }
     try:
-        checkpoint_thread_id = f"content:{task.id}"
+        checkpoint_thread_id = f"content:{run_id}"
         if action in {"resume", "retry"} and parent_run_id:
             parent = await run_repo.get_run(parent_run_id)
             if parent and parent.checkpoint_thread_id:

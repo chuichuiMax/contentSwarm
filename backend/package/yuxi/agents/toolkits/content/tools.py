@@ -591,6 +591,7 @@ async def create_content_cover_job(
         if locked_image_asset_id and source_asset_ids != [locked_image_asset_id]:
             raise ValueError("视觉方案未使用任务锁定的唯一图库图片")
         hycanvas_template_id = visual_material.get("hycanvas_template_id")
+        featured_cover_template_id = visual_material.get("featured_cover_template_id")
         poster_template_id = visual_material.get("poster_template_id")
         if hycanvas_template_id:
             from yuxi.services.content_cover_service import create_hycanvas_cover_job
@@ -624,6 +625,41 @@ async def create_content_cover_job(
                     "visual_plan_hash": plan_hash,
                     "workflow_resume": workflow_resume,
                 },
+            )
+        elif featured_cover_template_id:
+            from yuxi.services.content_cover_service import (
+                compose_visual_material_background,
+                ensure_featured_reference_asset,
+            )
+
+            background_asset_id = locked_image_asset_id
+            if visual_material.get("photo_composition"):
+                background_asset_id = await compose_visual_material_background(
+                    db, user, visual_material, content_task_id=task_id
+                )
+            if not background_asset_id:
+                raise ValueError("精选封面创作需要一张图库背景图")
+            reference_asset = await ensure_featured_reference_asset(db, user, featured_cover_template_id)
+            result = await create_cover_generate_job(
+                db,
+                user,
+                CoverGenerateCreate(
+                    mode="multi_reference",
+                    content_task_id=task_id,
+                    source_asset_ids=[background_asset_id],
+                    template_asset_id=reference_asset.id,
+                    reference_mode="style",
+                    title=text[0],
+                    subtitle=text[1] if len(text) > 1 else "",
+                    prompt="；".join(text),
+                    size="1080x1440",
+                    n=1,
+                    parameters={
+                        "visual_plan_hash": plan_hash,
+                        "workflow_resume": workflow_resume,
+                    },
+                    idempotency_key=idempotency_key,
+                ),
             )
         elif poster_template_id:
             from yuxi.repositories.content_cover_repository import ContentCoverRepository

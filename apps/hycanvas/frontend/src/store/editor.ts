@@ -96,6 +96,7 @@ import {
 import { booleanOp, fitCubicBeziers, pathToPolylines, recognizeShape, shapeNodeToParametric, shapeToPath, simplifyPolyline, strokeToOutline, type BooleanOp } from "@hc/geometry";
 import { imageAssets } from "@/lib/assetProvider";
 import { measuredTextHeight } from "@/lib/textFit";
+import { XHS_EDITORIAL_ID, browserEditorialMeasure, reflowXhsEditorialNodes } from "@/lib/xhsEditorialCover";
 import { pageGap, pageOffsets, pageTop } from "@/lib/pageLayout";
 import type { MagicDesignSpec } from "@/lib/magicDesign";
 import { accentRuleRect, extractLayoutSet, fallbackLayoutFill, layoutDesign, reflowPage, slotTypeScale, variantCandidate, verifyLayoutCapacities, type AiDesignSpec, type DeckResult, type ExtractedLayoutSet, type ExtractPageLike } from "@hc/aistudio";
@@ -911,6 +912,8 @@ interface EditorState {
    *  (colliding ids reminted), and optionally restyled to this document's
    *  theme via the exact slot-by-slot remap. Returns the inserted count. */
   importPagesFrom(file: DesignFile, pageIndices: number[], opts?: { matchTheme?: boolean; preservePageSize?: boolean }): number;
+  /** Replace only the active editorial layout instance; keep all other nodes. */
+  applyXhsEditorialTemplate(file: DesignFile): boolean;
   /** Import a full SVG file (e.g. an SVG export from another design tool) as editable elements:
    *  shapes/paths/text/images, registered assets, scaled to fit the page and
    *  grouped (ungroup to edit each element). Undoable. */
@@ -1538,6 +1541,18 @@ export const useEditor = create<EditorState>((set, get) => {
       undoStack: [...s.undoStack, { undo, redo }],
       redoStack: [],
     }));
+  };
+
+  const markXhsManual = (ids: string[]) => {
+    const page = get().doc.pages[get().activePage];
+    if (!page) return;
+    const belongs = (node: Node): boolean => ids.includes(node.id) || (node.type === "group" && (node as Extract<Node, { type: "group" }>).children.some(belongs));
+    if (!page.children.some((node) => node.data?.layoutTemplateId === XHS_EDITORIAL_ID && belongs(node))) return;
+    const mark = (node: Node): void => {
+      if (node.data?.layoutTemplateId === XHS_EDITORIAL_ID) node.data.layoutMode = "manual";
+      if (node.type === "group") (node as Extract<Node, { type: "group" }>).children.forEach(mark);
+    };
+    page.children.forEach(mark);
   };
 
   const commandEntry = (cmd: EditCommand) => ({
@@ -3737,6 +3752,7 @@ export const useEditor = create<EditorState>((set, get) => {
       const n = loc.node as unknown as { transform: Transform; size: { width: number; height: number } };
       n.transform = { ...n.transform, x, y };
       n.size = { width: Math.max(1, w), height: Math.max(1, h) };
+      markXhsManual([id]);
       get().tick();
     },
     snapshotPath: (id) => {
@@ -5278,11 +5294,12 @@ export const useEditor = create<EditorState>((set, get) => {
 
     runCommand: (cmd) => {
       const e = commandEntry(cmd);
-      perform(e.redo, e.undo);
+      perform(() => { e.redo(); if (cmd.kind === "transform") markXhsManual(cmd.nodes); }, e.undo);
     },
 
     tick: () => set((s) => ({ rev: s.rev + 1 })),
     pushApplied: (cmds) => {
+      for (const cmd of cmds) if (cmd.kind === "transform") markXhsManual(cmd.nodes);
       if (cmds.length) registerApplied(set, get, cmds);
       // Private mode (FR-15): command-based inserts (toolbar create, templates,
       // paste) are MY contributions this round, so they stay visible to me.
@@ -5579,6 +5596,50 @@ export const useEditor = create<EditorState>((set, get) => {
           }
           set({ activePage: Math.min(prevPage, doc.pages.length - 1), selection: prevSel });
         },
+      );
+      return true;
+    },
+    applyXhsEditorialTemplate: (file) => {
+      if (!usePresence.getState().canEdit() || get().readonlyPreview()) return false;
+      const page = get().doc.pages[get().activePage];
+      const source = file.pages[0];
+      if (!page || !source || page.width !== 1080 || page.height !== 1440) return false;
+      const before = structuredClone(page.children) as Node[];
+      const incoming = structuredClone(source.children) as Node[];
+      const idGen = () => `n_${crypto.randomUUID().slice(0, 12)}`;
+      const remapped = remapIds(incoming, idGen).nodes as Node[];
+      const instanceId = before.find((node) => node.data?.layoutTemplateId === XHS_EDITORIAL_ID)?.data?.layoutInstanceId ?? crypto.randomUUID();
+      const oldBySlot = new Map<string, Node>();
+      const collectOld = (node: Node): void => {
+        if (typeof node.data?.slotId === "string" && node.data.layoutTemplateId === XHS_EDITORIAL_ID) oldBySlot.set(node.data.slotId, node);
+        if (node.type === "group") (node as Extract<Node, { type: "group" }>).children.forEach(collectOld);
+      };
+      before.forEach(collectOld);
+      const assignInstance = (node: Node): void => {
+        if (node.data?.layoutTemplateId === XHS_EDITORIAL_ID) {
+          node.data.layoutInstanceId = instanceId;
+          const old = oldBySlot.get(String(node.data.slotId));
+          if (old?.type === "text" && node.type === "text") {
+            const oldText = old as TextNode;
+            const newText = node as TextNode;
+            const fill = oldText.content[0]?.runs[0]?.style.fill;
+            if (fill) newText.content.forEach((paragraph) => paragraph.runs.forEach((run) => { run.style.fill = structuredClone(fill); }));
+            if (oldText.textEffects?.length) newText.textEffects = structuredClone(oldText.textEffects);
+          }
+          if (old?.type === "shape" && node.type === "shape") (node as Extract<Node, { type: "shape" }>).fills = structuredClone((old as Extract<Node, { type: "shape" }>).fills);
+        }
+        if (node.type === "group") (node as Extract<Node, { type: "group" }>).children.forEach(assignInstance);
+      };
+      remapped.forEach(assignInstance);
+      const after = [...before.filter((node) => node.data?.layoutTemplateId !== XHS_EDITORIAL_ID), ...remapped];
+      const oldBackground = structuredClone(page.background);
+      const hasImageBackground = page.background?.type === "image" || before.some((node) => node.type === "image" &&
+        (node.data?.background === true || (node.size.width >= page.width && node.size.height >= page.height)));
+      const nextBackground = hasImageBackground ? oldBackground : structuredClone(source.background);
+      const oldSelection = get().selection;
+      perform(
+        () => { page.children = structuredClone(after) as typeof page.children; page.background = structuredClone(nextBackground); set({ selection: [] }); },
+        () => { page.children = structuredClone(before) as typeof page.children; page.background = structuredClone(oldBackground); set({ selection: oldSelection }); },
       );
       return true;
     },
@@ -6728,12 +6789,55 @@ export const useEditor = create<EditorState>((set, get) => {
     setText: (id, text) => {
       const loc = locate(get().doc, id);
       if (!loc || loc.node.type !== "text" || loc.node.locked || editBlocked(id)) return;
+      if (loc.node.data?.layoutTemplateId === XHS_EDITORIAL_ID && loc.node.data.layoutMode !== "manual") {
+        const page = get().doc.pages[get().activePage];
+        const before = structuredClone(page.children) as Node[];
+        const draft = structuredClone(before);
+        const findText = (nodes: Node[]): TextNode | undefined => {
+          for (const current of nodes) {
+            if (current.id === id && current.type === "text") return current as TextNode;
+            if (current.type === "group") {
+              const found = findText((current as Extract<Node, { type: "group" }>).children);
+              if (found) return found;
+            }
+          }
+        };
+        const target = findText(draft);
+        if (!target) return;
+        const style = target.content[0]?.runs[0]?.style;
+        if (!style) return;
+        target.content = text.split("\n").map((line) => ({ runs: [{ text: line, style: structuredClone(style) }], style: { align: "left", direction: "auto" } }));
+        const result = reflowXhsEditorialNodes(draft, browserEditorialMeasure());
+        if (!result.success) {
+          window.dispatchEvent(new CustomEvent("hycanvas:cover-layout-error", { detail: result.errors[0].message }));
+          return;
+        }
+        perform(
+          () => { page.children = structuredClone(result.nodes) as typeof page.children; },
+          () => { page.children = structuredClone(before) as typeof page.children; },
+        );
+        return;
+      }
       const node = loc.node as unknown as {
         content: { runs: { text: string; style: unknown }[]; style: unknown }[];
       };
       const old = node.content;
       const firstStyle = old[0]?.runs?.[0]?.style;
       if (!firstStyle) return; // no run to inherit style from; never write a styleless run
+      if (loc.node.data?.layoutTemplateId === XHS_EDITORIAL_ID) {
+        const current = loc.node as TextNode;
+        const style = current.content[0]?.runs[0]?.style;
+        if (style) {
+          const measure = browserEditorialMeasure();
+          const weight = style.axes?.wght ?? 400;
+          const lines = text.split("\n");
+          if (lines.some((line) => measure(line, style.fontSize, weight) > current.box.width) ||
+              lines.length * (style.fontSize * 1.2) > current.box.height) {
+            window.dispatchEvent(new CustomEvent("hycanvas:cover-layout-error", { detail: "当前槽位装不下文字，请缩短内容或点击重新排版" }));
+            return;
+          }
+        }
+      }
       const before = structuredClone(old);
       // Each text line becomes its own paragraph, inheriting that paragraph's
       // prior style where it existed (else the first paragraph's). Styles are
@@ -6750,7 +6854,7 @@ export const useEditor = create<EditorState>((set, get) => {
         () => {
           node.content = after;
           // New text wraps to a different line count; keep the box on it.
-          refitTextHeight(loc.node);
+          if (loc.node.data?.layoutTemplateId !== XHS_EDITORIAL_ID) refitTextHeight(loc.node);
         },
         () => {
           node.content = structuredClone(before);
@@ -7045,6 +7149,47 @@ export const useEditor = create<EditorState>((set, get) => {
     setContent: (id, content, boxHeight, boxHeightBefore) => {
       const loc = locate(get().doc, id);
       if (!loc || loc.node.type !== "text" || loc.node.locked || editBlocked(id)) return;
+      if (loc.node.data?.layoutTemplateId === XHS_EDITORIAL_ID) {
+        const page = get().doc.pages[get().activePage];
+        const before = structuredClone(page.children) as Node[];
+        const draft = structuredClone(before);
+        const findText = (nodes: Node[]): TextNode | undefined => {
+          for (const current of nodes) {
+            if (current.id === id && current.type === "text") return current as TextNode;
+            if (current.type === "group") {
+              const found = findText((current as Extract<Node, { type: "group" }>).children);
+              if (found) return found;
+            }
+          }
+        };
+        const target = findText(draft);
+        if (!target) return;
+        target.content = structuredClone(content);
+        const isManual = loc.node.data.layoutMode === "manual";
+        if (isManual) {
+          const measure = browserEditorialMeasure();
+          const lines = content.map((paragraph) => ({
+            text: paragraph.runs.map((run) => run.text).join(""),
+            size: Math.max(...paragraph.runs.map((run) => run.style.fontSize)),
+            weight: paragraph.runs[0]?.style.axes?.wght ?? 400,
+          }));
+          if (lines.some((line) => measure(line.text, line.size, line.weight) > target.box.width) ||
+              lines.reduce((height, line) => height + line.size * 1.2, 0) > target.box.height) {
+            window.dispatchEvent(new CustomEvent("hycanvas:cover-layout-error", { detail: "当前槽位装不下文字，请缩短内容或点击重新排版" }));
+            return;
+          }
+        }
+        const result = isManual ? { success: true as const, nodes: draft } : reflowXhsEditorialNodes(draft, browserEditorialMeasure());
+        if (!result.success) {
+          window.dispatchEvent(new CustomEvent("hycanvas:cover-layout-error", { detail: result.errors[0].message }));
+          return;
+        }
+        perform(
+          () => { page.children = structuredClone(result.nodes) as typeof page.children; },
+          () => { page.children = structuredClone(before) as typeof page.children; },
+        );
+        return;
+      }
       // C28: a slide's name follows its TITLE placeholder while the user has
       // not renamed the page by hand (name empty, or still equal to the old
       // derived title); an explicit rename breaks the link for that page.
@@ -7162,6 +7307,7 @@ export const useEditor = create<EditorState>((set, get) => {
     growTextBoxLive: (id, height, fixedBase) => {
       const loc = locate(get().doc, id);
       if (!loc || loc.node.type !== "text" || loc.node.locked || editBlocked(id)) return;
+      if (loc.node.data?.layoutTemplateId === XHS_EDITORIAL_ID) return;
       const node = loc.node as unknown as { size: { width: number; height: number }; box: { height: number; mode?: string; autoFit?: { enabled?: boolean } } };
       let h: number;
       if (node.box.mode === "autoHeight") {

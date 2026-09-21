@@ -11,7 +11,12 @@ import pytest
 from patchright.async_api import async_playwright, expect
 from sqlalchemy import delete, select
 
-from yuxi.services.content_viral_assets import preparation_skill_hash, search_ready_viral_assets
+from test.unit.content.test_viral_reference_card_v2 import prepared_v2
+from yuxi.services.content_viral_assets import (
+    preparation_skill_hash,
+    published_variable_codes,
+    search_ready_viral_assets,
+)
 from yuxi.storage.postgres.manager import pg_manager
 from yuxi.storage.postgres.models_business import Department, User
 from yuxi.storage.postgres.models_content import ContentViralArticleVersion as Asset
@@ -41,15 +46,13 @@ async def test_kb_mapping_persists_and_filters_reference_selection():
         db.add(user)
         await db.commit()
         user_id = user.id
-        example = await db.scalar(
-            select(Asset)
-            .where(Asset.status == "ready", Asset.preparation_skill_hash == preparation_skill_hash())
-            .limit(1)
-        )
-        assert example, "需要一篇已准备参考来验证检索"
-        code = example.prepared_json["reference_card"]["content_type_code"]
+        article, prepared = prepared_v2()
+        allowed_codes = await published_variable_codes(db)
+        assert allowed_codes, "需要已发布的业务变量来验证参考槽位"
+        prepared["reference_card"]["required_slots"][0]["variable_codes"] = [sorted(allowed_codes)[0]]
+        source = article.model_dump(mode="json")
+        code = prepared["reference_card"]["content_type_code"]
         other_code = "CT06" if code != "CT06" else "CT04"
-        source, prepared = copy.deepcopy(example.source_json), copy.deepcopy(example.prepared_json)
         embedding = await db.scalar(
             select(KnowledgeBase.embedding_model_spec).where(KnowledgeBase.kb_type == "milvus").limit(1)
         )
@@ -132,6 +135,7 @@ async def test_kb_mapping_persists_and_filters_reference_selection():
                     limit=10,
                 )
                 assert [item["id"] for item in found] == [asset_ids[0]]
+                assert found[0]["reference_card"]["schema_version"] == 2
                 for query in ("与参考完全不同的楼盘zxqv987654", ""):
                     found = await search_ready_viral_assets(
                         db, user, industry_slug="decoration", query=query, content_type_code=code, limit=100

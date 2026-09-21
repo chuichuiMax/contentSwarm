@@ -14,10 +14,7 @@ from yuxi.content.v3.formula_lexicons import TITLE_FORMULA_LEXICON_CODES, get_fo
 def _outline_payload(*, formula_code: str, section_ids: list[str], variant_key: str | None = None) -> dict:
     return {
         "body_formula_code": formula_code,
-        "sections": [
-            {"section_id": section_id, "goal": section_id, "evidence_ids": []}
-            for section_id in section_ids
-        ],
+        "sections": [{"section_id": section_id, "goal": section_id, "evidence_ids": []} for section_id in section_ids],
         "variant_key": variant_key,
     }
 
@@ -108,17 +105,30 @@ def test_formula_lexicon_requirements_cover_all_title_formulas_and_locked_body_f
     assert foreman["body"]
 
 
+def test_foreman_self_intro_does_not_require_unsupported_case_claim_lexicons() -> None:
+    requirements = get_formula_lexicon_requirements("FRT12", "FRB05")
+    assert [item["code"] for item in requirements["body"]] == ["persona.core_advantage"]
+
+
 def test_generated_content_must_report_formula_lexicon_usage() -> None:
     context = ContractDomainContext(
         locked_title_formula_code="T01",
         locked_body_formula_code="C02",
         required_title_lexicon_codes=frozenset({"title.audience", "title.positive_result"}),
+        allowed_title_lexicon_terms={
+            "title.audience": frozenset({"老房改造业主"}),
+            "title.positive_result": frozenset({"省心完工"}),
+        },
         allowed_body_lexicon_codes=frozenset({"body.old_house_pain", "body.renovation_advantage"}),
+        allowed_body_lexicon_terms={
+            "body.old_house_pain": frozenset({"收纳不足"}),
+            "body.renovation_advantage": frozenset({"动线合理"}),
+        },
         allowed_evidence_by_usage={"title": frozenset(), "body": frozenset()},
     )
     payload = {
         "title": {
-            "text": "标题",
+            "text": "老房改造业主省心完工",
             "formula_code": "T01",
             "evidence_ids": [],
             "lexicon_usage": [
@@ -131,7 +141,7 @@ def test_generated_content_must_report_formula_lexicon_usage() -> None:
             "sections": [{"section_id": "opening", "goal": "开篇", "evidence_ids": []}],
         },
         "draft": {
-            "body": "正文",
+            "body": "收纳不足可以通过动线合理来改善",
             "topics": [],
             "paragraph_evidence": [],
             "body_formula_code": "C02",
@@ -145,4 +155,45 @@ def test_generated_content_must_report_formula_lexicon_usage() -> None:
 
     payload["title"]["lexicon_usage"].pop()
     with pytest.raises(ContractDomainValidationError, match="标题必须使用"):
+        validate_content_node_result("GeneratedContentResultV1", payload, context)
+
+
+def test_generated_content_must_copy_lexicon_terms_and_use_them_verbatim() -> None:
+    context = ContractDomainContext(
+        locked_title_formula_code="T01",
+        locked_body_formula_code="C02",
+        required_title_lexicon_codes=frozenset({"title.audience"}),
+        allowed_title_lexicon_terms={"title.audience": frozenset({"小户型"})},
+        allowed_body_lexicon_codes=frozenset(),
+        allowed_evidence_by_usage={"title": frozenset(), "body": frozenset()},
+    )
+    payload = {
+        "title": {
+            "text": "长沙小户型装修",
+            "formula_code": "T01",
+            "evidence_ids": [],
+            "lexicon_usage": [{"code": "title.audience", "selected_terms": ["小户型"]}],
+        },
+        "outline": {
+            "body_formula_code": "C02",
+            "sections": [{"section_id": "opening", "goal": "开篇", "evidence_ids": []}],
+        },
+        "draft": {
+            "body": "正文",
+            "topics": [],
+            "paragraph_evidence": [],
+            "body_formula_code": "C02",
+            "lexicon_usage": [],
+        },
+    }
+    validate_content_node_result("GeneratedContentResultV1", payload, context)
+
+    payload["title"]["lexicon_usage"][0]["selected_terms"] = ["三居"]
+    with pytest.raises(ContractDomainValidationError, match="候选外词条") as exc_info:
+        validate_content_node_result("GeneratedContentResultV1", payload, context)
+    assert exc_info.value.correction_paths == ("title.lexicon_usage", "title.text")
+
+    payload["title"]["lexicon_usage"][0]["selected_terms"] = ["小户型"]
+    payload["title"]["text"] = "长沙装修"
+    with pytest.raises(ContractDomainValidationError, match="逐字使用"):
         validate_content_node_result("GeneratedContentResultV1", payload, context)

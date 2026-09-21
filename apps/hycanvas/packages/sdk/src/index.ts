@@ -309,6 +309,8 @@ export interface TemplateSummary {
   title: string;
   visibility: "personal" | "team" | "public";
   ownerId: string;
+  /** Present only when the current user owns the editable source design. */
+  sourceDesignId?: string | null;
   workspaceId: string | null;
   categories: string[];
   tags: string[];
@@ -327,7 +329,8 @@ export interface TemplateListFilter {
 
 export interface SaveAsTemplateInput {
   workspaceId: string;
-  /** Provide one of designId or file. */
+  /** Provide at least one. Supplying both updates the design's template from
+   *  the current in-memory snapshot without waiting for autosave. */
   designId?: string;
   file?: DesignFile;
   title: string;

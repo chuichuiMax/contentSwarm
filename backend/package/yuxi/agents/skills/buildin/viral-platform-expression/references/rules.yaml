@@ -1,0 +1,36 @@
+{
+  "module_id": "viral-platform-expression",
+  "version": "1.0.0",
+  "applies_when": {
+    "creation_mode": "viral_rewrite"
+  },
+  "rule_ids": [
+    "viral-platform-expression.v1"
+  ],
+  "runtime_rules": {
+    "forbidden_replacements": {
+      "最": "蕞"
+    },
+    "direct_cta_patterns": [
+      "评论区",
+      "评论告诉",
+      "评论我",
+      "私信我",
+      "把户型发来",
+      "把项目发来",
+      "发户型给我",
+      "发项目给我",
+      "留言户型",
+      "有装修需要找我"
+    ],
+    "high_risk_claims": [
+      "百分百",
+      "100%",
+      "保证",
+      "绝对",
+      "零风险",
+      "最便宜",
+      "蕞便宜"
+    ]
+  }
+}

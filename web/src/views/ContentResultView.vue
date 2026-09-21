@@ -44,6 +44,7 @@ const reviewChecks = computed(() => review.value.checks || [])
 const evidenceItems = computed(() => artifact.value?.evidence_snapshot?.items || [])
 const strategy = computed(() => artifact.value?.strategy_snapshot || task.value?.strategy || {})
 const reviewStatus = computed(() => review.value.status || 'pending')
+const historicalOriginal = computed(() => task.value?.runtime_config_snapshot?.creation_mode !== 'viral_rewrite')
 const matchDecision = computed(() => runAudit.value?.match_decision || {})
 const titleFormula = computed(() => buildFormulaPresentation(strategy.value, 'title'))
 const bodyFormula = computed(() => buildFormulaPresentation(strategy.value, 'body'))
@@ -53,7 +54,7 @@ const skillEvents = computed(() =>
   (runAudit.value?.events || []).filter((item) => item.event_type === 'content.skill.activated')
 )
 const canDistribute = computed(
-  () => artifact.value && ['passed', 'warning'].includes(reviewStatus.value)
+  () => !historicalOriginal.value && artifact.value && ['passed', 'warning'].includes(reviewStatus.value)
 )
 
 const taskStatusLabels = {
@@ -148,13 +149,13 @@ onBeforeUnmount(() => {
           <a-button @click="router.push('/content/accounts')">
             <UserRoundCog :size="16" />账号管理
           </a-button>
-          <a-button @click="router.push(`/content/tasks/${task.id}`)">
+          <a-button v-if="!historicalOriginal" @click="router.push(`/content/tasks/${task.id}`)">
             <FilePenLine :size="16" />继续编辑
           </a-button>
-          <a-tooltip v-if="!canDistribute" title="内容审核未通过，修订并重新审核后才能分发">
+          <a-tooltip v-if="!historicalOriginal && !canDistribute" title="内容审核未通过，修订并重新审核后才能分发">
             <a-button type="primary" disabled><Send :size="16" />分发到小红书</a-button>
           </a-tooltip>
-          <a-button v-else type="primary" @click="distributionOpen = true">
+          <a-button v-else-if="!historicalOriginal" type="primary" @click="distributionOpen = true">
             <Send :size="16" />分发到小红书
           </a-button>
         </div>
@@ -316,7 +317,7 @@ onBeforeUnmount(() => {
         <FileClock :size="28" />
         <h2>内容结果尚未生成</h2>
         <p>返回工作台继续执行生成流程，完成后即可在这里查看。</p>
-        <a-button type="primary" @click="router.push(`/content/tasks/${task.id}`)"
+        <a-button v-if="!historicalOriginal" type="primary" @click="router.push(`/content/tasks/${task.id}`)"
           >返回任务</a-button
         >
       </div>

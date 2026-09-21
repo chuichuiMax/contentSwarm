@@ -15,7 +15,7 @@ class HyCanvasDesignCreate(BaseModel):
         min_length=1,
         max_length=128,
         pattern=(
-            r"^(?:xiaohongshu-[a-z0-9-]+|"
+            r"^(?:(?:xiaohongshu|system-cover)-[a-z0-9-]+|"
             r"[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$"
         )
     )
@@ -130,6 +130,8 @@ class CoverGenerateCreate(BaseModel):
     template_asset_id: str | None = None
     mask_asset_id: str | None = None
     title: str = Field(default="", max_length=60)
+    subtitle: str = Field(default="", max_length=120)
+    reference_mode: Literal["replicate", "style"] = "replicate"
     prompt: str = Field(default="", max_length=8000)
     negative_prompt: str | None = Field(default=None, max_length=4000)
     size: str = "1080x1440"
@@ -180,6 +182,8 @@ class CoverGenerateCreate(BaseModel):
                 raise ValueError("蒙版生成需要蒙版图")
             if self.template_asset_id:
                 raise ValueError("蒙版生成不能同时携带模板图")
+        if self.reference_mode == "style" and not (self.mode == "multi_reference" and self.template_asset_id):
+            raise ValueError("风格参考模式需要多图参考并携带模板图")
         return self
 
 

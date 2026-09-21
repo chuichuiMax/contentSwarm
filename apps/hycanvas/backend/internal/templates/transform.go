@@ -48,6 +48,20 @@ func deepCopyDesign(file map[string]any) (map[string]any, map[string]string) {
 			})
 		}
 	}
+	// Template field declarations live in document metadata and point at scene
+	// nodes. Keep those references aligned with the freshly generated node ids;
+	// otherwise a copied template looks correct but its editable fields disappear
+	// the next time the save dialog is opened.
+	if meta := asObj(clone["meta"]); meta != nil {
+		for _, raw := range asArr(meta["brandEditableFields"]) {
+			field := asObj(raw)
+			if old := asStr(field["nodeId"]); old != "" {
+				if fresh, ok := idMap[old]; ok {
+					field["nodeId"] = fresh
+				}
+			}
+		}
+	}
 	// Rewrite connector endpoint attachments pointing within the copied design.
 	for _, p := range asArr(clone["pages"]) {
 		for _, root := range asArr(asObj(p)["children"]) {

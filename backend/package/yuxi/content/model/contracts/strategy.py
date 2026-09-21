@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from math import isclose
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator, model_validator
@@ -25,7 +24,7 @@ class CandidateAssessment(StrategyContract):
     )
     eligible: bool
     dimensions: dict[str, StrictInt] = Field(default_factory=dict)
-    total: float | None = None
+    total: float | None = Field(default=None, description="可选派生字段；服务端按评分维度和锁定权重重新计算")
     input_paths: list[str] = Field(
         default_factory=list,
         description=(
@@ -159,8 +158,6 @@ def validate_strategy_decision(
                 if any(value < 0 or value > 4 for value in item.dimensions.values()):
                     raise ValueError("评分必须为 0—4 整数")
                 total = sum(item.dimensions[key] / 4 * weight for key, weight in weights.items())
-                if item.total is not None and not isclose(item.total, total, abs_tol=0.001, rel_tol=0):
-                    raise ValueError("评分总分与锁定权重不一致")
                 item.total = total
             ranked[label][item.candidate_id] = item
     if result.status != "selected":

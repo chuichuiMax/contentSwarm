@@ -1,0 +1,12 @@
+{
+  "cases": [
+    {
+      "id": "layout-long-wall",
+      "expect": [
+        "无超长段落",
+        "Emoji 贴近对应语义",
+        "无 Markdown 结构"
+      ]
+    }
+  ]
+}

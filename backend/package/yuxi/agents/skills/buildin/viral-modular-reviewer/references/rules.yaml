@@ -1,0 +1,24 @@
+{
+  "module_id": "viral-modular-reviewer",
+  "version": "1.1.0",
+  "applies_when": {
+    "creation_mode": "viral_rewrite"
+  },
+  "rule_ids": [
+    "viral-modular-reviewer.v1.1"
+  ],
+  "runtime_rules": {
+    "uses_shared_rule_bundle": true,
+    "persona_opening_layers_required": [
+      "identity",
+      "value",
+      "evidence"
+    ],
+    "persona_opening_window_paragraphs": 2,
+    "persona_advantage_count": {
+      "min": 2,
+      "max": 3
+    },
+    "persona_advantages_match_current_pain": true
+  }
+}

@@ -1,5 +1,8 @@
 """图库组合的布局与选择契约；与画布 photo grid 使用相同的行列、跨格结构。"""
 
+import io
+
+from PIL import Image
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
@@ -61,3 +64,43 @@ class PhotoComposition(BaseModel):
     def render_layout(self):
         layout = next(item for item in PHOTO_LAYOUTS if item["id"] == self.layout_id)
         return {"rows": layout["rows"], "cols": layout["cols"], "cells": layout["cells"], "gap": 8}
+
+
+def _focal_crop(image: Image.Image, target_w: int, target_h: int, focal_x: float, focal_y: float) -> Image.Image:
+    scale = max(target_w / image.width, target_h / image.height)
+    scaled_w = max(target_w, round(image.width * scale))
+    scaled_h = max(target_h, round(image.height * scale))
+    resized = image.resize((scaled_w, scaled_h), Image.Resampling.LANCZOS)
+    left = min(max(round(focal_x * scaled_w - target_w / 2), 0), scaled_w - target_w)
+    top = min(max(round(focal_y * scaled_h - target_h / 2), 0), scaled_h - target_h)
+    return resized.crop((left, top, left + target_w, top + target_h))
+
+
+def render_composition_image(
+    photos: list[tuple[bytes, float, float]],
+    layout: dict,
+    *,
+    width: int = 1080,
+    height: int = 1440,
+) -> bytes:
+    """把冻结的组合布局拼成单张封面底图;photos 与 layout["cells"] 同序,每项为 (图片字节, focal_x, focal_y)。"""
+    rows = int(layout["rows"])
+    cols = int(layout["cols"])
+    gap = int(layout.get("gap") or 8)
+    cells = list(layout["cells"])
+    if len(photos) != len(cells):
+        raise ValueError("组合图片数量与布局不匹配")
+    canvas = Image.new("RGB", (width, height), (255, 255, 255))
+    cell_w = (width - gap * (cols - 1)) / cols
+    cell_h = (height - gap * (rows - 1)) / rows
+    for cell, (raw, focal_x, focal_y) in zip(cells, photos, strict=True):
+        with Image.open(io.BytesIO(raw)) as source:
+            photo = source.convert("RGB")
+            photo.load()
+        box_w = round(cell_w * int(cell["colSpan"]) + gap * (int(cell["colSpan"]) - 1))
+        box_h = round(cell_h * int(cell["rowSpan"]) + gap * (int(cell["rowSpan"]) - 1))
+        fitted = _focal_crop(photo, box_w, box_h, float(focal_x), float(focal_y))
+        canvas.paste(fitted, (round(int(cell["col"]) * (cell_w + gap)), round(int(cell["row"]) * (cell_h + gap))))
+    output = io.BytesIO()
+    canvas.save(output, format="PNG", optimize=True)
+    return output.getvalue()

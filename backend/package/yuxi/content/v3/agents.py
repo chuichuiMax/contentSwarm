@@ -29,8 +29,18 @@ class ContentAgentSpec:
 
 CONTENT_AGENT_SPECS = (
     ContentAgentSpec(
+        slug="content-fact-extraction-agent",
+        name="创作事实抽取智能体",
+        description="只从用户本次输入原文摘录缺失业务变量，不参与策略、公式或参考选择。",
+        skills=("content-fact-extractor",),
+        reasoning_effort="low",
+        model_call_timeout_seconds=45,
+        model_retry_times=0,
+        config_version=1,
+    ),
+    ContentAgentSpec(
         slug="content-strategy-agent",
-        name="内容策略 Agent",
+        name="内容策略智能体",
         description="分析内容价值、从候选集中确定内容方向，并解释固定规则结果及排序候选公式。",
         skills=("content-value-analyzer", "content-strategy-planner"),
         skill_tools=("get_creation_rule_bundle",),
@@ -41,7 +51,7 @@ CONTENT_AGENT_SPECS = (
     ),
     ContentAgentSpec(
         slug="content-research-agent",
-        name="内容调研 Agent",
+        name="内容调研智能体",
         description="按锁定策略收集真实业务资料与爆款结构参考。",
         skills=("content-evidence-researcher", "viral-reference-selector", "strategy-product-researcher"),
         skill_tools=("get_business_facts", "query_kb", "open_kb_document", "find_kb_document"),
@@ -52,18 +62,18 @@ CONTENT_AGENT_SPECS = (
     ),
     ContentAgentSpec(
         slug="content-viral-asset-agent",
-        name="爆款资产准备 Agent",
+        name="爆款素材准备智能体",
         description="入库时核验完整原文并提取可复用参考卡和结构蓝图。",
         skills=("viral-asset-preparer", "viral-document-detector"),
         reasoning_effort="low",
         inherit_context_from="content-research-agent",
-        model_call_timeout_seconds=100,
+        model_call_timeout_seconds=180,
         model_retry_times=0,
-        config_version=3,
+        config_version=4,
     ),
     ContentAgentSpec(
         slug="content-joint-strategy-agent",
-        name="行业联合策略 Agent",
+        name="内容联合策略智能体",
         description="依据行业 Skill 比较公式、独立手法和已准备参考卡，提交一次可审计决策。",
         skills=(
             "content-joint-strategy-selector",
@@ -79,7 +89,7 @@ CONTENT_AGENT_SPECS = (
     ),
     ContentAgentSpec(
         slug="content-business-rule-research-agent",
-        name="业务与规则调研 Agent",
+        name="业务规则调研智能体",
         description="并发检索品牌业务事实与平台业务规则。",
         skills=("content-business-rule-researcher",),
         skill_tools=("query_kb",),
@@ -91,7 +101,7 @@ CONTENT_AGENT_SPECS = (
     ),
     ContentAgentSpec(
         slug="content-price-research-agent",
-        name="价格调研 Agent",
+        name="价格调研智能体",
         description="并发检索与当前项目口径一致的价格证据。",
         skills=("content-price-researcher",),
         skill_tools=("query_kb",),
@@ -104,7 +114,7 @@ CONTENT_AGENT_SPECS = (
     ),
     ContentAgentSpec(
         slug="content-compliance-research-agent",
-        name="封禁词调研 Agent",
+        name="问题词与合规规则调研智能体",
         description="并发读取封禁词库中的问题词与常用表达映射。",
         skills=("content-compliance-researcher",),
         skill_tools=("query_kb",),
@@ -116,7 +126,7 @@ CONTENT_AGENT_SPECS = (
     ),
     ContentAgentSpec(
         slug="content-viral-candidate-agent",
-        name="爆款候选检索 Agent",
+        name="爆款候选检索智能体",
         description="并发检索多篇与当前输入变量匹配的爆款候选。",
         skills=("viral-candidate-researcher",),
         skill_tools=("query_kb",),
@@ -128,7 +138,7 @@ CONTENT_AGENT_SPECS = (
     ),
     ContentAgentSpec(
         slug="content-viral-selection-agent",
-        name="爆款匹配与结构解析 Agent",
+        name="爆款参考选择智能体",
         description="结合输入变量与真实证据选择唯一可填充爆款并抽取动态结构。",
         skills=("viral-reference-selector",),
         reasoning_effort="low",
@@ -139,7 +149,7 @@ CONTENT_AGENT_SPECS = (
     ),
     ContentAgentSpec(
         slug="content-title-agent",
-        name="标题创作 Agent",
+        name="标题创作智能体",
         description="按锁定标题公式生成候选，并从确定性校验通过的候选中选择最终标题。",
         skills=("content-title-generator",),
         skill_tools=(),
@@ -147,7 +157,7 @@ CONTENT_AGENT_SPECS = (
     ),
     ContentAgentSpec(
         slug="content-body-agent",
-        name="正文创作 Agent",
+        name="正文创作智能体",
         description="按锁定正文公式构建大纲、生成正文并执行人设润色。",
         skills=("content-outline-builder", "content-body-generator", "persona-style-polisher"),
         skill_tools=(),
@@ -155,7 +165,7 @@ CONTENT_AGENT_SPECS = (
     ),
     ContentAgentSpec(
         slug="content-generation-agent",
-        name="内容创作 Agent",
+        name="内容创作智能体",
         description="按已锁定的创作手法与公式，一次生成标题、大纲和具备自然语气、情绪与人设表达的正文。",
         reasoning_effort="medium",
         model_call_timeout_seconds=120,
@@ -174,21 +184,78 @@ CONTENT_AGENT_SPECS = (
     ),
     ContentAgentSpec(
         slug="content-review-agent",
-        name="内容审核 Agent",
+        name="内容审核智能体",
         description="在确定性校验后审查公式执行、事实一致性和风险。",
         skills=("content-reviewer",),
         skill_tools=("query_kb", "open_kb_document", "find_kb_document"),
         config_version=3,
     ),
     ContentAgentSpec(
+        slug="content-viral-generation-agent",
+        name="爆款仿写创作智能体",
+        description="按锁定公式和唯一爆款结构，装配模块化规则后一次生成或定点回修完整内容。",
+        skills=(
+            "viral-content-author",
+            "viral-author-core",
+            "viral-title-author",
+            "viral-body-author",
+            "viral-persona-author",
+            "viral-natural-expression",
+            "viral-layout-expression",
+            "viral-platform-expression",
+            "viral-price-author",
+            "viral-topic-author",
+        ),
+        skill_tools=(),
+        reasoning_effort="medium",
+        model_call_timeout_seconds=120,
+        model_retry_times=1,
+        inherit_context_from="content-generation-agent",
+        config_version=2,
+    ),
+    ContentAgentSpec(
+        slug="content-viral-review-agent",
+        name="爆款仿写审核智能体",
+        description="一次审核爆款结构、事实与报价、人设、Emoji 和自然表达。",
+        skills=("viral-content-reviewer", "viral-modular-reviewer"),
+        skill_tools=(),
+        inherit_context_from="content-review-agent",
+        config_version=2,
+    ),
+    ContentAgentSpec(
         slug="content-visual-agent",
-        name="内容视觉 Agent",
+        name="内容视觉智能体",
         description="制定视觉方案、提交封面任务并审核返回资产。",
-        skills=("content-visual-planner", "content-cover-generator", "content-visual-reviewer"),
+        skills=(
+            "content-visual-planner",
+            "viral-cover-matcher",
+            "content-cover-generator",
+            "content-visual-reviewer",
+        ),
         skill_tools=("create_content_cover_job",),
-        config_version=3,
+        config_version=4,
     ),
 )
+
+LEGACY_CONTENT_AGENT_NAMES = {
+    "content-fact-extraction-agent": "创作事实抽取 Agent",
+    "content-strategy-agent": "内容策略 Agent",
+    "content-research-agent": "内容调研 Agent",
+    "content-viral-asset-agent": "爆款资产准备 Agent",
+    "content-joint-strategy-agent": "行业联合策略 Agent",
+    "content-business-rule-research-agent": "业务与规则调研 Agent",
+    "content-price-research-agent": "价格调研 Agent",
+    "content-compliance-research-agent": "封禁词调研 Agent",
+    "content-viral-candidate-agent": "爆款候选检索 Agent",
+    "content-viral-selection-agent": "爆款匹配与结构解析 Agent",
+    "content-title-agent": "标题创作 Agent",
+    "content-body-agent": "正文创作 Agent",
+    "content-generation-agent": "内容创作 Agent",
+    "content-review-agent": "内容审核 Agent",
+    "content-viral-generation-agent": "爆款仿写创作 Agent",
+    "content-viral-review-agent": "爆款仿写审核 Agent",
+    "content-visual-agent": "内容视觉 Agent",
+}
 
 
 def _agent_context(spec: ContentAgentSpec, inherited_context: dict | None = None) -> dict:
@@ -232,12 +299,36 @@ def validate_existing_content_agent(agent: Agent, spec: ContentAgentSpec) -> Non
 def migrate_system_content_agent(agent: Agent, spec: ContentAgentSpec, *, now=None) -> bool:
     """按配置版本升级平台种子 Agent，不接管用户修改过的配置。"""
 
+    metadata_changed = False
+    if agent.created_by == "system" and agent.updated_by in {None, "system"}:
+        if agent.name != spec.name or agent.description != spec.description:
+            agent.name = spec.name
+            agent.description = spec.description
+            agent.updated_by = "system"
+            agent.updated_at = now or utc_now_naive()
+            metadata_changed = True
+    elif agent.created_by == "system" and agent.name == LEGACY_CONTENT_AGENT_NAMES.get(spec.slug):
+        agent.name = spec.name
+        agent.updated_at = now or utc_now_naive()
+        metadata_changed = True
+
     current_version = int(agent.config_version or 1)
     if current_version >= spec.config_version:
-        return False
+        return metadata_changed
     context = (agent.config_json or {}).get("context")
     if agent.created_by == "system" and agent.updated_by != "system":
         additive_migrations = {
+            "content-visual-agent": {
+                3: (
+                    ("viral-cover-matcher",),
+                    {
+                        "content-visual-planner",
+                        "content-cover-generator",
+                        "content-visual-reviewer",
+                    },
+                    {},
+                ),
+            },
             "content-price-research-agent": {
                 5: (
                     (),
@@ -319,9 +410,9 @@ def migrate_system_content_agent(agent: Agent, spec: ContentAgentSpec, *, now=No
             agent.config_version = spec.config_version
             agent.updated_at = now or utc_now_naive()
             return True
-        return False
+        return metadata_changed
     if agent.created_by != "system":
-        return False
+        return metadata_changed
     if (
         agent.backend_id != DEFAULT_AGENT_BACKEND_ID
         or agent.is_subagent

@@ -46,6 +46,52 @@ func TestSeedLoads(t *testing.T) {
 	}
 }
 
+func TestSystemCoverTemplatesAreSelectableAndFillable(t *testing.T) {
+	count := 0
+	for _, entry := range seedEntries {
+		template := entry.toTemplate()
+		if !strings.HasPrefix(template.ID, "system-cover-") {
+			continue
+		}
+		count++
+		if !contains(template.Tags, "小红书") || asNum(template.Format["width"]) != 1080 || asNum(template.Format["height"]) != 1440 {
+			t.Fatalf("system cover missing zone or format: %s", template.ID)
+		}
+		var file map[string]any
+		if err := json.Unmarshal(entry.File, &file); err != nil {
+			t.Fatal(err)
+		}
+		nodeIDs := map[string]bool{}
+		for _, page := range asArr(file["pages"]) {
+			for _, root := range asArr(asObj(page)["children"]) {
+				visitTree(asObj(root), func(node map[string]any) {
+					nodeIDs[asStr(node["id"])] = true
+					data := asObj(node["data"])
+					if contains([]string{"city", "layout", "trade", "service", "price", "area", "number"}, asStr(data["coverElementId"])) ||
+						contains([]string{"tag", "number"}, asStr(data["elementType"])) || asStr(node["name"]) == "数字与标签分隔线" {
+						t.Fatalf("system cover contains removed tag or number element in %s: %s", template.ID, asStr(node["name"]))
+					}
+				})
+			}
+		}
+		if len(template.FillableFields) == 0 {
+			t.Fatalf("system cover has no fillable fields: %s", template.ID)
+		}
+		fields := map[string]string{"主标题": "装修案例", "副标题": "施工细节"}
+		for _, raw := range template.FillableFields {
+			if !nodeIDs[asStr(asObj(raw)["nodeId"])] {
+				t.Fatalf("field refers to missing node in %s", template.ID)
+			}
+		}
+		if err := fillTextFields(file, template.FillableFields, fields); err != nil {
+			t.Fatalf("system cover cannot fill title and subtitle in %s: %v", template.ID, err)
+		}
+	}
+	if count != 52 {
+		t.Fatalf("want 52 system covers, got %d", count)
+	}
+}
+
 func TestSearchTemplates(t *testing.T) {
 	pool := []Template{
 		{ID: "1", Title: "Birthday Poster", Tags: []string{"party"}, Categories: []string{"poster"}},
@@ -90,9 +136,32 @@ func TestRowToTemplateUsesDeclaredFieldsFromDesignMeta(t *testing.T) {
 	}
 }
 
+func TestRowToTemplateForUserOnlyExposesOwnedSourceDesign(t *testing.T) {
+	sourceDesignID := "source-design"
+	now := time.Now()
+	row := TemplateRow{
+		ID: "custom-template", OwnerID: "owner", SourceDesignID: &sourceDesignID,
+		Title: "项目案例封面", Visibility: "public", File: json.RawMessage(`{"pages":[]}`),
+		Style: json.RawMessage(`{}`), FillableFields: json.RawMessage(`[]`),
+		Attributions: json.RawMessage(`[]`), CreatedAt: now, UpdatedAt: now,
+	}
+
+	owned := rowToTemplateForUser(row, "owner")
+	if owned.SourceDesignID == nil || *owned.SourceDesignID != sourceDesignID {
+		t.Fatalf("owner source design = %v", owned.SourceDesignID)
+	}
+	shared := rowToTemplateForUser(row, "viewer")
+	if shared.SourceDesignID != nil {
+		t.Fatalf("viewer must not receive source design, got %q", *shared.SourceDesignID)
+	}
+}
+
 func TestDeepCopyDesign(t *testing.T) {
 	file := map[string]any{
 		"id": "orig",
+		"meta": map[string]any{"brandEditableFields": []any{
+			map[string]any{"nodeId": "a", "kind": "text", "label": "标题"},
+		}},
 		"pages": []any{map[string]any{
 			"id": "p1", "children": []any{
 				map[string]any{"id": "a", "type": "shape"},
@@ -122,6 +191,10 @@ func TestDeepCopyDesign(t *testing.T) {
 	attach := conn["start"].(map[string]any)["attach"].(map[string]any)
 	if attach["nodeId"] != newA {
 		t.Fatalf("connector attach should remap to %q, got %v (idMap %v)", newA, attach["nodeId"], idMap["a"])
+	}
+	field := asObj(asArr(asObj(copy["meta"])["brandEditableFields"])[0])
+	if field["nodeId"] != newA {
+		t.Fatalf("template field should remap to %q, got %v", newA, field["nodeId"])
 	}
 }
 
@@ -153,6 +226,66 @@ func TestFillTextFieldsPreservesStyle(t *testing.T) {
 	}
 	if asStr(asObj(paragraph["style"])["align"]) != "center" {
 		t.Fatal("paragraph style should be preserved")
+	}
+}
+
+func TestFillTextFieldsDynamicallySeparatesStackedTitleAndSubtitle(t *testing.T) {
+	tests := []struct {
+		name      string
+		title     string
+		wantMoved bool
+	}{
+		{name: "short title keeps authored spacing", title: "长沙装修"},
+		{name: "two line title keeps authored spacing", title: "长沙老房翻新报价"},
+		{name: "three line title pushes subtitle", title: "长沙同城装修工长，水电泥瓦自己盯", wantMoved: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			title := map[string]any{
+				"id": "title-node", "type": "text",
+				"transform": map[string]any{"x": 72.0, "y": 264.0, "rotation": 0.0},
+				"size":      map[string]any{"width": 900.0, "height": 184.0},
+				"box": map[string]any{
+					"mode": "autoHeight", "width": 900.0, "height": 184.0,
+					"padding": map[string]any{"t": 8.0, "r": 8.0, "b": 8.0, "l": 8.0},
+				},
+				"content": []any{map[string]any{
+					"runs": []any{map[string]any{"text": "旧标题", "style": map[string]any{"fontSize": 112.0, "lineHeight": 1.2}}},
+				}},
+			}
+			subtitle := map[string]any{
+				"id": "subtitle-node", "type": "text",
+				"transform": map[string]any{"x": 72.0, "y": 640.0, "rotation": 0.0},
+				"size":      map[string]any{"width": 900.0, "height": 85.0},
+				"box":       map[string]any{"mode": "autoHeight", "width": 900.0, "height": 85.0},
+				"content": []any{map[string]any{
+					"runs": []any{map[string]any{"text": "旧副标题", "style": map[string]any{"fontSize": 46.0}}},
+				}},
+			}
+			file := map[string]any{"pages": []any{map[string]any{"children": []any{title, subtitle}}}}
+			fields := []any{
+				map[string]any{"nodeId": "title-node", "kind": "text", "label": "主标题", "semanticRole": "title"},
+				map[string]any{"nodeId": "subtitle-node", "kind": "text", "label": "副标题", "semanticRole": "subtitle"},
+			}
+			if err := fillTextFields(file, fields, map[string]string{"主标题": tt.title, "副标题": "30岁，长沙从业5年；施工范围先说清"}); err != nil {
+				t.Fatalf("fillTextFields: %v", err)
+			}
+
+			subtitleY := asNum(asObj(subtitle["transform"])["y"])
+			if !tt.wantMoved {
+				if subtitleY != 640 {
+					t.Fatalf("subtitle moved for fitting title: y=%v", subtitleY)
+				}
+				return
+			}
+			titleHeight := estimateAutoHeightText(title)
+			if subtitleY < 264+titleHeight+titleSubtitleGap-0.01 {
+				t.Fatalf("subtitle still overlaps title: titleHeight=%v subtitleY=%v", titleHeight, subtitleY)
+			}
+			if asNum(asObj(title["box"])["height"]) != titleHeight || asNum(asObj(title["size"])["height"]) != titleHeight {
+				t.Fatalf("auto-height title bounds were not updated: box=%+v size=%+v", title["box"], title["size"])
+			}
+		})
 	}
 }
 
@@ -601,6 +734,28 @@ func TestTemplates_DB(t *testing.T) {
 	if err != nil || !contains(zoneSaved.Tags, "小红书") || len(zoneSaved.Categories) != 1 || zoneSaved.Categories[0] != "小红书" {
 		t.Fatalf("zone tag not inherited: %+v err=%v", zoneSaved, err)
 	}
+	zoneDesign["title"] = "Updated source snapshot"
+	zoneResaved, err := svc.SaveAsTemplate(ctx, owner.ID, SaveInput{
+		WorkspaceID: ws.ID, DesignID: zoneRec.ID, File: zoneDesign,
+		Title: "Updated Zone Template", Visibility: "workspace",
+	})
+	if err != nil {
+		t.Fatalf("re-save zone template: %v", err)
+	}
+	if zoneResaved.ID != zoneSaved.ID || zoneResaved.Title != "Updated Zone Template" {
+		t.Fatalf("re-saving one design should update its template: first=%+v second=%+v", zoneSaved, zoneResaved)
+	}
+	var linkedTemplateCount int
+	if err := tx.QueryRow(ctx, `SELECT count(*) FROM "templates" WHERE "source_design_id" = $1`, zoneRec.ID).Scan(&linkedTemplateCount); err != nil {
+		t.Fatalf("count templates linked to source design: %v", err)
+	}
+	if linkedTemplateCount != 1 {
+		t.Fatalf("source design created %d templates, want 1", linkedTemplateCount)
+	}
+	zoneTemplateFile, err := svc.GetFile(ctx, owner.ID, zoneResaved.ID)
+	if err != nil || asStr(zoneTemplateFile["title"]) != "Updated source snapshot" {
+		t.Fatalf("re-save should use the current inline snapshot: file=%+v err=%v", zoneTemplateFile, err)
+	}
 	appliedZoneID, err := svc.Apply(ctx, owner.ID, zoneSaved.ID, ws.ID)
 	if err != nil {
 		t.Fatalf("apply zone template: %v", err)
@@ -608,6 +763,30 @@ func TestTemplates_DB(t *testing.T) {
 	appliedZone, err := persist.GetRecord(ctx, appliedZoneID)
 	if err != nil || appliedZone.TemplateZone == nil || *appliedZone.TemplateZone != "xiaohongshu" {
 		t.Fatalf("applied design should remain in Xiaohongshu zone: %+v err=%v", appliedZone, err)
+	}
+
+	// The featured-cover zone follows the same save/apply loop with its own tag.
+	featuredDesign := map[string]any{
+		"id": uuid.NewString(), "schemaVersion": 24, "title": "精选封面",
+		"unit": "px", "dpi": 96,
+		"pages":  []any{map[string]any{"id": "p-featured", "name": "Page 1", "width": 1080, "height": 1440, "children": []any{}}},
+		"assets": []any{}, "fonts": []any{}, "meta": map[string]any{"templateZone": "featured"},
+	}
+	featuredRec, err := persist.Create(ctx, ws.ID, "精选封面", persistence.DesignFile(featuredDesign), &owner.ID)
+	if err != nil {
+		t.Fatalf("create featured design: %v", err)
+	}
+	featuredSaved, err := svc.SaveAsTemplate(ctx, owner.ID, SaveInput{WorkspaceID: ws.ID, DesignID: featuredRec.ID, Title: "Featured Cover", Visibility: "public"})
+	if err != nil || !contains(featuredSaved.Tags, "精选封面") || len(featuredSaved.Categories) != 1 || featuredSaved.Categories[0] != "精选封面" {
+		t.Fatalf("featured zone tag not inherited: %+v err=%v", featuredSaved, err)
+	}
+	appliedFeaturedID, err := svc.Apply(ctx, owner.ID, featuredSaved.ID, ws.ID)
+	if err != nil {
+		t.Fatalf("apply featured template: %v", err)
+	}
+	appliedFeatured, err := persist.GetRecord(ctx, appliedFeaturedID)
+	if err != nil || appliedFeatured.TemplateZone == nil || *appliedFeatured.TemplateZone != "featured" {
+		t.Fatalf("applied design should remain in featured zone: %+v err=%v", appliedFeatured, err)
 	}
 
 	// Save the design as a private template; it then appears in the list.
@@ -680,6 +859,18 @@ func TestTemplates_DB(t *testing.T) {
 	}
 	if _, err := svc.Get(ctx, owner.ID, saved.ID); err != ErrNotFound {
 		t.Fatalf("deleted template should no longer exist, got %v", err)
+	}
+
+	// Public templates (featured-cover uploads) are retractable by their owner.
+	publicSaved, err := svc.SaveAsTemplate(ctx, owner.ID, SaveInput{WorkspaceID: ws.ID, File: loaded.File, Title: "Public Template", Visibility: "public"})
+	if err != nil {
+		t.Fatalf("SaveAsTemplate public: %v", err)
+	}
+	if err := svc.Delete(ctx, other.ID, publicSaved.ID); err != ErrForbidden {
+		t.Fatalf("non-owner should not delete a public template, got %v", err)
+	}
+	if err := svc.Delete(ctx, owner.ID, publicSaved.ID); err != nil {
+		t.Fatalf("owner should delete their public template: %v", err)
 	}
 	if len(seedEntries) > 0 {
 		if err := svc.Delete(ctx, owner.ID, seedEntries[0].toTemplate().ID); err != ErrForbidden {

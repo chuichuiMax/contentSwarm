@@ -84,9 +84,9 @@ def _payload(serial_no: str, images: list[dict], *, type_name: str = "施工报�
             "typeName": type_name,
             "quotationInfo": {"houseArea": "120平", "houseType": "三室两厅"},
             "prices": [
-                {"format": "半包", "content": "人工+辅材 6.8万"},
-                {"format": "全包", "content": "人工+辅材+主材 12.8万"},
+                {"format": "单价面积", "content": "防水 6 元/㎡ × 20㎡ = 120 元"},
             ],
+            "titlePrice": {"label": "整套人工合计", "displayText": "1.16w"},
             "mySite": "长沙市雨花区某某小区",
         },
         "tags": ["报价透明", "长沙装修"],
@@ -110,6 +110,13 @@ async def test_dangjia_endpoints_require_authentication(test_client):
     random_id = uuid.uuid4().hex
     assert (await test_client.get(f"/api/dangjia/content/tasks/{random_id}")).status_code == 401
     assert (await test_client.get(f"/api/dangjia/content/runs/{random_id}")).status_code == 401
+
+
+async def test_dangjia_media_route_is_public(test_client):
+    response = await test_client.get("/api/dangjia/content/media/cca_0123456789abcdef0123456789abcdef/1.png")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Dangjia media not found"
 
 
 async def test_dangjia_rejects_unknown_type_name(test_client, admin_headers):
@@ -152,6 +159,49 @@ async def test_dangjia_missing_task_and_run_return_not_found(test_client, admin_
 
     run_response = await test_client.get(f"/api/dangjia/content/runs/{random_id}", headers=admin_headers)
     assert run_response.status_code == 404
+
+
+async def test_dangjia_retry_ignores_draft_without_run(test_client, admin_headers):
+    serial_no = f"pytest-{uuid.uuid4().hex[:12]}"
+    bootstrap = await test_client.get("/api/content/bootstrap", headers=admin_headers)
+    assert bootstrap.status_code == 200, bootstrap.text
+    template = next(item for item in bootstrap.json()["industry_templates"] if item["slug"] == "decoration")
+    created = await test_client.post(
+        "/api/content/tasks",
+        headers=admin_headers,
+        json={
+            "industry_template_id": template["id"],
+            "mode": "quick",
+            "content_goal": "acquire",
+            "content_type_code": "CT03",
+            "name": "pytest 当家失败重试草稿",
+        },
+    )
+    assert created.status_code == 200, created.text
+    task_id = created.json()["task"]["id"]
+    try:
+        saved = await test_client.put(
+            f"/api/content/tasks/{task_id}/brief",
+            headers=admin_headers,
+            json={
+                "brief": {
+                    "form_values": {
+                        "external_serial_no": serial_no,
+                        "external_source": "dangjia",
+                    }
+                }
+            },
+        )
+        assert saved.status_code == 200, saved.text
+
+        payload = _payload(serial_no, _fake_images(1, cover_indexes=()))
+        retried = await test_client.post("/api/dangjia/content/tasks", json=payload, headers=admin_headers)
+
+        assert retried.status_code == 422, retried.text
+        assert retried.json()["detail"]["error"]["code"] == "DANGJIA_COVER_IMAGE_INVALID"
+    finally:
+        deleted = await test_client.delete(f"/api/content/tasks/{task_id}", headers=admin_headers)
+        assert deleted.status_code == 200, deleted.text
 
 
 async def test_dangjia_create_compile_run_and_idempotent_replay(test_client, admin_headers, image_server):
@@ -199,11 +249,21 @@ async def test_dangjia_create_compile_run_and_idempotent_replay(test_client, adm
         assert form_values["pain"] == ["想搞清楚120平三室两厅的施工报价明细"]
         assert form_values["project_type"] == "三室两厅"
         assert form_values["area"] == "120平"
-        assert form_values["budget"] == "【半包】人工+辅材 6.8万\n【全包】人工+辅材+主材 12.8万"
+        assert "budget" not in form_values
+        assert form_values["quote_format"] == "单价面积"
+        assert form_values["location"] == "长沙市"
         assert "水电改造" in form_values["craft_and_materials"]
         assert form_values["project_site"] == "长沙市雨花区某某小区"
         assert form_values["content_tags"] == ["报价透明", "长沙装修"]
         assert form_values["type_name"] == "施工报价"
+        assert task["content_type_code"] == "CT03"
+        runtime = task["runtime_config_snapshot"]
+        assert runtime["dangjia_request_fingerprint"]
+        assert runtime["trusted_external_material_snapshot"]["title_price"]["display_text"] == "1.16w"
+        assert (
+            runtime["trusted_external_material_snapshot"]["quote_block"]["original_content"]
+            == "防水 6 元/㎡ × 20㎡ = 120 元"
+        )
         assert task["brief"]["persona"]["description"].startswith("30岁，5年装修工龄，服务城市长沙市。")
 
         visual = task["brief"]["visual_material"]
@@ -232,6 +292,11 @@ async def test_dangjia_create_compile_run_and_idempotent_replay(test_client, adm
         assert replay_body["task_id"] == task_id
         assert replay_body["serial_no"] == serial_no
         assert replay_body["run_id"] == run_id
+
+        changed_payload = {**payload, "tags": [*payload["tags"], "新标签"]}
+        conflict = await test_client.post("/api/dangjia/content/tasks", json=changed_payload, headers=admin_headers)
+        assert conflict.status_code == 409, conflict.text
+        assert conflict.json()["detail"]["error"]["code"] == "DANGJIA_REQUEST_CONFLICT"
     finally:
         if task_id:
             deleted = await test_client.delete(f"/api/content/tasks/{task_id}", headers=admin_headers)

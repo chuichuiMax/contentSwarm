@@ -413,6 +413,18 @@ def test_content_review_can_cite_frozen_style_reference():
     assert result.checks[0].evidence_ids == ["e-style"]
 
 
+def test_standardized_content_review_does_not_recopy_opaque_evidence_ids():
+    payload = deepcopy(VALID_PAYLOADS["ContentReviewResultV1"])
+    payload["checks"][0]["evidence_ids"] = []
+
+    result = validate_content_node_result("StandardizedContentReviewResultV1", payload, DOMAIN_CONTEXT)
+
+    assert result.checks[0].evidence_ids == []
+    payload["checks"][0]["evidence_ids"] = ["e-body"]
+    with pytest.raises(ValidationError, match="at most 0 items"):
+        validate_content_node_result("StandardizedContentReviewResultV1", payload, DOMAIN_CONTEXT)
+
+
 def test_visual_plan_must_use_exactly_the_task_locked_gallery_image():
     context = replace(DOMAIN_CONTEXT, required_source_asset_ids=("asset-1",))
     payload = deepcopy(VALID_PAYLOADS["VisualPlanResultV1"])
@@ -722,6 +734,32 @@ def test_body_number_validation_ignores_line_leading_sequence_markers_only():
     assert exc_info.value.code == "unsupported_number"
 
 
+def test_body_number_validation_ignores_keycap_emoji_but_blocks_factual_numbers():
+    payload = deepcopy(VALID_PAYLOADS["ContentDraftResultV1"])
+    payload["body"] = "1️⃣ 先看施工范围\n2⃣ 再核对材料\n3️⃣ 最后确认报价"
+
+    validate_content_node_result("ContentDraftResultV1", payload, DOMAIN_CONTEXT)
+
+    payload["body"] += "，另收 99 元"
+    with pytest.raises(ContractDomainValidationError) as exc_info:
+        validate_content_node_result("ContentDraftResultV1", payload, DOMAIN_CONTEXT)
+
+    assert exc_info.value.code == "unsupported_number"
+
+
+def test_generated_body_length_is_checked_before_node_completion():
+    payload = {
+        "title": {"text": "真实施工说明", "formula_code": "T1", "evidence_ids": ["e-title"]},
+        "outline": deepcopy(VALID_PAYLOADS["OutlineResultV1"]),
+        "draft": {**deepcopy(VALID_PAYLOADS["ContentDraftResultV1"]), "body": "真实施工说明。" * 100},
+    }
+
+    with pytest.raises(ContractDomainValidationError) as exc_info:
+        validate_content_node_result("GeneratedContentResultV1", payload, DOMAIN_CONTEXT)
+
+    assert exc_info.value.code == "body_length_out_of_range"
+
+
 def test_common_agent_input_requires_all_trace_and_lock_fields():
     payload = {
         "task_id": "task",
@@ -779,6 +817,122 @@ async def test_result_collector_requires_activation_exactly_one_submission_and_n
     empty = ContentNodeResultCollector("ContentReviewResultV1", DOMAIN_CONTEXT, runtime)
     with pytest.raises(ContractDomainValidationError, match="未通过"):
         empty.finalize()
+
+
+@pytest.mark.asyncio
+async def test_generated_content_correction_only_replaces_failed_fields():
+    runtime = type("Runtime", (), {})()
+    runtime._required_skill_closure = []
+    runtime._activated_required_skills = []
+    context = replace(
+        DOMAIN_CONTEXT,
+        required_title_lexicon_codes=frozenset({"title.audience"}),
+        allowed_body_lexicon_codes=frozenset({"body.pain"}),
+    )
+    first_payload = {
+        "title": {
+            "text": "装修业主原始标题",
+            "formula_code": "T1",
+            "evidence_ids": ["e-title"],
+            "lexicon_usage": [{"code": "title.audience", "selected_terms": ["装修业主"]}],
+        },
+        "outline": {
+            "body_formula_code": "B1",
+            "sections": [{"section_id": "s1", "goal": "说明痛点", "evidence_ids": ["e-bod"]}],
+        },
+        "draft": {
+            "body": "返工原始正文",
+            "topics": ["装修"],
+            "paragraph_evidence": [{"paragraph_id": "p1", "evidence_ids": ["e-body"]}],
+            "body_formula_code": "B1",
+            "lexicon_usage": [{"code": "body.pain", "selected_terms": ["返工"]}],
+        },
+    }
+    collector = ContentNodeResultCollector("GeneratedContentResultV1", context, runtime)
+    first_parsed = get_contract_model("GeneratedContentResultV1").model_validate(first_payload)
+
+    with pytest.raises(ContractDomainValidationError) as exc_info:
+        await collector.submit(
+            title=first_parsed.title,
+            outline=first_parsed.outline,
+            draft=first_parsed.draft,
+        )
+    assert exc_info.value.code == "evidence_forbidden"
+    assert exc_info.value.correction_paths == ("outline.sections.0.evidence_ids",)
+
+    correction = deepcopy(first_payload)
+    correction["outline"]["sections"][0]["evidence_ids"] = ["e-body"]
+    correction["title"]["text"] = "不应采用的新标题"
+    correction["title"]["lexicon_usage"] = []
+    correction["draft"]["body"] = "不应采用的新正文"
+    correction_parsed = get_contract_model("GeneratedContentResultV1").model_validate(correction)
+    await collector.submit(
+        title=correction_parsed.title,
+        outline=correction_parsed.outline,
+        draft=correction_parsed.draft,
+    )
+
+    result = collector.finalize()
+    assert result["outline"]["sections"][0]["evidence_ids"] == ["e-body"]
+    assert result["title"]["text"] == "装修业主原始标题"
+    assert result["title"]["lexicon_usage"] == first_payload["title"]["lexicon_usage"]
+    assert result["draft"]["body"] == "返工原始正文"
+
+
+@pytest.mark.asyncio
+async def test_generated_content_uses_locked_formula_and_variant_metadata():
+    runtime = type("Runtime", (), {})()
+    runtime._required_skill_closure = []
+    runtime._activated_required_skills = []
+    context = replace(
+        DOMAIN_CONTEXT,
+        locked_body_calling_section_ids=("s1",),
+        required_title_lexicon_codes=frozenset({"title.audience"}),
+        locked_title_lexicon_terms={"title.audience": ("装修业主",)},
+        allowed_body_lexicon_codes=frozenset({"body.pain"}),
+        locked_body_lexicon_terms={"body.pain": ("返工",)},
+        locked_required_body_evidence_ids=("e-body",),
+        normalize_generation_evidence_ids=True,
+    )
+    first_payload = {
+        "title": {
+            "text": "装修业主原始标题",
+            "formula_code": "model-selected-title-formula",
+            "evidence_ids": ["e-title"],
+            "lexicon_usage": [{"code": "model.title.code", "selected_terms": ["错词"]}],
+        },
+        "outline": {
+            "body_formula_code": "model-selected-body-formula",
+            "sections": [{"section_id": "s1", "goal": "说明痛点", "evidence_ids": ["e-body"]}],
+            "variant_key": "unavailable-variant",
+        },
+        "draft": {
+            "body": "返工原始正文",
+            "topics": ["装修"],
+            "paragraph_evidence": [{"paragraph_id": "p1", "evidence_ids": ["mistyped-evidence"]}],
+            "body_formula_code": "model-selected-body-formula",
+            "lexicon_usage": [{"code": "model.body.code", "selected_terms": ["错词"]}],
+        },
+    }
+    collector = ContentNodeResultCollector("GeneratedContentResultV1", context, runtime)
+    parsed = get_contract_model("GeneratedContentResultV1").model_validate(first_payload)
+
+    await collector.submit(title=parsed.title, outline=parsed.outline, draft=parsed.draft)
+
+    result = collector.finalize()
+    assert result["title"]["formula_code"] == "T1"
+    assert result["outline"]["body_formula_code"] == "B1"
+    assert result["draft"]["body_formula_code"] == "B1"
+    assert result["outline"]["variant_key"] is None
+    assert result["outline"]["sections"][0]["evidence_ids"] == ["e-body"]
+    assert result["title"]["lexicon_usage"] == [
+        {"code": "title.audience", "selected_terms": ["装修业主"]}
+    ]
+    assert result["draft"]["lexicon_usage"] == [{"code": "body.pain", "selected_terms": ["返工"]}]
+    assert result["draft"]["paragraph_evidence"] == [
+        {"paragraph_id": "p1", "evidence_ids": []},
+        {"paragraph_id": "system-required-materials", "evidence_ids": ["e-body"]},
+    ]
 
 
 @pytest.mark.asyncio

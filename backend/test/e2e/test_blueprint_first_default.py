@@ -10,9 +10,10 @@ import httpx
 import pytest
 from patchright.async_api import async_playwright, expect
 
-from yuxi.content.v3.joint_workflow import PLATFORM_WORKFLOW_PRICE_RECOVERY_ID
+from yuxi.content.v3.joint_workflow import PLATFORM_WORKFLOW_STANDARDIZED_FACTORY_ID
 from yuxi.storage.postgres.manager import pg_manager
 from yuxi.storage.postgres.models_business import Department, User
+from yuxi.storage.postgres.models_content import ContentTask
 from yuxi.utils.auth_utils import AuthUtils
 
 
@@ -57,20 +58,41 @@ async def test_deployed_templates_create_blueprint_first_tasks():
             assert templates[0]["slug"] == "decoration"
             for template in templates:
                 assert template["blueprint_first"], template["id"]
-                assert template["default_workflow_version_id"] == PLATFORM_WORKFLOW_PRICE_RECOVERY_ID
+                assert template["default_workflow_version_id"] == PLATFORM_WORKFLOW_STANDARDIZED_FACTORY_ID
                 response = await client.post(
                     "/api/content/tasks",
                     json={
                         "industry_template_id": template["id"],
                         "name": "pytest Blueprint First default",
                         "content_goal": template["default_goal"],
-                        "creation_mode": "original",
+                        "content_type_code": "CT01",
+                        "creation_mode": "viral_rewrite",
                     },
                 )
                 response.raise_for_status()
                 task = response.json()["task"]
                 try:
-                    assert task["workflow_version_id"] == PLATFORM_WORKFLOW_PRICE_RECOVERY_ID
+                    assert task["workflow_version_id"] == PLATFORM_WORKFLOW_STANDARDIZED_FACTORY_ID
+                    rejected = await client.post(
+                        "/api/content/tasks",
+                        json={"industry_template_id": template["id"], "creation_mode": "original"},
+                    )
+                    assert rejected.status_code == 422
+                    async with pg_manager.AsyncSession() as db:
+                        historical = await db.get(ContentTask, task["id"])
+                        historical.runtime_config_snapshot_json = {
+                            **historical.runtime_config_snapshot_json,
+                            "creation_mode": "original",
+                        }
+                        await db.commit()
+                    rejected = await client.post(
+                        f"/api/content/tasks/{task['id']}/runs",
+                        json={"request_id": uuid.uuid4().hex},
+                    )
+                    assert rejected.status_code == 409
+                    assert rejected.json()["detail"]["error"]["code"] == "CONTENT_CREATION_MODE_UNSUPPORTED"
+                    historical_result = await client.get(f"/api/content/tasks/{task['id']}")
+                    assert historical_result.status_code == 200
                 finally:
                     response = await client.delete(f"/api/content/tasks/{task['id']}")
                     response.raise_for_status()
@@ -97,8 +119,9 @@ async def test_deployed_templates_create_blueprint_first_tasks():
                     await page.locator(".creation-type-field").get_by_text("工种总价", exact=True).click()
                     await expect(page.get_by_role("radio", name="工种总价", exact=True)).to_be_checked()
                     async with page.expect_response(
-                        lambda response: response.url.endswith("/api/content/tasks")
-                        and response.request.method == "POST"
+                        lambda response: (
+                            response.url.endswith("/api/content/tasks") and response.request.method == "POST"
+                        )
                     ) as created:
                         await page.get_by_role("button", name="创建任务并填写素材").click()
                     response = await created.value
@@ -114,7 +137,8 @@ async def test_deployed_templates_create_blueprint_first_tasks():
                         candidates_response = await client.get(f"/api/content/tasks/{task['id']}/strategy/candidates")
                         candidates_response.raise_for_status()
                         candidates = candidates_response.json()["strategy_candidates"]
-                        assert {item["code"] for item in candidates["direction_options"]} == {"CT04"}
+                        assert candidates["direction_code"] == "CT04"
+                        assert "direction_options" not in candidates
                         await expect(page).to_have_url(f"http://localhost:5173/content/tasks/{task['id']}")
                         await page.get_by_role("button", name="形成事实简报并进入 V3 生产").click()
                         await expect(page.get_by_text("请填写内容需求", exact=True)).to_be_visible()

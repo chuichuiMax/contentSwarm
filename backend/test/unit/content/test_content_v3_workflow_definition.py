@@ -5,10 +5,18 @@ from types import SimpleNamespace
 
 import pytest
 
+from yuxi.agents.skills.buildin import BUILTIN_SKILLS
 from yuxi.content.control.workflow.revision import RevisionRouteController
 from yuxi.content.model.workflows.definition import DEFAULT_CONTRACTS, WorkflowCatalog, WorkflowDefinitionPolicy
 from yuxi.content.v3.seed import _upgrade_system_workflow_v3
 from yuxi.content.v3.agents import CONTENT_AGENT_SPECS
+from yuxi.content.v3.joint_workflow import (
+    WORKFLOW_EXPRESSION_GUIDANCE,
+    WORKFLOW_MODULAR_AUTHOR,
+    WORKFLOW_PRICE_RECOVERY,
+    WORKFLOW_VIRAL_AUTHOR,
+)
+from yuxi.content.v3.modular_rules import GENERATION_SKILLS
 from yuxi.content.v3.workflow import WORKFLOW_V3
 
 
@@ -55,6 +63,70 @@ CATALOG = WorkflowCatalog(
 
 def _node(definition: dict, node_id: str) -> dict:
     return next(item for item in definition["nodes"] if item["id"] == node_id)
+
+
+@pytest.mark.unit
+def test_viral_workflow_replaces_only_generation_and_review_skills():
+    old_generation = _node(WORKFLOW_PRICE_RECOVERY, "generate_content")
+    generation = _node(WORKFLOW_VIRAL_AUTHOR, "generate_content")
+    review = _node(WORKFLOW_VIRAL_AUTHOR, "semantic_review")
+
+    assert len(old_generation["required_skills"]) == 7
+    assert generation["required_skills"] == ["viral-content-author"]
+    assert generation["agent_slug"] == "content-viral-generation-agent"
+    assert review["required_skills"] == ["viral-content-reviewer"]
+    assert review["agent_slug"] == "content-viral-review-agent"
+    assert _node(WORKFLOW_PRICE_RECOVERY, "generate_content") == old_generation
+    assert WORKFLOW_VIRAL_AUTHOR["edges"] == WORKFLOW_PRICE_RECOVERY["edges"]
+
+
+@pytest.mark.unit
+def test_modular_workflow_keeps_one_generation_call_and_activates_separate_skills():
+    generation = _node(WORKFLOW_MODULAR_AUTHOR, "generate_content")
+    review = _node(WORKFLOW_MODULAR_AUTHOR, "semantic_review")
+    visual = _node(WORKFLOW_MODULAR_AUTHOR, "plan_visuals")
+
+    assert generation["required_skills"] == list(GENERATION_SKILLS)
+    assert generation["agent_slug"] == "content-viral-generation-agent"
+    assert review["required_skills"] == ["viral-modular-reviewer"]
+    assert "runtime_config_snapshot" in review["state_inputs"]
+    assert visual["required_skills"] == ["content-visual-planner", "viral-cover-matcher"]
+    assert sum(node["id"] == "generate_content" for node in WORKFLOW_MODULAR_AUTHOR["nodes"]) == 1
+    assert WORKFLOW_MODULAR_AUTHOR["edges"] == WORKFLOW_VIRAL_AUTHOR["edges"]
+
+    WorkflowDefinitionPolicy.validate(
+        WORKFLOW_MODULAR_AUTHOR,
+        catalog=WorkflowCatalog(
+            agents=frozenset(item.slug for item in CONTENT_AGENT_SPECS),
+            skills=frozenset(item.slug for item in BUILTIN_SKILLS),
+            contracts=frozenset(DEFAULT_CONTRACTS),
+            backends=frozenset({"managed"}),
+        ),
+    )
+
+
+@pytest.mark.unit
+def test_expression_guidance_workflow_freezes_three_sources_for_generation_and_review():
+    generation = _node(WORKFLOW_EXPRESSION_GUIDANCE, "generate_content")
+    review = _node(WORKFLOW_EXPRESSION_GUIDANCE, "semantic_review")
+    policy = WORKFLOW_EXPRESSION_GUIDANCE["expression_knowledge_policy"]
+
+    assert [item["name"] for item in policy["sources"]] == ["我的优势", "表达语气库", "具象表达"]
+    assert policy["required"] is True
+    assert "expression_guidance" in generation["state_inputs"]
+    assert "expression_guidance" in review["state_inputs"]
+    assert sum(node["id"] == "generate_content" for node in WORKFLOW_EXPRESSION_GUIDANCE["nodes"]) == 1
+    assert WORKFLOW_EXPRESSION_GUIDANCE["edges"] == WORKFLOW_MODULAR_AUTHOR["edges"]
+
+    WorkflowDefinitionPolicy.validate(
+        WORKFLOW_EXPRESSION_GUIDANCE,
+        catalog=WorkflowCatalog(
+            agents=frozenset(item.slug for item in CONTENT_AGENT_SPECS),
+            skills=frozenset(item.slug for item in BUILTIN_SKILLS),
+            contracts=frozenset(DEFAULT_CONTRACTS),
+            backends=frozenset({"managed"}),
+        ),
+    )
 
 
 @pytest.mark.unit

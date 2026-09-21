@@ -278,6 +278,56 @@ def test_image_gen_builtin_skill_spec():
     assert (image_gen["source_dir"] / "SKILL.md").exists()
 
 
+def test_content_builtin_skills_use_chinese_display_names_and_stable_slugs():
+    specs = {spec["slug"]: spec for spec in svc.list_builtin_skill_specs()}
+    expected_names = {
+        "viral-document-detector": "爆款文档识别",
+        "content-joint-strategy-selector": "内容联合策略选择",
+        "prepared-viral-reference-selector": "已准备爆款参考选择",
+        "decoration-direction-formula-selector": "装修方向公式选择",
+        "industry-strategy-scorer": "行业策略评分",
+        "viral-asset-preparer": "爆款素材准备",
+        "content-strategy-planner": "内容策略规划",
+        "content-value-analyzer": "内容价值分析",
+        "content-evidence-researcher": "内容证据调研",
+        "content-business-rule-researcher": "业务规则调研",
+        "content-price-researcher": "价格证据调研",
+        "content-compliance-researcher": "问题词与合规规则调研",
+        "viral-candidate-researcher": "爆款候选检索",
+        "viral-reference-selector": "爆款参考选择与结构解析",
+        "strategy-product-researcher": "策略资料调研",
+        "content-title-generator": "标题生成",
+        "content-outline-builder": "正文大纲生成",
+        "content-body-generator": "正文生成",
+        "persona-style-polisher": "人设语气优化",
+        "viral-structure-rewriter": "爆款结构仿写",
+        "viral-layout-formatter": "爆款排版优化",
+        "humanizer-zh": "中文自然表达优化",
+        "content-human-expression": "人设与 Emoji 表达优化",
+        "content-reviewer": "内容审核",
+        "viral-content-author": "爆款仿写创作",
+        "viral-content-reviewer": "爆款仿写审核",
+        "viral-author-core": "爆款仿写编排",
+        "viral-title-author": "爆款标题创作",
+        "viral-body-author": "爆款正文创作",
+        "viral-persona-author": "人设表达",
+        "viral-natural-expression": "自然口语与去机械化",
+        "viral-layout-expression": "小红书格式化表达",
+        "viral-platform-expression": "平台表达规范",
+        "viral-price-author": "报价表达",
+        "viral-topic-author": "相关话题选择",
+        "viral-modular-reviewer": "模块化爆款审核",
+        "viral-cover-matcher": "首图内容匹配",
+        "content-visual-planner": "内容视觉规划",
+        "content-cover-generator": "内容封面生成",
+        "content-visual-reviewer": "内容视觉审核",
+    }
+
+    assert len(expected_names) == 40
+    assert {slug: specs[slug]["name"] for slug in expected_names} == expected_names
+    assert all(specs[slug]["slug"] == slug for slug in expected_names)
+
+
 def test_platform_skill_catalog_is_bundled():
     specs = {spec["slug"]: spec for spec in svc.list_builtin_skill_specs()}
     expected_slugs = {

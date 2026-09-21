@@ -1,0 +1,15 @@
+{
+  "module_id": "viral-topic-author",
+  "version": "1.0.0",
+  "applies_when": {
+    "creation_mode": "viral_rewrite"
+  },
+  "rule_ids": [
+    "viral-topic-author.v1"
+  ],
+  "runtime_rules": {
+    "topic_count": 10,
+    "must_use_candidate_pool": true,
+    "must_be_unique": true
+  }
+}

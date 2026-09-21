@@ -1,0 +1,12 @@
+{
+  "cases": [
+    {
+      "id": "natural-report-tone",
+      "input": "首先……其次……综上……",
+      "expect": [
+        "移除报告腔",
+        "事实不变"
+      ]
+    }
+  ]
+}

@@ -53,8 +53,11 @@ def build_strategy_candidates(
             if item.get("enabled", True)
             and item.get("compatibility") != "disabled"
             and (not item.get("industry_scope") or industry_slug in item["industry_scope"])
-            and (mode != "direction_scoped" or (auto_direction and not direction)
-                 or direction in item.get("content_type_codes", []))
+            and (
+                mode != "direction_scoped"
+                or (auto_direction and not direction)
+                or direction in item.get("content_type_codes", [])
+            )
         ),
         key=lambda item: str(item.get("id") or item.get("code")),
     )
@@ -164,6 +167,10 @@ def build_strategy_candidates(
         "reference_candidate_limit": policy["reference_candidate_limit"],
         "selection_skill": policy["mode_skills"][mode],
         "methods": methods,
+        "variables": sorted(
+            (deepcopy(item) for item in bundle.get("variables", []) if item.get("enabled", True)),
+            key=lambda item: item["code"],
+        ),
         **formula_lists,
         "valid_formula_pairs": [list(pair) for pair in sorted(pairs)],
         "source_rules": rules,

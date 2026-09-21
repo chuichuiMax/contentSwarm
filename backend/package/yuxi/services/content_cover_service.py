@@ -17,6 +17,7 @@ from fastapi import HTTPException, UploadFile
 from PIL import Image, ImageOps, UnidentifiedImageError
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.datastructures import Headers
 
 from yuxi.content_cover import COVER_PROCESSING_VERSION, COVER_SIZES, COVER_TEMPLATES, COVER_THEMES
 from yuxi.content_cover.image2_client import Image2Error
@@ -610,6 +611,71 @@ async def create_cover_asset(
         await get_minio_client().adelete_file(uploaded.bucket_name, uploaded.object_name)
         raise
     return {"asset": serialize_asset(item)}
+
+
+async def ensure_featured_reference_asset(db: AsyncSession, user: User, featured_template_id: str) -> ContentCoverAsset:
+    """把精选封面模板渲染成可复用的 template 角色资产;按渲染内容 sha256 去重,
+    模板未变更时复用旧资产及其版式分析缓存。"""
+    from yuxi.services.hycanvas_service import HyCanvasClient
+
+    repo = ContentCoverRepository(db)
+    png, content_type = await HyCanvasClient.from_env().render_template_png(featured_template_id)
+    sha = hashlib.sha256(png).hexdigest()
+    existing = await repo.find_featured_reference_asset(_owner_uid(user), featured_template_id)
+    if existing is not None and existing.sha256 == sha:
+        return existing
+    upload = UploadFile(
+        file=io.BytesIO(png),
+        filename=f"featured-reference-{featured_template_id[:8]}.png",
+        headers=Headers({"content-type": content_type}),
+    )
+    created = await create_cover_asset(db, user, upload, role="template", content_task_id=None)
+    asset = await repo.get_asset_for_user(created["asset"]["id"], _owner_uid(user))
+    if asset is None:
+        raise _error(500, "COVER_ASSET_SAVE_FAILED", "精选封面参考图保存失败")
+    await repo.update_asset_metadata(
+        asset,
+        {**(asset.metadata_json or {}), "featured_template_id": featured_template_id},
+    )
+    await db.commit()
+    return asset
+
+
+async def compose_visual_material_background(
+    db: AsyncSession,
+    user: User,
+    visual_material: dict[str, Any],
+    *,
+    content_task_id: str,
+) -> str:
+    """把简报冻结的图片组合渲染成单张封面底图资产,返回其 asset id。"""
+    from yuxi.content_cover.photo_composition import render_composition_image
+
+    composition = visual_material.get("photo_composition") or {}
+    slots = list(composition.get("slots") or [])
+    if not slots:
+        raise _error(422, "COVER_COMPOSITION_INCOMPLETE", "图片组合缺少已冻结的组合图片")
+    repo = ContentCoverRepository(db)
+    owner_uid = _owner_uid(user)
+    assets = await repo.get_assets_for_user(
+        [str(slot.get("asset_id") or "") for slot in slots], owner_uid, allow_material_use=True
+    )
+    by_id = {asset.id: asset for asset in assets}
+    photos: list[tuple[bytes, float, float]] = []
+    for slot in slots:
+        asset = by_id.get(str(slot.get("asset_id") or ""))
+        if asset is None:
+            raise _error(422, "COVER_SOURCE_ASSET_INVALID", "组合图片不存在或已删除")
+        content, _, _ = await get_cover_asset_file(db, user, asset.id)
+        photos.append((content, float(slot.get("focal_x", 0.5)), float(slot.get("focal_y", 0.5))))
+    png = await asyncio.to_thread(render_composition_image, photos, composition)
+    upload = UploadFile(
+        file=io.BytesIO(png),
+        filename="composition-background.png",
+        headers=Headers({"content-type": "image/png"}),
+    )
+    created = await create_cover_asset(db, user, upload, role="source", content_task_id=content_task_id)
+    return str(created["asset"]["id"])
 
 
 def _open_cover_image(data: bytes, *, error_message: str) -> Image.Image:
@@ -1769,6 +1835,7 @@ async def create_cover_generate_job(db: AsyncSession, user: User, payload: Cover
         if (mask.image_width, mask.image_height) != (source.image_width, source.image_height):
             raise _error(422, "COVER_MASK_SIZE_MISMATCH", "蒙版尺寸必须与原图一致")
     template_replicate = payload.mode == "multi_reference" and bool(payload.template_asset_id)
+    style_reference = template_replicate and payload.reference_mode == "style"
     if template_replicate and payload.size != "1080x1440":
         raise _error(422, "COVER_TEMPLATE_SIZE_INVALID", "模板复刻 V2 当前固定输出 1080×1440 PNG")
     prompt, artifact, linked_title = await _content_prompt(
@@ -1779,22 +1846,47 @@ async def create_cover_generate_job(db: AsyncSession, user: User, payload: Cover
         allow_empty=template_replicate,
     )
     title = payload.title.strip() or linked_title[:60]
-    template_texts = (
-        _template_texts(
-            artifact,
-            title,
-            source="content_asset" if payload.content_task_id else ("manual" if payload.title.strip() else "template"),
+    if style_reference:
+        template_texts = {
+            "title": title,
+            "subtitle": payload.subtitle.strip(),
+            "tags": [],
+            "preserve_fixed_copy": False,
+            "source": "content_asset" if payload.content_task_id else "manual",
+        }
+    else:
+        template_texts = (
+            _template_texts(
+                artifact,
+                title,
+                source="content_asset"
+                if payload.content_task_id
+                else ("manual" if payload.title.strip() else "template"),
+            )
+            if template_replicate
+            else None
         )
-        if template_replicate
-        else None
-    )
     mode_guidance = {
         "text_to_image": "生成高点击率的小红书封面底图，构图简洁、主体突出、层次清晰。",
         "image_to_image": "保留原图主体身份与关键细节，优化构图、光影和小红书封面氛围，不要凭空替换主体。",
         "multi_reference": "综合所有参考图；保留原图主体，借鉴模板的布局与视觉语言，但不要照搬其中的文字或品牌元素。",
         "mask": "只优化蒙版指定区域，未指定区域保持原图结构与主体一致。",
     }
-    if template_replicate:
+    if style_reference:
+        mode_guidance["multi_reference"] = (
+            "自由创作模式。参考图1是封面背景底图，必须完整保留其主体、场景与关键细节并铺满画布；"
+            "参考图2仅提供视觉风格：配色方案、字体气质、装饰元素语言与排版节奏。"
+            "不要复制参考图2的布局、文字内容或品牌元素。在背景上自由设计封面布局，构图自然、层级清晰。"
+        )
+        copy_lines = [f"主标题「{title}」"] if title else []
+        if template_texts["subtitle"]:
+            copy_lines.append(f"副标题「{template_texts['subtitle']}」")
+        copy_clause = "；".join(copy_lines) if copy_lines else "不生成任何文字"
+        output_guidance = (
+            "输出单张完整不透明的 1080×1440 封面图。画面中只允许出现以下文案，必须逐字正确、清晰可读："
+            f"{copy_clause}。除此之外不要生成任何其他文字、数字、字母、水印或 Logo。"
+        )
+    elif template_replicate:
         mode_guidance["multi_reference"] = (
             "严格模板复刻模式。参考图1是用户原图，参考图2是样式模板。最终封面必须以参考图1完整铺满画布，"
             "保留其人物、商品、空间、视角和关键细节；参考图2只提供上层视觉系统，不得保留其中的"

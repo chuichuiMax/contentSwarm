@@ -11,11 +11,16 @@ from sqlalchemy import select
 from yuxi.agents.buildin import agent_manager
 from yuxi.agents.context import prepare_agent_runtime_context
 from yuxi.content.model.contracts import ContentNodeResultCollector, ContractDomainContext
-from yuxi.content.model.viral_assets import ViralArticleSource, validate_prepared_asset
+from yuxi.content.model.viral_assets import ViralArticleSource, validate_prepared_asset_v2
 from yuxi.repositories.agent_repository import AgentRepository
 from yuxi.repositories.agent_run_repository import AgentRunRepository
 from yuxi.services.agent_runtime_service import resolve_agent_runtime_context
-from yuxi.services.content_viral_assets import accessible_asset_kbs, check_asset_source, preparation_skill_hash
+from yuxi.services.content_viral_assets import (
+    accessible_asset_kbs,
+    check_asset_source,
+    preparation_skill_hash,
+    published_variable_codes,
+)
 from yuxi.storage.postgres.manager import pg_manager
 from yuxi.storage.postgres.models_business import User
 from yuxi.storage.postgres.models_content import ContentViralArticleVersion
@@ -48,6 +53,9 @@ async def process_viral_asset(_ctx, asset_id: str, attempt: int):
             if asset.preparation_skill_hash != preparation_skill_hash():
                 raise ValueError("准备 Skill 已更新，请重新导入")
             source = ViralArticleSource.model_validate(asset.source_json)
+            allowed_variable_codes = sorted(await published_variable_codes(db))
+            if not allowed_variable_codes:
+                raise ValueError("已发布变量目录为空，无法准备参考槽位")
             context = await resolve_agent_runtime_context(db=db, user=user, bound_agent_id="content-viral-asset-agent")
             agent = await AgentRepository(db).get_visible_by_slug(slug="content-viral-asset-agent", user=user)
             backend = agent_manager.get_agent(agent.backend_id)
@@ -58,17 +66,21 @@ async def process_viral_asset(_ctx, asset_id: str, attempt: int):
             context.knowledges = []
             await prepare_agent_runtime_context(context, context_schema=backend.context_schema)
             collector = ContentNodeResultCollector(
-                "ViralAssetPreparationResultV1",
+                "ViralAssetPreparationResultV2",
                 ContractDomainContext(viral_source=source.model_dump()),
                 context,
             )
             context._content_node_result_collector = collector
-            context._content_node_output_contract = "ViralAssetPreparationResultV1"
+            context._content_node_output_contract = "ViralAssetPreparationResultV2"
             context._content_node_result_tool_name = "submit_content_node_result"
             context._content_node_max_tool_calls = 1
             context._content_node_token_budget = 12000
             context._content_node_tool_scope = ["submit_content_node_result"]
-            payload = {"source": source.model_dump(), "source_hash": source.source_hash}
+            payload = {
+                "source": source.model_dump(),
+                "source_hash": source.source_hash,
+                "allowed_variable_codes": allowed_variable_codes,
+            }
             runtime_snapshot = {
                 "model": str(getattr(context, "model", "")),
                 "skills": getattr(context, "_runtime_skill_snapshots", []) or [],
@@ -93,13 +105,17 @@ async def process_viral_asset(_ctx, asset_id: str, attempt: int):
             asset.agent_run_id = run_id
             await db.commit()
         graph = await backend.get_graph(context=context)
-        async with asyncio.timeout(140):
+        async with asyncio.timeout(240):
             await graph.ainvoke(
                 {"messages": [json.dumps(payload, ensure_ascii=False)]},
                 context=context,
-                config={"configurable": {"thread_id": context.thread_id, "uid": context.uid}, "recursion_limit": 12},
+                config={"configurable": {"thread_id": context.thread_id, "uid": context.uid}, "recursion_limit": 24},
             )
-        result = validate_prepared_asset(collector.finalize(), source)
+        result = validate_prepared_asset_v2(
+            collector.finalize(),
+            source,
+            allowed_variable_codes=set(allowed_variable_codes),
+        )
         async with pg_manager.get_async_session_context() as db:
             asset = (
                 await db.execute(
@@ -118,8 +134,9 @@ async def process_viral_asset(_ctx, asset_id: str, attempt: int):
                         **result.model_dump(mode="json"),
                         "runtime_config_snapshot": runtime_snapshot,
                     }
-                    asset.status = "ready" if result.status == "prepared" else "needs_review"
-                    asset.error_message = "；".join(result.issues) or None
+                    # 新资产必须经运营审核后才进入在线参考池。
+                    asset.status = "needs_review"
+                    asset.error_message = "；".join(result.issues) or "等待运营审核"
             await AgentRunRepository(db).set_terminal_status(run_id, status="completed")
             await db.commit()
     except (Exception, asyncio.CancelledError) as exc:

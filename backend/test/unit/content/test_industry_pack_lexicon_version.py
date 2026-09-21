@@ -53,13 +53,21 @@ async def test_runtime_snapshot_keeps_deprecated_pack_for_existing_task(monkeypa
     async def list_packs(self, *, published_only=True):
         return [] if published_only else [pack]
 
+    async def get_workflow(self, _id):
+        return None
+
     async def empty_list(self):
         return []
 
+    async def get_workflow(self, _id):
+        return None
+
     monkeypatch.setattr(ContentRepository, "get_template", get_template)
+    monkeypatch.setattr(ContentRepository, "get_workflow", get_workflow)
     monkeypatch.setattr(ContentRepository, "list_industry_packs", list_packs)
     monkeypatch.setattr(ContentRepository, "list_channel_profiles", empty_list)
     monkeypatch.setattr(ContentRepository, "list_compliance_policies", empty_list)
+    monkeypatch.setattr(ContentRepository, "get_workflow", get_workflow)
     result = await V3DeterministicNodeHandler._compile_runtime_snapshot(
         db=Database(), state={"task_id": "historical-task"}, node_run_id="test"
     )

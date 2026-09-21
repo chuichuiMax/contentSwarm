@@ -213,6 +213,23 @@ func TestRasterTextWrap(t *testing.T) {
 	}
 }
 
+func TestWrapChunksBreaksChineseCoverTitle(t *testing.T) {
+	chunks := wrapChunks("长沙同城装修工长，水电泥瓦自己盯")
+	if len(chunks) < 8 {
+		t.Fatalf("Chinese cover title remained effectively unbreakable: %+v", chunks)
+	}
+	var rebuilt strings.Builder
+	for _, chunk := range chunks {
+		rebuilt.WriteString(chunk.text)
+	}
+	if got := rebuilt.String(); got != "长沙同城装修工长，水电泥瓦自己盯" {
+		t.Fatalf("wrap chunks changed title text: %q", got)
+	}
+	if chunks[0].text != "长" || chunks[1].text != "沙" {
+		t.Fatalf("Chinese characters should provide wrap boundaries: %+v", chunks)
+	}
+}
+
 // TestRasterImageElement confirms the Go rasterizer decodes and draws an image
 // element (bytes embedded as a data URL on node["src"], as the video export
 // handler does), so image element clips composite in the server export.

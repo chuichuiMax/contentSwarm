@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import hashlib
 import json
-from math import isclose
 from typing import Any, Literal
 
 from pydantic import Field, field_validator, model_validator
+
+from yuxi.content.v3.modular_rules import runtime_policy
 
 from .strategy import (
     CandidateAssessment,
@@ -86,6 +87,25 @@ class JointStrategyDecisionV2(JointStrategyDecisionV1):
         return self
 
 
+class DeterministicCreationPlanDecisionV1(StrategyContract):
+    """固定规则生成的可审计选择轨迹，不包含模型评分。"""
+
+    schema_version: Literal[1] = 1
+    selection_mode: Literal["deterministic"] = "deterministic"
+    status: Literal["selected"] = "selected"
+    industry_slug: str = Field(min_length=1)
+    direction_code: str = Field(min_length=1)
+    group_id: str = Field(min_length=1)
+    rule_version_id: str = Field(min_length=1)
+    title_formula_code: str = Field(min_length=1)
+    body_formula_code: str = Field(min_length=1)
+    creation_method_codes: list[str] = Field(min_length=1)
+    reference_asset_id: str = Field(min_length=1)
+    reference_source_hash: str = Field(min_length=64, max_length=64)
+    slot_mapping: dict[str, list[str]] = Field(min_length=1)
+    selection_trace: list[str] = Field(min_length=1)
+
+
 def validate_joint_strategy(payload, inputs: dict[str, Any]) -> JointStrategyDecisionV1:
     model = JointStrategyDecisionV2 if "price_research_questions" in payload else JointStrategyDecisionV1
     result = model.model_validate(payload)
@@ -124,8 +144,6 @@ def validate_joint_strategy(payload, inputs: dict[str, Any]) -> JointStrategyDec
         if any(score < 0 or score > 4 for score in item.dimensions.values()):
             raise ValueError("参考得分必须为 0—4 整数")
         total = sum(item.dimensions[key] / 4 * weight for key, weight in scale["weights"].items())
-        if item.total is not None and not isclose(total, item.total, abs_tol=0.001, rel_tol=0):
-            raise ValueError("参考总分与锁定权重不一致")
         item.total = total
         eligible.append(item)
     if reference.status != "selected":
@@ -146,7 +164,21 @@ def validate_joint_strategy(payload, inputs: dict[str, Any]) -> JointStrategyDec
         raise ValueError("参考原文版本不一致")
     slots = {slot["name"]: slot for slot in selected["reference_card"]["required_slots"]}
     required = {name for name, slot in slots.items() if slot["required"]}
-    if not required.issubset(reference.slot_mapping) or not set(reference.slot_mapping).issubset(slots):
+    reference_policy = runtime_policy(
+        inputs["runtime_config_snapshot"],
+        "viral-author-core",
+        "reference_policy",
+    )
+    adaptive_structure = reference_policy.get("required_slot_mode") == "mapped_facts_only"
+    if not set(reference.slot_mapping).issubset(slots):
+        raise ValueError("必要事实槽位未完整映射或提交了不存在的槽位")
+    if adaptive_structure:
+        minimum_mapped_slots = reference_policy.get("minimum_mapped_slots")
+        if not isinstance(minimum_mapped_slots, int) or minimum_mapped_slots < 1:
+            raise ValueError("参考映射规则缺少有效的 minimum_mapped_slots")
+        if len(reference.slot_mapping) < minimum_mapped_slots:
+            raise ValueError(f"当前事实至少需要承接 {minimum_mapped_slots} 个参考结构槽位")
+    elif not required.issubset(reference.slot_mapping):
         raise ValueError("必要事实槽位未完整映射或提交了不存在的槽位")
     for paths in reference.slot_mapping.values():
         if not paths:
@@ -174,6 +206,8 @@ def validate_fact_path(inputs, path):
 
 class StrategySnapshotV2(StrategyContract):
     schema_version: Literal[2] = 2
+    planner_version: str | None = None
+    input_snapshot_hash: str | None = Field(default=None, min_length=64, max_length=64)
     industry_slug: str
     strategy_mode: Literal["direction_scoped", "scored"]
     content_direction: str | None
@@ -184,7 +218,7 @@ class StrategySnapshotV2(StrategyContract):
     body_formula: dict[str, Any] = Field(min_length=1)
     rule_version_id: str
     policy_hash: str
-    decision: JointStrategyDecisionV1
+    decision: JointStrategyDecisionV1 | DeterministicCreationPlanDecisionV1
     reference_snapshot: dict[str, Any] | None
     snapshot_hash: str = Field(min_length=64, max_length=64)
 
@@ -193,6 +227,9 @@ class StrategySnapshotV2(StrategyContract):
         payload = self.model_dump(mode="json", exclude={"snapshot_hash"})
         if payload.get("direction_blueprint") is None:
             payload.pop("direction_blueprint")
+        for key in ("planner_version", "input_snapshot_hash"):
+            if payload.get(key) is None:
+                payload.pop(key)
         canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         if self.snapshot_hash != hashlib.sha256(canonical.encode()).hexdigest():
             raise ValueError("新策略快照哈希不一致")

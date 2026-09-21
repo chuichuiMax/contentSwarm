@@ -66,6 +66,7 @@ async def test_worker_shutdown_marks_content_run_retryable_instead_of_cancelled(
 
     statuses = []
     events = []
+    notifications = []
     run = SimpleNamespace(
         id="run-worker-interrupted",
         status="pending",
@@ -79,8 +80,8 @@ async def test_worker_shutdown_marks_content_run_retryable_instead_of_cancelled(
         workflow_version_id="workflow-v3",
         rule_version_id="rules-v3",
         industry_template_version_id="industry-v3",
-        runtime_config_snapshot_json={"schema_version": 3},
-        brief_json={},
+        runtime_config_snapshot_json={"schema_version": 3, "creation_mode": "viral_rewrite"},
+        brief_json={"form_values": {"external_source": "dangjia"}},
         evidence_json={"items": []},
         mode="quick",
         status="queued",
@@ -102,6 +103,9 @@ async def test_worker_shutdown_marks_content_run_retryable_instead_of_cancelled(
 
     async def no_cancel(*args, **kwargs):
         return False
+
+    async def notify_result(**kwargs):
+        notifications.append(kwargs)
 
     async def get_graph(*args, **kwargs):
         return InterruptedGraph()
@@ -128,6 +132,7 @@ async def test_worker_shutdown_marks_content_run_retryable_instead_of_cancelled(
     monkeypatch.setattr(content_run_worker, "has_cancel_signal", no_cancel)
     monkeypatch.setattr(content_run_worker, "ContentRepository", FakeRepo)
     monkeypatch.setattr(content_run_worker.pg_manager, "get_async_session_context", session_context)
+    monkeypatch.setattr(content_run_worker, "notify_dangjia_content_result", notify_result, raising=False)
     monkeypatch.setattr(
         content_run_worker.agent_manager,
         "get_agent",
@@ -145,12 +150,107 @@ async def test_worker_shutdown_marks_content_run_retryable_instead_of_cancelled(
         "retryable": True,
     }
     assert [event_type for event_type, _ in events] == ["metadata", "error", "end"]
+    assert notifications == [
+        {"task_id": task.id, "run_id": run.id, "terminal_status": "failed"},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_explicit_cancellation_notifies_after_cancelled_status_is_committed(monkeypatch):
+    graph = FakeGraph()
+    statuses = []
+    events = []
+    notifications = []
+    run = SimpleNamespace(
+        id="run-cancelled",
+        status="pending",
+        uid="user-1",
+        request_id="request-cancelled",
+        checkpoint_thread_id="content:task-cancelled",
+        input_payload={"action": "start", "model_spec": None},
+    )
+    task = SimpleNamespace(
+        id="task-cancelled",
+        workflow_version_id="workflow-v3",
+        rule_version_id="rules-v3",
+        industry_template_version_id="industry-v3",
+        runtime_config_snapshot_json={"schema_version": 3, "creation_mode": "viral_rewrite"},
+        brief_json={"form_values": {"external_source": "dangjia"}},
+        evidence_json={"items": []},
+        mode="quick",
+        status="queued",
+        error_json=None,
+    )
+    workflow = SimpleNamespace(definition_json={"schema_version": 3})
+
+    async def load_run(run_id):
+        return run, task, workflow, {"version": {"id": "rules-v3"}}
+
+    async def set_status(run_id, *, status, **kwargs):
+        del run_id, kwargs
+        statuses.append(status)
+
+    async def append_event(run_id, event_type, payload, **kwargs):
+        del run_id, kwargs
+        events.append((event_type, payload))
+
+    async def no_event(*args, **kwargs):
+        del args, kwargs
+
+    async def has_cancel(*args, **kwargs):
+        del args, kwargs
+        return True
+
+    async def get_graph(*args, **kwargs):
+        del args, kwargs
+        return graph
+
+    async def notify_result(**kwargs):
+        notifications.append((kwargs, list(statuses), [event_type for event_type, _ in events]))
+
+    class FakeRepo:
+        def __init__(self, db):
+            del db
+
+        async def get_task(self, task_id, for_update=False):
+            del for_update
+            return task if task_id == task.id else None
+
+    @asynccontextmanager
+    async def session_context():
+        yield object()
+
+    monkeypatch.setattr(content_run_worker, "_load_content_run", load_run)
+    monkeypatch.setattr(content_run_worker, "_set_content_run_status", set_status)
+    monkeypatch.setattr(content_run_worker, "append_run_stream_event", append_event)
+    monkeypatch.setattr(content_run_worker, "clear_cancel_signal", no_event)
+    monkeypatch.setattr(content_run_worker, "has_cancel_signal", has_cancel)
+    monkeypatch.setattr(content_run_worker, "ContentRepository", FakeRepo)
+    monkeypatch.setattr(content_run_worker.pg_manager, "get_async_session_context", session_context)
+    monkeypatch.setattr(content_run_worker, "notify_dangjia_content_result", notify_result)
+    monkeypatch.setattr(
+        content_run_worker.agent_manager,
+        "get_agent",
+        lambda agent_id: SimpleNamespace(get_graph=get_graph),
+    )
+
+    await content_run_worker.process_content_run({"job_try": 1}, run.id)
+
+    assert task.status == "cancelled"
+    assert notifications == [
+        (
+            {"task_id": task.id, "run_id": run.id, "terminal_status": "cancelled"},
+            ["running", "cancelled"],
+            ["metadata", "end"],
+        )
+    ]
 
 
 @pytest.mark.asyncio
 async def test_graph_initialization_failure_marks_run_and_task_failed(monkeypatch):
     statuses = []
     events = []
+    notifications = []
     run = SimpleNamespace(
         id="run-bootstrap-failure",
         status="pending",
@@ -164,7 +264,8 @@ async def test_graph_initialization_failure_marks_run_and_task_failed(monkeypatc
         workflow_version_id="workflow-v3",
         rule_version_id="rules-v3",
         industry_template_version_id="industry-v3",
-        runtime_config_snapshot_json={"schema_version": 3},
+        runtime_config_snapshot_json={"schema_version": 3, "creation_mode": "viral_rewrite"},
+        brief_json={"form_values": {"external_source": "dangjia"}},
         status="queued",
         error_json=None,
     )
@@ -181,6 +282,9 @@ async def test_graph_initialization_failure_marks_run_and_task_failed(monkeypatc
 
     async def no_event(*args, **kwargs):
         return None
+
+    async def notify_result(**kwargs):
+        notifications.append(kwargs)
 
     async def get_graph(*args, **kwargs):
         raise ValueError("V3 工作流必须声明 runtime_limits")
@@ -206,6 +310,7 @@ async def test_graph_initialization_failure_marks_run_and_task_failed(monkeypatc
     monkeypatch.setattr(content_run_worker, "clear_cancel_signal", no_event)
     monkeypatch.setattr(content_run_worker, "ContentRepository", FakeRepo)
     monkeypatch.setattr(content_run_worker.pg_manager, "get_async_session_context", session_context)
+    monkeypatch.setattr(content_run_worker, "notify_dangjia_content_result", notify_result, raising=False)
     monkeypatch.setattr(
         content_run_worker.agent_manager,
         "get_agent",
@@ -218,19 +323,41 @@ async def test_graph_initialization_failure_marks_run_and_task_failed(monkeypatc
     assert task.status == "failed"
     assert task.error_json["code"] == "CONTENT_WORKFLOW_FAILED"
     assert [event_type for event_type, _ in events] == ["metadata", "error", "end"]
+    assert notifications == [
+        {"task_id": task.id, "run_id": run.id, "terminal_status": "failed"},
+    ]
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("price_recovery,reference_status,has_prices,requested_node,expected_predecessor", [
-    (False, None, False, "generate_body", None),
-    (True, "needs_input", True, "lock_creation_strategy", "merge_strategy_prices"),
-    (True, "no_candidate", True, None, "merge_strategy_prices"),
-    (False, "needs_input", True, "lock_creation_strategy", None),
-    (True, "selected", True, "lock_creation_strategy", None),
-    (True, "needs_input", False, "lock_creation_strategy", None),
-])
+@pytest.mark.parametrize(
+    "price_recovery,reference_status,has_prices,requested_node,workflow_version_id,reference_slot_mode,expected_predecessor",
+    [
+        (False, None, False, "generate_body", "workflow-v3", None, None),
+        (True, "needs_input", True, "lock_creation_strategy", "workflow-v3", None, "merge_strategy_prices"),
+        (True, "no_candidate", True, None, "workflow-v3", None, "merge_strategy_prices"),
+        (False, "needs_input", True, "lock_creation_strategy", "workflow-v3", None, None),
+        (True, "selected", True, "lock_creation_strategy", "workflow-v3", "mapped_facts_only", None),
+        (True, "needs_input", False, "lock_creation_strategy", "workflow-v3", None, None),
+        (
+            True,
+            "needs_input",
+            False,
+            "lock_creation_strategy",
+            "any-workflow-version",
+            "mapped_facts_only",
+            "prepare_strategy_candidates",
+        ),
+    ],
+)
 async def test_failed_node_retry_continues_from_checkpoint(
-    monkeypatch, price_recovery, reference_status, has_prices, requested_node, expected_predecessor,
+    monkeypatch,
+    price_recovery,
+    reference_status,
+    has_prices,
+    requested_node,
+    workflow_version_id,
+    reference_slot_mode,
+    expected_predecessor,
 ):
     graph = FakeGraph()
     graph.pending_node = requested_node or "lock_creation_strategy"
@@ -239,8 +366,16 @@ async def test_failed_node_retry_continues_from_checkpoint(
         "strategy_price_evidence_collection": {
             "evidence_items": [{"id": "price", "verified_status": "user_confirmed"}] if has_prices else [],
         },
+        "runtime_config_snapshot": {
+            "content_rule_bundle": {
+                "runtime_rules": {
+                    "viral-author-core": {"reference_policy": {"required_slot_mode": reference_slot_mode}}
+                }
+            }
+        },
     }
     statuses = []
+    notifications = []
 
     run = SimpleNamespace(
         id="run-retry",
@@ -252,17 +387,22 @@ async def test_failed_node_retry_continues_from_checkpoint(
     )
     task = SimpleNamespace(
         id="task-1",
-        workflow_version_id="workflow-v3",
+        workflow_version_id=workflow_version_id,
         rule_version_id="rules-v3",
         industry_template_version_id="industry-v3",
-        runtime_config_snapshot_json={"schema_version": 3},
-        brief_json={},
+        runtime_config_snapshot_json={"schema_version": 3, "creation_mode": "viral_rewrite"},
+        brief_json={"form_values": {"external_source": "dangjia"}},
         strategy_json={},
         evidence_json={"items": []},
     )
-    workflow = SimpleNamespace(definition_json={
-        "schema_version": 3, "nodes": [], "edges": [], "price_recovery": price_recovery,
-    })
+    workflow = SimpleNamespace(
+        definition_json={
+            "schema_version": 3,
+            "nodes": [],
+            "edges": [],
+            "price_recovery": price_recovery,
+        }
+    )
 
     async def load_run(run_id):
         return run, task, workflow, {"version": {"id": "rules-v3"}}
@@ -276,6 +416,9 @@ async def test_failed_node_retry_continues_from_checkpoint(
     async def no_cancel(*args, **kwargs):
         return False
 
+    async def notify_result(**kwargs):
+        notifications.append(kwargs)
+
     async def get_graph(*args, **kwargs):
         return graph
 
@@ -284,6 +427,7 @@ async def test_failed_node_retry_continues_from_checkpoint(
     monkeypatch.setattr(content_run_worker, "append_run_stream_event", no_event)
     monkeypatch.setattr(content_run_worker, "clear_cancel_signal", no_event)
     monkeypatch.setattr(content_run_worker, "has_cancel_signal", no_cancel)
+    monkeypatch.setattr(content_run_worker, "notify_dangjia_content_result", notify_result, raising=False)
     monkeypatch.setattr(
         content_run_worker.agent_manager,
         "get_agent",
@@ -301,6 +445,9 @@ async def test_failed_node_retry_continues_from_checkpoint(
         "resume_parent_run_id": None,
     }
     assert statuses == ["running", "completed"]
+    assert notifications == [
+        {"task_id": task.id, "run_id": run.id, "terminal_status": "completed"},
+    ]
 
 
 @pytest.mark.asyncio
@@ -332,7 +479,7 @@ async def test_retry_at_parallel_join_specifies_completed_predecessor(monkeypatc
         workflow_version_id="workflow-v3",
         rule_version_id="rules-v3",
         industry_template_version_id="industry-v3",
-        runtime_config_snapshot_json={"schema_version": 3},
+        runtime_config_snapshot_json={"schema_version": 3, "creation_mode": "viral_rewrite"},
     )
     workflow = SimpleNamespace(
         definition_json={
@@ -343,6 +490,7 @@ async def test_retry_at_parallel_join_specifies_completed_predecessor(monkeypatc
             ],
         }
     )
+    notifications = []
 
     async def load_run(run_id):
         return run, task, workflow, {"version": {"id": "rules-v3"}}
@@ -356,11 +504,15 @@ async def test_retry_at_parallel_join_specifies_completed_predecessor(monkeypatc
     async def get_graph(*args, **kwargs):
         return graph
 
+    async def notify_result(**kwargs):
+        notifications.append(kwargs)
+
     monkeypatch.setattr(content_run_worker, "_load_content_run", load_run)
     monkeypatch.setattr(content_run_worker, "_set_content_run_status", no_event)
     monkeypatch.setattr(content_run_worker, "append_run_stream_event", no_event)
     monkeypatch.setattr(content_run_worker, "clear_cancel_signal", no_event)
     monkeypatch.setattr(content_run_worker, "has_cancel_signal", no_cancel)
+    monkeypatch.setattr(content_run_worker, "notify_dangjia_content_result", notify_result)
     monkeypatch.setattr(
         content_run_worker.agent_manager,
         "get_agent",
@@ -371,6 +523,7 @@ async def test_retry_at_parallel_join_specifies_completed_predecessor(monkeypatc
 
     assert graph.update_calls == [None, "collect_viral_candidates"]
     assert graph.invoked_with is None
+    assert notifications == []
 
 
 @pytest.mark.asyncio
@@ -404,7 +557,7 @@ async def test_cover_submission_retry_replans_when_template_text_is_too_long(mon
         workflow_version_id="workflow-v3",
         rule_version_id="rules-v3",
         industry_template_version_id="industry-v3",
-        runtime_config_snapshot_json={"schema_version": 3},
+        runtime_config_snapshot_json={"schema_version": 3, "creation_mode": "viral_rewrite"},
     )
     workflow = SimpleNamespace(definition_json={"schema_version": 3, "nodes": [], "edges": []})
 
@@ -462,7 +615,7 @@ async def test_failed_cover_wait_retry_requeues_cover_and_updates_checkpoint(mon
         workflow_version_id="workflow-v3",
         rule_version_id="rules-v3",
         industry_template_version_id="industry-v3",
-        runtime_config_snapshot_json={"schema_version": 3},
+        runtime_config_snapshot_json={"schema_version": 3, "creation_mode": "viral_rewrite"},
     )
     workflow = SimpleNamespace(definition_json={"schema_version": 3, "nodes": [], "edges": []})
 
@@ -534,7 +687,7 @@ async def test_missing_cover_wait_retry_rewinds_to_cover_submission(monkeypatch)
         workflow_version_id="workflow-v3",
         rule_version_id="rules-v3",
         industry_template_version_id="industry-v3",
-        runtime_config_snapshot_json={"schema_version": 3},
+        runtime_config_snapshot_json={"schema_version": 3, "creation_mode": "viral_rewrite"},
     )
     workflow = SimpleNamespace(definition_json={"schema_version": 3, "nodes": [], "edges": []})
 
@@ -595,14 +748,15 @@ async def test_retryable_model_validation_error_is_wrapped_for_arq_retry(monkeyp
         workflow_version_id="workflow-v3",
         rule_version_id="rules-v3",
         industry_template_version_id="industry-v3",
-        runtime_config_snapshot_json={"schema_version": 3},
-        brief_json={"task_id": "task-model-retry"},
+        runtime_config_snapshot_json={"schema_version": 3, "creation_mode": "viral_rewrite"},
+        brief_json={"task_id": "task-model-retry", "form_values": {"external_source": "dangjia"}},
         strategy_json={"compatibility": "compatible"},
         evidence_json={"items": []},
         selected_angle_json={},
     )
     workflow = SimpleNamespace(definition_json={"schema_version": 3, "nodes": [], "edges": []})
     statuses = []
+    notifications = []
 
     async def load_run(run_id):
         return run, task, workflow, {"version": {"id": "rules-v3"}}
@@ -616,6 +770,9 @@ async def test_retryable_model_validation_error_is_wrapped_for_arq_retry(monkeyp
     async def no_cancel(*args, **kwargs):
         return False
 
+    async def notify_result(**kwargs):
+        notifications.append(kwargs)
+
     async def get_graph(*args, **kwargs):
         return InvalidModelGraph()
 
@@ -624,6 +781,7 @@ async def test_retryable_model_validation_error_is_wrapped_for_arq_retry(monkeyp
     monkeypatch.setattr(content_run_worker, "append_run_stream_event", no_event)
     monkeypatch.setattr(content_run_worker, "clear_cancel_signal", no_event)
     monkeypatch.setattr(content_run_worker, "has_cancel_signal", no_cancel)
+    monkeypatch.setattr(content_run_worker, "notify_dangjia_content_result", notify_result, raising=False)
     monkeypatch.setattr(
         content_run_worker.agent_manager,
         "get_agent",
@@ -634,3 +792,4 @@ async def test_retryable_model_validation_error_is_wrapped_for_arq_retry(monkeyp
         await content_run_worker.process_content_run({"job_try": 1}, run.id)
 
     assert statuses == ["running"]
+    assert notifications == []

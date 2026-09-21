@@ -25,7 +25,10 @@ DEFAULT_CONTRACTS = {
     "JointStrategyDecisionV2",
     "ReevaluateJointStrategyInputV1",
     "ResearchStrategyPricesInputV1",
+    "ResearchCreationPlanPricesInputV1",
+    "ExtractCreationFactsInputV1",
     "StrategyPriceEvidenceResultV1",
+    "ExtractedCreationFactsResultV1",
     "SelectContentDirectionInputV1",
     "ExplainStrategyInputV1",
     "CollectMissingEvidenceInputV1",
@@ -70,6 +73,7 @@ DEFAULT_CONTRACTS = {
     "GeneratedContentResultV1",
     "PersonaPolishResultV1",
     "ContentReviewResultV1",
+    "StandardizedContentReviewResultV1",
     "VisualPlanResultV1",
     "CoverJobSubmissionResultV1",
     "VisualReviewResultV1",
@@ -108,9 +112,31 @@ class WorkflowDefinitionPolicy:
                 raise ValueError(f"不支持的工作流节点类型: {node.get('type')}")
 
         cls._validate_dag(ids, edges)
-        joint = definition.get("selection_policy") in {"agent_skill_v1", "blueprint_first_v1"}
-        cls._validate_v3_nodes(node_by_id, catalog, joint=joint, price_recovery=bool(definition.get("price_recovery")))
-        cls._validate_v3_control_flow(edges, joint=joint, price_recovery=bool(definition.get("price_recovery")))
+        joint = definition.get("selection_policy") in {
+            "agent_skill_v1",
+            "blueprint_first_v1",
+            "modular_viral_author_v1",
+        }
+        standardized_factory = definition.get("selection_policy") == "standardized_factory_v1"
+        deterministic_plan = definition.get("selection_policy") in {
+            "deterministic_creation_plan_v1",
+            "standardized_factory_v1",
+        }
+        cls._validate_v3_nodes(
+            node_by_id,
+            catalog,
+            joint=joint,
+            price_recovery=bool(definition.get("price_recovery")),
+            deterministic_plan=deterministic_plan,
+            standardized_factory=standardized_factory,
+        )
+        cls._validate_v3_control_flow(
+            edges,
+            joint=joint,
+            price_recovery=bool(definition.get("price_recovery")),
+            deterministic_plan=deterministic_plan,
+            standardized_factory=standardized_factory,
+        )
         cls._validate_revision_routes(definition.get("revision_routes") or [], node_by_id)
         cls._validate_runtime_limits(definition)
 
@@ -137,10 +163,26 @@ class WorkflowDefinitionPolicy:
 
     @classmethod
     def _validate_v3_nodes(
-        cls, node_by_id: dict[str, dict[str, Any]], catalog: WorkflowCatalog | None,
-        *, joint: bool = False, price_recovery: bool = False,
+        cls,
+        node_by_id: dict[str, dict[str, Any]],
+        catalog: WorkflowCatalog | None,
+        *,
+        joint: bool = False,
+        price_recovery: bool = False,
+        deterministic_plan: bool = False,
+        standardized_factory: bool = False,
     ) -> None:
-        expected = 29 if joint and price_recovery else 25 if joint else 26
+        expected = (
+            33
+            if standardized_factory
+            else 29
+            if deterministic_plan
+            else 29
+            if joint and price_recovery
+            else 25
+            if joint
+            else 26
+        )
         if len(node_by_id) != expected:
             raise ValueError(f"内容与封面工作流必须声明 {expected} 个节点")
         if joint:
@@ -151,17 +193,45 @@ class WorkflowDefinitionPolicy:
             if node_by_id.get("prepare_strategy_candidates", {}).get("type") != "deterministic":
                 raise ValueError("联合策略必须先装配受限候选")
         if price_recovery:
-            if not joint or node_by_id.get("confirm_strategy_prices", {}).get("type") != "human_review":
+            if (not joint and not deterministic_plan) or node_by_id.get("confirm_strategy_prices", {}).get(
+                "type"
+            ) != "human_review":
                 raise ValueError("报价补证必须经过人工确认")
-            if node_by_id.get("reselect_creation_strategy", {}).get("output_contract") != "JointStrategyDecisionV2":
+            if (
+                not deterministic_plan
+                and node_by_id.get("reselect_creation_strategy", {}).get("output_contract") != "JointStrategyDecisionV2"
+            ):
                 raise ValueError("报价补证必须由策略 Agent 复评")
+        if deterministic_plan:
+            if node_by_id.get("prepare_creation_plan_inputs", {}).get("type") != "deterministic":
+                raise ValueError("确定性创作计划必须先装配规则、事实和参考资产")
+            if node_by_id.get("build_creation_plan", {}).get("type") != "deterministic":
+                raise ValueError("确定性创作计划必须由固定节点构建")
+            if node_by_id.get("extract_creation_facts", {}).get("type") != "agent":
+                raise ValueError("自由文本事实必须经受限抽取节点处理")
+            if node_by_id.get("merge_extracted_creation_facts", {}).get("type") != "deterministic":
+                raise ValueError("抽取事实必须经固定规则逐字校验")
+            if {"select_creation_strategy", "reselect_creation_strategy", "lock_creation_strategy"} & set(node_by_id):
+                raise ValueError("确定性创作计划不得调用或保留策略选择 Agent")
+        if standardized_factory:
+            for node_id in (
+                "validate_material_gate",
+                "freeze_production_pack",
+                "compose_locked_quote_block",
+                "validate_composed_content",
+            ):
+                if node_by_id.get(node_id, {}).get("type") != "deterministic":
+                    raise ValueError(f"标准化生产工作流的 {node_id} 必须使用固定节点")
+            generation_inputs = set(node_by_id.get("generate_content", {}).get("state_inputs") or [])
+            if "production_pack" not in generation_inputs:
+                raise ValueError("标准化生产工作流必须向内容生成节点提供冻结生产包")
         missing_gates = sorted(V3_HUMAN_GATE_IDS - set(node_by_id))
         if missing_gates:
             raise ValueError(f"V3 工作流缺少必选人工关口: {', '.join(missing_gates)}")
         for node_id in V3_HUMAN_GATE_IDS:
             if node_by_id[node_id].get("type") != "human_review":
                 raise ValueError(f"必选人工关口 {node_id} 必须使用 human_review 类型")
-        if node_by_id.get("lock_creation_strategy", {}).get("type") != "deterministic":
+        if not deterministic_plan and node_by_id.get("lock_creation_strategy", {}).get("type") != "deterministic":
             raise ValueError("lock_creation_strategy 必须用固定规则校验并锁定 Agent 选择")
         if node_by_id.get("load_formula_lexicons", {}).get("type") != "deterministic":
             raise ValueError("load_formula_lexicons 必须用固定规则加载锁定公式对应词库")
@@ -183,7 +253,14 @@ class WorkflowDefinitionPolicy:
                 raise ValueError("只有 revise_if_needed 可以使用 revision_router 类型")
 
     @staticmethod
-    def _validate_v3_control_flow(edges: list[Any], *, joint: bool = False, price_recovery: bool = False) -> None:
+    def _validate_v3_control_flow(
+        edges: list[Any],
+        *,
+        joint: bool = False,
+        price_recovery: bool = False,
+        deterministic_plan: bool = False,
+        standardized_factory: bool = False,
+    ) -> None:
         edge_set = {tuple(edge) for edge in edges}
         required = {
             ("deterministic_validate", "revise_if_needed"),
@@ -202,24 +279,82 @@ class WorkflowDefinitionPolicy:
             ("merge_research_evidence", "confirm_high_risk_facts"),
             ("freeze_evidence_bundle", "generate_content"),
         }
-        if joint:
+        if deterministic_plan:
+            required = {
+                edge
+                for edge in required
+                if not set(edge)
+                & {
+                    "select_creation_strategy",
+                    "lock_creation_strategy",
+                    "collect_viral_candidates",
+                    "select_viral_reference",
+                }
+            }
+            required.update(
+                {
+                    ("normalize_evidence", "prepare_creation_plan_inputs"),
+                    ("prepare_creation_plan_inputs", "extract_creation_facts"),
+                    ("extract_creation_facts", "merge_extracted_creation_facts"),
+                    ("merge_extracted_creation_facts", "research_strategy_prices"),
+                    ("research_strategy_prices", "confirm_strategy_prices"),
+                    ("confirm_strategy_prices", "merge_strategy_prices"),
+                    ("merge_strategy_prices", "build_creation_plan"),
+                    ("build_creation_plan", "load_formula_lexicons"),
+                    *(
+                        (node, "merge_research_evidence")
+                        for node in (
+                            "collect_business_rule_evidence",
+                            "collect_price_evidence",
+                            "collect_compliance_evidence",
+                        )
+                    ),
+                }
+            )
+            if standardized_factory:
+                required.discard(("freeze_evidence_bundle", "generate_content"))
+                required.update(
+                    {
+                        ("freeze_evidence_bundle", "validate_material_gate"),
+                        ("validate_material_gate", "freeze_production_pack"),
+                        ("freeze_production_pack", "generate_content"),
+                        ("compose_locked_quote_block", "validate_composed_content"),
+                        ("validate_composed_content", "semantic_review"),
+                    }
+                )
+        elif joint:
             removed = {"collect_viral_candidates", "select_viral_reference"}
             required = {edge for edge in required if not set(edge) & removed}
-            required.update({
-                ("normalize_evidence", "prepare_strategy_candidates"),
-                ("prepare_strategy_candidates", "select_creation_strategy"),
-                *((node, "merge_research_evidence") for node in (
-                    "collect_business_rule_evidence", "collect_price_evidence", "collect_compliance_evidence"
-                )),
-            })
-        if price_recovery:
+            required.update(
+                {
+                    ("normalize_evidence", "prepare_strategy_candidates"),
+                    ("prepare_strategy_candidates", "select_creation_strategy"),
+                    *(
+                        (node, "merge_research_evidence")
+                        for node in (
+                            "collect_business_rule_evidence",
+                            "collect_price_evidence",
+                            "collect_compliance_evidence",
+                        )
+                    ),
+                }
+            )
+        if price_recovery and not deterministic_plan:
             bypass = ("select_creation_strategy", "lock_creation_strategy")
             if bypass in edge_set:
                 raise ValueError("不得绕过报价补证直接锁定策略")
             required.remove(bypass)
-            chain = ["select_creation_strategy", "research_strategy_prices", "confirm_strategy_prices",
-                     "merge_strategy_prices", "reselect_creation_strategy", "lock_creation_strategy"]
+            chain = [
+                "select_creation_strategy",
+                "research_strategy_prices",
+                "confirm_strategy_prices",
+                "merge_strategy_prices",
+                "reselect_creation_strategy",
+                "lock_creation_strategy",
+            ]
             required.update(zip(chain, chain[1:]))
+        if standardized_factory and ("freeze_evidence_bundle", "generate_content") in edge_set:
+            raise ValueError("标准化生产工作流不得绕过物料质量门直接生成内容")
         if not required <= edge_set:
             raise ValueError("V3.7 工作流缺少策略锁定、并发调研汇总、爆款选择或固定回修链路")
         forbidden = {

@@ -1,0 +1,26 @@
+{
+  "module_id": "viral-persona-author",
+  "version": "1.1.0",
+  "applies_when": {
+    "creation_mode": "viral_rewrite"
+  },
+  "rule_ids": [
+    "viral-persona-author.v1.1"
+  ],
+  "runtime_rules": {
+    "opening_required": true,
+    "opening_window_paragraphs": 2,
+    "opening_layers": [
+      "identity",
+      "value",
+      "evidence"
+    ],
+    "relevant_advantage_count": {
+      "min": 2,
+      "max": 3
+    },
+    "pain_matching_required": true,
+    "closing_consistency_required": true,
+    "grounding_required": true
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "module_id": "viral-price-author",
+  "version": "1.1.0",
+  "applies_when": {
+    "creation_mode": "viral_rewrite"
+  },
+  "rule_ids": [
+    "viral-price-author.v2"
+  ],
+  "runtime_rules": {
+    "required_price_metadata": [
+      "price_basis",
+      "scope",
+      "unit"
+    ],
+    "price_basis": [
+      "standard_unit_price",
+      "project_quote"
+    ],
+    "city_trade_unit_must_match": true,
+    "price_policy": {
+      "explicit_total_mode": "authoritative",
+      "itemized_list_mode": "may_be_partial",
+      "sum_claim_mode": "verified_equal_only"
+    }
+  }
+}

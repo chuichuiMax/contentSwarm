@@ -78,6 +78,24 @@ class ContentCoverRepository:
         await self.db.flush()
         return item
 
+    async def find_featured_reference_asset(
+        self, owner_uid: str, featured_template_id: str
+    ) -> ContentCoverAsset | None:
+        return (
+            (
+                await self.db.execute(
+                    select(ContentCoverAsset).where(
+                        ContentCoverAsset.owner_uid == owner_uid,
+                        ContentCoverAsset.role == "template",
+                        ContentCoverAsset.deleted_at.is_(None),
+                        ContentCoverAsset.metadata_json["featured_template_id"].astext == featured_template_id,
+                    )
+                )
+            )
+            .scalars()
+            .first()
+        )
+
     async def update_asset_metadata(
         self,
         asset: ContentCoverAsset,

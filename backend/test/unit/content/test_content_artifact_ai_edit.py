@@ -17,7 +17,7 @@ def _task() -> SimpleNamespace:
     return SimpleNamespace(
         id="task-1",
         latest_run_id="run-1",
-        runtime_config_snapshot_json={"schema_version": 3},
+        runtime_config_snapshot_json={"schema_version": 3, "creation_mode": "viral_rewrite"},
         brief_json={"required_terms": [], "forbidden_terms": []},
         strategy_json={},
         evidence_json={"items": []},

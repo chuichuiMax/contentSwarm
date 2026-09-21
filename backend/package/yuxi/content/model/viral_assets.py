@@ -67,9 +67,51 @@ class ReferenceCard(ViralContract):
     anchors: list[SourceAnchor] = Field(min_length=1)
 
 
+class ReferenceSlotV2(ViralContract):
+    """可由固定规则映射到本次 Evidence 的参考结构槽位。"""
+
+    slot_key: str = Field(min_length=1, pattern=r"^[a-z][a-z0-9_]*$")
+    name: str = Field(min_length=1)
+    description: str = Field(min_length=1)
+    variable_codes: list[str] = Field(min_length=1)
+    match_mode: Literal["all", "any"] = "all"
+    evidence_required: bool = True
+    required: bool
+    anchor: SourceAnchor
+
+    @model_validator(mode="after")
+    def unique_variable_codes(self):
+        if len(self.variable_codes) != len(set(self.variable_codes)):
+            raise ValueError("参考槽位变量编码不能重复")
+        if any(not re.fullmatch(r"[a-z][a-z0-9_]*", code) for code in self.variable_codes):
+            raise ValueError("参考槽位变量编码格式无效")
+        return self
+
+
+class ReferenceCardV2(ViralContract):
+    schema_version: Literal[2] = 2
+    content_type_code: Literal["CT01", "CT02", "CT03", "CT04", "CT05", "CT06", "CT07"]
+    content_type_reason: str = Field(min_length=1)
+    audience: str = Field(min_length=1)
+    scene: str = Field(min_length=1)
+    goal: str = Field(min_length=1)
+    channel: str = Field(min_length=1)
+    summary: str = Field(min_length=1, max_length=1000)
+    required_slots: list[ReferenceSlotV2] = Field(min_length=1)
+    anchors: list[SourceAnchor] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def unique_slot_keys(self):
+        keys = [slot.slot_key for slot in self.required_slots]
+        if len(keys) != len(set(keys)):
+            raise ValueError("参考事实槽位编码不能重复")
+        return self
+
+
 class ViralAssetPreparationInputV1(ViralContract):
     source: ViralArticleSource
     source_hash: str = Field(min_length=64, max_length=64)
+    allowed_variable_codes: list[str] = Field(min_length=1)
 
     @model_validator(mode="after")
     def verify_source_hash(self):
@@ -88,6 +130,34 @@ class ViralAssetImport(ViralContract):
     viral_basis: str = Field(min_length=1, max_length=3000)
 
 
+class ViralAssetReviewInput(ViralContract):
+    action: Literal["approve", "reject", "disable", "enable"]
+    reason: str = Field(default="", max_length=1000)
+
+    @model_validator(mode="after")
+    def reason_required_for_rejection(self):
+        if self.action == "reject" and not self.reason:
+            raise ValueError("驳回时必须填写原因")
+        return self
+
+
+class ReferenceSlotCorrection(ViralContract):
+    slot_key: str = Field(min_length=1, pattern=r"^[a-z][a-z0-9_]*$")
+    name: str = Field(min_length=1)
+    description: str = Field(min_length=1)
+    variable_codes: list[str] = Field(min_length=1)
+    match_mode: Literal["all", "any"] = "all"
+    evidence_required: bool = True
+    required: bool
+
+
+class ViralAssetCorrectionInput(ViralContract):
+    content_type_code: Literal["CT01", "CT02", "CT03", "CT04", "CT05", "CT06", "CT07"]
+    content_type_reason: str = Field(min_length=1, max_length=4000)
+    required_slots: list[ReferenceSlotCorrection] = Field(min_length=1)
+    reason: str = Field(min_length=1, max_length=1000)
+
+
 class ViralAssetPreparationResultV1(ViralContract):
     status: Literal["prepared", "needs_review"]
     source_hash: str = Field(min_length=64, max_length=64)
@@ -101,6 +171,25 @@ class ViralAssetPreparationResultV1(ViralContract):
         if self.status == "prepared":
             if not self.reference_card or not self.reference_blueprint or self.issues:
                 raise ValueError("准备成功必须有参考卡、蓝图且不存在未解决问题")
+        elif not self.issues or self.reference_card or self.reference_blueprint or self.blueprint_anchors:
+            raise ValueError("待核验结果只提交明确问题，不发布未核验画像")
+        return self
+
+
+class ViralAssetPreparationResultV2(ViralContract):
+    schema_version: Literal[2] = 2
+    status: Literal["prepared", "needs_review"]
+    source_hash: str = Field(min_length=64, max_length=64)
+    reference_card: ReferenceCardV2 | None = None
+    reference_blueprint: dict[str, Any] | None = None
+    blueprint_anchors: dict[str, list[SourceAnchor]] = Field(default_factory=dict)
+    issues: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def require_consistent_status(self):
+        if self.status == "prepared":
+            if not self.reference_card or not self.reference_blueprint or self.issues:
+                raise ValueError("准备成功必须有 V2 参考卡、蓝图且不存在未解决问题")
         elif not self.issues or self.reference_card or self.reference_blueprint or self.blueprint_anchors:
             raise ValueError("待核验结果只提交明确问题，不发布未核验画像")
         return self
@@ -145,6 +234,68 @@ def validate_prepared_asset(payload: dict[str, Any], source: ViralArticleSource)
     card = result.reference_card
     if source.industry_slug == "decoration" and (not card.content_type_code or not card.content_type_reason):
         raise ValueError("装修爆款必须标注创作类型及原文分类依据")
+    names = [slot.name for slot in card.required_slots]
+    if len(names) != len(set(names)):
+        raise ValueError("参考事实槽位名称不能重复")
+    anchors = [*card.anchors, *(slot.anchor for slot in card.required_slots)]
+    for name in BLUEPRINT_FIELDS:
+        if not result.blueprint_anchors[name]:
+            raise ValueError("蓝图各字段均需原文依据，未出现的样式也需引用检查范围")
+        anchors.extend(result.blueprint_anchors[name])
+    for anchor in anchors:
+        text = getattr(source, anchor.section)
+        if anchor.start is None and anchor.end is None:
+            if text.count(anchor.quote) != 1:
+                raise ValueError("原文引用不存在或存在多处匹配，请提供明确位置")
+            anchor.start = text.index(anchor.quote)
+            anchor.end = anchor.start + len(anchor.quote)
+        if anchor.start is None or anchor.end is None:
+            raise ValueError("原文引用位置必须同时提供 start/end")
+        if anchor.end <= anchor.start or text[anchor.start : anchor.end] != anchor.quote:
+            raise ValueError("画像引用与原文位置不一致")
+    return result
+
+
+def validate_prepared_asset_v2(
+    payload: dict[str, Any],
+    source: ViralArticleSource,
+    *,
+    allowed_variable_codes: set[str] | None = None,
+) -> ViralAssetPreparationResultV2:
+    """校验新资产；V1 校验器继续供历史资产读取。"""
+
+    result = ViralAssetPreparationResultV2.model_validate(payload)
+    if result.reference_card is not None and allowed_variable_codes is not None:
+        unknown = sorted(
+            {
+                code
+                for slot in result.reference_card.required_slots
+                for code in slot.variable_codes
+                if code not in allowed_variable_codes
+            }
+        )
+        if unknown:
+            raise ValueError("参考槽位引用了未发布变量：" + "、".join(unknown))
+    if result.source_hash != source.source_hash:
+        raise ValueError("准备结果必须对应同一原文版本")
+    if result.status == "needs_review":
+        return result
+    if source.completeness != "complete":
+        raise ValueError("未核验完整性的原文不能发布画像")
+    blueprint = result.reference_blueprint
+    if not BLUEPRINT_FIELDS.issubset(blueprint) or not BLUEPRINT_FIELDS.issubset(result.blueprint_anchors):
+        raise ValueError("结构蓝图缺少必需字段或原文依据")
+    if not blueprint["title_slot_sequence"] or not blueprint["content_block_sequence"]:
+        raise ValueError("结构蓝图缺少标题槽位或信息块顺序")
+    if not isinstance(blueprint["list_pattern"], dict) or blueprint["list_pattern"].get("type") not in {
+        "none",
+        "numbered",
+        "emoji",
+        "bulleted",
+        "mixed",
+    }:
+        raise ValueError("蓝图列表类型无效")
+    card = result.reference_card
     names = [slot.name for slot in card.required_slots]
     if len(names) != len(set(names)):
         raise ValueError("参考事实槽位名称不能重复")

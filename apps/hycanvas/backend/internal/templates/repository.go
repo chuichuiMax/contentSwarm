@@ -30,6 +30,7 @@ type DBTX interface {
 type TemplateRow struct {
 	ID             string
 	OwnerID        string
+	SourceDesignID *string
 	WorkspaceID    *string
 	Title          string
 	Category       *string
@@ -45,13 +46,13 @@ type TemplateRow struct {
 	UpdatedAt      time.Time
 }
 
-const tmplCols = `id,"owner_id","workspace_id",title,category,tags,file,thumbnail,visibility,"collection_id",style,
+const tmplCols = `id,"owner_id","source_design_id","workspace_id",title,category,tags,file,thumbnail,visibility,"collection_id",style,
 	'[]'::jsonb,attribution,"created_at","updated_at"`
 
 func scanTemplate(row pgx.Row) (TemplateRow, error) {
 	var t TemplateRow
 	var vis string
-	err := row.Scan(&t.ID, &t.OwnerID, &t.WorkspaceID, &t.Title, &t.Category, &t.Tags, &t.File,
+	err := row.Scan(&t.ID, &t.OwnerID, &t.SourceDesignID, &t.WorkspaceID, &t.Title, &t.Category, &t.Tags, &t.File,
 		&t.Thumbnail, &vis, &t.CollectionID, &t.Style, &t.FillableFields, &t.Attributions, &t.CreatedAt, &t.UpdatedAt)
 	t.Visibility = strings.ToLower(vis)
 	return t, err
@@ -120,26 +121,33 @@ func (s *Service) listCollectionRows(ctx context.Context, collectionID string) (
 }
 
 type createTemplateInput struct {
-	ownerID      string
-	workspaceID  *string
-	title        string
-	category     *string
-	tags         []string
-	file         json.RawMessage
-	thumbnail    *string
-	visibility   string // lowercase
-	collectionID *string
-	style        json.RawMessage
+	ownerID        string
+	sourceDesignID *string
+	workspaceID    *string
+	title          string
+	category       *string
+	tags           []string
+	file           json.RawMessage
+	thumbnail      *string
+	visibility     string // lowercase
+	collectionID   *string
+	style          json.RawMessage
 }
 
-func (s *Service) createRow(ctx context.Context, in createTemplateInput) (TemplateRow, error) {
-	const q = `INSERT INTO "templates" (id,"owner_id","workspace_id",title,category,tags,file,thumbnail,visibility,"collection_id",style,attribution,"updated_at")
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'[]'::jsonb,now()) RETURNING ` + tmplCols
+func (s *Service) saveRow(ctx context.Context, in createTemplateInput) (TemplateRow, error) {
+	const q = `INSERT INTO "templates" (id,"owner_id","source_design_id","workspace_id",title,category,tags,file,thumbnail,visibility,"collection_id",style,attribution,"updated_at")
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'[]'::jsonb,now())
+		ON CONFLICT ("owner_id","source_design_id") WHERE "source_design_id" IS NOT NULL DO UPDATE SET
+			"workspace_id" = EXCLUDED."workspace_id", title = EXCLUDED.title, category = EXCLUDED.category,
+			tags = EXCLUDED.tags, file = EXCLUDED.file, thumbnail = EXCLUDED.thumbnail,
+			visibility = EXCLUDED.visibility, "collection_id" = EXCLUDED."collection_id",
+			style = EXCLUDED.style, "updated_at" = now()
+		RETURNING ` + tmplCols
 	if in.tags == nil {
 		in.tags = []string{}
 	}
 	return scanTemplate(s.db.QueryRow(ctx, q,
-		uuid.NewString(), in.ownerID, in.workspaceID, in.title, in.category, in.tags, in.file,
+		uuid.NewString(), in.ownerID, in.sourceDesignID, in.workspaceID, in.title, in.category, in.tags, in.file,
 		in.thumbnail, strings.ToUpper(in.visibility), in.collectionID, in.style))
 }
 

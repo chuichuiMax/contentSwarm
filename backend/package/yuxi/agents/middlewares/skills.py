@@ -167,6 +167,44 @@ class RequiredSkillResolutionError(ValueError):
         self.code = code
 
 
+def select_viral_author_instructions(instructions: str, payload: dict) -> str:
+    """从同一版本 Skill 中确定性选取本轮适用段落。"""
+
+    evidence = (payload.get("evidence_bundle") or {}).get("items") or []
+    formula_code = ((payload.get("strategy_snapshot") or {}).get("body_formula") or {}).get("code") or ""
+    form_values = (payload.get("content_brief") or {}).get("form_values") or {}
+    has_price = (
+        formula_code in {f"FRB{index:02d}" for index in range(6, 10)}
+        or bool(form_values.get("quote_type"))
+        or any(
+            (item.get("metadata") or {}).get("price_basis")
+            or set(item.get("variable_codes") or []) & {"price", "budget", "cost", "discount", "fee"}
+            for item in evidence
+        )
+    )
+    repair = any((payload.get(key) or {}).get("status") == "blocked" for key in ("validation_report", "review_report"))
+    channel = payload.get("channel_profile") or {}
+    emoji_disabled = (channel.get("body_constraints") or {}).get("emoji_allowed") is False
+    selected = {
+        "PRICE": has_price,
+        "FIRST": not repair,
+        "REPAIR": repair,
+        "EMOJI": not emoji_disabled,
+        "EMOJI_DISABLED": emoji_disabled,
+    }
+    for section, include in selected.items():
+        begin = f"<!-- VIRAL_AUTHOR_{section}_BEGIN -->"
+        end = f"<!-- VIRAL_AUTHOR_{section}_END -->"
+        prefix, marker, remainder = instructions.partition(begin)
+        if not marker:
+            raise RequiredSkillResolutionError("required_skill_section_missing", f"仿写 Skill 缺少段落: {begin}")
+        body, marker, suffix = remainder.partition(end)
+        if not marker:
+            raise RequiredSkillResolutionError("required_skill_section_missing", f"仿写 Skill 缺少段落: {end}")
+        instructions = prefix + (body if include else "") + suffix
+    return instructions.strip()
+
+
 def expand_required_skill_closure(
     slugs: list[str] | None,
     dependency_map: dict[str, SkillDependencyNode],
@@ -510,13 +548,10 @@ class SkillsMiddleware(AgentMiddleware):
                 )
             if getattr(runtime_context, "_content_max_model_calls", None):
                 node_input = getattr(runtime_context, "_content_node_input", None)
-                mode = (
-                    (getattr(node_input, "payload", {}) or {})
-                    .get("runtime_config_snapshot", {})
-                    .get(
-                        "creation_mode",
-                        "original",
-                    )
+                payload = getattr(node_input, "payload", {}) or {}
+                mode = payload.get("runtime_config_snapshot", {}).get(
+                    "creation_mode",
+                    "original",
                 )
                 if slug == "viral-layout-formatter":
                     original_start = instructions.index("## 原创模式")
@@ -526,21 +561,49 @@ class SkillsMiddleware(AgentMiddleware):
                         if mode == "original"
                         else instructions[:original_start] + instructions[viral_start:]
                     )
-                if slug == "content-joint-strategy-selector":
-                    original_start = instructions.index("## 原创模式")
-                    rewrite_start = instructions.index("## 仿写模式")
-                    instructions = (
-                        instructions[:rewrite_start]
-                        if mode == "original"
-                        else instructions[:original_start] + instructions[rewrite_start:]
-                    )
                 if slug == "content-reviewer":
-                    mode = (getattr(node_input, "payload", {}) or {}).get("review_scope", "full")
+                    mode = payload.get("review_scope", "full")
                     if mode in {"emoji", "expression"}:
                         instructions = instructions.split("## 完整审核", 1)[0]
+                if slug == "viral-content-author":
+                    instructions = select_viral_author_instructions(instructions, payload)
+                    mode = (
+                        "repair"
+                        if any(
+                            (payload.get(key) or {}).get("status") == "blocked"
+                            for key in ("validation_report", "review_report")
+                        )
+                        else "first"
+                    )
+                if slug == "viral-content-reviewer":
+                    mode = "viral_full"
+                if slug in {
+                    "viral-author-core",
+                    "viral-title-author",
+                    "viral-body-author",
+                    "viral-persona-author",
+                    "viral-natural-expression",
+                    "viral-layout-expression",
+                    "viral-platform-expression",
+                    "viral-price-author",
+                    "viral-topic-author",
+                }:
+                    mode = (
+                        "repair"
+                        if any(
+                            (payload.get(key) or {}).get("status") == "blocked"
+                            for key in ("validation_report", "review_report")
+                        )
+                        else "first"
+                    )
+                if slug == "viral-modular-reviewer":
+                    mode = "modular_full"
+                if slug == "viral-cover-matcher":
+                    mode = "visual_match"
                 applied = getattr(runtime_context, "_content_applied_skill_instructions", {})
                 applied[slug] = {
                     "mode": mode,
+                    "selection_reason": ("阻断代码定点回修" if mode == "repair" else "节点规则要求"),
                     "version": item.get("version"),
                     "content_hash": item.get("content_hash"),
                     "instruction_chars": len(instructions),

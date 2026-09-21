@@ -16,11 +16,18 @@ export const contentApi = {
   importViralAssets: (payload) => apiPost('/api/content/viral-assets/import', payload),
   getViralAsset: (assetId) => apiGet(`/api/content/viral-assets/${assetId}`),
   retryViralAsset: (assetId) => apiPost(`/api/content/viral-assets/${assetId}/retry`),
+  reviewViralAsset: (assetId, payload) =>
+    apiPost(`/api/content/viral-assets/${assetId}/review`, payload),
+  correctViralAsset: (assetId, payload) =>
+    apiPatch(`/api/content/viral-assets/${assetId}/reference-card`, payload),
+  reprepareViralAssets: (assetIds) =>
+    apiPost('/api/content/viral-assets/reprepare', { asset_ids: assetIds }),
   getBootstrap: () => apiGet('/api/content/bootstrap'),
   createTask: (payload) => apiPost('/api/content/tasks', payload),
   listTasks: (params) => apiGet(`/api/content/tasks${encodeQuery(params)}`),
   getTask: (taskId) => apiGet(`/api/content/tasks/${taskId}`),
   getStrategyCandidates: (taskId) => apiGet(`/api/content/tasks/${taskId}/strategy/candidates`),
+  getCreationPlanPreview: (taskId) => apiGet(`/api/content/tasks/${taskId}/creation-plan/preview`),
   getStrategyDecision: (taskId) => apiGet(`/api/content/tasks/${taskId}/strategy/decision`),
   updateTask: (taskId, payload) => apiPatch(`/api/content/tasks/${taskId}`, payload),
   deleteTask: (taskId) => apiDelete(`/api/content/tasks/${taskId}`),
@@ -33,11 +40,9 @@ export const contentApi = {
   },
   listOcrResults: (taskId) => apiGet(`/api/content/tasks/${taskId}/ocr-results`),
   getOcrResult: (resultId) => apiGet(`/api/content/ocr-results/${resultId}`),
-  updateOcrResult: (resultId, payload) =>
-    apiPatch(`/api/content/ocr-results/${resultId}`, payload),
+  updateOcrResult: (resultId, payload) => apiPatch(`/api/content/ocr-results/${resultId}`, payload),
   retryOcrResult: (resultId) => apiPost(`/api/content/ocr-results/${resultId}/retry`),
-  getOcrImage: (resultId) =>
-    apiGet(`/api/content/ocr-results/${resultId}/image`, {}, true, 'blob'),
+  getOcrImage: (resultId) => apiGet(`/api/content/ocr-results/${resultId}/image`, {}, true, 'blob'),
   getCoverBootstrap: () => apiGet('/api/content/covers/bootstrap'),
   listHyCanvasTemplates: () => apiGet('/api/content/covers/hycanvas/templates'),
   getHyCanvasTemplatePreview: (templateId) =>
@@ -66,8 +71,7 @@ export const contentApi = {
       `/api/content/covers/hycanvas/designs/${encodeURIComponent(designId)}/editor-session`,
       payload
     ),
-  createHyCanvasWorkspaceSession: () =>
-    apiPost('/api/content/covers/hycanvas/workspace-session'),
+  createHyCanvasWorkspaceSession: () => apiPost('/api/content/covers/hycanvas/workspace-session'),
   updateCoverImage2Config: (payload) => apiPut('/api/content/covers/image2-config', payload),
   testCoverImage2Config: (payload) => apiPost('/api/content/covers/image2-config/test', payload),
   previewCoverTemplateReplication: (payload) =>
@@ -104,10 +108,8 @@ export const contentApi = {
   deleteCoverAsset: (assetId) => apiDelete(`/api/content/covers/assets/${assetId}`),
   getCoverAssetFile: (assetId) =>
     apiGet(`/api/content/covers/assets/${assetId}/file`, {}, true, 'blob'),
-  createCoverEditorProject: (payload) =>
-    apiPost('/api/content/covers/editor-projects', payload),
-  getCoverEditorProject: (projectId) =>
-    apiGet(`/api/content/covers/editor-projects/${projectId}`),
+  createCoverEditorProject: (payload) => apiPost('/api/content/covers/editor-projects', payload),
+  getCoverEditorProject: (projectId) => apiGet(`/api/content/covers/editor-projects/${projectId}`),
   updateCoverEditorProject: (projectId, payload) =>
     apiPatch(`/api/content/covers/editor-projects/${projectId}`, payload),
   renderCoverEditorProject: (projectId, payload) =>
@@ -123,16 +125,13 @@ export const contentApi = {
       true,
       'raw'
     ),
-  retryCoverJob: (jobId, payload) =>
-    apiPost(`/api/content/covers/jobs/${jobId}/retry`, payload),
+  retryCoverJob: (jobId, payload) => apiPost(`/api/content/covers/jobs/${jobId}/retry`, payload),
   cancelCoverJob: (jobId) => apiPost(`/api/content/covers/jobs/${jobId}/cancel`),
   setCurrentCover: (jobId, assetId = null) =>
     apiPost(`/api/content/covers/jobs/${jobId}/set-current`, { asset_id: assetId }),
   saveBrief: (taskId, brief) => apiPut(`/api/content/tasks/${taskId}/brief`, { brief }),
-  compileBrief: (taskId, brief) =>
-    apiPost(`/api/content/tasks/${taskId}/compile-brief`, { brief }),
-  getRuleBundle: (versionId) =>
-    apiGet(`/api/content/rule-versions/${versionId}/bundle`),
+  compileBrief: (taskId, brief) => apiPost(`/api/content/tasks/${taskId}/compile-brief`, { brief }),
+  getRuleBundle: (versionId) => apiGet(`/api/content/rule-versions/${versionId}/bundle`),
   createRun: (taskId, payload) => apiPost(`/api/content/tasks/${taskId}/runs`, payload),
   getRun: (runId) => apiGet(`/api/content/runs/${runId}`),
   resumeRun: (runId, payload) => apiPost(`/api/content/runs/${runId}/resume`, payload),
@@ -158,11 +157,9 @@ export const contentApi = {
     apiPost(`/api/content/artifacts/${artifactId}/finalize`, payload),
   regenerateArtifact: (artifactId, payload) =>
     apiPost(`/api/content/artifacts/${artifactId}/regenerate`, payload),
-  listArtifactVersions: (artifactId) =>
-    apiGet(`/api/content/artifacts/${artifactId}/versions`),
+  listArtifactVersions: (artifactId) => apiGet(`/api/content/artifacts/${artifactId}/versions`),
   listXiaohongshuAccounts: () => apiGet('/api/content/xiaohongshu/accounts'),
-  createXiaohongshuAccount: (payload) =>
-    apiPost('/api/content/xiaohongshu/accounts', payload),
+  createXiaohongshuAccount: (payload) => apiPost('/api/content/xiaohongshu/accounts', payload),
   updateXiaohongshuAccount: (accountId, payload) =>
     apiPatch(`/api/content/xiaohongshu/accounts/${accountId}`, payload),
   deleteXiaohongshuAccount: (accountId) =>
@@ -182,21 +179,24 @@ export const contentApi = {
   actXiaohongshuBrowserSession: (accountId, payload) =>
     apiPost(`/api/content/xiaohongshu/accounts/${accountId}/browser-session/action`, payload),
   getXiaohongshuBrowserScreenshot: (accountId) =>
-    apiGet(`/api/content/xiaohongshu/accounts/${accountId}/browser-session/screenshot`, {}, true, 'blob'),
+    apiGet(
+      `/api/content/xiaohongshu/accounts/${accountId}/browser-session/screenshot`,
+      {},
+      true,
+      'blob'
+    ),
   closeXiaohongshuBrowserSession: (accountId) =>
     apiDelete(`/api/content/xiaohongshu/accounts/${accountId}/browser-session`),
   getXiaohongshuLoginSession: (sessionId) =>
     apiGet(`/api/content/xiaohongshu/login-sessions/${sessionId}`),
   createDistribution: (artifactId, payload) =>
     apiPost(`/api/content/artifacts/${artifactId}/distributions`, payload),
-  listDistributions: (artifactId) =>
-    apiGet(`/api/content/artifacts/${artifactId}/distributions`),
+  listDistributions: (artifactId) => apiGet(`/api/content/artifacts/${artifactId}/distributions`),
   getDistribution: (jobId) => apiGet(`/api/content/distributions/${jobId}`),
   getDistributionScreenshot: (resultId) =>
     apiGet(`/api/content/distribution-results/${resultId}/screenshot`, {}, true, 'blob'),
   listRuleVersions: () => apiGet('/api/content/admin/rules'),
-  getAdminRuleBundle: (versionId) =>
-    apiGet(`/api/content/admin/rules/${versionId}/bundle`),
+  getAdminRuleBundle: (versionId) => apiGet(`/api/content/admin/rules/${versionId}/bundle`),
   createRuleDraft: (payload) => apiPost('/api/content/admin/rules/drafts', payload),
   saveRuleDraft: (versionId, payload) =>
     apiPut(`/api/content/admin/rules/${versionId}/bundle`, payload),

@@ -154,7 +154,7 @@ func templatesRenderHandler(tm *templates.Service, up *uploads.Service) http.Han
 			return
 		}
 		if key := apiKeyFrom(r.Context()); key != nil &&
-			(template.WorkspaceID == nil || *template.WorkspaceID != key.WorkspaceID) {
+			template.WorkspaceID != nil && *template.WorkspaceID != key.WorkspaceID {
 			templatesProblem(w, r, templates.ErrNotFound)
 			return
 		}

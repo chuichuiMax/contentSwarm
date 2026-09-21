@@ -30,6 +30,8 @@ from yuxi.content_cover.schemas import CoverEditorScene, Image2Input, Image2Requ
 from yuxi.content_cover.template_replication import (
     TemplateQualityError,
     TemplateReplicationError,
+    _best_text_match,
+    _normalize_text,
     apply_layout_overrides,
     analyze_template,
     build_copy_plan,
@@ -439,12 +441,180 @@ async def _poll_image2(
     raise Image2Error("IMAGE2_POLL_TIMEOUT", "image2 异步任务等待超时", retryable=True)
 
 
+def _style_copy_ok(recognized: dict[str, str], title: str, subtitle: str) -> bool:
+    joined = _normalize_text("".join(recognized.values()))
+    return joined == _normalize_text(f"{title}{subtitle}")
+
+
+def _style_slot_overrides(
+    analysis: TemplateAnalysis,
+    recognized: dict[str, str],
+    title: str,
+    subtitle: str,
+) -> dict[str, str] | None:
+    slots = list(analysis.text_slots)
+    overrides: dict[str, str] = {}
+    for role, text in (("title", title), ("subtitle", subtitle)):
+        if not text.strip():
+            continue
+        available = [slot for slot in slots if slot.id not in overrides]
+        if not available:
+            return None
+        norm = _normalize_text(text)
+        best = max(available, key=lambda slot: _best_text_match(norm, _normalize_text(recognized.get(slot.id, ""))))
+        if _best_text_match(norm, _normalize_text(recognized.get(best.id, ""))) < 0.4:
+            role_matches = [slot for slot in available if slot.role == role]
+            if role_matches:
+                best = role_matches[0]
+            elif role == "subtitle":
+                best = max(available, key=lambda slot: slot.box.width * slot.box.height)
+            else:
+                return None
+        overrides[best.id] = text.strip()
+    return overrides
+
+
+async def _finalize_style_reference(
+    job: ContentCoverJob,
+    client: Image2Client,
+    draft_raw: bytes,
+    *,
+    template_data: bytes,
+    request_data: dict[str, Any],
+    target_size: tuple[int, int],
+    deadline: float,
+) -> bytes:
+    template_texts = request_data.get("template_texts") or {}
+    title = str(template_texts.get("title") or request_data.get("title") or "").strip()
+    subtitle = str(template_texts.get("subtitle") or "").strip()
+    source = str(template_texts.get("source") or "manual")
+    draft_image = _open_worker_image(draft_raw)
+    analysis = None
+    recognized: dict[str, str] = {}
+    if draft_image.size == target_size:
+        try:
+            analysis = await asyncio.to_thread(analyze_template, draft_image, target_size=target_size)
+        except TemplateReplicationError:
+            analysis = None
+    if analysis is not None:
+        recognized = await asyncio.to_thread(recognize_slot_texts, draft_image, analysis)
+        if _style_copy_ok(recognized, title, subtitle):
+            job.result_json = {
+                **(job.result_json or {}),
+                "style_reference": {"stage": "draft_accepted", "recognized_text": recognized},
+            }
+            await _set_job(job.id, result_json=job.result_json)
+            return draft_raw
+
+    async def erase_text(image_raw: bytes, edit_analysis: TemplateAnalysis) -> bytes:
+        await _emit(job.id, "progress", {"status": "repairing", "progress": 82})
+        repair_request = Image2Request(
+            mode="mask",
+            prompt=(
+                "将透明区域抹除文字并补全为与周围画面一致的内容，"
+                "不要生成任何文字、字母、数字、Logo 或水印；不透明区域必须逐像素保留原图。"
+            ),
+            negative_prompt=request_data.get("negative_prompt"),
+            size=request_data.get("size") or "1080x1440",
+            n=1,
+            source_images=[_compact_template_reference(image_raw, "style-draft.png", target_size=target_size)],
+            mask_image=Image2Input(
+                data=build_edit_mask(edit_analysis),
+                content_type="image/png",
+                file_name="style-text-mask.png",
+            ),
+            extra={"quality": "high", "output_format": "png"},
+        )
+        result = await client.submit(repair_request, idempotency_key=f"{job.id}:style-repair")
+        result = await _poll_image2(job, client, result, progress_start=82, progress_end=94, deadline=deadline)
+        if not result.images:
+            raise Image2Error("IMAGE2_RESULT_EMPTY", "image2 修复任务完成但没有返回图片")
+        return (await client.read_output(result.images[0]))[0]
+
+    async def render_and_check(
+        canvas_image: Image.Image,
+        render_analysis: TemplateAnalysis,
+        copy_plan,
+        generated_image: Image.Image,
+        stage: str,
+    ) -> bytes:
+        raw, overflow_count = await asyncio.to_thread(
+            render_template_replication,
+            canvas_image,
+            canvas_image,
+            render_analysis,
+            copy_plan,
+            generated=generated_image,
+        )
+        output_image = _open_worker_image(raw)
+        recognized_out = await asyncio.to_thread(recognize_slot_texts, output_image, render_analysis)
+        report = await asyncio.to_thread(
+            evaluate_quality,
+            canvas_image,
+            output_image,
+            render_analysis,
+            copy_plan,
+            overflow_count=overflow_count,
+            recognized_text=recognized_out,
+        )
+        if report.passed and not _style_copy_ok(recognized_out, title, subtitle):
+            report = report.model_copy(update={"passed": False, "failures": [*report.failures, "输出文案与期望不一致"]})
+        quality_reports = list((job.result_json or {}).get("quality_reports") or [])
+        quality_reports.append(report.model_dump(mode="json"))
+        job.result_json = {
+            **(job.result_json or {}),
+            "quality_reports": quality_reports,
+            "style_reference": {"stage": stage, "recognized_text": recognized_out},
+        }
+        await _set_job(job.id, result_json=job.result_json)
+        if not report.passed:
+            raise TemplateQualityError(report)
+        return raw
+
+    overrides = _style_slot_overrides(analysis, recognized, title, subtitle) if analysis is not None else None
+    if analysis is not None and overrides is not None:
+        textless_raw = await erase_text(draft_raw, analysis)
+        copy_plan = build_copy_plan(
+            analysis,
+            title=title,
+            subtitle=subtitle,
+            tags=[],
+            source=source,
+            overrides=overrides,
+            unmapped="blank",
+        )
+        return await render_and_check(
+            draft_image,
+            analysis,
+            copy_plan,
+            _open_worker_image(textless_raw),
+            "repaired",
+        )
+
+    clean_image = draft_image
+    if analysis is not None:
+        clean_image = _open_worker_image(await erase_text(draft_raw, analysis))
+    reference_image = _open_worker_image(template_data)
+    reference_analysis = await asyncio.to_thread(analyze_template, reference_image, target_size=target_size)
+    copy_plan = build_copy_plan(
+        reference_analysis,
+        title=title,
+        subtitle=subtitle,
+        tags=[],
+        source=source,
+        overrides=dict(request_data.get("copy_overrides") or {}),
+        unmapped="blank",
+    )
+    return await render_and_check(clean_image, reference_analysis, copy_plan, clean_image, "reference_layout")
+
+
 async def _run_image2(job: ContentCoverJob) -> list[bytes]:
     sources, template, mask = await _load_job_assets(job)
     request_data = job.request_json or {}
     await _check_cancelled(job.id)
     requested_count = int(request_data.get("n") or 1)
     template_replicate = bool(request_data.get("template_replicate"))
+    style_reference = template_replicate and str(request_data.get("reference_mode") or "replicate") == "style"
     template_data = None
     source_data = None
     template_analysis = None
@@ -452,7 +622,36 @@ async def _run_image2(job: ContentCoverJob) -> list[bytes]:
     template_image = None
     source_image = None
     requested_size = COVER_SIZES.get(request_data.get("size") or "")
-    if template_replicate:
+    if style_reference:
+        if template is None or len(sources) != 1:
+            raise CoverRenderError("风格参考创作需要一张参考图和一张背景图")
+        if requested_size is None:
+            raise CoverRenderError("风格参考输出尺寸不支持")
+        template_data, source_data = await asyncio.gather(
+            _download_asset(template),
+            _download_asset(sources[0]),
+        )
+        image2_request = Image2Request(
+            mode="multi_reference",
+            prompt=request_data.get("prompt") or "",
+            negative_prompt=request_data.get("negative_prompt"),
+            size=request_data.get("size") or "1080x1440",
+            n=1,
+            source_images=[
+                _compact_template_reference(
+                    source_data,
+                    sources[0].original_file_name,
+                    target_size=(requested_size["width"], requested_size["height"]),
+                )
+            ],
+            template_image=_compact_template_reference(
+                template_data,
+                template.original_file_name,
+                target_size=(requested_size["width"], requested_size["height"]),
+            ),
+            extra=request_data.get("parameters") or {},
+        )
+    elif template_replicate:
         if template is None or len(sources) != 1:
             raise CoverRenderError("模板复刻需要一张模板图和一张原图")
         if requested_size is None:
@@ -582,7 +781,19 @@ async def _run_image2(job: ContentCoverJob) -> list[bytes]:
                 {"status": "downloading", "progress": download_progress},
             )
             raw = (await client.read_output(result.images[0]))[0]
-            if template_replicate and TEMPLATE_REPLICATION_V2_ENABLED:
+            if style_reference:
+                if template_data is None or requested_size is None:
+                    raise CoverRenderError("风格参考上下文缺失")
+                raw = await _finalize_style_reference(
+                    job,
+                    client,
+                    raw,
+                    template_data=template_data,
+                    request_data=request_data,
+                    target_size=(requested_size["width"], requested_size["height"]),
+                    deadline=deadline,
+                )
+            elif template_replicate and TEMPLATE_REPLICATION_V2_ENABLED:
                 if (
                     template_data is None
                     or source_data is None

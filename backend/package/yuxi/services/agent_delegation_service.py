@@ -19,7 +19,13 @@ from yuxi.agents.context import normalize_agent_context_config, prepare_agent_ru
 from yuxi.agents.models import resolve_chat_model_spec
 from yuxi.agents.middlewares.model_call_timeout import ContentModelProgress
 from yuxi.models.providers.cache import model_cache
-from yuxi.content.control.workflow.generation_input import project_generation_input
+from yuxi.content.control.workflow.generation_input import (
+    project_generation_input,
+    project_locked_quote_safe_input,
+    project_review_input,
+    project_visual_input,
+    project_visual_review_input,
+)
 from yuxi.content.control.workflow.strategy_input import load_strategy_profiles, project_strategy_input
 from yuxi.content.control.errors import ContentApplicationError
 from yuxi.content.execution_trace import build_execution_preview
@@ -46,6 +52,7 @@ CONTENT_NODE_EXECUTION_LIMITS = {
     "select_creation_strategy": (150, 65, "low"),
     "reselect_creation_strategy": (150, 65, "low"),
 }
+CONTENT_NODE_EXECUTION_STEP_OVERRIDES = {"plan_visuals": 16}
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,16 +134,36 @@ def build_runtime_config_snapshot(*, agent: Agent, context, request: AgentDelega
         "output_contract": request.output_contract,
         "input_contract": request.input_contract,
     }
+    # 投影节点默认沿用已声明输入契约；确实更换模型视图结构的节点在下方覆盖。
+    snapshot["model_input_contract"] = request.input_contract
     if request.node_run.node_id in CONTENT_NODE_EXECUTION_LIMITS:
         if request.node_run.node_id == "generate_content":
-            snapshot["generation_policy_version"] = 1
-            snapshot["model_input_contract"] = "GenerateContentPromptV1"
+            snapshot["generation_policy_version"] = (
+                4
+                if "viral-author-core" in request.required_skills
+                else 3
+                if request.agent_slug == "content-viral-generation-agent"
+                else 2
+            )
+            snapshot["model_input_contract"] = (
+                "StandardizedGenerateContentPromptV1"
+                if request.input_payload.get("production_pack") is not None
+                else "GenerateContentPromptV1"
+            )
         elif request.node_run.node_id == "semantic_review":
             snapshot["emoji_review_policy_version"] = 1
             snapshot["persona_review_policy_version"] = 1
-            snapshot["model_input_contract"] = "SemanticReviewInputV1"
+            if request.agent_slug == "content-viral-review-agent":
+                snapshot["viral_review_policy_version"] = (
+                    2 if "viral-modular-reviewer" in request.required_skills else 1
+                )
+            snapshot["model_input_contract"] = (
+                "SemanticReviewPromptV1"
+                if request.agent_slug == "content-viral-review-agent"
+                else "SemanticReviewInputV1"
+            )
         else:
-            snapshot["strategy_execution_policy_version"] = 2
+            snapshot["strategy_execution_policy_version"] = 3
             snapshot["model_input_contract"] = "JointStrategyPromptV1"
         snapshot["streaming_timeout_policy_version"] = 1
         snapshot["limits"]["timeout_mode"] = "idle"
@@ -177,6 +204,9 @@ class AgentDelegationService:
         if request.node_run.node_id in CONTENT_NODE_EXECUTION_LIMITS:
             # 版本化运行策略不改写历史任务的已发布工作流定义。
             request = replace(request, timeout_seconds=CONTENT_NODE_EXECUTION_LIMITS[request.node_run.node_id][0])
+        if minimum_steps := CONTENT_NODE_EXECUTION_STEP_OVERRIDES.get(request.node_run.node_id):
+            # 结构化结果工具成功后还要经过中间件结束节点；历史视觉节点的 12 步不足以完成第 4 次纠错收尾。
+            request = replace(request, max_execution_steps=max(request.max_execution_steps, minimum_steps))
         agent, backend = await self._resolve_agent(request)
         thread_id = _bounded_run_identifier(
             f"content:{request.task_id}:{request.node_run.node_id}:{request.node_run.attempt}"
@@ -219,21 +249,6 @@ class AgentDelegationService:
             )
 
         if request.node_run.node_id in CONTENT_NODE_EXECUTION_LIMITS:
-            # 完整权限闭包校验后，才按本次模式收窄实际执行范围。
-            if (
-                request.node_run.node_id == "generate_content"
-                and request.input_payload["runtime_config_snapshot"].get("creation_mode", "original") == "original"
-            ):
-                context._required_skill_closure = [
-                    slug for slug in context._required_skill_closure if slug != "viral-structure-rewriter"
-                ]
-            if (
-                request.node_run.node_id in {"select_creation_strategy", "reselect_creation_strategy"}
-                and request.input_payload["runtime_config_snapshot"].get("creation_mode", "original") == "original"
-            ):
-                context._required_skill_closure = [
-                    slug for slug in context._required_skill_closure if slug != "prepared-viral-reference-selector"
-                ]
             # 所需 Skill 已全文注入；不再发送面向动态探索/read_file 的通用目录说明。
             context._prompt_skills = []
             context._runtime_skill_snapshots = [
@@ -259,13 +274,30 @@ class AgentDelegationService:
         node_input = ContentAgentNodeInputV2.model_validate(node_input_payload)
         model_view = None
         if request.node_run.node_id == "generate_content":
-            model_view = project_generation_input(node_input.payload)
+            model_view = project_generation_input(
+                node_input.payload,
+                active_skills=request.required_skills,
+            )
+        elif request.node_run.node_id == "semantic_review" and request.agent_slug == "content-viral-review-agent":
+            model_view = project_review_input(node_input.payload)
+        elif request.node_run.node_id == "plan_visuals" and "viral-cover-matcher" in request.required_skills:
+            model_view = project_visual_input(
+                node_input.payload,
+                required_visual_intent=request.domain_context.required_visual_intent,
+                required_source_asset_ids=request.domain_context.required_source_asset_ids,
+                allowed_visual_evidence_ids=request.domain_context.allowed_evidence_by_usage.get("visual", frozenset()),
+            )
+        elif request.node_run.node_id == "visual_review":
+            model_view = project_visual_review_input(node_input.payload)
         elif request.node_run.node_id in {"select_creation_strategy", "reselect_creation_strategy"}:
             channel, persona = await load_strategy_profiles(
                 self.content_repo,
                 request.governance_values["locked_versions"],
             )
             model_view = project_strategy_input(node_input.payload, channel_profile=channel, persona_profile=persona)
+        safe_view = project_locked_quote_safe_input(model_view or node_input.payload)
+        if safe_view is not None:
+            model_view = safe_view
         if model_view is not None:
             canonical_view = json.dumps(model_view, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
             runtime_snapshot["model_input_hash"] = hashlib.sha256(canonical_view.encode()).hexdigest()

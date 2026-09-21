@@ -1,0 +1,15 @@
+{
+  "module_id": "viral-title-author",
+  "version": "1.0.0",
+  "applies_when": {
+    "creation_mode": "viral_rewrite"
+  },
+  "rule_ids": [
+    "viral-title-author.v1"
+  ],
+  "runtime_rules": {
+    "element_min": 2,
+    "element_max": 4,
+    "single_selling_point": true
+  }
+}

@@ -300,6 +300,11 @@ export function EditorApp() {
     window.location.assign(integrationReturnUrl);
   }, [integrationReturnUrl]);
   const toast = useToast();
+  useEffect(() => {
+    const showCoverLayoutError = (event: Event) => toast.error((event as CustomEvent<string>).detail);
+    window.addEventListener("hycanvas:cover-layout-error", showCoverLayoutError);
+    return () => window.removeEventListener("hycanvas:cover-layout-error", showCoverLayoutError);
+  }, [toast]);
   const loadDoc = useEditor((s) => s.loadDoc);
   const setDocTitle = useEditor((s) => s.setDocTitle);
   const title = useEditor((s) => s.doc.title);
@@ -1202,14 +1207,16 @@ export function EditorApp() {
       {shareOpen && designId && (
         <ShareDialog key={designId} open onClose={() => { setShareOpen(false); setShareFocusRequests(false); }} designId={designId} focusRequests={shareFocusRequests} />
       )}
-      <SaveAsTemplateDialog
-        key={designId ?? "unsaved"}
-        open={templateOpen}
-        onClose={() => setTemplateOpen(false)}
-        onSaved={async () => { await save(false); }}
-        designId={designId}
-        workspaceId={workspaceId}
-      />
+      {templateOpen && (
+        <SaveAsTemplateDialog
+          key={designId ?? "unsaved"}
+          open
+          onClose={() => setTemplateOpen(false)}
+          onSaved={async () => { await save(false); }}
+          designId={designId}
+          workspaceId={workspaceId}
+        />
+      )}
       {publishOpen && <PublishDialog open onClose={() => setPublishOpen(false)} designId={designId ?? undefined} workspaceId={workspaceId ?? undefined} />}
       {websiteOpen && <WebsiteDialog open onClose={() => setWebsiteOpen(false)} designId={designId ?? undefined} workspaceId={workspaceId ?? undefined} />}
       {printOpen && <PrintDialog open onClose={() => setPrintOpen(false)} />}

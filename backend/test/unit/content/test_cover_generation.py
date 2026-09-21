@@ -1496,3 +1496,139 @@ async def test_xiaohongshu_distribution_snapshot_locks_selected_cover(monkeypatc
         "object_name": cover.object_name,
         "sha256": cover.sha256,
     }
+
+
+def test_style_reference_requires_multi_reference_with_template():
+    with pytest.raises(ValidationError):
+        CoverGenerateCreate(
+            mode="image_to_image",
+            source_asset_ids=["source-1"],
+            reference_mode="style",
+            prompt="风格创作",
+            idempotency_key="request-1234",
+        )
+    with pytest.raises(ValidationError):
+        CoverGenerateCreate(
+            mode="multi_reference",
+            source_asset_ids=["source-1", "source-2"],
+            reference_mode="style",
+            prompt="风格创作",
+            idempotency_key="request-1234",
+        )
+
+
+def test_style_reference_payload_keeps_exact_copy():
+    payload = CoverGenerateCreate(
+        mode="multi_reference",
+        source_asset_ids=["bg-1"],
+        template_asset_id="ref-1",
+        reference_mode="style",
+        title="主标题",
+        subtitle="副标题文案",
+        prompt="自由创作封面",
+        idempotency_key="request-1234",
+    )
+
+    assert payload.reference_mode == "style"
+    assert payload.subtitle == "副标题文案"
+
+
+def test_copy_plan_blank_mode_leaves_unmapped_slots_empty():
+    _, analysis = _template_analysis_fixture()
+
+    plan = build_copy_plan(analysis, title="新标题", source="content_asset", unmapped="blank")
+
+    by_role = {slot.role: slot for slot in plan.slots}
+    assert by_role["title"].text == "新标题"
+    assert by_role["title"].changed is True
+    assert by_role["subtitle"].text == ""
+    assert by_role["subtitle"].changed is True
+
+
+def test_blank_slots_skip_deterministic_text_rendering(monkeypatch: pytest.MonkeyPatch):
+    template, analysis = _template_analysis_fixture()
+    plan = build_copy_plan(analysis, source="content_asset", unmapped="blank")
+    assert all(not slot.text for slot in plan.slots)
+
+    def forbidden_render(*args, **kwargs):
+        raise AssertionError("留空槽位不应渲染文字")
+
+    monkeypatch.setattr("yuxi.content_cover.template_replication._render_slot", forbidden_render)
+    raw, overflow_count = render_template_replication(template, template, analysis, plan)
+
+    assert overflow_count == 0
+    with Image.open(io.BytesIO(raw)) as output:
+        assert output.size == (1080, 1440)
+
+
+def test_style_copy_check_requires_exact_expected_text():
+    assert content_cover_worker._style_copy_ok({"slot-1": "主标题", "slot-2": "副标题"}, "主标题", "副标题")
+    assert content_cover_worker._style_copy_ok({"slot-1": "主标题副标题"}, "主标题", "副标题")
+    assert not content_cover_worker._style_copy_ok({"slot-1": "主标题", "slot-2": "多余文字"}, "主标题", "")
+    assert not content_cover_worker._style_copy_ok({"slot-1": "主标"}, "主标题", "")
+
+
+def test_style_slot_overrides_follow_draft_layout():
+    _, analysis = _template_analysis_fixture()
+
+    overrides = content_cover_worker._style_slot_overrides(
+        analysis,
+        {"slot-1": "装修避坑大全", "slot-2": "设计定制"},
+        "装修避坑大全",
+        "设计定制",
+    )
+
+    assert overrides == {"slot-1": "装修避坑大全", "slot-2": "设计定制"}
+
+
+def test_style_slot_overrides_falls_back_to_slot_roles():
+    _, analysis = _template_analysis_fixture()
+
+    overrides = content_cover_worker._style_slot_overrides(
+        analysis,
+        {"slot-1": "乱", "slot-2": "码"},
+        "全新标题",
+        "全新副标题",
+    )
+
+    assert overrides == {"slot-1": "全新标题", "slot-2": "全新副标题"}
+
+
+def test_style_slot_overrides_returns_none_without_enough_slots():
+    template = Image.new("RGB", (1080, 1440), "#E8E2DC")
+    draw = ImageDraw.Draw(template)
+    draw.text((90, 120), "唯一标题", fill="white", font=content_cover_renderer._font(112, bold=True))
+    analysis = analyze_template(
+        template,
+        target_size=(1080, 1440),
+        ocr_blocks=[{"text": "唯一标题", "box": (90, 120, 690, 235)}],
+    )
+
+    assert content_cover_worker._style_slot_overrides(analysis, {"slot-1": "唯一标题"}, "唯一标题", "副标题") is None
+
+
+def test_photo_composition_render_aligns_cells():
+    from yuxi.content_cover.photo_composition import PHOTO_LAYOUTS, render_composition_image
+
+    layout = next(item for item in PHOTO_LAYOUTS if item["id"] == "grid-2")
+    red = _image("#D64343", (1600, 900))
+    blue = _image("#3F65C6", (900, 1600))
+
+    raw = render_composition_image([(red, 0.5, 0.5), (blue, 0.5, 0.5)], {**layout, "gap": 8}, width=540, height=720)
+
+    with Image.open(io.BytesIO(raw)) as output:
+        assert output.size == (540, 720)
+        rgb = output.convert("RGB")
+        left = rgb.getpixel((135, 360))
+        right = rgb.getpixel((405, 360))
+    assert left[0] > 150 and left[2] < 120
+    assert right[2] > 150 and right[0] < 120
+
+
+def test_photo_composition_render_requires_matching_photo_count():
+    from yuxi.content_cover.photo_composition import PHOTO_LAYOUTS, render_composition_image
+
+    layout = next(item for item in PHOTO_LAYOUTS if item["id"] == "grid-2")
+
+    with pytest.raises(ValueError):
+        render_composition_image([(_image("#D64343"), 0.5, 0.5)], layout)

@@ -1,0 +1,18 @@
+{
+  "cases": [
+    {
+      "id": "platform-cta",
+      "input": "把户型发来，我帮你看",
+      "expect": [
+        "不要求评论私信或发送资料"
+      ]
+    },
+    {
+      "id": "platform-word",
+      "input": "最省钱",
+      "expect": [
+        "写为蕞"
+      ]
+    }
+  ]
+}

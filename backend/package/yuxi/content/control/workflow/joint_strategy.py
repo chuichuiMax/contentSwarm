@@ -8,9 +8,11 @@ from copy import deepcopy
 
 from sqlalchemy import select
 
+from yuxi.content.control.errors import ContentApplicationError
 from yuxi.content.control.strategy.recommend_v3 import StrategyPreviewActor
 from yuxi.content.infrastructure.postgres.strategy_preview_repository import PostgresStrategyPreviewRepository
 from yuxi.content.model.contracts.joint_strategy import StrategySnapshotV2, validate_joint_strategy
+from yuxi.content.v3.title_formula_slots import enrich_decoration_title_formula
 from yuxi.services.content_viral_assets import (
     check_asset_source,
     preparation_skill_hash,
@@ -24,6 +26,21 @@ async def prepare_strategy_candidates(*, db, state, node_run_id):
     del node_run_id
     from yuxi.content.v3.joint_workflow import BLUEPRINT_FIRST_WORKFLOW_IDS
 
+    brief = state["content_brief"]
+    quote_type = str((brief.get("form_values") or {}).get("quote_type") or "").strip()
+    if (
+        brief.get("content_type_code") in {"CT04", "CT05"}
+        and "预算" in quote_type
+        and not any(
+            (item.get("metadata") or {}).get("price_basis") == "project_quote"
+            for item in (state.get("evidence_bundle") or {}).get("items") or []
+        )
+    ):
+        raise ContentApplicationError(
+            "CONTENT_QUOTE_BASIS_MISMATCH",
+            "工种总价或人工+辅材需要同一项目的真实分项报价；当前只有预算口径，请补充报价或调整创作类型",
+            "invalid",
+        )
     auto_direction = state["runtime_config_snapshot"].get("workflow_version_id") in BLUEPRINT_FIRST_WORKFLOW_IDS
     user = (await db.execute(select(User).where(User.uid == state["uid"], User.is_deleted == 0))).scalar_one()
     result = await PostgresStrategyPreviewRepository(db).load_candidates(
@@ -32,6 +49,10 @@ async def prepare_strategy_candidates(*, db, state, node_run_id):
         auto_direction=auto_direction,
     )
     catalog = result["strategy_candidates"]
+    if catalog.get("industry_slug") == "decoration":
+        catalog["title_formulas"] = [
+            enrich_decoration_title_formula(item) for item in catalog.get("title_formulas") or []
+        ]
     candidates = deepcopy(catalog)
     # 在线决策只看适用条件和公式说明；完整规则保留在锁定目录中供创作使用。
     candidates.pop("source_rules")
@@ -60,36 +81,32 @@ async def prepare_strategy_candidates(*, db, state, node_run_id):
             }
         )
         candidates["available_input_paths"] = list(fact_values)
-    queries = []
-    references = []
-    if state["runtime_config_snapshot"].get("creation_mode") == "viral_rewrite":
-        brief = state["content_brief"]
-        query = " ".join(
-            str(brief.get(key) or "")
-            for key in ("topic", "project_name", "content_goal", "audience", "form_values", "business_variables")
+    if state["runtime_config_snapshot"].get("creation_mode") != "viral_rewrite":
+        raise ValueError("内容策略只支持爆款仿写")
+    query = " ".join(
+        str(brief.get(key) or "")
+        for key in ("topic", "project_name", "content_goal", "audience", "form_values", "business_variables")
+    )
+    if auto_direction:
+        # 检索输入保留用户事实，排除字段名和运行元数据；语义判断由选择 Agent 完成。
+        query = " ".join(dict.fromkeys(str(value) for value in fact_values.values()))
+    queries = [query]
+    references = await search_ready_viral_assets(
+        db,
+        user,
+        industry_slug=catalog["industry_slug"],
+        query=query,
+        limit=catalog["reference_candidate_limit"],
+        include_structure=auto_direction,
+        content_type_code=catalog.get("direction_code"),
+    )
+    if catalog.get("direction_code") and not references:
+        raise ContentApplicationError(
+            "CONTENT_REFERENCE_TYPE_MISSING",
+            f"未找到创作类型 {catalog['direction_code']} 对应的已准备爆款，"
+            "请在有权限访问的知识库中绑定该创作类型，并准备同类型参考文章",
+            "invalid",
         )
-        if auto_direction:
-            # 检索输入保留用户事实，排除字段名和运行元数据；语义判断由选择 Agent 完成。
-            query = " ".join(dict.fromkeys(str(value) for value in fact_values.values()))
-        queries = [query]
-        references = await search_ready_viral_assets(
-            db,
-            user,
-            industry_slug=catalog["industry_slug"],
-            query=query,
-            limit=catalog["reference_candidate_limit"],
-            include_structure=auto_direction,
-            content_type_code=catalog.get("direction_code"),
-        )
-        if catalog.get("direction_code") and not references:
-            from yuxi.content.control.errors import ContentApplicationError
-
-            raise ContentApplicationError(
-                "CONTENT_REFERENCE_TYPE_MISSING",
-                f"未找到创作类型 {catalog['direction_code']} 对应的已准备爆款，"
-                "请在有权限访问的知识库中绑定该创作类型，并准备同类型参考文章",
-                "invalid",
-            )
     return {
         "strategy_catalog": catalog,
         "strategy_candidates": candidates,
@@ -215,6 +232,12 @@ async def lock_joint_strategy(*, db, state, node_run_id):
             }
         ]
         selected_assessment = next(item for item in result.reference.assessments if item.candidate_id == asset.id)
+        required_reference_slots = {
+            str(item.get("name") or "")
+            for item in (asset.prepared_json.get("reference_card") or {}).get("required_slots") or []
+            if item.get("required") and item.get("name")
+        }
+        omitted_reference_slots = sorted(required_reference_slots - set(result.reference.slot_mapping))
         # 将已核验的新决策投影为现有创作契约；不再评分，也不补造旧式选择结果。
         selection.update(
             selected_candidate_id=asset.id,
@@ -224,6 +247,7 @@ async def lock_joint_strategy(*, db, state, node_run_id):
                 "matched_dimensions": selected_assessment.dimensions,
                 "structure_fillability": {
                     "filled_slots": result.reference.slot_mapping,
+                    "omitted_reference_slots": omitted_reference_slots,
                     "unfilled_required_slots": [],
                 },
                 "candidate_comparison": [item.model_dump() for item in result.reference.assessments],

@@ -124,6 +124,18 @@ export const useContentStudioStore = defineStore('contentStudio', () => {
     }
   }
 
+  async function updateTask(payload) {
+    if (!task.value?.id) return null
+    loading.saving = true
+    try {
+      const response = await contentApi.updateTask(task.value.id, payload)
+      task.value = response.task
+      return task.value
+    } finally {
+      loading.saving = false
+    }
+  }
+
   async function compileBrief(brief) {
     loading.saving = true
     try {
@@ -442,6 +454,7 @@ export const useContentStudioStore = defineStore('contentStudio', () => {
     loadBootstrap,
     createTask,
     loadTask,
+    updateTask,
     compileBrief,
     saveBrief,
     startRun,

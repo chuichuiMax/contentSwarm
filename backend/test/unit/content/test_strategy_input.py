@@ -6,15 +6,42 @@ from unittest.mock import AsyncMock
 import pytest
 
 from test.unit.content.test_joint_strategy import joint_example
+from yuxi.content.control.errors import ContentApplicationError
+from yuxi.content.control.workflow.joint_strategy import prepare_strategy_candidates
 from yuxi.content.control.workflow.strategy_input import load_strategy_profiles, project_strategy_input
 from yuxi.content.model.contracts.joint_strategy import validate_joint_strategy
 from yuxi.content.model.contracts.strategy import resolve_input_path
 
 
-@pytest.mark.parametrize("mode", ["original", "viral_rewrite"])
-def test_projection_preserves_facts_candidates_and_original_contract(mode):
-    payload, decision = joint_example(mode)
-    payload["runtime_config_snapshot"].update(visual_material={"secret_storage": "not-for-model"})
+@pytest.mark.asyncio
+async def test_explicit_trade_quote_direction_rejects_budget_only_before_model_selection():
+    state = {
+        "content_brief": {
+            "content_type_code": "CT04",
+            "form_values": {"quote_type": "项目硬装预算", "budget": "硬装预算18万元"},
+        },
+        "evidence_bundle": {"items": [{"value": "硬装预算18万元", "metadata": {}}]},
+    }
+
+    with pytest.raises(ContentApplicationError) as exc_info:
+        await prepare_strategy_candidates(db=None, state=state, node_run_id="node")
+
+    assert exc_info.value.code == "CONTENT_QUOTE_BASIS_MISMATCH"
+
+
+def test_projection_preserves_facts_candidates_and_original_contract():
+    payload, decision = joint_example("viral_rewrite")
+    payload["runtime_config_snapshot"].update(
+        content_rule_bundle={
+            "runtime_rules": {
+                "viral-author-core": {
+                    "reference_policy": {"required_slot_mode": "mapped_facts_only", "minimum_mapped_slots": 1}
+                },
+                "viral-price-author": {"price_policy": {"explicit_total_mode": "authoritative"}},
+            }
+        },
+        visual_material={"secret_storage": "not-for-model"},
+    )
     payload["content_brief"]["form_values"].update(channel_profile_version_id="stale-channel", price="实际价另填")
     payload["content_brief"]["business_variables"] = {"pain": "与用户确认事实相同", "conflict": "不同值"}
     payload["content_brief"]["form_values"]["pain"] = "与用户确认事实相同"
@@ -44,7 +71,11 @@ def test_projection_preserves_facts_candidates_and_original_contract(mode):
     view = project_strategy_input(payload, channel_profile={"version_id": "locked"}, persona_profile={})
     assert payload == before
     assert view["channel_profile"] == {"version_id": "locked"}
-    assert view["runtime_config_snapshot"] == {"creation_mode": mode}
+    assert view["runtime_config_snapshot"] == {
+        "creation_mode": "viral_rewrite",
+        "reference_policy": {"required_slot_mode": "mapped_facts_only", "minimum_mapped_slots": 1},
+        "price_policy": {"explicit_total_mode": "authoritative"},
+    }
     assert "pain" not in view["content_brief"]["form_values"]
     assert view["content_brief"]["form_values"]["price"] == "实际价另填"
     assert view["content_brief"]["business_variables"] == {"conflict": "不同值"}
@@ -59,17 +90,12 @@ def test_projection_preserves_facts_candidates_and_original_contract(mode):
         assert resolve_input_path(view, path) == resolve_input_path(payload, path)
     for section in ("title_formulas", "content_formulas", "methods", "valid_formula_pairs"):
         assert view["strategy_candidates"][section] == payload["strategy_candidates"][section]
-    if mode == "original":
-        assert "reference_candidates" not in view
-        assert "reference" not in view["strategy_candidates"]["scoring"]
-        decision["reference"] = {"status": "not_requested", "reason": "原创"}
-    else:
-        assert len(view["reference_candidates"]) == 2
-        assert view["reference_candidates"][0]["structure_preview"] == {"blocks": ["事实"]}
-        assert "full_text" not in view["reference_candidates"][0]
-        for assessment in decision["reference"]["assessments"]:
-            assessment["input_paths"] = ["evidence_bundle.items.0.value"]
-        decision["reference"]["slot_mapping"]["pain"] = ["evidence_bundle.items.0.value"]
+    assert len(view["reference_candidates"]) == 2
+    assert view["reference_candidates"][0]["structure_preview"] == {"blocks": ["事实"]}
+    assert "full_text" not in view["reference_candidates"][0]
+    for assessment in decision["reference"]["assessments"]:
+        assessment["input_paths"] = ["evidence_bundle.items.0.value"]
+    decision["reference"]["slot_mapping"]["pain"] = ["evidence_bundle.items.0.value"]
     for section in ("title_assessments", "body_assessments", "method_assessments"):
         for assessment in decision["strategy"][section]:
             assessment["input_paths"] = ["evidence_bundle.items.0.value"]
@@ -131,8 +157,7 @@ async def test_profiles_use_only_task_locked_versions_and_missing_versions_fail(
         await load_strategy_profiles(repo, {"persona_profile_version_id": "persona-old"})
 
 
-@pytest.mark.parametrize("mode", ["original", "viral_rewrite"])
-def test_joint_skill_only_injects_current_mode(mode):
+def test_joint_skill_injects_viral_only_instructions():
     from yuxi.agents.middlewares.skills import SkillsMiddleware
     from yuxi.agents.skills.buildin import BUILTIN_SKILLS
 
@@ -140,20 +165,21 @@ def test_joint_skill_only_injects_current_mode(mode):
     instructions = (Path(spec.source_dir) / "SKILL.md").read_text()
     context = SimpleNamespace(
         _content_max_model_calls=2,
-        _content_node_input=SimpleNamespace(payload={"runtime_config_snapshot": {"creation_mode": mode}}),
+        _content_node_input=SimpleNamespace(payload={"runtime_config_snapshot": {"creation_mode": "viral_rewrite"}}),
         _runtime_skill_metadata={
             spec.slug: {"instructions": instructions, "version": spec.version, "content_hash": "full"},
         },
     )
     text = SkillsMiddleware()._build_required_skills_section([spec.slug], context)
     assert "共同决策规则" in text
-    assert ("## 报价补证" in text) == (mode == "viral_rewrite")
-    assert ("## 原创模式" in text) == (mode == "original")
-    assert context._content_applied_skill_instructions[spec.slug]["instruction_chars"] < len(instructions)
+    assert "内容类型 → 装修场景 → 读者需求或痛点" in text
+    assert "## 报价补证" in text
+    assert "## 原创模式" not in text
+    assert context._content_applied_skill_instructions[spec.slug]["instruction_chars"] == len(instructions.strip())
 
 
 def test_projection_keeps_type_conflicts_and_uses_locked_persona():
-    payload, _ = joint_example("original")
+    payload, _ = joint_example("viral_rewrite")
     payload["content_brief"]["persona"] = {"tone": "旧简报人设"}
     payload["content_brief"]["form_values"]["count"] = True
     payload["evidence_bundle"]["items"] = [
@@ -169,3 +195,53 @@ def test_projection_keeps_type_conflicts_and_uses_locked_persona():
     assert view["content_brief"]["form_values"]["count"] is True
     assert "persona" not in view["content_brief"]
     assert payload["content_brief"]["persona"] == {"tone": "旧简报人设"}
+
+
+def test_projection_keeps_single_copy_of_user_request():
+    payload, _ = joint_example("viral_rewrite")
+    request = '{"serialNo":"001","requirementType":{"typeName":"自我介绍"}}'
+    payload["content_brief"].update(
+        user_request=request,
+        form_values={"user_request": request},
+        business_variables={"user_request": request},
+    )
+
+    view = project_strategy_input(payload, channel_profile={}, persona_profile={})
+
+    assert view["content_brief"]["user_request"] == request
+    assert view["content_brief"]["form_values"] == {}
+    assert view["content_brief"]["business_variables"] == {}
+    assert view["strategy_candidates"]["available_input_paths"] == ["content_brief.user_request"]
+
+
+def test_single_auto_direction_blueprint_is_sent_once():
+    payload, _ = joint_example("viral_rewrite")
+    blueprint = {"layer_sequence": [{"code": "business"}]}
+    candidates = payload["strategy_candidates"]
+    candidates["auto_direction"] = True
+    candidates["direction_blueprint"] = blueprint
+    candidates["direction_options"] = [{"code": "CT01", "direction_blueprint": blueprint}]
+
+    view = project_strategy_input(payload, channel_profile={}, persona_profile={})
+
+    assert "direction_blueprint" not in view["strategy_candidates"]
+    assert view["strategy_candidates"]["direction_options"][0]["direction_blueprint"] == blueprint
+    assert payload["strategy_candidates"]["direction_blueprint"] == blueprint
+
+
+def test_distinct_auto_direction_blueprints_are_kept():
+    payload, _ = joint_example("viral_rewrite")
+    candidates = payload["strategy_candidates"]
+    candidates["auto_direction"] = True
+    candidates["direction_blueprint"] = {"layer_sequence": ["top"]}
+    candidates["direction_options"] = [{"code": "CT01", "direction_blueprint": {"layer_sequence": ["option"]}}]
+
+    view = project_strategy_input(payload, channel_profile={}, persona_profile={})
+
+    assert view["strategy_candidates"]["direction_blueprint"] == {"layer_sequence": ["top"]}
+
+
+def test_strategy_projection_rejects_original_mode():
+    payload, _ = joint_example("original")
+    with pytest.raises(ValueError, match="只支持爆款仿写"):
+        project_strategy_input(payload, channel_profile={}, persona_profile={})

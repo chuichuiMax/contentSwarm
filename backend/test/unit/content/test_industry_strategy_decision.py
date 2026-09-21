@@ -94,7 +94,6 @@ def test_decoration_rejects_formula_scores():
     "change",
     [
         "missing_dimension",
-        "wrong_total",
         "out_of_range",
         "float",
         "missing_path",
@@ -108,8 +107,6 @@ def test_scored_mode_rejects_unverifiable_scores(change):
     score = result["title_assessments"][0]
     if change == "missing_dimension":
         del score["dimensions"]["goal"]
-    elif change == "wrong_total":
-        score["total"] = 99
     elif change == "out_of_range":
         score["dimensions"]["goal"] = 5
     elif change == "float":
@@ -124,6 +121,15 @@ def test_scored_mode_rejects_unverifiable_scores(change):
         result["title_assessments"] = []
     with pytest.raises(ValueError):
         validate(candidates, result)
+
+
+def test_scored_mode_recomputes_model_supplied_total():
+    candidates, result = example("education")
+    result["title_assessments"][0]["total"] = 99
+
+    decision = validate(candidates, result)
+
+    assert decision.title_assessments[0].total == 75
 
 
 def test_rejected_candidate_cannot_be_selected():

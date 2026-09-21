@@ -9,6 +9,7 @@ description: 装修创作使用已选或基于资料与参考自动采用的内�
 
 1. auto_direction=true 时，从 direction_options 中选出与真实资料、选中参考结构相符的方向，写入 direction_code，并说明原因；只比较该方向 title_formula_codes、body_formula_codes 内公式，使用其 valid_formula_pairs。不必等待用户选择方向。auto_direction 未启用时，保持 strategy_candidates.direction_code 的锁定方向，不改动历史手动模式。
 2. 比较方向内的标题和正文公式适用说明，核对本次输入能否支持必要事实。总预算不能代替分项报价，计划结果不能代替已发生结果。
+   - 同时读取 `runtime_config_snapshot.price_policy`。规则指定明确总价优先且分项允许不穷尽时，总价与分项都可作为锁定事实；分项无法核成总价时不得据此淘汰相应公式或要求补差额，后续也不能声称已列分项等于总价。
 3. 从 `valid_formula_pairs` 中选择一个资料可支持且符合表达目标的配对。唯一合格配对可直接采用；多个配对根据输入语义匹配，不根据候选位置。
 4. 每个被比较公式给出简短理由和非空输入字段路径，或明确淘汰理由；公式 `dimensions` 留空、`total` 为 null，不能制造数值评分。
 5. 确定方向后不跨方向、借用已停用公式或为了找到公式而修改用户输入。没有合格配对时返回 `needs_input` 或 `no_candidate` 及具体原因。

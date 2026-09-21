@@ -13,6 +13,7 @@ from yuxi.content.catalog import CONTENT_TYPES
 from yuxi.content.rules import BODY_FORMULAS, METHODS, TITLE_FORMULAS
 from yuxi.content.schemas import ContentBriefPayload, ContentRunCreate, ContentTaskCreate
 from yuxi.content.v3.fixtures import load_decoration_matrix
+from yuxi.content.v3.joint_workflow import PLATFORM_WORKFLOW_VIRAL_AUTHOR_ID
 from yuxi.content.v3.workflow import LEGACY_PLATFORM_WORKFLOW_V3_ID, PLATFORM_WORKFLOW_V3_ID
 
 
@@ -77,6 +78,77 @@ def test_industry_rule_scope_can_override_platform_content_goal():
 
 
 @pytest.mark.asyncio
+async def test_platform_brief_keeps_user_selected_content_type(monkeypatch):
+    task = SimpleNamespace(
+        id="task-structured-request",
+        workflow_version_id=PLATFORM_WORKFLOW_V3_ID,
+        industry_template_version_id="industry-decoration-v3",
+        rule_version_id="rules-v3",
+        content_goal="acquire",
+        content_type_code="CT03",
+        current_stage="brief",
+        selected_image_item_id=None,
+        selected_poster_template_id=None,
+        runtime_config_snapshot_json={
+            "schema_version": 3,
+            "creation_mode": "viral_rewrite",
+            "content_type_code": "CT03",
+        },
+        strategy_json={"stale": True},
+        brief_json={},
+        to_dict=lambda: {
+            "id": task.id,
+            "content_type_code": task.content_type_code,
+            "runtime_config_snapshot": task.runtime_config_snapshot_json,
+        },
+    )
+
+    class FakeRepo:
+        def __init__(self, db):
+            del db
+
+        async def get_task_for_user(self, task_id, user, for_update=False):
+            del user, for_update
+            return task if task_id == task.id else None
+
+        async def get_template(self, template_id):
+            return SimpleNamespace(id=template_id)
+
+        async def track(self, *args, **kwargs):
+            del args, kwargs
+
+    class FakeDB:
+        async def commit(self):
+            return None
+
+    monkeypatch.setattr(content_service, "ContentRepository", FakeRepo)
+    monkeypatch.setattr(
+        content_service,
+        "compile_content_brief",
+        lambda **kwargs: ({"content_type_code": kwargs["task"].content_type_code}, []),
+    )
+    monkeypatch.setattr(content_service, "normalize_manual_evidence", lambda task_id, compiled: {"items": []})
+    request = """{
+      "serialNo": "001",
+      "persona": {"introduction": "长沙装修工长"},
+      "requirementType": {"typeName": "自我介绍"}
+    }"""
+
+    result = await content_service.save_content_brief(
+        FakeDB(),
+        SimpleNamespace(uid="user-1"),
+        task.id,
+        ContentBriefPayload(user_request=request),
+        compile_now=True,
+    )
+
+    assert result["compiled"] is True
+    assert task.content_type_code == "CT03"
+    assert task.runtime_config_snapshot_json["content_type_code"] == "CT03"
+    assert task.brief_json["content_type_code"] == "CT03"
+
+
+@pytest.mark.asyncio
 async def test_v34_brief_compiles_without_visual_material(monkeypatch):
     task = SimpleNamespace(
         id="task-v34",
@@ -85,7 +157,7 @@ async def test_v34_brief_compiles_without_visual_material(monkeypatch):
         current_stage="brief",
         selected_image_item_id=None,
         selected_poster_template_id=None,
-        runtime_config_snapshot_json={"schema_version": 3},
+        runtime_config_snapshot_json={"schema_version": 3, "creation_mode": "viral_rewrite"},
         strategy_json={},
         to_dict=lambda: {
             "id": "task-v34",
@@ -142,7 +214,7 @@ async def test_v37_brief_rejects_hycanvas_template_without_image(monkeypatch):
         current_stage="brief",
         selected_image_item_id=None,
         selected_poster_template_id=None,
-        runtime_config_snapshot_json={"schema_version": 3},
+        runtime_config_snapshot_json={"schema_version": 3, "creation_mode": "viral_rewrite"},
         strategy_json={},
         brief_json={},
         to_dict=lambda: {
@@ -199,7 +271,7 @@ async def test_v3_run_starts_from_brief_without_legacy_strategy(monkeypatch):
         workflow_version_id=PLATFORM_WORKFLOW_V3_ID,
         brief_json={"form_values": {"brand_name": "测试品牌"}},
         strategy_json={},
-        runtime_config_snapshot_json={"schema_version": 3},
+        runtime_config_snapshot_json={"schema_version": 3, "creation_mode": "viral_rewrite"},
     )
 
     class FakeRepo:
@@ -260,7 +332,7 @@ async def test_previous_v3_checkpoint_is_read_only_after_new_contract_release(mo
         id="task-old-v3",
         workflow_version_id=LEGACY_PLATFORM_WORKFLOW_V3_ID,
         brief_json={"form_values": {"brand_name": "历史品牌"}},
-        runtime_config_snapshot_json={"schema_version": 3},
+        runtime_config_snapshot_json={"schema_version": 3, "creation_mode": "viral_rewrite"},
     )
 
     class FakeRepo:
@@ -290,13 +362,13 @@ async def test_new_tasks_only_lock_v3_rule_pack_and_workflow(monkeypatch):
         id="industry-decoration-v3",
         slug="decoration",
         status="published",
-        default_workflow_version_id="workflow-v3",
+        default_workflow_version_id=PLATFORM_WORKFLOW_VIRAL_AUTHOR_ID,
         default_goal="brand",
         default_strategy={},
         name="装修与家居",
     )
     workflow = SimpleNamespace(
-        id="workflow-v3",
+        id=PLATFORM_WORKFLOW_VIRAL_AUTHOR_ID,
         slug="enterprise-content",
         status="published",
         definition_json={"schema_version": 3, "nodes": [], "edges": []},
@@ -359,9 +431,9 @@ async def test_new_tasks_only_lock_v3_rule_pack_and_workflow(monkeypatch):
     )
 
     assert result["task"]["runtime_config_snapshot"]["schema_version"] == 3
-    assert result["task"]["runtime_config_snapshot"]["creation_mode"] == "original"
+    assert result["task"]["runtime_config_snapshot"]["creation_mode"] == "viral_rewrite"
     assert created[0]["rule_version_id"] == "rules-v3"
-    assert created[0]["workflow_version"].id == "workflow-v3"
+    assert created[0]["workflow_version"].id == PLATFORM_WORKFLOW_VIRAL_AUTHOR_ID
     assert created[0]["industry_pack_version_id"] == "industry-pack-decoration-v3"
 
 

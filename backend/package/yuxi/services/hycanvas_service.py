@@ -40,6 +40,18 @@ def _composition_payload(composition, images):
     }
 
 
+# 封面模板目录 tag→专区:小红书=内置封面,精选封面=用户批量上传的参考图。
+_COVER_TEMPLATE_ZONES = {"小红书": "builtin", "精选封面": "featured"}
+
+
+def _cover_template_zone(tags: list[str]) -> str | None:
+    for tag in tags:
+        zone = _COVER_TEMPLATE_ZONES.get(tag)
+        if zone is not None:
+            return zone
+    return None
+
+
 class HyCanvasClient:
     def __init__(
         self,
@@ -83,7 +95,8 @@ class HyCanvasClient:
         data = await self._request("GET", "/api/v1/templates")
         templates = []
         for item in data:
-            if "小红书" not in (item.get("tags") or []):
+            zone = _cover_template_zone(item.get("tags") or [])
+            if zone is None:
                 continue
             fillable_fields = item.get("fillableFields") or []
             format_ = item.get("format") or {}
@@ -104,6 +117,7 @@ class HyCanvasClient:
                 {
                     "id": item["id"],
                     "title": item["title"],
+                    "zone": zone,
                     "format": format_,
                     "fillable_fields": fillable_fields,
                     "preview_urls": preview_urls,

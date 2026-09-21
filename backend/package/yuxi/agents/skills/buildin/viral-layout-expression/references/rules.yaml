@@ -1,0 +1,20 @@
+{
+  "module_id": "viral-layout-expression",
+  "version": "1.0.0",
+  "applies_when": {
+    "creation_mode": "viral_rewrite"
+  },
+  "rule_ids": [
+    "viral-layout-expression.v1"
+  ],
+  "runtime_rules": {
+    "max_paragraph_chars": 160,
+    "forbidden_markdown_patterns": [
+      "```",
+      "|---",
+      "## ",
+      "### "
+    ],
+    "emoji_semantic_categories_min": 3
+  }
+}

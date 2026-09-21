@@ -9,11 +9,11 @@ description: 为完整爆款原文生成可复用参考卡、必要事实槽位�
 
 1. 核对标题、正文是否构成单篇完整文章，并读取来源提供的参考用途记录；普通报价表、无法确定文章边界、内容截断或 `completeness=unverified` 时，提交 `needs_review` 和具体问题。
 2. 从原文提取参考卡：实际受众、场景、内容目标、渠道、简短摘要。不能把文件名“爆款库”当作爆款依据。
-3. 提取改写时必需的事实槽位及原文锚点。区分“总预算/分项报价”“计划结果/实际结果”“方案/真实前后对比”。只列原文真正依赖的事实，不用固定槽位模板。
+3. 提取改写时必需的事实槽位及原文锚点。每个槽位必须填写稳定的 `slot_key`、可由业务资料提供的 `variable_codes`、`match_mode=all|any`、`evidence_required` 和 `required`。`variable_codes` 只能从输入的 `allowed_variable_codes` 中选择。区分“总预算/分项报价”“计划结果/实际结果”“方案/真实前后对比”。只列原文真正依赖的事实，不用固定槽位模板。
 4. 提取 `title_pattern`、`title_slot_sequence`、`opening_hook`、`content_block_sequence`、`narrative_structure`、`paragraph_rhythm`、`list_pattern`、`emoji_pattern`、`interaction_style`。保留真实段落顺序、列表样式、Emoji 相对位置和互动方式；原文没有的结构不得补造。
 5. 蓝图只包含可迁移结构，不携带原文品牌、客户、价格、结果数字和承诺。原文引用独立保存在 anchors，用于核验，不作为业务事实。
 6. 所有锚点只需提供 section（title/body）和精确 quote，由工具定位坐标。引用必须在原文唯一出现；有重复时换用稍长的唯一引用。不要花时间逐字计数。每个蓝图字段需原文依据，未出现列表或 Emoji 时引用已检查的正文范围。
-7. 核验蓝图和参考卡一致后提交 `ViralAssetPreparationResultV1`。`source_hash` 使用输入提供的值，不自行猜测。存在疑问时仅返回问题，不发布半成品。
+7. 核验蓝图和参考卡一致后提交 `ViralAssetPreparationResultV2`，根对象和 `reference_card` 的 `schema_version` 都填 `2`。`source_hash` 使用输入提供的值，不自行猜测。存在疑问时仅返回问题，不发布半成品。
 
 本阶段不比较本次创作候选，不选择公式、不生成新文章。后续任务直接复用准备结果，不重复抽取。
 

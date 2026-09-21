@@ -1,0 +1,15 @@
+{
+  "module_id": "viral-body-author",
+  "version": "1.0.0",
+  "applies_when": {
+    "creation_mode": "viral_rewrite"
+  },
+  "rule_ids": [
+    "viral-body-author.v1"
+  ],
+  "runtime_rules": {
+    "body_min_chars": 200,
+    "body_max_chars": 650,
+    "max_advantages": 3
+  }
+}

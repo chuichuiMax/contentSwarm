@@ -9,6 +9,17 @@ from yuxi.services.hycanvas_service import HyCanvasClient
 from yuxi.services import hycanvas_service
 
 
+def test_system_cover_template_id_can_create_design():
+    payload = HyCanvasDesignCreate(
+        artifact_id="artifact-1",
+        template_id="system-cover-two-line",
+        title="装修封面",
+        fields={"主标题": "旧房改造", "副标题": "施工细节"},
+    )
+
+    assert payload.template_id == "system-cover-two-line"
+
+
 def test_from_env_requires_complete_configuration(monkeypatch):
     for name in (
         "HYCANVAS_BASE_URL",
@@ -60,6 +71,14 @@ async def test_lists_three_by_four_fillable_templates_and_keeps_metadata():
                     "fillableFields": [],
                 },
                 {
+                    "id": "featured-cover-1",
+                    "title": "上传的精选封面",
+                    "tags": ["精选封面"],
+                    "format": {"width": 1080, "height": 1440, "unit": "px"},
+                    "fillableFields": [],
+                    "previewUrls": ["/template-previews/featured-cover-1-p0.png"],
+                },
+                {
                     "id": "landscape-template",
                     "title": "横版封面",
                     "format": {"width": 1200, "height": 628, "unit": "px"},
@@ -81,14 +100,19 @@ async def test_lists_three_by_four_fillable_templates_and_keeps_metadata():
 
     result = await client.list_xiaohongshu_templates()
 
-    assert result["total"] == 2
+    assert result["total"] == 3
     assert result["templates"][0]["id"] == "xiaohongshu-checklist"
+    assert result["templates"][0]["zone"] == "builtin"
     assert result["templates"][1]["id"] == "8bc32ed9-f80a-47e2-8e2b-913e35c125c8"
+    assert result["templates"][1]["zone"] == "builtin"
     assert result["templates"][0]["fillable_fields"][0]["label"] == "主标题"
     assert result["templates"][0]["preview_urls"] == ["/hycanvas-template-previews/xiaohongshu-checklist-p0.png"]
     assert result["templates"][1]["preview_urls"] == [
         "/api/content/covers/hycanvas/templates/8bc32ed9-f80a-47e2-8e2b-913e35c125c8/render.png"
     ]
+    assert result["templates"][2]["id"] == "featured-cover-1"
+    assert result["templates"][2]["zone"] == "featured"
+    assert result["templates"][2]["preview_urls"] == ["/hycanvas-template-previews/featured-cover-1-p0.png"]
 
 
 @pytest.mark.asyncio

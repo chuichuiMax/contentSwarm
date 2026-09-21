@@ -103,6 +103,9 @@ VARIABLES = [
     ("advice", "忠告表达", "string", "normal", False),
     ("call_to_action", "行动指令", "string", "normal", False),
     ("quote_type", "报价口径", "string", "high_risk", True),
+    ("title_price", "标题价格", "string", "high_risk", True),
+    ("title_price_label", "标题价格口径", "string", "high_risk", True),
+    ("quote_block", "锁定报价原文", "object", "high_risk", True),
 ]
 
 INDUSTRY_CONFIG: dict[str, dict[str, Any]] = {

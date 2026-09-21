@@ -1,0 +1,21 @@
+{
+  "module_id": "viral-author-core",
+  "version": "1.1.0",
+  "applies_when": {
+    "creation_mode": "viral_rewrite"
+  },
+  "rule_ids": [
+    "viral-author-core.v2"
+  ],
+  "runtime_rules": {
+    "truth_required": true,
+    "single_theme": true,
+    "creation_mode": "viral_rewrite",
+    "reference_policy": {
+      "required_slot_mode": "mapped_facts_only",
+      "minimum_mapped_slots": 1,
+      "unmapped_block_mode": "generalize_or_omit",
+      "reference_facts_must_be_grounded": true
+    }
+  }
+}

@@ -43,6 +43,10 @@ const nextConfig: NextConfig = {
   // unnecessary for) the static export build.
   ...(process.env.NODE_ENV === "development"
     ? {
+        // Large multi-page covers embed material images in the design JSON.
+        // Next's default 10 MB proxy body cap truncates snapshot saves, leaving
+        // the Go API waiting for the missing bytes until the proxy times out.
+        experimental: { proxyClientMaxBodySize: "64mb" },
         async rewrites() {
           return [
             // ContentFlow opens the managed-auth redemption URL on the public

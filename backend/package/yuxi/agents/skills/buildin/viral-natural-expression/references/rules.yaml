@@ -1,0 +1,33 @@
+{
+  "module_id": "viral-natural-expression",
+  "version": "1.0.0",
+  "applies_when": {
+    "creation_mode": "viral_rewrite"
+  },
+  "rule_ids": [
+    "viral-natural-expression.v1"
+  ],
+  "runtime_rules": {
+    "popular_expression_max": 2,
+    "mechanical_markers": [
+      "旧况很典型",
+      "关键数据先摊开",
+      "先说背景",
+      "再看过程",
+      "最后看结果",
+      "下面来说",
+      "接下来看看",
+      "首先",
+      "其次",
+      "综上",
+      "值得注意的是",
+      "通过以上内容"
+    ],
+    "popular_expression_pool": [
+      "说实话",
+      "先把账算明白",
+      "这一步别急",
+      "现场看才更直观"
+    ]
+  }
+}

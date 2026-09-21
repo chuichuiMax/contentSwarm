@@ -1,7 +1,7 @@
 // Save-as-template dialog. Captures a title, category, and
 // visibility, then saves the current design as a reusable template via the SDK.
-// Uses the design's id when available (server loads its latest snapshot) and
-// otherwise sends the in-memory file so unsaved work can still be templatized.
+// Sends the design id as the stable template identity and the in-memory file as
+// the current snapshot. Unsaved designs fall back to the inline file alone.
 
 import { useMemo, useState } from "react";
 import { childrenOf, type Node } from "@hc/schema";
@@ -35,13 +35,26 @@ const semanticRoles = [
   ["body_excerpt", "正文摘要"],
 ] as const;
 
-function textNodes(file: ReturnType<typeof useEditor.getState>["doc"]): Array<{ id: string; text: string }> {
-  const result: Array<{ id: string; text: string }> = [];
+type TextNodeSummary = { id: string; text: string; fontSize?: number; width?: number; height?: number };
+
+function textNodes(file: ReturnType<typeof useEditor.getState>["doc"]): TextNodeSummary[] {
+  const result: TextNodeSummary[] = [];
   const visit = (node: Node) => {
     if (node.type === "text") {
       const content = (node as unknown as { content?: { runs?: { text?: string }[] }[] }).content ?? [];
       const text = content.map((p) => (p.runs ?? []).map((r) => r.text ?? "").join("")).join(" ").trim();
-      result.push({ id: node.id, text: text || node.name || "未命名文字" });
+      const firstRun = (node as unknown as {
+        content?: { runs?: { style?: { fontSize?: number } }[] }[];
+      }).content?.[0]?.runs?.[0];
+      const box = (node as unknown as { box?: { width?: number; height?: number } }).box;
+      const size = (node as unknown as { size?: { width?: number; height?: number } }).size;
+      result.push({
+        id: node.id,
+        text: text || node.name || "未命名文字",
+        fontSize: firstRun?.style?.fontSize,
+        width: box?.width ?? size?.width,
+        height: box?.height ?? size?.height,
+      });
     }
     for (const child of childrenOf(node)) visit(child);
   };
@@ -49,10 +62,107 @@ function textNodes(file: ReturnType<typeof useEditor.getState>["doc"]): Array<{ 
   return result;
 }
 
+function nextFieldKey(usedKeys: Set<string>, startAt: number): string {
+  let index = Math.max(1, startAt);
+  while (usedKeys.has(`field_${index}`)) index += 1;
+  return `field_${index}`;
+}
+
+function normalizeFillableFields(
+  file: ReturnType<typeof useEditor.getState>["doc"],
+  fields?: Partial<FillableFieldSummary>[],
+): FillableFieldSummary[] {
+  const nodes = textNodes(file);
+  const textByNodeId = new Map(nodes.map((node) => [node.id, node.text]));
+  const declared = fields ?? (file.meta as { brandEditableFields?: Partial<FillableFieldSummary>[] } | undefined)
+    ?.brandEditableFields;
+  if (!Array.isArray(declared)) return [];
+
+  const resolvedNodeIds = new Map<number, string>();
+  const usedNodeIds = new Set<string>();
+  declared.forEach((field, index) => {
+    if (typeof field.nodeId === "string" && textByNodeId.has(field.nodeId)) {
+      resolvedNodeIds.set(index, field.nodeId);
+      usedNodeIds.add(field.nodeId);
+    }
+  });
+
+  // Older template copies regenerated scene node ids without updating the
+  // field protocol stored in document metadata. Typography survives the copy,
+  // so it provides a stable way to reconnect those declarations. Exact/direct
+  // ids above always win; unmatched declarations are paired greedily by font
+  // size with box dimensions as a tie-breaker.
+  const candidates: Array<{ fieldIndex: number; nodeId: string; score: number }> = [];
+  declared.forEach((field, fieldIndex) => {
+    if (resolvedNodeIds.has(fieldIndex)) return;
+    const typography = field.typography;
+    const fieldFontSize = typography?.runs?.[0]?.fontSize;
+    if (typeof fieldFontSize !== "number") return;
+    const fieldWidth = typeof typography?.box?.width === "number" ? typography.box.width : undefined;
+    const fieldHeight = typeof typography?.box?.height === "number" ? typography.box.height : undefined;
+    for (const node of nodes) {
+      if (usedNodeIds.has(node.id) || typeof node.fontSize !== "number") continue;
+      const fontDelta = Math.abs(fieldFontSize - node.fontSize);
+      if (fontDelta > 0.5) continue;
+      const widthDelta = fieldWidth && node.width ? Math.abs(fieldWidth - node.width) / Math.max(fieldWidth, node.width) : 0;
+      const heightDelta = fieldHeight && node.height ? Math.abs(fieldHeight - node.height) / Math.max(fieldHeight, node.height) : 0;
+      candidates.push({ fieldIndex, nodeId: node.id, score: fontDelta + widthDelta * 0.1 + heightDelta * 0.1 });
+    }
+  });
+  candidates.sort((left, right) => left.score - right.score || left.fieldIndex - right.fieldIndex);
+  const matchedFields = new Set<number>();
+  for (const candidate of candidates) {
+    if (matchedFields.has(candidate.fieldIndex) || usedNodeIds.has(candidate.nodeId)) continue;
+    resolvedNodeIds.set(candidate.fieldIndex, candidate.nodeId);
+    matchedFields.add(candidate.fieldIndex);
+    usedNodeIds.add(candidate.nodeId);
+  }
+
+  const usedKeys = new Set<string>();
+  const normalized: FillableFieldSummary[] = [];
+  for (const [index, field] of declared.entries()) {
+    const nodeId = resolvedNodeIds.get(index) ?? "";
+    const nodeText = textByNodeId.get(nodeId);
+    if (!nodeText) continue;
+
+    const existingKey = typeof field.key === "string" ? field.key.trim() : "";
+    const key = existingKey && !usedKeys.has(existingKey)
+      ? existingKey
+      : nextFieldKey(usedKeys, normalized.length + 1);
+    usedKeys.add(key);
+
+    const semanticRole = semanticRoles.some(([value]) => value === field.semanticRole)
+      ? field.semanticRole as FillableFieldSummary["semanticRole"]
+      : "title";
+    const configuredMaxChars = Number(field.constraints?.maxChars);
+    const maxChars = Number.isFinite(configuredMaxChars) && configuredMaxChars > 0
+      ? Math.min(500, Math.floor(configuredMaxChars))
+      : Math.max(4, Math.min(120, nodeText.length || 20));
+
+    normalized.push({
+      ...field,
+      nodeId,
+      kind: "text",
+      key,
+      label: typeof field.label === "string" && field.label.trim()
+        ? field.label.trim()
+        : nodeText.slice(0, 30),
+      semanticRole,
+      constraints: {
+        ...field.constraints,
+        required: semanticRole === "label" ? false : (field.constraints?.required ?? true),
+        maxChars,
+      },
+    });
+  }
+  return normalized;
+}
+
 export function SaveAsTemplateDialog({
   open,
   onClose,
   onSaved,
+  designId,
   workspaceId,
 }: {
   open: boolean;
@@ -72,14 +182,9 @@ export function SaveAsTemplateDialog({
   const [busy, setBusy] = useState(false);
   const doc = useEditor((s) => s.doc);
   const availableTextNodes = useMemo(() => textNodes(doc), [doc]);
-  const [fillableFields, setFillableFields] = useState<FillableFieldSummary[]>(() =>
-    (doc.meta as { brandEditableFields?: FillableFieldSummary[] } | undefined)?.brandEditableFields ?? [],
-  );
+  const [fillableFields, setFillableFields] = useState<FillableFieldSummary[]>(() => normalizeFillableFields(doc));
   const availableNodeIds = useMemo(() => new Set(availableTextNodes.map((node) => node.id)), [availableTextNodes]);
   const selectedFields = fillableFields.filter((field) => availableNodeIds.has(field.nodeId));
-  const fieldsValid = selectedFields.every((field) =>
-    Boolean(field.label.trim() && field.key?.trim() && field.semanticRole && (field.constraints?.maxChars ?? 0) > 0),
-  ) && new Set(selectedFields.map((field) => field.key)).size === selectedFields.length;
 
   function toggleField(nodeId: string, text: string) {
     setFillableFields((current) => current.some((field) => field.nodeId === nodeId)
@@ -87,7 +192,7 @@ export function SaveAsTemplateDialog({
       : [...current, {
           nodeId,
           kind: "text",
-          key: `field_${current.length + 1}`,
+          key: nextFieldKey(new Set(current.map((field) => field.key?.trim() ?? "")), current.length + 1),
           label: text.slice(0, 30),
           semanticRole: "title",
           constraints: { required: true, maxChars: Math.max(4, Math.min(120, text.length || 20)) },
@@ -109,15 +214,16 @@ export function SaveAsTemplateDialog({
   }
 
   async function save() {
-    if (!workspaceId || !title.trim() || !fieldsValid) {
+    const file = useEditor.getState().doc;
+    const preparedFields = normalizeFillableFields(file, selectedFields);
+    if (!workspaceId || !title.trim()) {
       if (!workspaceId) toast.error("工作区信息尚未加载完成，请关闭弹窗后重新打开。");
       else if (!title.trim()) toast.error("请填写模板名称。");
-      else if (!fieldsValid) toast.error("请完整填写已选择的文字字段名称、唯一编码、语义和最大字数。");
       return;
     }
+    setFillableFields(preparedFields);
     setBusy(true);
     try {
-      const file = useEditor.getState().doc;
       let selectedCollectionId = collectionId;
       if (!selectedCollectionId && category.trim()) {
         const collection = await oc.createTemplateCollection(workspaceId, category.trim());
@@ -129,18 +235,21 @@ export function SaveAsTemplateDialog({
       }
       await oc.saveAsTemplate({
         workspaceId,
-        // Loading by designId can race autosave and capture an older style.
+        // designId gives the server a stable template identity; file keeps the
+        // template snapshot in sync with the editor even if autosave is still
+        // completing.
+        designId: designId ?? undefined,
         file,
         title: title.trim(),
         category: category.trim() || undefined,
         tags: zoneTag ? [zoneTag] : undefined,
         visibility,
         collectionId: selectedCollectionId,
-        fillableFields: selectedFields.length > 0 ? selectedFields : undefined,
+        fillableFields: preparedFields.length > 0 ? preparedFields : undefined,
         thumbnail: createDesignThumbnail(file),
       });
-      useEditor.getState().setDocMeta({ brandEditableFields: selectedFields });
-      await onSaved?.(selectedFields);
+      useEditor.getState().setDocMeta({ brandEditableFields: preparedFields });
+      await onSaved?.(preparedFields);
       toast.success(tr("editor.saved_as_template"));
       onClose();
     } catch {

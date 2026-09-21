@@ -23,7 +23,9 @@ from yuxi.content.control.workflow.deterministic_node import V3DeterministicNode
 from yuxi.content.control.errors import ContentApplicationError
 from yuxi.content.control.workflow.revision import resolve_revision_reason, revision_reason_label
 from yuxi.content.control.strategy.recommend_v3 import StrategyPreviewContext
+from yuxi.content.model.evidence import EvidenceBundleV1
 from yuxi.content.model.rules.engine import CombinationGroup, MethodMember
+from yuxi.content.v3.joint_workflow import WORKFLOW_STANDARDIZED_FACTORY
 from yuxi.content.v3.workflow import WORKFLOW_V3
 from yuxi.storage.postgres.models_content import ContentNodeRun, ContentTask
 
@@ -122,6 +124,12 @@ async def test_normalize_evidence_adds_derived_scene_to_frozen_bundle(monkeypatc
         def __init__(self, _db):
             pass
 
+        async def get_latest_frozen_bundle(self, _task_id):
+            return None
+
+        async def canonicalize_existing_items(self, items):
+            return items
+
         async def persist_frozen_bundle(self, bundle, **kwargs):
             persisted["bundle"] = bundle
             persisted["kwargs"] = kwargs
@@ -150,6 +158,60 @@ async def test_normalize_evidence_adds_derived_scene_to_frozen_bundle(monkeypatc
     assert len(scene_items) == 1
     assert scene_items[0]["source_id"] == "derived_scene_from_business_brief"
     assert persisted["kwargs"]["added_evidence_ids"]
+
+
+@pytest.mark.asyncio
+async def test_normalize_evidence_reuses_identical_bundle_and_versions_changed_brief(monkeypatch):
+    class FakeEvidenceService:
+        latest = None
+        persisted = []
+
+        def __init__(self, _db):
+            pass
+
+        async def get_latest_frozen_bundle(self, _task_id):
+            return self.latest
+
+        async def canonicalize_existing_items(self, items):
+            return items
+
+        async def persist_frozen_bundle(self, bundle, **_kwargs):
+            self.__class__.latest = bundle
+            self.__class__.persisted.append(bundle)
+
+    monkeypatch.setattr(deterministic_node_module, "EvidenceApplicationService", FakeEvidenceService)
+    handler = V3DeterministicNodeHandler()
+    state = {
+        "task_id": "task-repeat",
+        "run_id": "run-1",
+        "content_brief": {"business_variables": {"product": "铲墙", "quantity": "30㎡"}},
+        "media_evidence_items": [],
+    }
+
+    first = await handler._normalize_evidence(db=SimpleNamespace(), state=state, node_run_id="node-1")
+    second = await handler._normalize_evidence(
+        db=SimpleNamespace(),
+        state={**state, "run_id": "run-2", "evidence_bundle": first["evidence_bundle"]},
+        node_run_id="node-2",
+    )
+    changed = await handler._normalize_evidence(
+        db=SimpleNamespace(),
+        state={
+            **state,
+            "run_id": "run-3",
+            "evidence_bundle": first["evidence_bundle"],
+            "content_brief": {"business_variables": {"product": "铲墙", "quantity": "50㎡"}},
+        },
+        node_run_id="node-3",
+    )
+
+    first_bundle = EvidenceBundleV1.model_validate(first["evidence_bundle"])
+    second_bundle = EvidenceBundleV1.model_validate(second["evidence_bundle"])
+    changed_bundle = EvidenceBundleV1.model_validate(changed["evidence_bundle"])
+    assert second_bundle.id == first_bundle.id
+    assert changed_bundle.version == 2
+    assert changed_bundle.supersedes_id == first_bundle.id
+    assert len(FakeEvidenceService.persisted) == 2
 
 
 @pytest.mark.asyncio
@@ -562,7 +624,7 @@ async def test_merge_research_excludes_unconfirmed_external_high_risk_evidence(m
     result = await V3DeterministicNodeHandler()._merge_research_evidence(
         db=SimpleNamespace(),
         state={
-            "runtime_config_snapshot": {"creation_mode": "original", "rule_version_id": "rules-v3"},
+            "runtime_config_snapshot": {"creation_mode": "viral_rewrite", "rule_version_id": "rules-v3"},
             "formula_selection_snapshot": {},
             "evidence_bundle": {"items": []},
             "business_rule_evidence_collection": {"evidence_items": []},
@@ -598,8 +660,11 @@ async def test_semantic_review_calls_agent_for_normal_first_draft(monkeypatch):
 
     node_run = SimpleNamespace(id="node-run-1")
     task = SimpleNamespace(
-        id="task-1", industry_pack_version_id="pack", channel_profile_version_id="channel",
-        persona_profile_version_id=None, rule_version_id="rules-v3",
+        id="task-1",
+        industry_pack_version_id="pack",
+        channel_profile_version_id="channel",
+        persona_profile_version_id=None,
+        rule_version_id="rules-v3",
     )
     user = SimpleNamespace(uid="user-1")
 
@@ -850,6 +915,32 @@ async def test_passed_title_validation_continues_to_title_agent_selection():
     assert result["revision_status"] == "continue"
 
 
+@pytest.mark.asyncio
+async def test_standardized_factory_composes_final_draft_before_semantic_review():
+    agent = ContentWorkflowAgent()
+    after_validation = await agent._execute_node(
+        {"id": "revise_if_needed", "type": "revision_router"},
+        {
+            "current_node": "deterministic_validate",
+            "retry_counts": {},
+            "validation_report": {"status": "passed", "checks": []},
+        },
+        WORKFLOW_STANDARDIZED_FACTORY,
+    )
+    after_review = await agent._execute_node(
+        {"id": "revise_if_needed", "type": "revision_router"},
+        {
+            "current_node": "semantic_review",
+            "retry_counts": {},
+            "review_report": {"status": "passed", "checks": []},
+        },
+        WORKFLOW_STANDARDIZED_FACTORY,
+    )
+
+    assert after_validation["revision_target"] == "compose_locked_quote_block"
+    assert after_review["revision_target"] == "human_content_approval"
+
+
 @pytest.mark.unit
 def test_title_selection_mapper_only_accepts_selectable_candidates():
     state = {
@@ -913,6 +1004,26 @@ def test_unified_generation_mapper_publishes_title_outline_and_body_together():
     assert mapped["selected_title"]["selected_by"] == "agent"
     assert mapped["content_outline"] == result["outline"]
     assert mapped["content_draft"] == result["draft"]
+    assert mapped["creative_content_draft"] == result["draft"]
+    assert len(mapped["creative_draft_hash"]) == 64
+    assert mapped["draft_revision"] == 1
+    assert mapped["review_report"] is None
+
+
+@pytest.mark.unit
+def test_semantic_review_is_bound_to_the_exact_final_draft_hash():
+    draft = {"body": "最终正文", "topics": ["装修"]}
+    final_hash = "f" * 64
+
+    mapped = AgentNodeResultMapper.to_state(
+        "semantic_review",
+        {"status": "passed", "checks": []},
+        {"content_draft": draft, "final_draft_hash": final_hash, "draft_revision": 2},
+    )
+
+    assert mapped["reviewed_draft_hash"] == final_hash
+    assert mapped["review_report"]["reviewed_draft_hash"] == final_hash
+    assert mapped["review_report"]["draft_revision"] == 2
 
 
 @pytest.mark.asyncio

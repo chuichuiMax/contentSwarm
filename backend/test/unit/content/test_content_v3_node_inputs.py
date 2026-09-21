@@ -232,6 +232,25 @@ def test_semantic_review_input_contains_all_review_upstream_outputs(strict):
         "runtime_config_snapshot": {"strict_semantic_review": strict},
         "channel_profile": {"body_constraints": {"emoji_allowed": False}},
         "persona_profile": {"tone": "专业克制"},
+        "production_pack": {
+            "expression_policy": {
+                "emoji_allowed": False,
+                "minimum_semantic_categories": 0,
+                "required_categories": [],
+            },
+            "materials": [
+                {"variable_codes": ["title_price"], "payload": {"value": "1.16w"}},
+                {"variable_codes": ["title_price_label"], "payload": {"value": "整套人工合计"}},
+                {"variable_codes": ["quote_type"], "payload": {"value": "标准单价"}},
+            ],
+        },
+        "locked_block_composition": {
+            "status": "composed",
+            "block_id": "quote_block",
+            "insertion_policy": "after-opening-paragraph-v1",
+            "rendered_char_count": 48,
+        },
+        "composed_content_validation_report": {"status": "passed"},
     }
     assembly = ContentNodeInputAssembler.build(node=node, state=state)
 
@@ -242,6 +261,10 @@ def test_semantic_review_input_contains_all_review_upstream_outputs(strict):
     assert assembly.payload["review_scope"] == ("full" if strict else "expression")
     assert assembly.payload["channel_profile"] == state["channel_profile"]
     assert assembly.payload["persona_profile"] == state["persona_profile"]
+    assert assembly.payload["expression_policy"] == state["production_pack"]["expression_policy"]
+    assert assembly.payload["locked_content_context"]["validation_status"] == "passed"
+    assert assembly.payload["locked_content_context"]["title_price"] == "1.16w"
+    assert "不是模型创作内容" in assembly.payload["locked_content_context"]["review_instruction"]
 
 
 @pytest.mark.unit
@@ -301,6 +324,8 @@ def test_input_contract_registry_contains_every_agent_payload_contract():
         "JointStrategyPromptV1",
         "ReevaluateJointStrategyInputV1",
         "ResearchStrategyPricesInputV1",
+        "ResearchCreationPlanPricesInputV1",
+        "ExtractCreationFactsInputV1",
         "ViralAssetPreparationInputV1",
         "SelectContentDirectionInputV1",
         "ExplainStrategyInputV1",
@@ -322,6 +347,8 @@ def test_input_contract_registry_contains_every_agent_payload_contract():
         "PersonaStylePolishInputV1",
         "GenerateContentInputV1",
         "GenerateContentPromptV1",
+        "StandardizedGenerateContentPromptV1",
+        "SemanticReviewPromptV1",
         "SemanticReviewInputV1",
         "PlanVisualsInputV1",
         "SubmitCoverJobInputV1",

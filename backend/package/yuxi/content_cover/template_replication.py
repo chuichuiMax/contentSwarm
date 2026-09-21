@@ -870,14 +870,27 @@ def build_copy_plan(
     tags: Sequence[str] = (),
     source: str = "template",
     overrides: dict[str, str] | None = None,
+    unmapped: str = "keep",
 ) -> CopyPlan:
     overrides = overrides or {}
     tag_values = iter(tags)
     slots: list[CopySlotPlan] = []
     title_used = False
     subtitle_used = False
+
+    def blank_slot(slot) -> CopySlotPlan:
+        return CopySlotPlan(
+            slot_id=slot.id,
+            role=slot.role,
+            source_text=slot.source_text,
+            text="",
+            max_chars=slot.max_chars,
+            max_lines=slot.max_lines,
+            changed=True,
+        )
+
     for slot in analysis.text_slots:
-        candidate = slot.source_text
+        candidate: str | None = None
         if slot.id in overrides:
             candidate = overrides[slot.id]
         elif source != "template" and slot.role == "title" and title and not title_used:
@@ -885,7 +898,17 @@ def build_copy_plan(
         elif source != "template" and slot.role == "subtitle" and subtitle and not subtitle_used:
             candidate, subtitle_used = subtitle, True
         elif source != "template" and slot.role == "tag":
-            candidate = next(tag_values, slot.source_text)
+            tag_value = next(tag_values, None)
+            if tag_value is not None:
+                candidate = tag_value
+        if candidate is None:
+            if unmapped == "blank":
+                slots.append(blank_slot(slot))
+                continue
+            candidate = slot.source_text
+        if unmapped == "blank" and not candidate.strip():
+            slots.append(blank_slot(slot))
+            continue
         fitted = _compact_copy(candidate, slot.max_chars) or slot.source_text
         slots.append(
             CopySlotPlan(
@@ -1168,7 +1191,8 @@ def render_template_replication(
         if plan is None:
             continue
         if plan.changed:
-            overflow_count += int(_render_slot(canvas, slot, plan.text))
+            if plan.text.strip():
+                overflow_count += int(_render_slot(canvas, slot, plan.text))
         else:
             _paste_original_slot(canvas, normalized_template, slot)
     output = io.BytesIO()

@@ -28,6 +28,12 @@ def test_strategy_has_time_for_two_calls_and_preserves_explicit_reasoning(node_i
     assert context.reasoning_effort == "medium"
 
 
+def test_visual_node_has_enough_steps_to_finish_after_a_valid_fourth_submission():
+    from yuxi.services.agent_delegation_service import CONTENT_NODE_EXECUTION_STEP_OVERRIDES
+
+    assert CONTENT_NODE_EXECUTION_STEP_OVERRIDES["plan_visuals"] > 12
+
+
 @pytest.mark.asyncio
 async def test_graph_preserves_prepared_generation_scope(monkeypatch):
     from unittest.mock import AsyncMock
@@ -223,7 +229,7 @@ def test_generation_projection_keeps_price_sources_rules_and_revision_without_mu
             ],
         },
         "runtime_config_snapshot": {
-            "creation_mode": "original",
+            "creation_mode": "viral_rewrite",
             "visual_material": {},
             "selection_policy_snapshot": {},
         },
@@ -238,7 +244,7 @@ def test_generation_projection_keeps_price_sources_rules_and_revision_without_mu
     assert payload == before
     assert "decision" not in result["strategy_snapshot"]
     assert result["strategy_snapshot"]["body_formula"] == payload["strategy_snapshot"]["body_formula"]
-    assert result["runtime_config_snapshot"] == {"creation_mode": "original"}
+    assert result["runtime_config_snapshot"] == {"creation_mode": "viral_rewrite"}
     assert result["content_draft"] == payload["content_draft"]
     evidence = result["evidence_bundle"]["items"][0]
     for key in ("id", "value", "source_id", "allowed_usage", "verified_status", "risk_level", "metadata"):

@@ -129,6 +129,8 @@ class ContentWorkflowAgent(BaseAgent):
             "human_content_approval": "human_content_approval",
             **{route["to"]: route["to"] for route in definition.get("revision_routes") or []},
         }
+        if "compose_locked_quote_block" in nodes:
+            revision_targets["compose_locked_quote_block"] = "compose_locked_quote_block"
         for node_id, node in nodes.items():
             if node["type"] == "revision_router":
                 graph.add_conditional_edges(
@@ -289,8 +291,15 @@ class ContentWorkflowAgent(BaseAgent):
                 if persisted:
                     output_snapshot = {"updated_fields": sorted(result.keys())}
                     if cache_key or node_id in {
-                        "select_creation_strategy", "lock_creation_strategy", "research_strategy_prices",
-                        "confirm_strategy_prices", "merge_strategy_prices", "reselect_creation_strategy",
+                        "select_creation_strategy",
+                        "lock_creation_strategy",
+                        "research_strategy_prices",
+                        "confirm_strategy_prices",
+                        "merge_strategy_prices",
+                        "reselect_creation_strategy",
+                        "prepare_creation_plan_inputs",
+                        "merge_extracted_creation_facts",
+                        "build_creation_plan",
                     }:
                         output_snapshot["result"] = result
                     if node_id == "prepare_strategy_candidates":
@@ -358,9 +367,12 @@ class ContentWorkflowAgent(BaseAgent):
                     "retry_counts": dict(state.get("retry_counts") or {}),
                 }
             if previous_node == "deterministic_validate" and not _report_is_blocked(validation_report):
+                node_ids = {item.get("id") for item in (definition or {}).get("nodes") or []}
                 return {
                     "revision_reason_code": None,
-                    "revision_target": "semantic_review",
+                    "revision_target": (
+                        "compose_locked_quote_block" if "compose_locked_quote_block" in node_ids else "semantic_review"
+                    ),
                     "revision_status": "continue",
                     "retry_counts": dict(state.get("retry_counts") or {}),
                 }
@@ -462,8 +474,11 @@ class ContentWorkflowAgent(BaseAgent):
             if set(answer.get("confirmed_evidence_ids") or []) != ids:
                 raise ValueError("检索报价必须逐项确认；标准单价的确认不代表本项目实际成交价")
             collection["evidence_items"] = [{**item, "verified_status": "user_confirmed"} for item in items]
-            return {"strategy_price_evidence_collection": collection,
-                    "state_version": state_version + 1, "resume_parent_run_id": None}
+            return {
+                "strategy_price_evidence_collection": collection,
+                "state_version": state_version + 1,
+                "resume_parent_run_id": None,
+            }
 
         if interrupt_type == "high_risk_facts":
             collection = dict(state.get("evidence_collection") or {})
@@ -641,6 +656,17 @@ class ContentWorkflowAgent(BaseAgent):
                     message=f"最终审批前仍有阻断报告: {', '.join(invalid_reports)}",
                     kind="conflict",
                 )
+            if any(
+                "quote_block" in (material.get("variable_codes") or [])
+                for material in (state.get("production_pack") or {}).get("materials") or []
+            ):
+                composed_report = state.get("composed_content_validation_report") or {}
+                if composed_report.get("status") != "passed":
+                    raise ContentApplicationError(
+                        code="content_approval_blocked",
+                        message="锁定报价块尚未完成合成终检",
+                        kind="conflict",
+                    )
             artifact_payload = {
                 "task_id": state["task_id"],
                 "run_id": state["run_id"],

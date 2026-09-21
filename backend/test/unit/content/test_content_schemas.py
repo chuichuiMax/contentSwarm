@@ -8,6 +8,7 @@ from yuxi.content.schemas import ContentVisualMaterialSelection
     "template_id",
     [
         "xiaohongshu-clean-title",
+        "system-cover-two-line",
         "01c7f0bc-3ce5-431b-82e5-7390e9bc246e",
     ],
 )

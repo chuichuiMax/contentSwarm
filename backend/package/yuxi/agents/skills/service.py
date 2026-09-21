@@ -1243,6 +1243,7 @@ def list_builtin_skill_specs() -> list[dict[str, Any]]:
     for raw_spec in get_builtin_skill_specs():
         slug = str(getattr(raw_spec, "slug", "")).strip()
         source_dir = Path(str(getattr(raw_spec, "source_dir", ""))).resolve()
+        configured_name = str(getattr(raw_spec, "display_name", "")).strip()
         configured_description = str(getattr(raw_spec, "description", "")).strip()
         version = str(getattr(raw_spec, "version", "1.0.0")).strip() or "1.0.0"
         configured_tools = normalize_string_list(getattr(raw_spec, "tool_dependencies", None))
@@ -1267,7 +1268,7 @@ def list_builtin_skill_specs() -> list[dict[str, Any]]:
         specs.append(
             {
                 "slug": slug,
-                "name": parsed_name,
+                "name": _validate_skill_display_name(configured_name or parsed_name),
                 "description": configured_description or parsed_desc,
                 "version": version,
                 "tool_dependencies": configured_tools or normalize_string_list(meta.get("tool_dependencies")),

@@ -1,0 +1,12 @@
+{
+  "cases": [
+    {
+      "id": "cover-quote",
+      "input": "整体房屋装修报价清单",
+      "expect": [
+        "visual_intent=whole_house_quote",
+        "优先效果图或前后对比"
+      ]
+    }
+  ]
+}

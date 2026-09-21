@@ -147,7 +147,7 @@ onMounted(load)
                 <small>{{ statusLabels[record.status] || record.status }} · {{ formatDateTime(record.updated_at) }}</small>
               </button>
               <div class="row-actions">
-                <a-button type="text" aria-label="复制任务" @click="duplicate(record)"><Copy :size="15" /></a-button>
+                <a-button v-if="record.runtime_config_snapshot?.creation_mode === 'viral_rewrite'" type="text" aria-label="复制任务" @click="duplicate(record)"><Copy :size="15" /></a-button>
                 <a-button type="text" danger aria-label="删除任务" @click="remove(record)"><Trash2 :size="15" /></a-button>
               </div>
             </div>

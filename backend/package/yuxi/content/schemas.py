@@ -8,7 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from yuxi.content.model.industry.pack import IndustryPackRegressionMetrics
 
 ContentMode = Literal["quick", "pro"]
-CreationMode = Literal["original", "viral_rewrite"]
+CreationMode = Literal["viral_rewrite"]
 
 
 class ContentTaskCreate(BaseModel):
@@ -16,7 +16,7 @@ class ContentTaskCreate(BaseModel):
 
     industry_template_id: str
     mode: ContentMode = "quick"
-    creation_mode: CreationMode = "original"
+    creation_mode: CreationMode = "viral_rewrite"
     content_goal: str | None = None
     content_type_code: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_-]{1,80}$")
     persona_profile_version_id: str | None = None
@@ -40,7 +40,6 @@ class ContentTaskBatchDelete(BaseModel):
     task_ids: list[str] = Field(min_length=1, max_length=100)
 
 
-
 class ContentVisualMaterialSelection(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -50,9 +49,13 @@ class ContentVisualMaterialSelection(BaseModel):
     hycanvas_template_id: str | None = Field(
         default=None,
         pattern=(
-            r"^(?:xiaohongshu-[a-z0-9-]+|"
+            r"^(?:(?:xiaohongshu|system-cover)-[a-z0-9-]+|"
             r"[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$"
         ),
+    )
+    featured_cover_template_id: str | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
     )
 
 
