@@ -7,9 +7,11 @@ from typing import Any
 
 from yuxi.content.rules import brief_variable_map
 
-NUMBER_PATTERN = re.compile(r"\d+(?:\.\d+)?(?:%|元|万元|天|周|月|年|岁|个|位|次|㎡|人)?")
+NUMBER_UNITS = r"万元|平方米|平米|m²|元|天|周|月|年|岁|个|位|次|㎡|平|人|%"
+NUMBER_PATTERN = re.compile(rf"\d+(?:\.\d+)?(?:{NUMBER_UNITS})?")
+NUMBER_TOKEN_PATTERN = re.compile(rf"(?P<value>\d+(?:\.\d+)?)(?P<unit>{NUMBER_UNITS})?")
 HIGH_RISK_CLAIMS = ("保证", "百分百", "100%", "一定有效", "绝对", "零风险", "最便宜", "第一")
-NUMBER_UNIT_SPACING = re.compile(r"(?<=\d)\s+(?=万元|元|天|周|月|年|岁|个|位|次|㎡|人|%)")
+NUMBER_UNIT_SPACING = re.compile(rf"(?<=\d)\s+(?={NUMBER_UNITS})")
 PERSONA_NUMBER_UNITS = {
     "age": "岁",
     "workYears": "年",
@@ -17,6 +19,19 @@ PERSONA_NUMBER_UNITS = {
     "servedSiteCount": "个",
     "ownerRecommendCount": "位",
 }
+
+
+def _canonical_number_token(token: str) -> str:
+    matched = NUMBER_TOKEN_PATTERN.fullmatch(token)
+    if matched is None:
+        return token
+    value = matched.group("value")
+    if "." in value:
+        value = value.rstrip("0").rstrip(".")
+    unit = matched.group("unit") or ""
+    if unit in {"平方米", "平米", "m²", "平"}:
+        unit = "㎡"
+    return f"{value}{unit}"
 
 
 def _evidence_id(task_id: str, key: str, value: Any) -> str:
@@ -62,7 +77,7 @@ def merge_evidence(base: dict[str, Any], additions: list[dict[str, Any]]) -> dic
     return {"items": items, "summary": summary}
 
 
-def _structured_number_aliases(value: Any) -> set[str]:
+def _structured_number_aliases(value: Any, inherited_unit: str = "") -> set[str]:
     if isinstance(value, str):
         stripped = value.strip()
         if not stripped or stripped[0] not in "{[":
@@ -74,15 +89,33 @@ def _structured_number_aliases(value: Any) -> set[str]:
 
     aliases: set[str] = set()
     if isinstance(value, dict):
+        amount = value.get("amount")
+        amount_unit = str(value.get("unit") or inherited_unit).strip()
+        if (
+            isinstance(amount, (int, float))
+            and not isinstance(amount, bool)
+            and amount_unit
+            and re.fullmatch(NUMBER_UNITS, amount_unit)
+        ):
+            scalar = str(int(amount)) if isinstance(amount, float) and amount.is_integer() else str(amount)
+            aliases.add(_canonical_number_token(f"{scalar}{amount_unit}"))
+        if amount_unit:
+            for key, nested in value.items():
+                if not (key.endswith("_amount") or key.endswith("_total")):
+                    continue
+                if not isinstance(nested, (int, float)) or isinstance(nested, bool):
+                    continue
+                scalar = str(int(nested)) if isinstance(nested, float) and nested.is_integer() else str(nested)
+                aliases.add(_canonical_number_token(f"{scalar}{amount_unit}"))
         for key, nested in value.items():
             unit = PERSONA_NUMBER_UNITS.get(key)
             scalar = str(nested).strip()
             if unit and re.fullmatch(r"\d+(?:\.\d+)?", scalar):
-                aliases.add(f"{scalar}{unit}")
-            aliases.update(_structured_number_aliases(nested))
+                aliases.add(_canonical_number_token(f"{scalar}{unit}"))
+            aliases.update(_structured_number_aliases(nested, amount_unit))
     elif isinstance(value, list):
         for nested in value:
-            aliases.update(_structured_number_aliases(nested))
+            aliases.update(_structured_number_aliases(nested, inherited_unit))
     return aliases
 
 
@@ -91,18 +124,24 @@ def evidence_number_tokens(evidence_bundle: dict[str, Any]) -> list[str]:
         item.get("value") for item in evidence_bundle.get("items") or [] if item.get("value") is not None
     ]
     evidence_text = " ".join(json.dumps(value, ensure_ascii=False) for value in evidence_values)
-    tokens = set(NUMBER_PATTERN.findall(NUMBER_UNIT_SPACING.sub("", evidence_text)))
+    tokens = {
+        _canonical_number_token(token) for token in NUMBER_PATTERN.findall(NUMBER_UNIT_SPACING.sub("", evidence_text))
+    }
     for item in evidence_bundle.get("items") or []:
+        value = item.get("value")
+        unit = str((item.get("metadata") or {}).get("unit") or "").strip()
+        if isinstance(value, (int, float)) and not isinstance(value, bool) and unit:
+            scalar = str(int(value)) if isinstance(value, float) and value.is_integer() else str(value)
+            tokens.add(_canonical_number_token(f"{scalar}{unit}"))
         if item.get("source_type") not in {None, "manual_input"}:
             continue
-        value = item.get("value")
         if value is None:
             continue
         tokens.update(_structured_number_aliases(value))
         raw = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
         for field, unit in PERSONA_NUMBER_UNITS.items():
             for number in re.findall(rf'"{field}"\s*:\s*"?(\d+(?:\.\d+)?)"?', raw):
-                tokens.add(f"{number}{unit}")
+                tokens.add(_canonical_number_token(f"{number}{unit}"))
     return sorted(tokens)
 
 
@@ -112,9 +151,12 @@ def unsupported_number_tokens(content: str, evidence_bundle: dict[str, Any]) -> 
     evidence_text = NUMBER_UNIT_SPACING.sub("", evidence_text)
     content = re.sub(r"[0-9]\ufe0f?\u20e3", "", content)
     allowed = set(evidence_number_tokens(evidence_bundle))
-    return sorted(
-        {number for number in NUMBER_PATTERN.findall(content) if number not in evidence_text and number not in allowed}
-    )
+    unsupported = set()
+    for number in NUMBER_PATTERN.findall(content):
+        if number in evidence_text or _canonical_number_token(number) in allowed:
+            continue
+        unsupported.add(number)
+    return sorted(unsupported)
 
 
 def validate_content(

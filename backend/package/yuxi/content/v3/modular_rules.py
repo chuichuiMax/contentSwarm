@@ -12,7 +12,22 @@ from yuxi.content.rules import brief_variable_map
 
 MODULAR_WORKFLOW_ID = "content-workflow-blueprint-first-v4"
 EXPRESSION_GUIDANCE_WORKFLOW_ID = "content-workflow-blueprint-first-v5"
-MODULAR_WORKFLOW_IDS = frozenset({MODULAR_WORKFLOW_ID, EXPRESSION_GUIDANCE_WORKFLOW_ID})
+DETERMINISTIC_PLAN_WORKFLOW_ID = "content-workflow-deterministic-plan-v1"
+STANDARDIZED_FACTORY_WORKFLOW_V1_ID = "content-workflow-standardized-factory-v1"
+STANDARDIZED_FACTORY_WORKFLOW_V2_ID = "content-workflow-standardized-factory-v2"
+STANDARDIZED_FACTORY_WORKFLOW_V3_ID = "content-workflow-standardized-factory-v3"
+STANDARDIZED_FACTORY_WORKFLOW_ID = "content-workflow-standardized-factory-v4"
+MODULAR_WORKFLOW_IDS = frozenset(
+    {
+        MODULAR_WORKFLOW_ID,
+        EXPRESSION_GUIDANCE_WORKFLOW_ID,
+        DETERMINISTIC_PLAN_WORKFLOW_ID,
+        STANDARDIZED_FACTORY_WORKFLOW_V1_ID,
+        STANDARDIZED_FACTORY_WORKFLOW_V2_ID,
+        STANDARDIZED_FACTORY_WORKFLOW_V3_ID,
+        STANDARDIZED_FACTORY_WORKFLOW_ID,
+    }
+)
 MODULAR_RULE_BUNDLE_VERSION = "viral-modular-v1"
 
 GENERATION_SKILLS = (
@@ -34,6 +49,8 @@ _ALWAYS_REQUIRED_REVIEW_CODES = (
     "EMOJI_COVERAGE",
     "EMOJI_APPROPRIATENESS",
     "EMOJI_RESTRICTIONS",
+)
+_PERSONA_REVIEW_CODES = (
     "PERSONA_OPENING",
     "PERSONA_CLOSING",
     "PERSONA_GROUNDING",
@@ -185,12 +202,28 @@ def modular_review_codes(payload: dict[str, Any]) -> tuple[str, ...]:
     )
 
 
+def requires_persona_review(payload: dict[str, Any]) -> bool:
+    production_pack = payload.get("production_pack") or {}
+    if not production_pack:
+        return True
+    variable_codes = {
+        str(requirement.get("variable_code") or "")
+        for requirement in (production_pack.get("material_manifest") or {}).get("requirements") or []
+    }
+    return bool(variable_codes & {"persona_fact", "advantage", "advantages"})
+
+
 def required_review_codes(payload: dict[str, Any]) -> tuple[str, ...]:
     """返回当前审核契约要求模型逐项提交的完整 code 清单。"""
 
     strategy = payload.get("strategy_snapshot") or {}
+    expression_policy = payload.get("expression_policy") or (
+        (payload.get("production_pack") or {}).get("expression_policy") or {}
+    )
+    emoji_review_codes = _ALWAYS_REQUIRED_REVIEW_CODES if expression_policy.get("emoji_allowed", True) else ()
     return (
-        *_ALWAYS_REQUIRED_REVIEW_CODES,
+        *emoji_review_codes,
+        *(_PERSONA_REVIEW_CODES if requires_persona_review(payload) else ()),
         *(_COMPOSITION_REVIEW_CODES if strategy.get("direction_blueprint") else ()),
         *modular_review_codes(payload),
     )
@@ -280,6 +313,10 @@ __all__ = [
     "MODULAR_WORKFLOW_ID",
     "MODULAR_WORKFLOW_IDS",
     "REVIEW_SKILL",
+    "STANDARDIZED_FACTORY_WORKFLOW_ID",
+    "STANDARDIZED_FACTORY_WORKFLOW_V1_ID",
+    "STANDARDIZED_FACTORY_WORKFLOW_V2_ID",
+    "STANDARDIZED_FACTORY_WORKFLOW_V3_ID",
     "build_modular_rule_bundle",
     "derive_visual_intent",
     "has_price_context",

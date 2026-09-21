@@ -21,8 +21,10 @@ from yuxi.agents.middlewares.model_call_timeout import ContentModelProgress
 from yuxi.models.providers.cache import model_cache
 from yuxi.content.control.workflow.generation_input import (
     project_generation_input,
+    project_locked_quote_safe_input,
     project_review_input,
     project_visual_input,
+    project_visual_review_input,
 )
 from yuxi.content.control.workflow.strategy_input import load_strategy_profiles, project_strategy_input
 from yuxi.content.control.errors import ContentApplicationError
@@ -143,7 +145,11 @@ def build_runtime_config_snapshot(*, agent: Agent, context, request: AgentDelega
                 if request.agent_slug == "content-viral-generation-agent"
                 else 2
             )
-            snapshot["model_input_contract"] = "GenerateContentPromptV1"
+            snapshot["model_input_contract"] = (
+                "StandardizedGenerateContentPromptV1"
+                if request.input_payload.get("production_pack") is not None
+                else "GenerateContentPromptV1"
+            )
         elif request.node_run.node_id == "semantic_review":
             snapshot["emoji_review_policy_version"] = 1
             snapshot["persona_review_policy_version"] = 1
@@ -281,12 +287,17 @@ class AgentDelegationService:
                 required_source_asset_ids=request.domain_context.required_source_asset_ids,
                 allowed_visual_evidence_ids=request.domain_context.allowed_evidence_by_usage.get("visual", frozenset()),
             )
+        elif request.node_run.node_id == "visual_review":
+            model_view = project_visual_review_input(node_input.payload)
         elif request.node_run.node_id in {"select_creation_strategy", "reselect_creation_strategy"}:
             channel, persona = await load_strategy_profiles(
                 self.content_repo,
                 request.governance_values["locked_versions"],
             )
             model_view = project_strategy_input(node_input.payload, channel_profile=channel, persona_profile=persona)
+        safe_view = project_locked_quote_safe_input(model_view or node_input.payload)
+        if safe_view is not None:
+            model_view = safe_view
         if model_view is not None:
             canonical_view = json.dumps(model_view, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
             runtime_snapshot["model_input_hash"] = hashlib.sha256(canonical_view.encode()).hexdigest()

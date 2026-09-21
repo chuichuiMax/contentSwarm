@@ -5,12 +5,14 @@ import hashlib
 import json
 import re
 from copy import deepcopy
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.content.control.evidence import EvidenceApplicationService
+from yuxi.content.control.errors import ContentApplicationError
 from yuxi.content.control.strategy.recommend_v3 import StrategyPreviewActor
 from yuxi.content.infrastructure.postgres.decision_snapshot_repository import PostgresDecisionSnapshotRepository
 from yuxi.content.infrastructure.postgres.strategy_preview_repository import PostgresStrategyPreviewRepository
@@ -28,6 +30,19 @@ from yuxi.content.model.formulas.selector import (
     FormulaSelectionRequest,
     FormulaSelector,
 )
+from yuxi.content.model.materials import (
+    MaterialRequirementManifestV1,
+    ProductionOrderV1,
+    build_formula_lexicon_constraints,
+    freeze_production_pack,
+    standardize_evidence_materials,
+    validate_material_gate,
+)
+from yuxi.content.model.locked_blocks import (
+    compose_after_opening_paragraph,
+    extract_locked_quote_block,
+    quote_body_limits,
+)
 from yuxi.content.model.rules.engine import CombinationMatcher, MatchRequest
 from yuxi.content.rules import brief_variable_map, canonical_brief_facts
 from yuxi.content.validation import ComplianceEngine, validate_numeric_evidence_coverage
@@ -35,6 +50,11 @@ from yuxi.content.validators import validate_content, validate_modular_content
 from yuxi.content.v3.body_calling import get_decoration_body_calling, get_decoration_body_calling_source
 from yuxi.content.industry_matrix import resolve_industry_formula
 from yuxi.content.v3.formula_lexicons import get_formula_lexicon_requirements
+from yuxi.content.v3.title_formula_slots import (
+    enrich_decoration_title_formula,
+    required_title_lexicon_codes,
+    title_formula_slot_schema,
+)
 from yuxi.services.run_queue_service import append_run_stream_event
 from yuxi.storage.postgres.models_content import ContentFormula, ContentTask, CreationMethod, TitleFormula
 from yuxi.storage.postgres.models_knowledge import KnowledgeBase, KnowledgeChunk, KnowledgeFile
@@ -45,12 +65,254 @@ _SLOT_REQUIRED_VARIABLES = {
     "case_proof": {"number", "result", "scene", "location"},
     "brand": {"brand_name"},
 }
+_TRUSTED_QUOTE_SNAPSHOT_KEY = "trusted_external_material_snapshot"
+_TRUSTED_QUOTE_VARIABLES = {"title_price", "title_price_label", "quote_block", "quote_type"}
+
+
+def _trusted_quote_evidence_items(snapshot: dict[str, Any], *, content_type_code: str) -> list[EvidenceItemV1]:
+    """把服务端当家快照重新验签并转换为高风险已确认 Evidence。"""
+
+    if (
+        snapshot.get("schema_version") != 1
+        or snapshot.get("source") != "dangjia"
+        or snapshot.get("content_type_code") != content_type_code
+    ):
+        raise ContentApplicationError(
+            "TRUSTED_QUOTE_SNAPSHOT_INVALID",
+            "当家报价可信快照的版本、来源或创作类型不匹配",
+            "invalid",
+        )
+    serial_no = str(snapshot.get("serial_no") or "").strip()
+    quote_type = str(snapshot.get("quote_type") or "").strip()
+    title_price = snapshot.get("title_price") or {}
+    quote_block = snapshot.get("quote_block") or {}
+    label = str(title_price.get("label") or "").strip()
+    display_text = str(title_price.get("display_text") or "").strip()
+    original_content = quote_block.get("original_content")
+    expected_content_hash = quote_block.get("content_hash")
+    if (
+        not serial_no
+        or quote_type not in {"standard_unit_price", "project_quote"}
+        or not label
+        or not display_text
+        or not isinstance(original_content, str)
+        or not original_content
+        or quote_block.get("render_policy") != "semicolon-lines-v1"
+        or quote_block.get("insertion_policy") != "after-opening-paragraph-v1"
+    ):
+        raise ContentApplicationError(
+            "TRUSTED_QUOTE_SNAPSHOT_INVALID",
+            "当家报价可信快照缺少必需字段或使用了未发布策略",
+            "invalid",
+        )
+    content_hash = hashlib.sha256(original_content.encode("utf-8")).hexdigest()
+    if content_hash != expected_content_hash:
+        raise ContentApplicationError(
+            "LOCKED_QUOTE_BLOCK_INTEGRITY_FAILED",
+            "当家报价原文与冻结 Hash 不一致",
+            "invalid",
+        )
+
+    def item(
+        variable_code: str,
+        value: Any,
+        *,
+        allowed_usage: tuple[str, ...],
+        source_hash: str,
+        metadata: dict[str, Any],
+    ) -> EvidenceItemV1:
+        source_id = f"dangjia:{serial_no}:{variable_code.replace('_', '-')}"
+        evidence_hash = hashlib.sha256(f"{source_id}:{source_hash}".encode()).hexdigest()
+        return EvidenceItemV1(
+            id=f"ev_{evidence_hash[:24]}",
+            variable_codes=(variable_code,),
+            value=value,
+            source_type="business_record",
+            source_id=source_id,
+            source_version=serial_no,
+            verified_status="user_confirmed",
+            allowed_usage=allowed_usage,
+            risk_level="high_risk",
+            source_hash=source_hash,
+            metadata=metadata,
+        )
+
+    title_price_hash = hashlib.sha256(
+        json.dumps([label, display_text], ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    label_hash = hashlib.sha256(label.encode("utf-8")).hexdigest()
+    quote_type_hash = hashlib.sha256(quote_type.encode("utf-8")).hexdigest()
+    return [
+        item(
+            "title_price",
+            display_text,
+            allowed_usage=("title",),
+            source_hash=title_price_hash,
+            metadata={"label": label, "source_path": "requirementType.titlePrice.displayText"},
+        ),
+        item(
+            "title_price_label",
+            label,
+            allowed_usage=("title", "body"),
+            source_hash=label_hash,
+            metadata={"source_path": "requirementType.titlePrice.label"},
+        ),
+        item(
+            "quote_type",
+            quote_type,
+            allowed_usage=("body",),
+            source_hash=quote_type_hash,
+            metadata={"source_path": "requirementType.prices[0].format"},
+        ),
+        item(
+            "quote_block",
+            {
+                "original_content": original_content,
+                "content_hash": content_hash,
+                "render_policy": "semicolon-lines-v1",
+                "insertion_policy": "after-opening-paragraph-v1",
+            },
+            allowed_usage=("body",),
+            source_hash=content_hash,
+            metadata={
+                "quote_format": snapshot.get("quote_format"),
+                "source_path": "requirementType.prices[0].content",
+                "immutable": True,
+            },
+        ),
+    ]
 
 
 def _display_business_value(value: Any) -> str:
     if isinstance(value, list):
         return "、".join(str(item).strip() for item in value if str(item).strip())
     return str(value).strip() if value not in (None, "") else ""
+
+
+def _required_title_fact_options(
+    brief: dict[str, Any],
+    strategy_snapshot: dict[str, Any],
+    production_pack: dict[str, Any] | None = None,
+) -> dict[str, tuple[str, ...]]:
+    """返回可逐字校验的标题槽位；同一槽位内的变量和词库按 one-of 解释。"""
+
+    variables = brief_variable_map(brief)
+    for material in (production_pack or {}).get("materials") or []:
+        value = (material.get("payload") or {}).get("value")
+        for code in material.get("variable_codes") or []:
+            if value not in (None, "", [], {}):
+                variables.setdefault(str(code), value)
+
+    formula = enrich_decoration_title_formula(strategy_snapshot.get("title_formula") or {})
+    location = _display_business_value(variables.get("location"))
+
+    def raw_values(value: Any) -> list[str]:
+        if isinstance(value, (list, tuple, set)):
+            return [str(item).strip() for item in value if str(item).strip()]
+        rendered = _display_business_value(value)
+        return [rendered] if rendered else []
+
+    slots = title_formula_slot_schema(formula)
+    variable_codes = list(formula.get("variable_schema") or [])
+    for slot in slots:
+        for code in slot.get("variable_codes") or []:
+            if code not in variable_codes:
+                variable_codes.append(code)
+
+    options_by_variable: dict[str, list[str]] = {}
+    for code in variable_codes:
+        values = raw_values(variables.get(code))
+        if not values:
+            continue
+        options: list[str] = []
+        if code == "location":
+            for value in values:
+                options.append(value)
+                city_match = re.search(r"(?:^|省|自治区)([^省市区县]{2,})市", value)
+                district_match = re.search(r"市([^省市区县]{2,}[区县])", value)
+                if city_match:
+                    city = city_match.group(1)
+                    options.extend((f"{city}市", city))
+                    if district_match:
+                        options.append(f"{city}{district_match.group(1)}")
+                if district_match:
+                    options.append(district_match.group(1))
+        elif code == "product":
+            for value in values:
+                options.append(value)
+                normalized = value
+                for token in (location, "同城", "装修"):
+                    if token:
+                        normalized = normalized.replace(token, "")
+                normalized = normalized.strip(" -—·，,：:")
+                if normalized:
+                    options.append(normalized)
+                    shortened = normalized
+                    for suffix in ("服务", "施工", "人工", "改造"):
+                        if shortened.endswith(suffix) and len(shortened) > len(suffix):
+                            shortened = shortened[: -len(suffix)]
+                    if shortened:
+                        options.append(shortened)
+        elif code == "title_price":
+            options.extend(values)
+        elif code in {"quantity", "price"}:
+            options.extend(
+                number for value in values for number in re.findall(r"\d+(?:\.\d+)?", value.replace(",", ""))
+            )
+        elif code == "persona_fact":
+            options.extend(fact for value in values for fact in re.findall(r"\d+(?:\.\d+)?(?:年|岁|个|位|次)", value))
+            options.extend(
+                identity
+                for value in values
+                for identity in re.findall(r"(?:装修)?工长|设计师|项目经理|监理|施工负责人", value)
+            )
+            if any("工长" in value for value in values):
+                options.append("工长")
+        else:
+            options.extend(values)
+        if options:
+            options_by_variable[code] = list(dict.fromkeys(options))
+
+    lexicon_bundle = (production_pack or {}).get("formula_lexicon_bundle") or {}
+    selected_title_terms = (lexicon_bundle.get("selection") or {}).get("title") or {}
+    fact_bindings = (lexicon_bundle.get("fact_bindings") or {}).get("title") or {}
+    for lexicon_code, bindings in fact_bindings.items():
+        selected = set(selected_title_terms.get(lexicon_code) or [])
+        for binding in bindings or []:
+            term = str(binding.get("term") or "").strip()
+            if not term or term not in selected:
+                continue
+            for variable_code in binding.get("variable_codes") or []:
+                options_by_variable.setdefault(str(variable_code), []).append(term)
+
+    if not slots:
+        return {
+            code: tuple(dict.fromkeys(options_by_variable.get(code) or []))
+            for code in formula.get("variable_schema") or []
+            if options_by_variable.get(code)
+        }
+
+    required: dict[str, tuple[str, ...]] = {}
+    for slot in slots:
+        variable_codes = [str(code) for code in slot.get("variable_codes") or []]
+        lexicon_codes = [str(code) for code in slot.get("lexicon_codes") or []]
+        options = [option for code in variable_codes for option in options_by_variable.get(code) or []]
+        options.extend(
+            str(term).strip()
+            for code in lexicon_codes
+            for term in selected_title_terms.get(code) or []
+            if str(term).strip()
+        )
+        slot_code = str(slot.get("code") or "").strip()
+        label = str(slot.get("label") or slot_code).strip()
+        source_codes = "/".join([*variable_codes, *lexicon_codes])
+        key = (
+            f"{slot_code}[{source_codes}]（{label}，任选一项）"
+            if len(variable_codes) + len(lexicon_codes) > 1
+            else f"{slot_code}（{label}）"
+        )
+        required[key] = tuple(dict.fromkeys(options))
+    return required
 
 
 def _brief_source_path(brief: dict[str, Any], key: str) -> str:
@@ -100,6 +362,68 @@ def _derive_scene_evidence(task_id: str, brief: dict[str, Any]) -> EvidenceItemV
         allowed_usage=("body", "visual"),
         source_hash=source_hash,
         metadata={"derived_from_fields": source_fields},
+    )
+
+
+def _derive_formula_calculation_evidence(state: dict[str, Any]) -> EvidenceItemV1 | None:
+    requirements = {
+        str(item.get("variable_code") or "")
+        for item in (state.get("material_manifest") or {}).get("requirements") or []
+    }
+    if "calculated_total" not in requirements:
+        return None
+    variables = brief_variable_map(state.get("content_brief") or {})
+    quote_type = str(variables.get("quote_type") or "")
+    quantity_text = str(variables.get("quantity") or "").replace(",", "")
+    price_text = str(variables.get("price") or "").replace(",", "")
+    quantity_match = re.search(r"\d+(?:\.\d+)?", quantity_text)
+    price_match = re.search(r"\d+(?:\.\d+)?", price_text)
+    is_project_quote = quote_type == "project_quote" or "项目" in quote_type
+    if not is_project_quote or not quantity_match or not price_match or not re.search(r"元\s*/\s*㎡", price_text):
+        return None
+    try:
+        quantity = Decimal(quantity_match.group())
+        unit_price = Decimal(price_match.group())
+    except InvalidOperation:
+        return None
+    total = quantity * unit_price
+
+    def display(value: Decimal) -> str:
+        rendered = format(value.normalize(), "f")
+        return rendered.rstrip("0").rstrip(".") if "." in rendered else rendered
+
+    quantity_value = display(quantity)
+    unit_price_value = display(unit_price)
+    total_value = display(total)
+    expression = f"{quantity_value}㎡×{unit_price_value}元/㎡={total_value}元"
+    source_hash = hashlib.sha256(
+        json.dumps(
+            [state["task_id"], "calculated_total", quantity_value, unit_price_value, total_value, quote_type],
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+    return EvidenceItemV1(
+        id=f"ev_{source_hash[:16]}",
+        variable_codes=("calculated_total",),
+        value=int(total) if total == total.to_integral_value() else float(total),
+        source_type="human_confirmation",
+        source_id="formula:FRB07:quantity_x_unit_price",
+        source_version="deterministic-calculation-v1",
+        verified_status="user_confirmed",
+        allowed_usage=("body",),
+        risk_level="high_risk",
+        source_hash=source_hash,
+        metadata={
+            "unit": "元",
+            "material_type": "derived_calculation",
+            "derivation": {
+                "operation": "multiply",
+                "expression": expression,
+                "input_variable_codes": ["quantity", "price"],
+                "disclaimer": "同一项目口径的程序计算参考，不等同于最终成交或结算金额。",
+            },
+        },
     )
 
 
@@ -398,6 +722,18 @@ class V3DeterministicNodeHandler:
             from yuxi.content.control.workflow.joint_strategy import prepare_strategy_candidates
 
             return await prepare_strategy_candidates(db=db, state=state, node_run_id=node_run_id)
+        if node["id"] == "prepare_creation_plan_inputs":
+            from yuxi.content.control.workflow.creation_plan import prepare_creation_plan_inputs
+
+            return await prepare_creation_plan_inputs(db=db, state=state, node_run_id=node_run_id)
+        if node["id"] == "build_creation_plan":
+            from yuxi.content.control.workflow.creation_plan import build_creation_plan
+
+            return await build_creation_plan(db=db, state=state, node_run_id=node_run_id)
+        if node["id"] == "merge_extracted_creation_facts":
+            from yuxi.content.control.workflow.creation_plan import merge_extracted_creation_facts
+
+            return await merge_extracted_creation_facts(db=db, state=state, node_run_id=node_run_id)
         if node["id"] == "lock_creation_strategy" and state.get("joint_strategy_decision"):
             from yuxi.content.control.workflow.joint_strategy import lock_joint_strategy
 
@@ -413,6 +749,10 @@ class V3DeterministicNodeHandler:
             "match_combination_group": self._match_combination_group,
             "resolve_formula_requirements": self._resolve_formula_requirements,
             "freeze_evidence_bundle": self._freeze_evidence_bundle,
+            "validate_material_gate": self._validate_material_gate,
+            "freeze_production_pack": self._freeze_production_pack,
+            "compose_locked_quote_block": self._compose_locked_quote_block,
+            "validate_composed_content": self._validate_composed_content,
             "prepare_formula_selection": self._prepare_formula_selection,
             "resolve_product_material_requirements": self._resolve_product_material_requirements,
             "freeze_product_evidence_bundle": self._freeze_product_evidence_bundle,
@@ -425,6 +765,258 @@ class V3DeterministicNodeHandler:
         if handler is None:
             raise ValueError(f"未注册的 V3 固定节点: {node['id']}")
         return await handler(db=db, state=state, node_run_id=node_run_id)
+
+    @staticmethod
+    async def _validate_material_gate(*, db: AsyncSession, state: dict[str, Any], node_run_id: str) -> dict[str, Any]:
+        del db, node_run_id
+        try:
+            manifest = MaterialRequirementManifestV1.model_validate(state["material_manifest"])
+            reference_snapshot = (state.get("strategy_snapshot") or {}).get("reference_snapshot") or {}
+            materials = standardize_evidence_materials(
+                evidence_bundle=state["evidence_bundle"],
+                manifest=manifest,
+                reference_snapshot=reference_snapshot,
+            )
+            report = validate_material_gate(manifest=manifest, materials=materials)
+        except (KeyError, ValueError) as exc:
+            raise ContentApplicationError("MATERIAL_SCHEMA_INVALID", str(exc), "invalid") from exc
+        if report.status != "passed":
+            first = report.issues[0] if report.issues else None
+            raise ContentApplicationError(
+                first.code if first else "MATERIAL_GATE_BLOCKED",
+                first.message if first else "标准物料质量门未通过",
+                "invalid",
+            )
+        try:
+            locked_quote = extract_locked_quote_block(
+                {
+                    "materials": [item.model_dump(mode="json") for item in materials],
+                    "channel_profile": state.get("channel_profile") or {},
+                }
+            )
+        except ValueError as exc:
+            raise ContentApplicationError("LOCKED_QUOTE_BLOCK_INTEGRITY_FAILED", str(exc), "invalid") from exc
+        if locked_quote is not None:
+            limits = quote_body_limits(
+                {"channel_profile": state.get("channel_profile") or {}},
+                locked_quote["rendered_content"],
+            )
+            if limits["creative_body_max_chars"] < limits["creative_body_min_chars"]:
+                raise ContentApplicationError(
+                    "LOCKED_QUOTE_BLOCK_TOO_LONG",
+                    "报价原文超过渠道正文容量，无法保留至少 200 字的创作空间",
+                    "invalid",
+                )
+        references = [item for item in materials if item.material_type == "viral_reference"]
+        if len(references) != 1:
+            raise ContentApplicationError(
+                "REFERENCE_MATERIAL_INVALID",
+                "冻结生产包前必须且只能有一篇已审核爆款参考",
+                "invalid",
+            )
+        lexicon_constraints = build_formula_lexicon_constraints(
+            materials=materials,
+            formula_lexicon_bundle=state.get("formula_lexicon_bundle") or {},
+            material_quality_report=report,
+        )
+        strategy_title_formula = (state.get("strategy_snapshot") or {}).get("title_formula") or {}
+        title_lexicon_codes = {
+            str(entry.get("code") or "")
+            for entry in (state.get("formula_lexicon_bundle") or {}).get("title") or []
+            if str(entry.get("code") or "").strip()
+        }
+        required_title_codes = required_title_lexicon_codes(strategy_title_formula)
+        unresolved = [
+            code
+            for code in lexicon_constraints["unresolved_fact_bound_codes"]
+            if code not in title_lexicon_codes or code in required_title_codes
+        ]
+        if unresolved:
+            raise ContentApplicationError(
+                "MATERIAL_LEXICON_GROUNDING_MISSING",
+                "公式必选词库没有已审核事实支撑：" + "、".join(unresolved),
+                "invalid",
+            )
+        return {
+            "standardized_materials": [item.model_dump(mode="json") for item in materials],
+            "material_quality_report": report.model_dump(mode="json"),
+        }
+
+    @staticmethod
+    async def _freeze_production_pack(*, db: AsyncSession, state: dict[str, Any], node_run_id: str) -> dict[str, Any]:
+        del db, node_run_id
+        try:
+            runtime = state.get("runtime_config_snapshot") or {}
+            brief = state.get("content_brief") or {}
+            writing_request = (
+                _display_business_value(brief.get("user_request") or brief_variable_map(brief).get("user_request"))
+                or None
+            )
+            pack = freeze_production_pack(
+                task_id=state["task_id"],
+                production_order=ProductionOrderV1.model_validate(state["production_order"]),
+                material_manifest=MaterialRequirementManifestV1.model_validate(state["material_manifest"]),
+                material_quality_report=state["material_quality_report"],
+                materials=state["standardized_materials"],
+                strategy_snapshot=state["strategy_snapshot"],
+                evidence_bundle=state["evidence_bundle"],
+                formula_lexicon_bundle=state["formula_lexicon_bundle"],
+                reference_snapshot=state["strategy_snapshot"]["reference_snapshot"],
+                expression_guidance=state.get("expression_guidance"),
+                writing_request=writing_request,
+                channel_profile=state.get("channel_profile") or {},
+                persona_profile=state.get("persona_profile") or {},
+                content_rule_bundle=runtime.get("content_rule_bundle") or {},
+                compliance_policy_version_ids=runtime.get("compliance_policy_version_ids") or [],
+            )
+        except (KeyError, ValueError) as exc:
+            raise ContentApplicationError("PRODUCTION_PACK_INVALID", str(exc), "invalid") from exc
+        return {"production_pack": pack.model_dump(mode="json")}
+
+    @staticmethod
+    async def _compose_locked_quote_block(
+        *, db: AsyncSession, state: dict[str, Any], node_run_id: str
+    ) -> dict[str, Any]:
+        del db, node_run_id
+        production_pack = state.get("production_pack") or {}
+        try:
+            locked_quote = extract_locked_quote_block(production_pack)
+        except ValueError as exc:
+            raise ContentApplicationError("LOCKED_QUOTE_BLOCK_INTEGRITY_FAILED", str(exc), "invalid") from exc
+        creative_draft = deepcopy(state.get("creative_content_draft") or state.get("content_draft") or {})
+        creative_hash = hashlib.sha256(
+            json.dumps(creative_draft, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        if locked_quote is None:
+            return {
+                "creative_content_draft": creative_draft,
+                "content_draft": creative_draft,
+                "creative_draft_hash": creative_hash,
+                "final_draft_hash": creative_hash,
+                "locked_block_composition": {"status": "not_applicable"},
+            }
+        draft = deepcopy(creative_draft)
+        creative_body = str(draft.get("body") or "")
+        rendered = locked_quote["rendered_content"]
+        original = locked_quote["original_content"]
+        if rendered in creative_body or original in creative_body:
+            raise ContentApplicationError(
+                "LOCKED_QUOTE_BLOCK_INTEGRITY_FAILED",
+                "创作稿包含应由程序插入的锁定报价块",
+                "invalid",
+            )
+        limits = quote_body_limits(production_pack, rendered)
+        if not limits["creative_body_min_chars"] <= len(creative_body) <= limits["creative_body_max_chars"]:
+            raise ContentApplicationError(
+                "LOCKED_QUOTE_BLOCK_LENGTH_INVALID",
+                "创作正文长度未给锁定报价块预留足够渠道容量",
+                "invalid",
+            )
+        try:
+            composed_body = compose_after_opening_paragraph(creative_body, rendered)
+        except ValueError as exc:
+            raise ContentApplicationError("LOCKED_QUOTE_BLOCK_INTEGRITY_FAILED", str(exc), "invalid") from exc
+        draft["body"] = composed_body
+        paragraph_evidence = list(draft.get("paragraph_evidence") or [])
+        paragraph_evidence.append(
+            {
+                "paragraph_id": "locked_quote_block",
+                "evidence_ids": locked_quote["evidence_ids"],
+            }
+        )
+        draft["paragraph_evidence"] = paragraph_evidence
+        final_hash = hashlib.sha256(
+            json.dumps(draft, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        channel_result = deepcopy(state.get("channel_result") or {})
+        if channel_result:
+            channel_result["body"] = composed_body
+        return {
+            "creative_content_draft": creative_draft,
+            "content_draft": draft,
+            "creative_draft_hash": creative_hash,
+            "final_draft_hash": final_hash,
+            **({"channel_result": channel_result} if channel_result else {}),
+            "locked_block_composition": {
+                "status": "composed",
+                "block_id": "quote_block",
+                "material_id": locked_quote["material_id"],
+                "content_hash": locked_quote["content_hash"],
+                "rendered_char_count": len(rendered),
+                "creative_body_hash": hashlib.sha256(creative_body.encode("utf-8")).hexdigest(),
+                "final_body_hash": hashlib.sha256(composed_body.encode("utf-8")).hexdigest(),
+                "insertion_policy": locked_quote["insertion_policy"],
+            },
+        }
+
+    @staticmethod
+    async def _validate_composed_content(
+        *, db: AsyncSession, state: dict[str, Any], node_run_id: str
+    ) -> dict[str, Any]:
+        del db, node_run_id
+        production_pack = state.get("production_pack") or {}
+        try:
+            locked_quote = extract_locked_quote_block(production_pack)
+        except ValueError as exc:
+            raise ContentApplicationError("LOCKED_QUOTE_BLOCK_INTEGRITY_FAILED", str(exc), "invalid") from exc
+        if locked_quote is None:
+            return {"composed_content_validation_report": {"status": "not_applicable", "checks": []}}
+        draft = state.get("content_draft") or {}
+        body = str(draft.get("body") or "")
+        draft_hash = hashlib.sha256(
+            json.dumps(draft, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        composition = state.get("locked_block_composition") or {}
+        rendered = locked_quote["rendered_content"]
+        checks: list[dict[str, Any]] = []
+        if (
+            composition.get("status") != "composed"
+            or composition.get("content_hash") != locked_quote["content_hash"]
+            or composition.get("final_body_hash") != hashlib.sha256(body.encode("utf-8")).hexdigest()
+            or state.get("final_draft_hash") != draft_hash
+            or body.count(rendered) != 1
+        ):
+            checks.append(
+                {
+                    "code": "LOCKED_QUOTE_BLOCK_INTEGRITY_FAILED",
+                    "level": "error",
+                    "message": "最终正文没有且仅有一个完整的锁定报价块",
+                }
+            )
+        limits = quote_body_limits(production_pack, rendered)
+        if len(body) > limits["final_body_max_chars"]:
+            checks.append(
+                {
+                    "code": "CHANNEL_BODY_LONG",
+                    "level": "error",
+                    "message": f"合成后正文超过渠道上限 {limits['final_body_max_chars']} 字",
+                }
+            )
+        compliance = ComplianceEngine().validate_and_adapt(
+            title=str((state.get("selected_title") or {}).get("text") or ""),
+            body=body,
+            topics=list(draft.get("topics") or []),
+            channel_profile=state.get("channel_profile") or {},
+            policies=state.get("compliance_policies") or [],
+        )
+        if compliance["status"] == "blocked" or compliance["replacement_diffs"]:
+            checks.append(
+                {
+                    "code": "COMPOSED_CONTENT_COMPLIANCE_FAILED",
+                    "level": "error",
+                    "message": "合成后全文命中阻断或自动替换规则；锁定报价原文禁止自动修改",
+                }
+            )
+        if checks:
+            raise ContentApplicationError(checks[0]["code"], checks[0]["message"], "invalid")
+        return {
+            "composed_content_validation_report": {
+                "status": "passed",
+                "checks": [],
+                "content_hash": locked_quote["content_hash"],
+                "final_body_hash": hashlib.sha256(body.encode("utf-8")).hexdigest(),
+            }
+        }
 
     @staticmethod
     async def _select_creation_strategy(*, db: AsyncSession, state: dict[str, Any], node_run_id: str) -> dict[str, Any]:
@@ -648,6 +1240,21 @@ class V3DeterministicNodeHandler:
             if body_calling is not None
             else body_formula.structure_schema or []
         )
+        title_formula_payload = {
+            "code": title_formula.code,
+            "name": title_formula.name,
+            "core_goal": title_formula.core_goal,
+            "source_content": title_formula.source_content or {},
+            "reference_examples": title_formula.reference_examples or [],
+            "variable_schema": title_formula.variable_schema or [],
+            "compatible_methods": title_formula.compatible_methods or [],
+            "risk_rules": title_formula.risk_rules or [],
+            "lexicon_codes": (
+                [item["code"] for item in formula_lexicons["title"]] if formula_lexicons is not None else []
+            ),
+        }
+        if context.industry_slug == "decoration":
+            title_formula_payload = enrich_decoration_title_formula(title_formula_payload)
         strategy_payload = {
             "content_direction": direction,
             "selected_group_id": group.code,
@@ -665,19 +1272,7 @@ class V3DeterministicNodeHandler:
                 }
                 for code in method_codes
             ],
-            "title_formula": {
-                "code": title_formula.code,
-                "name": title_formula.name,
-                "core_goal": title_formula.core_goal,
-                "source_content": title_formula.source_content or {},
-                "reference_examples": title_formula.reference_examples or [],
-                "variable_schema": title_formula.variable_schema or [],
-                "compatible_methods": title_formula.compatible_methods or [],
-                "risk_rules": title_formula.risk_rules or [],
-                "lexicon_codes": (
-                    [item["code"] for item in formula_lexicons["title"]] if formula_lexicons is not None else []
-                ),
-            },
+            "title_formula": title_formula_payload,
             "body_formula": {
                 "code": body_formula.code,
                 "name": body_formula.name,
@@ -909,9 +1504,6 @@ class V3DeterministicNodeHandler:
 
     async def _normalize_evidence(self, *, db: AsyncSession, state: dict[str, Any], node_run_id: str) -> dict[str, Any]:
         del node_run_id
-        existing = state.get("evidence_bundle") or {}
-        if existing.get("status") == "frozen" and existing.get("bundle_hash"):
-            return {"evidence_bundle": existing}
         items: list[EvidenceItemV1] = []
         for key, value, variable_codes in canonical_brief_facts(state["content_brief"]):
             if value in (None, "", [], {}):
@@ -957,8 +1549,56 @@ class V3DeterministicNodeHandler:
                     metadata={"object_uri": media.get("object_uri")},
                 )
             )
-        bundle = freeze_evidence_bundle(task_id=state["task_id"], version=1, items=items)
-        await EvidenceApplicationService(db).persist_frozen_bundle(
+        trusted_snapshot = (state.get("runtime_config_snapshot") or {}).get(_TRUSTED_QUOTE_SNAPSHOT_KEY)
+        if trusted_snapshot is not None:
+            trusted_items = _trusted_quote_evidence_items(
+                trusted_snapshot,
+                content_type_code=str((state.get("content_brief") or {}).get("content_type_code") or ""),
+            )
+            items = [item for item in items if not set(item.variable_codes).intersection(_TRUSTED_QUOTE_VARIABLES)]
+            items.extend(trusted_items)
+        evidence_service = EvidenceApplicationService(db)
+        items = await evidence_service.canonicalize_existing_items(items)
+        latest = await evidence_service.get_latest_frozen_bundle(state["task_id"])
+
+        def same_fact_identity(left: EvidenceItemV1, right: EvidenceItemV1) -> bool:
+            return (
+                left.id == right.id
+                and left.variable_codes == right.variable_codes
+                and left.value == right.value
+                and left.source_type == right.source_type
+                and left.verified_status == right.verified_status
+                and left.allowed_usage == right.allowed_usage
+                and left.risk_level == right.risk_level
+                and left.source_hash == right.source_hash
+            )
+
+        if latest is not None:
+            latest_by_id = {item.id: item for item in latest.items}
+            items = [
+                latest_by_id[item.id]
+                if item.id in latest_by_id and same_fact_identity(latest_by_id[item.id], item)
+                else item
+                for item in items
+            ]
+
+        def item_signature(item: EvidenceItemV1) -> str:
+            return json.dumps(
+                item.model_dump(mode="json", exclude={"created_at"}),
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+
+        if latest is not None and sorted(map(item_signature, latest.items)) == sorted(map(item_signature, items)):
+            return {"evidence_bundle": latest.model_dump(mode="json")}
+        bundle = freeze_evidence_bundle(
+            task_id=state["task_id"],
+            version=(latest.version + 1) if latest else 1,
+            items=items,
+            supersedes_id=latest.id if latest else None,
+        )
+        await evidence_service.persist_frozen_bundle(
             bundle,
             run_id=state["run_id"],
             thread_id=state["task_id"],
@@ -1112,6 +1752,9 @@ class V3DeterministicNodeHandler:
         current = EvidenceBundleV1.model_validate(state["evidence_bundle"])
         collection = state.get("evidence_collection") or {}
         additions = [EvidenceItemV1.model_validate(item) for item in collection.get("evidence_items") or []]
+        derived_calculation = _derive_formula_calculation_evidence(state)
+        if derived_calculation is not None:
+            additions.append(derived_calculation)
         current_by_id = {item.id: item for item in current.items}
         new_additions: list[EvidenceItemV1] = []
         for item in additions:
@@ -1126,7 +1769,8 @@ class V3DeterministicNodeHandler:
                     "evidence_id_conflict",
                     f"Evidence ID {item.id} 已存在但内容不一致",
                 )
-        additions = new_additions
+        evidence_service = EvidenceApplicationService(db)
+        additions = await evidence_service.canonicalize_existing_items(new_additions)
         if not additions:
             return {"evidence_bundle": current.model_dump(mode="json")}
         bundle = next_evidence_bundle_version(
@@ -1134,7 +1778,7 @@ class V3DeterministicNodeHandler:
             additions=additions,
             citations=[*current.citations, *({"source_id": item} for item in collection.get("citations") or [])],
         )
-        await EvidenceApplicationService(db).persist_frozen_bundle(
+        await evidence_service.persist_frozen_bundle(
             bundle,
             run_id=state["run_id"],
             thread_id=state["task_id"],
@@ -1184,6 +1828,48 @@ class V3DeterministicNodeHandler:
                 }
             )
 
+        # A failed run may already have frozen deterministic KB/reference
+        # evidence. Retrying the same task should reuse an identical item
+        # instead of submitting its ID as new evidence again.
+        current_items = {
+            item.id: item
+            for item in (
+                EvidenceItemV1.model_validate(raw) for raw in (state.get("evidence_bundle") or {}).get("items") or []
+            )
+        }
+        new_evidence_items: list[dict[str, Any]] = []
+        reused_reference_ids: set[str] = set()
+        for raw in evidence_items:
+            candidate = EvidenceItemV1.model_validate(raw)
+            existing = current_items.get(candidate.id)
+            if existing is None:
+                new_evidence_items.append(raw)
+                continue
+            existing_payload = existing.model_dump(mode="json", exclude={"created_at", "metadata"})
+            candidate_payload = candidate.model_dump(mode="json", exclude={"created_at", "metadata"})
+            if existing_payload != candidate_payload:
+                raise EvidenceGovernanceError(
+                    "evidence_id_conflict",
+                    f"Evidence ID {candidate.id} 已存在但内容不一致",
+                )
+            if (
+                candidate.metadata.get("material_type") == "viral_example"
+                and candidate.metadata.get("selected_reference") is True
+            ):
+                # The final collection contract still needs to validate the
+                # one selected reference. The freeze node will drop this
+                # identical copy instead of persisting it again.
+                new_evidence_items.append(raw)
+                reused_reference_ids.add(candidate.id)
+        evidence_items = new_evidence_items
+        validation_evidence_bundle = deepcopy(state.get("evidence_bundle") or {})
+        if reused_reference_ids:
+            validation_evidence_bundle["items"] = [
+                item
+                for item in validation_evidence_bundle.get("items") or []
+                if str(item.get("id") or "") not in reused_reference_ids
+            ]
+
         citations = list(
             dict.fromkeys(
                 str(citation)
@@ -1223,7 +1909,7 @@ class V3DeterministicNodeHandler:
             ContractDomainContext.from_governance(
                 match_decision_snapshot=state.get("match_decision_snapshot") or {},
                 formula_selection_snapshot=formula,
-                evidence_bundle=state.get("evidence_bundle") or {},
+                evidence_bundle=validation_evidence_bundle,
                 locked_versions={
                     "industry_pack_version_id": str(task.get("industry_pack_version_id") or ""),
                     "channel_profile_version_id": str(task.get("channel_profile_version_id") or ""),
@@ -1405,6 +2091,9 @@ class V3DeterministicNodeHandler:
                 new_additions.append(item)
             # 兼容已通过旧版契约的节点结果：同 ID 只能引用冻结证据，Agent 重复提交的副本一律不参与合并。
 
+        evidence_service = EvidenceApplicationService(db)
+        new_additions = await evidence_service.canonicalize_existing_items(new_additions)
+
         evidence_by_id = {**current_by_id, **{item.id: item for item in new_additions}}
         requirement_by_id = {
             item["requirement_id"]: item
@@ -1451,7 +2140,7 @@ class V3DeterministicNodeHandler:
                     *({"source_id": item} for item in collection.get("citations") or []),
                 ],
             )
-            await EvidenceApplicationService(db).persist_frozen_bundle(
+            await evidence_service.persist_frozen_bundle(
                 bundle,
                 run_id=state["run_id"],
                 thread_id=state["task_id"],
@@ -1603,13 +2292,23 @@ class V3DeterministicNodeHandler:
         title["text"] = result["title"]
         draft["body"] = result["body"]
         draft["topics"] = result["topics"]
-        return {"selected_title": title, "content_draft": draft, "channel_result": result}
+        draft_hash = hashlib.sha256(
+            json.dumps(draft, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        return {
+            "selected_title": title,
+            "creative_content_draft": draft,
+            "content_draft": draft,
+            "creative_draft_hash": draft_hash,
+            "channel_result": result,
+        }
 
     @staticmethod
     async def _deterministic_validate(*, db: AsyncSession, state: dict[str, Any], node_run_id: str) -> dict[str, Any]:
         del db, node_run_id
         draft = state.get("content_draft") or {}
         body = draft.get("body", "")
+        production_pack = state.get("production_pack") or {}
         report = validate_content(
             title=(state.get("selected_title") or {}).get("text", ""),
             body=body,
@@ -1622,17 +2321,54 @@ class V3DeterministicNodeHandler:
                 "body_formula_code": ((state.get("strategy_snapshot") or {}).get("body_formula") or {}).get("code"),
             },
         )
-        if not 200 <= len(body) <= 650:
+        locked_quote = extract_locked_quote_block(production_pack) if production_pack else None
+        body_minimum = 200
+        body_maximum = 650
+        if locked_quote is not None:
+            limits = quote_body_limits(production_pack, locked_quote["rendered_content"])
+            body_minimum = limits["creative_body_min_chars"]
+            body_maximum = limits["creative_body_max_chars"]
+        if not body_minimum <= len(body) <= body_maximum:
             report["checks"].append(
                 {
                     "code": "BODY_LENGTH_OUT_OF_RANGE",
                     "level": "error",
                     "location": "body",
-                    "message": "正文目标长度必须为 200～650 字",
+                    "message": f"正文目标长度必须为 {body_minimum}～{body_maximum} 字",
                     "evidence_ids": [],
                 }
             )
             report["status"] = "blocked"
+        if production_pack:
+            title = str((state.get("selected_title") or {}).get("text") or "")
+            title_for_numbers = title.replace(",", "")
+            strategy_snapshot = production_pack.get("strategy_snapshot") or state.get("strategy_snapshot") or {}
+            missing_title_facts = {
+                code: options
+                for code, options in _required_title_fact_options(
+                    state["content_brief"], strategy_snapshot, production_pack
+                ).items()
+                if not any(option.replace(",", "") in title_for_numbers for option in options)
+            }
+            if missing_title_facts:
+                descriptions = [
+                    f"{code}（可接受：{'/'.join(options)}）" for code, options in missing_title_facts.items()
+                ]
+                report["checks"].append(
+                    {
+                        "code": "TITLE_REQUIRED_FACT_MISSING",
+                        "level": "error",
+                        "location": "title",
+                        "message": "标题缺少锁定公式必填事实槽位：" + "、".join(descriptions),
+                        "evidence_ids": [],
+                    }
+                )
+                report["status"] = "blocked"
+        channel_checks = list((state.get("channel_result") or {}).get("checks") or [])
+        if channel_checks:
+            report["checks"].extend(channel_checks)
+            if any(item.get("level") == "error" for item in channel_checks):
+                report["status"] = "blocked"
         rule_bundle = (state.get("runtime_config_snapshot") or {}).get("content_rule_bundle") or {}
         if rule_bundle:
             modular_checks = validate_modular_content(
@@ -1675,14 +2411,133 @@ class V3DeterministicNodeHandler:
             for paragraph in draft.get("paragraph_evidence") or []
             for evidence_id in paragraph.get("evidence_ids") or []
         }
-        knowledge_body_evidence = {
-            str(item["id"])
-            for item in (state.get("evidence_bundle") or {}).get("items") or []
-            if item.get("source_type") == "knowledge_base"
-            and "body" in (item.get("allowed_usage") or [])
-            and item.get("metadata", {}).get("material_type")
-            not in {"viral_example", "platform_rule", "compliance_rule", "forbidden_terms"}
-        }
+        derived_calculations = [
+            material
+            for material in production_pack.get("materials") or []
+            if "calculated_total" in (material.get("variable_codes") or [])
+        ]
+        for material in derived_calculations:
+            payload = material.get("payload") or {}
+            derivation = payload.get("derivation") or {}
+            expression = str(derivation.get("expression") or "").strip()
+            evidence_ids = {str(item) for item in material.get("evidence_ids") or []}
+            normalized_body = re.sub(r"\s+", "", body).replace("x", "×").replace("X", "×").replace("*", "×")
+            normalized_expression = re.sub(r"\s+", "", expression).replace("x", "×").replace("X", "×").replace("*", "×")
+            accepted_expressions = {normalized_expression} if normalized_expression else set()
+            expression_match = re.fullmatch(
+                r"(?P<quantity>\d+(?:\.\d+)?)㎡×(?P<unit_price>\d+(?:\.\d+)?)元/㎡=(?P<total>\d+(?:\.\d+)?)元",
+                normalized_expression,
+            )
+            if expression_match:
+                accepted_expressions.add(
+                    f"{expression_match.group('unit_price')}元/㎡×"
+                    f"{expression_match.group('quantity')}㎡={expression_match.group('total')}元"
+                )
+            calculation_used = any(candidate in normalized_body for candidate in accepted_expressions)
+            if not calculation_used or not (evidence_ids & used_body_evidence):
+                report["checks"].append(
+                    {
+                        "code": "DERIVED_CALCULATION_UNUSED",
+                        "level": "error",
+                        "location": "body",
+                        "message": f"正文必须逐字写入并引用程序校验结果：{expression}",
+                        "evidence_ids": sorted(evidence_ids),
+                    }
+                )
+                report["status"] = "blocked"
+        trade_breakdowns = [
+            material
+            for material in production_pack.get("materials") or []
+            if "trade_breakdown" in (material.get("variable_codes") or [])
+        ]
+        for material in trade_breakdowns:
+            value = (material.get("payload") or {}).get("value") or []
+            evidence_ids = {str(item) for item in material.get("evidence_ids") or []}
+            missing_items = [
+                str(item.get("trade") or "")
+                for item in value
+                if str(item.get("trade") or "") not in body
+                or str(item.get("amount") or "") not in body.replace(",", "")
+                or not any(str(included) in body for included in item.get("included_items") or [])
+            ]
+            if missing_items or not (evidence_ids & used_body_evidence):
+                report["checks"].append(
+                    {
+                        "code": "TRADE_BREAKDOWN_UNUSED",
+                        "level": "error",
+                        "location": "body",
+                        "message": "正文必须逐项写入并引用已确认的工种金额与至少一个包含项："
+                        + "、".join(missing_items or ["缺少分项 Evidence 引用"]),
+                        "evidence_ids": sorted(evidence_ids),
+                    }
+                )
+                report["status"] = "blocked"
+        labor_aux_breakdowns = [
+            material
+            for material in production_pack.get("materials") or []
+            if "labor_aux_breakdown" in (material.get("variable_codes") or [])
+        ]
+        for material in labor_aux_breakdowns:
+            value = (material.get("payload") or {}).get("value") or {}
+            evidence_ids = {str(item) for item in material.get("evidence_ids") or []}
+            body_without_commas = body.replace(",", "")
+            required_totals = [
+                ("人工合计", value.get("labor_total")),
+                ("辅材合计", value.get("auxiliary_total")),
+            ]
+            missing_items = [
+                label
+                for label, amount in required_totals
+                if label not in body or str(amount or "") not in body_without_commas
+            ]
+            for item in value.get("trades") or []:
+                trade = str(item.get("trade") or "")
+                required_amounts = [
+                    amount
+                    for amount in (item.get("labor_amount"), item.get("auxiliary_amount"))
+                    if isinstance(amount, (int, float)) and not isinstance(amount, bool) and amount > 0
+                ]
+                if (
+                    trade not in body
+                    or any(str(amount) not in body_without_commas for amount in required_amounts)
+                    or not any(str(included) in body for included in item.get("included_items") or [])
+                ):
+                    missing_items.append(trade)
+            if missing_items or not (evidence_ids & used_body_evidence):
+                report["checks"].append(
+                    {
+                        "code": "LABOR_AUX_BREAKDOWN_UNUSED",
+                        "level": "error",
+                        "location": "body",
+                        "message": "正文必须写入并引用已确认的人工、辅材合计及各工种拆分："
+                        + "、".join(missing_items or ["缺少拆分 Evidence 引用"]),
+                        "evidence_ids": sorted(evidence_ids),
+                    }
+                )
+                report["status"] = "blocked"
+        if production_pack:
+            bound_material_ids = {
+                str(material_id)
+                for binding in (production_pack.get("material_quality_report") or {}).get("bindings") or []
+                for material_id in binding.get("material_ids") or []
+            }
+            knowledge_body_evidence = {
+                str(evidence_id)
+                for material in production_pack.get("materials") or []
+                if str(material.get("id") or "") in bound_material_ids
+                and (material.get("source") or {}).get("source_type") == "knowledge_base"
+                and "body" in ((material.get("governance") or {}).get("allowed_usage") or [])
+                for evidence_id in material.get("evidence_ids") or []
+            }
+        else:
+            knowledge_body_evidence = {
+                str(item["id"])
+                for item in (state.get("evidence_bundle") or {}).get("items") or []
+                if item.get("source_type") == "knowledge_base"
+                and "body" in (item.get("allowed_usage") or [])
+                and item.get("metadata", {}).get("material_type")
+                not in {"viral_example", "platform_rule", "compliance_rule", "forbidden_terms"}
+            }
         if knowledge_body_evidence and not used_body_evidence.intersection(knowledge_body_evidence):
             report["checks"].append(
                 {

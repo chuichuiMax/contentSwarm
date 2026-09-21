@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.content.infrastructure.postgres.evidence_repository import PostgresEvidenceRepository
 from yuxi.content.model.evidence import EvidenceBundleV1
+from yuxi.content.model.evidence import EvidenceItemV1
 from yuxi.services.run_queue_service import append_run_stream_event
 
 
@@ -11,6 +12,12 @@ class EvidenceApplicationService:
     def __init__(self, db: AsyncSession):
         self.db = db
         self.repository = PostgresEvidenceRepository(db)
+
+    async def get_latest_frozen_bundle(self, task_id: str) -> EvidenceBundleV1 | None:
+        return await self.repository.get_latest_frozen_bundle(task_id)
+
+    async def canonicalize_existing_items(self, items: list[EvidenceItemV1]) -> list[EvidenceItemV1]:
+        return await self.repository.canonicalize_existing_items(items)
 
     async def persist_frozen_bundle(
         self,

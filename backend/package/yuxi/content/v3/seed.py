@@ -17,14 +17,23 @@ from yuxi.content.catalog import (
 from yuxi.content.model.workflows.definition import workflow_definition_hash
 from yuxi.content.rules import BODY_FORMULAS, INDUSTRIES, METHODS, TITLE_FORMULAS
 from yuxi.content.v3.fixtures import load_decoration_matrix
+from yuxi.content.v3.modular_rules import (
+    STANDARDIZED_FACTORY_WORKFLOW_V1_ID,
+    STANDARDIZED_FACTORY_WORKFLOW_V2_ID,
+    STANDARDIZED_FACTORY_WORKFLOW_V3_ID,
+)
 from yuxi.content.v3.joint_workflow import (
     PLATFORM_WORKFLOW_EXPRESSION_GUIDANCE_ID,
+    PLATFORM_WORKFLOW_DETERMINISTIC_PLAN_ID,
     PLATFORM_WORKFLOW_MODULAR_AUTHOR_ID,
     PLATFORM_WORKFLOW_PRICE_RECOVERY_ID,
+    PLATFORM_WORKFLOW_STANDARDIZED_FACTORY_ID,
     PLATFORM_WORKFLOW_VIRAL_AUTHOR_ID,
     WORKFLOW_EXPRESSION_GUIDANCE,
+    WORKFLOW_DETERMINISTIC_PLAN,
     WORKFLOW_MODULAR_AUTHOR,
     WORKFLOW_VIRAL_AUTHOR,
+    WORKFLOW_STANDARDIZED_FACTORY,
 )
 from yuxi.content.v3.workflow import PLATFORM_WORKFLOW_V3_ID, WORKFLOW_V3
 from yuxi.storage.postgres.models_content import (
@@ -221,7 +230,109 @@ async def _ensure_workflow_v3(db: AsyncSession) -> None:
         WORKFLOW_MODULAR_AUTHOR,
         PLATFORM_WORKFLOW_EXPRESSION_GUIDANCE_ID,
         WORKFLOW_EXPRESSION_GUIDANCE,
+        PLATFORM_WORKFLOW_DETERMINISTIC_PLAN_ID,
+        WORKFLOW_DETERMINISTIC_PLAN,
+        PLATFORM_WORKFLOW_STANDARDIZED_FACTORY_ID,
+        WORKFLOW_STANDARDIZED_FACTORY,
     )
+
+    standardized_workflow = await db.get(ContentWorkflowVersion, PLATFORM_WORKFLOW_STANDARDIZED_FACTORY_ID)
+    if standardized_workflow is None:
+        db.add(
+            ContentWorkflowVersion(
+                id=PLATFORM_WORKFLOW_STANDARDIZED_FACTORY_ID,
+                slug="enterprise-content",
+                tenant_id=None,
+                version=26,
+                schema_version=3,
+                status="draft",
+                definition_json=deepcopy(WORKFLOW_STANDARDIZED_FACTORY),
+                definition_hash=workflow_definition_hash(WORKFLOW_STANDARDIZED_FACTORY),
+                input_schema={"type": "ContentBrief", "version": 3},
+                output_schema={"type": "ContentArtifact", "version": 3},
+                created_by="system",
+            )
+        )
+    elif standardized_workflow.created_by == "system":
+        standardized_workflow.version = 26
+        standardized_workflow.schema_version = 3
+        expected_definition = deepcopy(WORKFLOW_STANDARDIZED_FACTORY)
+        expected_hash = workflow_definition_hash(expected_definition)
+        if standardized_workflow.definition_hash != expected_hash:
+            started_task_exists = await db.scalar(
+                select(
+                    exists(
+                        select(ContentNodeRun.id)
+                        .join(ContentTask, ContentTask.id == ContentNodeRun.task_id)
+                        .where(ContentTask.workflow_version_id == PLATFORM_WORKFLOW_STANDARDIZED_FACTORY_ID)
+                    )
+                )
+            )
+            if started_task_exists:
+                raise RuntimeError("标准化内容生产工作流已有运行记录，请新增工作流版本而非覆盖")
+            standardized_workflow.version = 26
+            standardized_workflow.schema_version = 3
+            standardized_workflow.definition_json = expected_definition
+            standardized_workflow.definition_hash = expected_hash
+            standardized_workflow.input_schema = {"type": "ContentBrief", "version": 3}
+            standardized_workflow.output_schema = {"type": "ContentArtifact", "version": 3}
+
+    deterministic_workflow = await db.get(ContentWorkflowVersion, PLATFORM_WORKFLOW_DETERMINISTIC_PLAN_ID)
+    if deterministic_workflow is None:
+        db.add(
+            ContentWorkflowVersion(
+                id=PLATFORM_WORKFLOW_DETERMINISTIC_PLAN_ID,
+                slug="enterprise-content",
+                tenant_id=None,
+                version=22,
+                schema_version=3,
+                status="draft",
+                definition_json=deepcopy(WORKFLOW_DETERMINISTIC_PLAN),
+                definition_hash=workflow_definition_hash(WORKFLOW_DETERMINISTIC_PLAN),
+                input_schema={"type": "ContentBrief", "version": 3},
+                output_schema={"type": "ContentArtifact", "version": 3},
+                created_by="system",
+            )
+        )
+    elif deterministic_workflow.created_by == "system":
+        expected_definition = deepcopy(WORKFLOW_DETERMINISTIC_PLAN)
+        expected_hash = workflow_definition_hash(expected_definition)
+        if deterministic_workflow.definition_hash != expected_hash:
+            started_task_exists = await db.scalar(
+                select(
+                    exists(
+                        select(ContentNodeRun.id)
+                        .join(ContentTask, ContentTask.id == ContentNodeRun.task_id)
+                        .where(ContentTask.workflow_version_id == PLATFORM_WORKFLOW_DETERMINISTIC_PLAN_ID)
+                    )
+                )
+            )
+            if started_task_exists:
+                raise RuntimeError("确定性创作计划工作流已有运行记录，请新增工作流版本而非覆盖")
+            previous_hash = deterministic_workflow.definition_hash
+            deterministic_workflow.version = 22
+            deterministic_workflow.schema_version = 3
+            deterministic_workflow.definition_json = expected_definition
+            deterministic_workflow.definition_hash = expected_hash
+            deterministic_workflow.input_schema = {"type": "ContentBrief", "version": 3}
+            deterministic_workflow.output_schema = {"type": "ContentArtifact", "version": 3}
+            tasks = list(
+                (
+                    await db.execute(
+                        select(ContentTask).where(
+                            ContentTask.workflow_version_id == PLATFORM_WORKFLOW_DETERMINISTIC_PLAN_ID
+                        )
+                    )
+                ).scalars()
+            )
+            for task in tasks:
+                if task.workflow_definition_hash not in {None, previous_hash}:
+                    continue
+                task.workflow_definition_hash = expected_hash
+                task.runtime_config_snapshot_json = {
+                    **(task.runtime_config_snapshot_json or {}),
+                    "workflow_definition_hash": expected_hash,
+                }
 
     if await db.get(ContentWorkflowVersion, PLATFORM_WORKFLOW_EXPRESSION_GUIDANCE_ID) is None:
         db.add(
@@ -580,7 +691,7 @@ async def _ensure_all_industry_packs_v3(db: AsyncSession) -> None:
 
 
 async def _activate_v3_seed_data(db: AsyncSession) -> None:
-    """发布系统配置，并将系统装修模板切换到模块化 V4 工作流。"""
+    """发布系统配置，并将系统装修模板切换到标准化内容生产工作流。"""
 
     now = utc_now_naive()
     rules = await db.get(ContentRuleVersion, PLATFORM_RULE_V3_ID)
@@ -620,6 +731,30 @@ async def _activate_v3_seed_data(db: AsyncSession) -> None:
     if expression_workflow.status != "published":
         expression_workflow.status = "published"
     expression_workflow.published_at = expression_workflow.published_at or now
+    deterministic_workflow = await db.get(ContentWorkflowVersion, PLATFORM_WORKFLOW_DETERMINISTIC_PLAN_ID)
+    deterministic_hash = workflow_definition_hash(WORKFLOW_DETERMINISTIC_PLAN)
+    if (
+        deterministic_workflow is None
+        or deterministic_workflow.status not in {"draft", "validated", "canary", "published"}
+        or deterministic_workflow.definition_hash != deterministic_hash
+        or workflow_definition_hash(deterministic_workflow.definition_json) != deterministic_hash
+    ):
+        raise RuntimeError("确定性创作计划工作流缺失或定义已变更，停止启动")
+    if deterministic_workflow.status != "published":
+        deterministic_workflow.status = "published"
+    deterministic_workflow.published_at = deterministic_workflow.published_at or now
+    standardized_workflow = await db.get(ContentWorkflowVersion, PLATFORM_WORKFLOW_STANDARDIZED_FACTORY_ID)
+    standardized_hash = workflow_definition_hash(WORKFLOW_STANDARDIZED_FACTORY)
+    if (
+        standardized_workflow is None
+        or standardized_workflow.status not in {"draft", "validated", "canary", "published"}
+        or standardized_workflow.definition_hash != standardized_hash
+        or workflow_definition_hash(standardized_workflow.definition_json) != standardized_hash
+    ):
+        raise RuntimeError("标准化内容生产工作流缺失或定义已变更，停止启动")
+    if standardized_workflow.status != "published":
+        standardized_workflow.status = "published"
+    standardized_workflow.published_at = standardized_workflow.published_at or now
     default_workflow = await db.get(ContentWorkflowVersion, PLATFORM_WORKFLOW_PRICE_RECOVERY_ID)
     if default_workflow is None:
         raise RuntimeError("现行爆款仿写工作流缺失")
@@ -674,7 +809,7 @@ async def _activate_v3_seed_data(db: AsyncSession) -> None:
             },
             "default_knowledge_scope": [],
             "default_workflow_version_id": (
-                PLATFORM_WORKFLOW_EXPRESSION_GUIDANCE_ID
+                PLATFORM_WORKFLOW_STANDARDIZED_FACTORY_ID
                 if template is None
                 or template.default_workflow_version_id
                 in {
@@ -683,6 +818,11 @@ async def _activate_v3_seed_data(db: AsyncSession) -> None:
                     PLATFORM_WORKFLOW_VIRAL_AUTHOR_ID,
                     PLATFORM_WORKFLOW_MODULAR_AUTHOR_ID,
                     PLATFORM_WORKFLOW_EXPRESSION_GUIDANCE_ID,
+                    PLATFORM_WORKFLOW_DETERMINISTIC_PLAN_ID,
+                    STANDARDIZED_FACTORY_WORKFLOW_V1_ID,
+                    STANDARDIZED_FACTORY_WORKFLOW_V2_ID,
+                    STANDARDIZED_FACTORY_WORKFLOW_V3_ID,
+                    PLATFORM_WORKFLOW_STANDARDIZED_FACTORY_ID,
                 }
                 else template.default_workflow_version_id
             ),
@@ -728,6 +868,8 @@ async def _activate_v3_seed_data(db: AsyncSession) -> None:
 __all__ = [
     "DECORATION_INDUSTRY_PACK_V3_ID",
     "PLATFORM_WORKFLOW_EXPRESSION_GUIDANCE_ID",
+    "PLATFORM_WORKFLOW_DETERMINISTIC_PLAN_ID",
+    "PLATFORM_WORKFLOW_STANDARDIZED_FACTORY_ID",
     "PLATFORM_RULE_V3_ID",
     "PLATFORM_WORKFLOW_MODULAR_AUTHOR_ID",
     "PLATFORM_WORKFLOW_V3_ID",

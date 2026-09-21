@@ -6,6 +6,8 @@
 from __future__ import annotations
 
 import io
+import hashlib
+import json
 from typing import Any
 
 import httpx
@@ -55,6 +57,13 @@ MAX_IMAGE_BYTES = 20 * 1024 * 1024
 OBS_DOWNLOAD_TIMEOUT = 30.0
 COMPOSITION_LAYOUT_BY_COUNT = {2: "grid-2", 3: "grid-3", 4: "grid-4", 6: "grid-6", 9: "grid-9"}
 EXTERNAL_SOURCE = "dangjia"
+TRUSTED_QUOTE_SNAPSHOT_KEY = "trusted_external_material_snapshot"
+QUOTE_TYPE_BY_CT_CODE = {
+    "CT02": "standard_unit_price",
+    "CT03": "standard_unit_price",
+    "CT04": "project_quote",
+    "CT05": "project_quote",
+}
 
 
 class DangjiaHonors(BaseModel):
@@ -91,12 +100,20 @@ class DangjiaPrice(BaseModel):
     content: str = Field(min_length=1, max_length=8000)
 
 
+class DangjiaTitlePrice(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    label: str = Field(min_length=1, max_length=100)
+    displayText: str = Field(min_length=1, max_length=100)
+
+
 class DangjiaRequirementType(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     typeName: str = Field(min_length=1, max_length=100)
     quotationInfo: DangjiaQuotationInfo
     prices: list[DangjiaPrice] = Field(min_length=1, max_length=20)
+    titlePrice: DangjiaTitlePrice | None = None
     mySite: str | None = Field(default=None, max_length=500)
 
 
@@ -188,6 +205,18 @@ def _resolve_ct_code(requirement: DangjiaRequirementType) -> str:
             )
         return ct_code
 
+    if len(requirement.prices) != 1:
+        raise _dj_error(
+            422,
+            "DANGJIA_PRICE_COUNT_INVALID",
+            "施工报价必须有且仅有一条 prices",
+        )
+    if requirement.titlePrice is None:
+        raise _dj_error(
+            422,
+            "DANGJIA_TITLE_PRICE_REQUIRED",
+            "施工报价必须提供已确认的 titlePrice",
+        )
     formats = {price.format.strip().replace(" ", "") for price in requirement.prices}
     codes = {PRICE_FORMAT_TO_CT_CODE[item] for item in formats if item in PRICE_FORMAT_TO_CT_CODE}
     unknown = sorted(formats - PRICE_FORMAT_TO_CT_CODE.keys())
@@ -206,6 +235,52 @@ def _resolve_ct_code(requirement: DangjiaRequirementType) -> str:
     return codes.pop()
 
 
+def _canonical_hash(value: Any) -> str:
+    return hashlib.sha256(
+        json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+    ).hexdigest()
+
+
+def _request_fingerprint(payload: DangjiaContentCreate) -> str:
+    return _canonical_hash(payload.model_dump(mode="json"))
+
+
+def build_trusted_quote_snapshot(
+    payload: DangjiaContentCreate,
+    *,
+    content_type_code: str,
+) -> dict[str, Any] | None:
+    """构造仅保存在服务端运行快照中的报价事实，不接受公共简报接口注入。"""
+
+    requirement = payload.requirementType
+    if requirement.typeName.strip() != "施工报价":
+        return None
+    if len(requirement.prices) != 1 or requirement.titlePrice is None:
+        raise _dj_error(422, "DANGJIA_QUOTE_METADATA_INVALID", "施工报价元数据不完整")
+    price = requirement.prices[0]
+    original_content = price.content
+    content_hash = hashlib.sha256(original_content.encode("utf-8")).hexdigest()
+    quote_format = price.format.strip().replace(" ", "")
+    return {
+        "schema_version": 1,
+        "source": EXTERNAL_SOURCE,
+        "serial_no": payload.serialNo.strip(),
+        "content_type_code": content_type_code,
+        "quote_format": quote_format,
+        "quote_type": QUOTE_TYPE_BY_CT_CODE[content_type_code],
+        "title_price": {
+            "label": requirement.titlePrice.label,
+            "display_text": requirement.titlePrice.displayText,
+        },
+        "quote_block": {
+            "original_content": original_content,
+            "content_hash": content_hash,
+            "render_policy": "semicolon-lines-v1",
+            "insertion_policy": "after-opening-paragraph-v1",
+        },
+    }
+
+
 def build_dangjia_form_values(payload: DangjiaContentCreate) -> dict[str, Any]:
     """映射为装修行业表单事实；brand_name/audience/pain 为平台必填，由真实入参推导。"""
     persona = payload.persona
@@ -215,27 +290,34 @@ def build_dangjia_form_values(payload: DangjiaContentCreate) -> dict[str, Any]:
     house_area = requirement.quotationInfo.houseArea.strip()
     skills = [item.strip() for item in persona.skills if item.strip()]
     advantages = [item.strip() for item in persona.serviceAdvantages if item.strip()]
-    budget_text = "\n".join(f"【{price.format.strip()}】{price.content.strip()}" for price in requirement.prices)
+    is_quote = requirement.typeName.strip() == "施工报价"
     craft_parts: list[str] = []
     if skills:
         craft_parts.append(f"工种能力：{'、'.join(skills)}")
     if advantages:
         craft_parts.append(f"服务优势：{'、'.join(advantages)}")
-    return {
+    values = {
         "external_serial_no": payload.serialNo.strip(),
         "external_source": EXTERNAL_SOURCE,
         "brand_name": f"{city}装修工长" if city else "当家装修工长",
         "audience": [f"{city}准备装修{house_type}的业主" if city else f"准备装修{house_type}的业主"],
         "pain": [f"想搞清楚{house_area}{house_type}的施工报价明细"],
         "advantage": advantages,
+        "location": city or _clean(requirement.mySite),
         "project_type": house_type,
         "area": house_area,
-        "budget": budget_text,
         "craft_and_materials": "；".join(craft_parts),
         "project_site": _clean(requirement.mySite),
         "content_tags": [item.strip() for item in payload.tags if item.strip()],
         "type_name": requirement.typeName.strip(),
     }
+    if is_quote:
+        values["quote_format"] = requirement.prices[0].format.strip().replace(" ", "")
+    else:
+        values["budget"] = "\n".join(
+            f"【{price.format.strip()}】{price.content.strip()}" for price in requirement.prices
+        )
+    return values
 
 
 def build_dangjia_brief(
@@ -338,11 +420,19 @@ def _task_response(task: ContentTask | dict[str, Any], *, run_id: str | None, id
 
 async def create_dangjia_content(db: AsyncSession, user: User, payload: DangjiaContentCreate) -> dict[str, Any]:
     serial_no = payload.serialNo.strip()
+    ct_code = _resolve_ct_code(payload.requirementType)
+    request_fingerprint = _request_fingerprint(payload)
     existing = await _find_task_by_serial(db, user, serial_no)
     if existing is not None:
+        existing_fingerprint = (existing.runtime_config_snapshot_json or {}).get("dangjia_request_fingerprint")
+        if existing_fingerprint is not None and existing_fingerprint != request_fingerprint:
+            raise _dj_error(
+                409,
+                "DANGJIA_REQUEST_CONFLICT",
+                "相同 serialNo 已提交过不同内容，请使用新的 serialNo",
+            )
         return _task_response(existing, run_id=None, idempotent=True)
 
-    ct_code = _resolve_ct_code(payload.requirementType)
     cover_image = _require_cover_image(payload.images)
     # 先校验图片数量是否落在组合布局支持范围内，避免下载后才报错。
     _composition_layout_id(len(payload.images))
@@ -367,6 +457,16 @@ async def create_dangjia_content(db: AsyncSession, user: User, payload: DangjiaC
     )
     task_id = created["task"]["id"]
     await save_content_brief(db, user, task_id, brief, compile_now=True)
+    task = await db.get(ContentTask, task_id)
+    if task is None:
+        raise _dj_error(500, "DANGJIA_TASK_PERSIST_FAILED", "内容任务创建后未找到")
+    trusted_quote_snapshot = build_trusted_quote_snapshot(payload, content_type_code=ct_code)
+    task.runtime_config_snapshot_json = {
+        **(task.runtime_config_snapshot_json or {}),
+        "dangjia_request_fingerprint": request_fingerprint,
+        **({TRUSTED_QUOTE_SNAPSHOT_KEY: trusted_quote_snapshot} if trusted_quote_snapshot else {}),
+    }
+    await db.commit()
     run = await create_content_run(
         db,
         user,

@@ -40,11 +40,20 @@ from yuxi.content.control.strategy.recommend_v3 import (
     StrategyPreviewActor,
 )
 from yuxi.content.infrastructure.postgres.strategy_preview_repository import PostgresStrategyPreviewRepository
-from yuxi.content.model.viral_assets import ViralAssetImport
+from yuxi.content.model.viral_assets import ViralAssetCorrectionInput, ViralAssetImport, ViralAssetReviewInput
 from yuxi.repositories.viral_asset_repository import asset_dict
 from yuxi.services.content_viral_assets import (
-    check_asset_source, import_viral_assets, list_viral_assets,
-    preparation_skill_hash, require_asset, retry_viral_asset,
+    check_asset_source,
+    correct_viral_asset,
+    import_viral_assets,
+    list_viral_assets,
+    preparation_skill_hash,
+    published_variable_codes,
+    reference_card_variable_codes,
+    reprepare_viral_assets,
+    require_asset,
+    retry_viral_asset,
+    review_viral_asset,
 )
 from yuxi.services.agent_run_service import cancel_agent_run_view, stream_agent_run_events
 from yuxi.services.content_ocr_service import (
@@ -494,17 +503,22 @@ async def import_viral_asset_file(
 
 @content.get("/viral-file-jobs")
 async def get_viral_file_jobs(
-    current_user: User = Depends(get_required_user), db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_required_user),
+    db: AsyncSession = Depends(get_db),
 ):
     from yuxi.services.viral_document_service import list_reference_file_jobs
+
     return await list_reference_file_jobs(db, current_user)
 
 
 @content.post("/viral-file-jobs")
 async def prepare_viral_files(
-    payload: dict = Body(...), current_user: User = Depends(get_admin_user), db: AsyncSession = Depends(get_db),
+    payload: dict = Body(...),
+    current_user: User = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_db),
 ):
     from yuxi.services.viral_document_service import schedule_reference_file
+
     kb_id, file_ids = payload.get("kb_id"), payload.get("file_ids")
     if not isinstance(kb_id, str) or not isinstance(file_ids, list) or not 1 <= len(file_ids) <= 100:
         raise HTTPException(422, "请选择知识库和 1—100 个原文文件")
@@ -535,6 +549,14 @@ async def get_viral_asset(
     elif asset.status == "ready" and asset.preparation_skill_hash != preparation_skill_hash():
         asset.status, asset.error_message = "invalidated", "准备标准已更新，请重新导入"
         await db.commit()
+    elif asset.status == "ready" and (asset.prepared_json or {}).get("schema_version") != 2:
+        asset.status, asset.error_message = "invalidated", "参考卡契约已升级，请重新准备"
+        await db.commit()
+    elif asset.status == "ready" and reference_card_variable_codes(
+        asset.prepared_json
+    ) - await published_variable_codes(db):
+        asset.status, asset.error_message = "invalidated", "参考槽位引用的变量已停用，请重新准备"
+        await db.commit()
     return {"asset": asset_dict(asset, include_source=True)}
 
 
@@ -545,6 +567,40 @@ async def retry_viral_asset_preparation(
     db: AsyncSession = Depends(get_db),
 ):
     return await retry_viral_asset(db, current_user, asset_id)
+
+
+@content.post("/viral-assets/{asset_id}/review")
+async def review_viral_asset_preparation(
+    asset_id: str,
+    payload: ViralAssetReviewInput,
+    current_user: User = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    return await review_viral_asset(db, current_user, asset_id, payload)
+
+
+@content.patch("/viral-assets/{asset_id}/reference-card")
+async def correct_viral_asset_reference_card(
+    asset_id: str,
+    payload: ViralAssetCorrectionInput,
+    current_user: User = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    return await correct_viral_asset(db, current_user, asset_id, payload)
+
+
+@content.post("/viral-assets/reprepare")
+async def batch_reprepare_viral_assets(
+    payload: dict = Body(...),
+    current_user: User = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    asset_ids = payload.get("asset_ids")
+    if not isinstance(asset_ids, list) or not 1 <= len(asset_ids) <= 100:
+        raise HTTPException(422, "请选择 1—100 个爆款资产")
+    if any(not isinstance(item, str) or not item for item in asset_ids):
+        raise HTTPException(422, "爆款资产标识无效")
+    return await reprepare_viral_assets(db, current_user, asset_ids)
 
 
 @content.get("/tasks/{task_id}/strategy/candidates")
@@ -562,6 +618,20 @@ async def get_strategy_candidates(
                 tenant_id=str(current_user.department_id) if current_user.department_id is not None else None,
             ),
         )
+    except ContentApplicationError as exc:
+        raise present_content_error(exc) from exc
+
+
+@content.get("/tasks/{task_id}/creation-plan/preview")
+async def get_creation_plan_preview(
+    task_id: str,
+    current_user: User = Depends(get_required_user),
+    db: AsyncSession = Depends(get_db),
+):
+    from yuxi.content.control.workflow.creation_plan import preview_creation_plan
+
+    try:
+        return await preview_creation_plan(db=db, user=current_user, task_id=task_id)
     except ContentApplicationError as exc:
         raise present_content_error(exc) from exc
 
@@ -584,35 +654,66 @@ async def get_strategy_decision(
     while run and run.thread_id == task_id and run.id not in run_ids:
         run_ids.append(run.id)
         run = await db.get(AgentRun, run.parent_run_id) if run.parent_run_id else None
-    rows = list((await db.execute(
-        select(ContentNodeRun).where(
-            ContentNodeRun.task_id == task_id,
-            ContentNodeRun.agent_run_id.in_(run_ids),
-            ContentNodeRun.node_id.in_(["select_creation_strategy", "lock_creation_strategy"]),
-            ContentNodeRun.status == "completed",
-        ).order_by(ContentNodeRun.finished_at.desc(), ContentNodeRun.id.desc()).limit(6)
-    )).scalars())
+    rows = list(
+        (
+            await db.execute(
+                select(ContentNodeRun)
+                .where(
+                    ContentNodeRun.task_id == task_id,
+                    ContentNodeRun.agent_run_id.in_(run_ids),
+                    ContentNodeRun.node_id.in_(
+                        [
+                            "select_creation_strategy",
+                            "lock_creation_strategy",
+                            "build_creation_plan",
+                        ]
+                    ),
+                    ContentNodeRun.status == "completed",
+                )
+                .order_by(ContentNodeRun.finished_at.desc(), ContentNodeRun.id.desc())
+                .limit(6)
+            )
+        ).scalars()
+    )
     selection_row = next((row for row in rows if row.node_id == "select_creation_strategy"), None)
     selection_input = ((selection_row.input_snapshot or {}).get("visible_payload") or {}) if selection_row else {}
     candidates = (
         ((selection_row.input_snapshot or {}).get("visible_payload") or {}).get("strategy_candidates", {})
-        if selection_row else {}
+        if selection_row
+        else {}
     )
-    automatic_view = {
-        "automatic_direction": candidates.get("auto_direction", False),
-        "direction_names": {item["code"]: item["name"] for item in candidates.get("direction_options", [])},
-    } if candidates.get("auto_direction") else {}
+    automatic_view = (
+        {
+            "automatic_direction": candidates.get("auto_direction", False),
+            "direction_names": {item["code"]: item["name"] for item in candidates.get("direction_options", [])},
+        }
+        if candidates.get("auto_direction")
+        else {}
+    )
     for row in rows:
         output = (row.output_snapshot or {}).get("result") or {}
         snapshot = output.get("strategy_snapshot")
         decision = (snapshot or {}).get("decision") or output.get("joint_strategy_decision")
         if decision:
+            if decision.get("selection_mode") == "deterministic":
+                return {
+                    "candidate_names": {},
+                    "input_evidence": {},
+                    "decision": decision,
+                    "snapshot": snapshot,
+                    "node_run_id": row.id,
+                    "run_id": row.agent_run_id,
+                    "automatic_direction": False,
+                }
             from yuxi.services.content_strategy_presentation import build_decision_presentation
 
             return {
                 **build_decision_presentation(decision, selection_input),
-                "decision": decision, "snapshot": snapshot, "node_run_id": row.id,
-                "run_id": row.agent_run_id, **automatic_view,
+                "decision": decision,
+                "snapshot": snapshot,
+                "node_run_id": row.id,
+                "run_id": row.agent_run_id,
+                **automatic_view,
             }
     return {"decision": None, "snapshot": None, **automatic_view}
 
