@@ -1,0 +1,59 @@
+{
+      "serialNo": "004",
+    "persona": {
+        "age": "44",
+        "workYears": "23",
+        "serviceCity": "长沙市",
+        "introduction": "我从事装修行业23年了，在长沙有自己的施工队，师傅手艺都很好、我服务了长沙很多工地，还有很多在施工的工地也可以去现场看，需要装修的朋友可以来看看多对比一下",
+        "skills": [
+            "工长",
+            "拆除",
+            "泥瓦"
+        ],
+        "honors": {
+            "ownerRecommendCount": "10",
+            "servedSiteCount": "10"
+        },
+        "tone": "细心",
+        "serviceAdvantages": [
+            "装修经验丰富",
+            "自有工人无转包"
+        ]
+    },
+    "requirementType": {
+        "typeName": "日常",
+        "quotationInfo": {
+
+        },
+        "prices": [
+
+        ],
+        "mySite": "湖南省开福区天健城"
+    },
+    "tags": [
+        "油漆",
+        "工地巡检"
+    ],
+    "images": [
+        {
+            "templateId": "1",
+            "objectKey": "f291b03265274e6a88941b1c8b95bd38.jpg",
+            "objectUrl": "https://dangjia-dev.obs.cn-south-1.myhuaweicloud.com/f291b03265274e6a88941b1c8b95bd38.jpg"
+        },
+        {
+            "templateId": "",
+            "objectKey": "5c8b589e816149b2b91ffbf21d6688d0.jpg",
+            "objectUrl": "https://dangjia-dev.obs.cn-south-1.myhuaweicloud.com/5c8b589e816149b2b91ffbf21d6688d0.jpg"
+        },
+        {
+            "templateId": "",
+            "objectKey": "b48ac650f362436e999dc904a1e3317d.jpg",
+            "objectUrl": "https://dangjia-dev.obs.cn-south-1.myhuaweicloud.com/b48ac650f362436e999dc904a1e3317d.jpg"
+        },
+        {
+            "templateId": "",
+            "objectKey": "6ec6c8d5dd034c03923ff0d47f2d3610.jpg",
+            "objectUrl": "https://dangjia-dev.obs.cn-south-1.myhuaweicloud.com/6ec6c8d5dd034c03923ff0d47f2d3610.jpg"
+        }
+    ]
+}

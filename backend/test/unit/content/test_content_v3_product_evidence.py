@@ -528,6 +528,423 @@ async def test_body_validation_requires_available_business_knowledge_evidence(mo
 
 @pytest.mark.unit
 @pytest.mark.asyncio
+async def test_standardized_pack_does_not_require_unbound_lower_priority_knowledge(monkeypatch):
+    monkeypatch.setattr(
+        "yuxi.content.control.workflow.deterministic_node.validate_content",
+        lambda **kwargs: {"status": "passed", "checks": []},
+    )
+    result = await V3DeterministicNodeHandler().execute(
+        db=object(),
+        node={"id": "deterministic_validate"},
+        state={
+            "selected_title": {"text": "标题"},
+            "content_brief": {"brand": {"name": "测试品牌"}},
+            "strategy_snapshot": _strategy_snapshot(),
+            "evidence_bundle": {
+                "items": [
+                    {
+                        "id": "ev-user-advantage",
+                        "source_type": "manual_input",
+                        "allowed_usage": ["body"],
+                        "metadata": {},
+                    },
+                    {
+                        "id": "ev-kb-advantage",
+                        "source_type": "knowledge_base",
+                        "allowed_usage": ["body"],
+                        "metadata": {"material_type": "brand_fact"},
+                    },
+                ]
+            },
+            "production_pack": {
+                "material_quality_report": {
+                    "bindings": [{"requirement_id": "variable:advantages", "material_ids": ["mat-user-advantage"]}]
+                },
+                "materials": [
+                    {
+                        "id": "mat-user-advantage",
+                        "material_type": "business_fact",
+                        "evidence_ids": ["ev-user-advantage"],
+                        "source": {"source_type": "manual_input"},
+                        "governance": {"allowed_usage": ["body"]},
+                    },
+                    {
+                        "id": "mat-kb-advantage",
+                        "material_type": "business_fact",
+                        "evidence_ids": ["ev-kb-advantage"],
+                        "source": {"source_type": "knowledge_base"},
+                        "governance": {"allowed_usage": ["body"]},
+                    },
+                ],
+            },
+            "product_evidence_pack": {},
+            "content_draft": {
+                "body": "这是一段引用本次用户确认资料、且长度足够的正文。" * 12,
+                "topics": [],
+                "paragraph_evidence": [{"paragraph_id": "p1", "evidence_ids": ["ev-user-advantage"]}],
+            },
+        },
+        node_run_id="node-body-standardized",
+    )
+
+    assert result["validation_report"] == {"status": "passed", "checks": []}
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_standardized_pack_requires_exact_derived_calculation_and_citation(monkeypatch):
+    monkeypatch.setattr(
+        "yuxi.content.control.workflow.deterministic_node.validate_content",
+        lambda **kwargs: {"status": "passed", "checks": []},
+    )
+    state = {
+        "selected_title": {"text": "标题"},
+        "content_brief": {"brand": {"name": "测试品牌"}},
+        "strategy_snapshot": _strategy_snapshot(),
+        "evidence_bundle": {"items": []},
+        "production_pack": {
+            "material_quality_report": {"bindings": []},
+            "materials": [
+                {
+                    "id": "mat-calculation",
+                    "material_type": "business_fact",
+                    "variable_codes": ["calculated_total"],
+                    "evidence_ids": ["ev-calculation"],
+                    "payload": {
+                        "value": 10680,
+                        "unit": "元",
+                        "derivation": {"expression": "89㎡×120元/㎡=10680元"},
+                    },
+                    "source": {"source_type": "human_confirmation"},
+                    "governance": {"allowed_usage": ["body"]},
+                }
+            ],
+        },
+        "product_evidence_pack": {},
+        "content_draft": {
+            "body": "这是一段足够长但没有写入程序计算结果的正文。" * 12,
+            "topics": [],
+            "paragraph_evidence": [],
+        },
+    }
+    blocked = await V3DeterministicNodeHandler().execute(
+        db=object(), node={"id": "deterministic_validate"}, state=state, node_run_id="node-derived-blocked"
+    )
+    assert blocked["validation_report"]["checks"][-1]["code"] == "DERIVED_CALCULATION_UNUSED"
+
+    state["content_draft"] = {
+        "body": (
+            "89㎡×120元/㎡=10680元，这是同口径程序计算参考，不等同于最终成交或结算金额。"
+            + "施工范围还要现场核对。" * 15
+        ),
+        "topics": [],
+        "paragraph_evidence": [{"paragraph_id": "p1", "evidence_ids": ["ev-calculation"]}],
+    }
+    passed = await V3DeterministicNodeHandler().execute(
+        db=object(), node={"id": "deterministic_validate"}, state=state, node_run_id="node-derived-passed"
+    )
+    assert passed["validation_report"] == {"status": "passed", "checks": []}
+
+    state["content_draft"]["body"] = (
+        "120元/㎡ × 89㎡ = 10680元，这是同口径程序计算参考，不等同于最终成交或结算金额。"
+        + "施工范围还要现场核对。" * 15
+    )
+    reversed_factors = await V3DeterministicNodeHandler().execute(
+        db=object(),
+        node={"id": "deterministic_validate"},
+        state=state,
+        node_run_id="node-derived-reversed-factors-passed",
+    )
+    assert reversed_factors["validation_report"] == {"status": "passed", "checks": []}
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_standardized_pack_requires_each_trade_amount_item_and_citation(monkeypatch):
+    monkeypatch.setattr(
+        "yuxi.content.control.workflow.deterministic_node.validate_content",
+        lambda **kwargs: {"status": "passed", "checks": []},
+    )
+    state = {
+        "selected_title": {"text": "标题"},
+        "content_brief": {"brand": {"name": "测试品牌"}},
+        "strategy_snapshot": _strategy_snapshot(),
+        "evidence_bundle": {"items": []},
+        "production_pack": {
+            "material_quality_report": {"bindings": []},
+            "materials": [
+                {
+                    "id": "mat-trades",
+                    "material_type": "business_fact",
+                    "variable_codes": ["trade_breakdown"],
+                    "evidence_ids": ["ev-trades"],
+                    "payload": {
+                        "value": [
+                            {"trade": "砌筑找平", "amount": 6800, "unit": "元", "included_items": ["墙地面找平"]},
+                            {"trade": "防水施工", "amount": 5200, "unit": "元", "included_items": ["厨卫防水"]},
+                        ]
+                    },
+                    "source": {"source_type": "manual_input"},
+                    "governance": {"allowed_usage": ["body"]},
+                }
+            ],
+        },
+        "product_evidence_pack": {},
+        "content_draft": {
+            "body": "砌筑找平6800元含墙地面找平。" + "这是一段长度足够的正文。" * 18,
+            "topics": [],
+            "paragraph_evidence": [{"paragraph_id": "p1", "evidence_ids": ["ev-trades"]}],
+        },
+    }
+    blocked = await V3DeterministicNodeHandler().execute(
+        db=object(), node={"id": "deterministic_validate"}, state=state, node_run_id="node-trades-blocked"
+    )
+    assert any(item["code"] == "TRADE_BREAKDOWN_UNUSED" for item in blocked["validation_report"]["checks"])
+
+    state["content_draft"] = {
+        "body": (
+            "砌筑找平6800元，包含墙地面找平；防水施工5200元，包含厨卫防水。" + "所有金额都来自同一份项目报价。" * 15
+        ),
+        "topics": [],
+        "paragraph_evidence": [{"paragraph_id": "p1", "evidence_ids": ["ev-trades"]}],
+    }
+    passed = await V3DeterministicNodeHandler().execute(
+        db=object(), node={"id": "deterministic_validate"}, state=state, node_run_id="node-trades-passed"
+    )
+    assert passed["validation_report"] == {"status": "passed", "checks": []}
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_standardized_pack_requires_labor_aux_totals_trades_and_citation(monkeypatch):
+    monkeypatch.setattr(
+        "yuxi.content.control.workflow.deterministic_node.validate_content",
+        lambda **kwargs: {"status": "passed", "checks": []},
+    )
+    state = {
+        "selected_title": {"text": "标题"},
+        "content_brief": {"brand": {"name": "测试品牌"}},
+        "strategy_snapshot": _strategy_snapshot(),
+        "evidence_bundle": {"items": []},
+        "production_pack": {
+            "material_quality_report": {"bindings": []},
+            "materials": [
+                {
+                    "id": "mat-labor-aux",
+                    "material_type": "business_fact",
+                    "variable_codes": ["labor_aux_breakdown"],
+                    "evidence_ids": ["ev-labor-aux"],
+                    "payload": {
+                        "value": {
+                            "labor_total": 12800,
+                            "auxiliary_total": 9000,
+                            "unit": "元",
+                            "trades": [
+                                {
+                                    "trade": "基层处理",
+                                    "labor_amount": 6000,
+                                    "auxiliary_amount": 4000,
+                                    "included_items": ["铲除修补"],
+                                },
+                                {
+                                    "trade": "墙面涂刷",
+                                    "labor_amount": 6800,
+                                    "auxiliary_amount": 5000,
+                                    "included_items": ["底漆面漆"],
+                                },
+                            ],
+                        }
+                    },
+                    "source": {"source_type": "manual_input"},
+                    "governance": {"allowed_usage": ["body"]},
+                }
+            ],
+        },
+        "product_evidence_pack": {},
+        "content_draft": {
+            "body": "人工合计12800元，辅材合计9000元。" + "内容说明。" * 35,
+            "topics": [],
+            "paragraph_evidence": [{"paragraph_id": "p1", "evidence_ids": ["ev-labor-aux"]}],
+        },
+    }
+    blocked = await V3DeterministicNodeHandler().execute(
+        db=object(), node={"id": "deterministic_validate"}, state=state, node_run_id="node-labor-aux-blocked"
+    )
+    assert any(item["code"] == "LABOR_AUX_BREAKDOWN_UNUSED" for item in blocked["validation_report"]["checks"])
+
+    state["content_draft"]["body"] = (
+        "人工合计12800元，辅材合计9000元。"
+        "基层处理：人工6000元、辅材4000元，包含铲除修补；"
+        "墙面涂刷：人工6800元、辅材5000元，包含底漆面漆。" + "所有金额都来自同一份项目报价。" * 12
+    )
+    passed = await V3DeterministicNodeHandler().execute(
+        db=object(), node={"id": "deterministic_validate"}, state=state, node_run_id="node-labor-aux-passed"
+    )
+    assert passed["validation_report"] == {"status": "passed", "checks": []}
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_standardized_pack_requires_deterministic_title_formula_facts(monkeypatch):
+    monkeypatch.setattr(
+        "yuxi.content.control.workflow.deterministic_node.validate_content",
+        lambda **kwargs: {"status": "passed", "checks": []},
+    )
+    state = {
+        "selected_title": {"text": "长沙半包21800元"},
+        "content_brief": {
+            "brand": {"name": "测试品牌"},
+            "form_values": {
+                "location": "长沙",
+                "quantity": 89,
+                "product": "小户型",
+                "scene": "半包",
+                "title_price": "21800元",
+            },
+        },
+        "strategy_snapshot": {"title_formula": {"code": "FRT01"}},
+        "evidence_bundle": {"items": []},
+        "production_pack": {
+            "strategy_snapshot": {
+                "title_formula": {
+                    "code": "FRT01",
+                    "variable_schema": ["location", "quantity", "product", "title_price"],
+                }
+            },
+            "material_quality_report": {"bindings": []},
+            "materials": [],
+        },
+        "product_evidence_pack": {},
+        "content_draft": {"body": "这是一段长度足够的正文。" * 20, "topics": [], "paragraph_evidence": []},
+    }
+
+    blocked = await V3DeterministicNodeHandler().execute(
+        db=object(), node={"id": "deterministic_validate"}, state=state, node_run_id="node-title-facts-blocked"
+    )
+    title_check = next(
+        item for item in blocked["validation_report"]["checks"] if item["code"] == "TITLE_REQUIRED_FACT_MISSING"
+    )
+    assert "面积/房型" in title_check["message"]
+
+    state["selected_title"] = {"text": "长沙89㎡半包21800元"}
+    passed = await V3DeterministicNodeHandler().execute(
+        db=object(), node={"id": "deterministic_validate"}, state=state, node_run_id="node-title-facts-passed"
+    )
+    assert passed["validation_report"] == {"status": "passed", "checks": []}
+
+    state["content_brief"]["form_values"]["location"] = "湖南省长沙市雨花区保利大都汇"
+    passed_with_city_alias = await V3DeterministicNodeHandler().execute(
+        db=object(),
+        node={"id": "deterministic_validate"},
+        state=state,
+        node_run_id="node-title-location-alias-passed",
+    )
+    assert passed_with_city_alias["validation_report"] == {"status": "passed", "checks": []}
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_standardized_pack_requires_quantified_persona_fact_in_title(monkeypatch):
+    monkeypatch.setattr(
+        "yuxi.content.control.workflow.deterministic_node.validate_content",
+        lambda **kwargs: {"status": "passed", "checks": []},
+    )
+    state = {
+        "selected_title": {"text": "长沙同城装修工地巡检6800元"},
+        "content_brief": {
+            "brand": {"name": "测试品牌"},
+            "form_values": {
+                "location": "长沙",
+                "persona_fact": "我是长沙装修工长，做装修施工管理5年",
+                "product": "长沙同城装修工地巡检",
+                "price": "6800元",
+            },
+        },
+        "strategy_snapshot": {"title_formula": {"code": "FRT06"}},
+        "evidence_bundle": {"items": []},
+        "production_pack": {
+            "strategy_snapshot": {
+                "title_formula": {
+                    "code": "FRT06",
+                    "variable_schema": ["location", "persona_fact", "product", "price"],
+                }
+            },
+            "material_quality_report": {"bindings": []},
+            "materials": [],
+        },
+        "product_evidence_pack": {},
+        "content_draft": {"body": "这是一段长度足够的正文。" * 20, "topics": [], "paragraph_evidence": []},
+    }
+
+    blocked = await V3DeterministicNodeHandler().execute(
+        db=object(), node={"id": "deterministic_validate"}, state=state, node_run_id="node-persona-title-blocked"
+    )
+    title_check = next(
+        item for item in blocked["validation_report"]["checks"] if item["code"] == "TITLE_REQUIRED_FACT_MISSING"
+    )
+    assert "身份" in title_check["message"]
+    assert "5年" in title_check["message"]
+
+    state["selected_title"] = {"text": "长沙5年工长同城装修工地巡检6800元"}
+    passed = await V3DeterministicNodeHandler().execute(
+        db=object(), node={"id": "deterministic_validate"}, state=state, node_run_id="node-persona-title-passed"
+    )
+    assert passed["validation_report"] == {"status": "passed", "checks": []}
+
+    state["selected_title"] = {"text": "长沙工长同城装修工地巡检6800元"}
+    passed_with_identity = await V3DeterministicNodeHandler().execute(
+        db=object(),
+        node={"id": "deterministic_validate"},
+        state=state,
+        node_run_id="node-persona-identity-passed",
+    )
+    assert passed_with_identity["validation_report"] == {"status": "passed", "checks": []}
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_deterministic_validation_includes_channel_length_errors(monkeypatch):
+    monkeypatch.setattr(
+        "yuxi.content.control.workflow.deterministic_node.validate_content",
+        lambda **kwargs: {"status": "passed", "checks": []},
+    )
+    result = await V3DeterministicNodeHandler().execute(
+        db=object(),
+        node={"id": "deterministic_validate"},
+        state={
+            "selected_title": {"text": "这是一个超过渠道限制的标题"},
+            "content_brief": {"brand": {"name": "测试品牌"}},
+            "strategy_snapshot": _strategy_snapshot(),
+            "evidence_bundle": {"items": []},
+            "product_evidence_pack": {},
+            "channel_result": {
+                "checks": [
+                    {
+                        "code": "CHANNEL_TITLE_LONG",
+                        "level": "error",
+                        "location": "title",
+                        "message": "title 超过 20 字",
+                    }
+                ]
+            },
+            "content_draft": {"body": "这是一段长度足够的正文。" * 20, "topics": [], "paragraph_evidence": []},
+        },
+        node_run_id="node-channel-length",
+    )
+
+    assert result["validation_report"]["status"] == "blocked"
+    assert result["validation_report"]["checks"] == [
+        {
+            "code": "CHANNEL_TITLE_LONG",
+            "level": "error",
+            "location": "title",
+            "message": "title 超过 20 字",
+        }
+    ]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
 async def test_body_validation_blocks_mechanical_outline_narration(monkeypatch):
     monkeypatch.setattr(
         "yuxi.content.control.workflow.deterministic_node.validate_content",

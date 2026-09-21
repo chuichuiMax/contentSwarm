@@ -1180,8 +1180,9 @@ def test_parallel_research_agents_receive_only_their_knowledge_scope(node_id, ex
 
 
 def test_formal_content_agent_catalog_and_conflict_policy():
-    assert len(CONTENT_AGENT_SPECS) == 16
+    assert len(CONTENT_AGENT_SPECS) == 17
     assert {item.slug for item in CONTENT_AGENT_SPECS} == {
+        "content-fact-extraction-agent",
         "content-strategy-agent",
         "content-research-agent",
         "content-joint-strategy-agent",
@@ -1201,6 +1202,10 @@ def test_formal_content_agent_catalog_and_conflict_policy():
     }
     assert all(item.name.endswith("智能体") for item in CONTENT_AGENT_SPECS)
     assert all("Agent" not in item.name for item in CONTENT_AGENT_SPECS)
+    fact_spec = next(item for item in CONTENT_AGENT_SPECS if item.slug == "content-fact-extraction-agent")
+    assert fact_spec.skills == ("content-fact-extractor",)
+    assert fact_spec.skill_tools == ()
+    assert fact_spec.model_retry_times == 0
     title_spec = next(item for item in CONTENT_AGENT_SPECS if item.slug == "content-title-agent")
     assert title_spec.skill_tools == ()
     assert title_spec.config_version == 4

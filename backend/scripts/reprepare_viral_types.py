@@ -27,7 +27,13 @@ async def main(apply: bool):
         latest = {}
         for row in rows:
             latest.setdefault(row.article_id, row)
-        candidates = [row for row in latest.values() if row.preparation_skill_hash != preparation_skill_hash()]
+        current_skill_hash = preparation_skill_hash()
+        candidates = [
+            row
+            for row in latest.values()
+            if row.preparation_skill_hash != current_skill_hash
+            or (row.preparation_skill_hash == current_skill_hash and row.status == "failed")
+        ]
         print(f"需要重新准备 {len(candidates)} 篇装修文章", flush=True)
         if apply:
             queued = 0
@@ -35,11 +41,16 @@ async def main(apply: bool):
                 if not await check_asset_source(db, row):
                     print(f"跳过已变更原文 {row.id}，需重新导入", flush=True)
                     continue
-                asset = await ViralAssetRepository(db).register(
-                    ViralArticleSource.model_validate(row.source_json),
-                    skill_hash=preparation_skill_hash(),
-                    uid=row.created_by,
-                )
+                if row.preparation_skill_hash == current_skill_hash:
+                    asset = row
+                    asset.status, asset.error_message = "pending", None
+                    asset.attempt += 1
+                else:
+                    asset = await ViralAssetRepository(db).register(
+                        ViralArticleSource.model_validate(row.source_json),
+                        skill_hash=current_skill_hash,
+                        uid=row.created_by,
+                    )
                 await enqueue_asset(db, asset)
                 queued += 1
                 while asset.status in {"pending", "running"}:

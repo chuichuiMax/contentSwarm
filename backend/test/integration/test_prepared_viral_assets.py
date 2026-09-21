@@ -9,7 +9,8 @@ import pytest
 from fastapi import HTTPException
 from sqlalchemy import delete
 
-from test.unit.content.test_viral_asset_preparation import prepared, source
+from test.unit.content.test_viral_asset_preparation import source
+from test.unit.content.test_viral_reference_card_v2 import prepared_v2
 from yuxi.repositories.viral_asset_repository import ViralAssetRepository
 from yuxi.services import content_viral_assets as service
 from yuxi.storage.postgres.manager import pg_manager
@@ -35,7 +36,7 @@ async def test_article_card_scope_freshness_and_history(monkeypatch):
                     kb_type="milvus",
                     created_by=uid,
                     embedding_model_spec="alibaba:text-embedding-v4",
-                    additional_params={},
+                    additional_params={"viral_content_type": "CT06"},
                 )
             )
             await db.flush()
@@ -54,7 +55,7 @@ async def test_article_card_scope_freshness_and_history(monkeypatch):
             assets = []
             for article in articles:
                 asset = await repo.register(article, skill_hash=service.preparation_skill_hash(), uid=uid)
-                asset.status, asset.prepared_json = "ready", prepared(article)
+                asset.status, asset.prepared_json = "ready", prepared_v2(article)[1]
                 assets.append(asset)
             await db.commit()
             same = await repo.register(articles[0], skill_hash=service.preparation_skill_hash(), uid=uid)
@@ -66,11 +67,20 @@ async def test_article_card_scope_freshness_and_history(monkeypatch):
             assert len(cards) == 2
             assert all("body" not in card and "reference_blueprint" not in card for card in cards)
             assert all("anchors" not in card["reference_card"] for card in cards)
-            assert await service.search_ready_viral_assets(
-                db, user, industry_slug="decoration", query="互动", kb_ids=[kb_id], limit=2
-            ) == []
+            assert all(card["reference_card"]["schema_version"] == 2 for card in cards)
+            assert (
+                await service.search_ready_viral_assets(
+                    db, user, industry_slug="decoration", query="互动", kb_ids=[kb_id], limit=2
+                )
+                == []
+            )
             structural = await service.search_ready_viral_assets(
-                db, user, industry_slug="decoration", query="互动", kb_ids=[kb_id], limit=2,
+                db,
+                user,
+                industry_slug="decoration",
+                query="互动",
+                kb_ids=[kb_id],
+                limit=2,
                 include_structure=True,
             )
             assert len(structural) == 2

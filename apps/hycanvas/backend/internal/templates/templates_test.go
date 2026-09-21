@@ -222,6 +222,66 @@ func TestFillTextFieldsPreservesStyle(t *testing.T) {
 	}
 }
 
+func TestFillTextFieldsDynamicallySeparatesStackedTitleAndSubtitle(t *testing.T) {
+	tests := []struct {
+		name      string
+		title     string
+		wantMoved bool
+	}{
+		{name: "short title keeps authored spacing", title: "长沙装修"},
+		{name: "two line title keeps authored spacing", title: "长沙老房翻新报价"},
+		{name: "three line title pushes subtitle", title: "长沙同城装修工长，水电泥瓦自己盯", wantMoved: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			title := map[string]any{
+				"id": "title-node", "type": "text",
+				"transform": map[string]any{"x": 72.0, "y": 264.0, "rotation": 0.0},
+				"size":      map[string]any{"width": 900.0, "height": 184.0},
+				"box": map[string]any{
+					"mode": "autoHeight", "width": 900.0, "height": 184.0,
+					"padding": map[string]any{"t": 8.0, "r": 8.0, "b": 8.0, "l": 8.0},
+				},
+				"content": []any{map[string]any{
+					"runs": []any{map[string]any{"text": "旧标题", "style": map[string]any{"fontSize": 112.0, "lineHeight": 1.2}}},
+				}},
+			}
+			subtitle := map[string]any{
+				"id": "subtitle-node", "type": "text",
+				"transform": map[string]any{"x": 72.0, "y": 640.0, "rotation": 0.0},
+				"size":      map[string]any{"width": 900.0, "height": 85.0},
+				"box":       map[string]any{"mode": "autoHeight", "width": 900.0, "height": 85.0},
+				"content": []any{map[string]any{
+					"runs": []any{map[string]any{"text": "旧副标题", "style": map[string]any{"fontSize": 46.0}}},
+				}},
+			}
+			file := map[string]any{"pages": []any{map[string]any{"children": []any{title, subtitle}}}}
+			fields := []any{
+				map[string]any{"nodeId": "title-node", "kind": "text", "label": "主标题", "semanticRole": "title"},
+				map[string]any{"nodeId": "subtitle-node", "kind": "text", "label": "副标题", "semanticRole": "subtitle"},
+			}
+			if err := fillTextFields(file, fields, map[string]string{"主标题": tt.title, "副标题": "30岁，长沙从业5年；施工范围先说清"}); err != nil {
+				t.Fatalf("fillTextFields: %v", err)
+			}
+
+			subtitleY := asNum(asObj(subtitle["transform"])["y"])
+			if !tt.wantMoved {
+				if subtitleY != 640 {
+					t.Fatalf("subtitle moved for fitting title: y=%v", subtitleY)
+				}
+				return
+			}
+			titleHeight := estimateAutoHeightText(title)
+			if subtitleY < 264+titleHeight+titleSubtitleGap-0.01 {
+				t.Fatalf("subtitle still overlaps title: titleHeight=%v subtitleY=%v", titleHeight, subtitleY)
+			}
+			if asNum(asObj(title["box"])["height"]) != titleHeight || asNum(asObj(title["size"])["height"]) != titleHeight {
+				t.Fatalf("auto-height title bounds were not updated: box=%+v size=%+v", title["box"], title["size"])
+			}
+		})
+	}
+}
+
 func TestFillTextFieldsRestoresCompleteTypographyContract(t *testing.T) {
 	originalStyle := map[string]any{
 		"fontFamily": "Noto Sans SC", "fontStyle": "ExtraBold Italic", "fontSize": 72.0,

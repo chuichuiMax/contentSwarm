@@ -16,6 +16,10 @@ tmp_dir = "tmp"
   include_ext = ["go", "json"]
   exclude_dir = ["tmp", "internal/webui/public"]
   stop_on_error = true
+  # Air stays alive when the child API process is killed. Restart the binary so
+  # the container can recover without waiting for a manual Docker restart.
+  rerun = true
+  rerun_delay = 1000
   # fsnotify is unreliable on Docker bind mounts (macOS/Windows), so poll for
   # changes - this is what makes backend live-reload actually fire in-container.
   poll = true

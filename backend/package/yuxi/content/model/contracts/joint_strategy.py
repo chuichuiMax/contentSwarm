@@ -87,6 +87,25 @@ class JointStrategyDecisionV2(JointStrategyDecisionV1):
         return self
 
 
+class DeterministicCreationPlanDecisionV1(StrategyContract):
+    """固定规则生成的可审计选择轨迹，不包含模型评分。"""
+
+    schema_version: Literal[1] = 1
+    selection_mode: Literal["deterministic"] = "deterministic"
+    status: Literal["selected"] = "selected"
+    industry_slug: str = Field(min_length=1)
+    direction_code: str = Field(min_length=1)
+    group_id: str = Field(min_length=1)
+    rule_version_id: str = Field(min_length=1)
+    title_formula_code: str = Field(min_length=1)
+    body_formula_code: str = Field(min_length=1)
+    creation_method_codes: list[str] = Field(min_length=1)
+    reference_asset_id: str = Field(min_length=1)
+    reference_source_hash: str = Field(min_length=64, max_length=64)
+    slot_mapping: dict[str, list[str]] = Field(min_length=1)
+    selection_trace: list[str] = Field(min_length=1)
+
+
 def validate_joint_strategy(payload, inputs: dict[str, Any]) -> JointStrategyDecisionV1:
     model = JointStrategyDecisionV2 if "price_research_questions" in payload else JointStrategyDecisionV1
     result = model.model_validate(payload)
@@ -187,6 +206,8 @@ def validate_fact_path(inputs, path):
 
 class StrategySnapshotV2(StrategyContract):
     schema_version: Literal[2] = 2
+    planner_version: str | None = None
+    input_snapshot_hash: str | None = Field(default=None, min_length=64, max_length=64)
     industry_slug: str
     strategy_mode: Literal["direction_scoped", "scored"]
     content_direction: str | None
@@ -197,7 +218,7 @@ class StrategySnapshotV2(StrategyContract):
     body_formula: dict[str, Any] = Field(min_length=1)
     rule_version_id: str
     policy_hash: str
-    decision: JointStrategyDecisionV1
+    decision: JointStrategyDecisionV1 | DeterministicCreationPlanDecisionV1
     reference_snapshot: dict[str, Any] | None
     snapshot_hash: str = Field(min_length=64, max_length=64)
 
@@ -206,6 +227,9 @@ class StrategySnapshotV2(StrategyContract):
         payload = self.model_dump(mode="json", exclude={"snapshot_hash"})
         if payload.get("direction_blueprint") is None:
             payload.pop("direction_blueprint")
+        for key in ("planner_version", "input_snapshot_hash"):
+            if payload.get(key) is None:
+                payload.pop(key)
         canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         if self.snapshot_hash != hashlib.sha256(canonical.encode()).hexdigest():
             raise ValueError("新策略快照哈希不一致")

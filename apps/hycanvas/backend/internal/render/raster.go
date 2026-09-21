@@ -732,9 +732,10 @@ type textChunk struct {
 	ws   bool
 }
 
-// wrapChunks splits text into alternating word and whitespace chunks so greedy
-// word wrapping can break between words, matching @hc/text's layout. A newline
-// inside a run is treated as whitespace (not a hard break), as on the browser.
+// wrapChunks splits text at whitespace and CJK/punctuation boundaries so greedy
+// wrapping follows Intl.Segmenter's browser behavior closely enough for cover
+// titles. A newline inside a run is whitespace rather than a hard break, which
+// matches @hc/text's layout.
 func wrapChunks(s string) []textChunk {
 	var out []textChunk
 	if s == "" {
@@ -744,19 +745,32 @@ func wrapChunks(s string) []textChunk {
 	curWS := false
 	started := false
 	isWS := func(r rune) bool { return r == ' ' || r == '\t' || r == '\n' || r == '\r' }
+	isBreakable := func(r rune) bool {
+		return unicode.In(r, unicode.Han, unicode.Hiragana, unicode.Katakana, unicode.Hangul) || unicode.IsPunct(r)
+	}
+	flush := func() {
+		if b.Len() == 0 {
+			return
+		}
+		out = append(out, textChunk{text: b.String(), ws: curWS})
+		b.Reset()
+		started = false
+	}
 	for _, r := range s {
 		w := isWS(r)
+		if isBreakable(r) {
+			flush()
+			out = append(out, textChunk{text: string(r)})
+			continue
+		}
 		if started && w != curWS {
-			out = append(out, textChunk{text: b.String(), ws: curWS})
-			b.Reset()
+			flush()
 		}
 		b.WriteRune(r)
 		curWS = w
 		started = true
 	}
-	if b.Len() > 0 {
-		out = append(out, textChunk{text: b.String(), ws: curWS})
-	}
+	flush()
 	return out
 }
 

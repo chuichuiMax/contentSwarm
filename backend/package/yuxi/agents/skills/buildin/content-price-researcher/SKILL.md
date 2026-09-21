@@ -22,11 +22,11 @@ description: 从价格库检索与当前项目直接相关且口径明确的价�
 - 查询结束后立即严格提交一次 `PriceEvidenceCollectionResultV1`，其中每项都必须是价格资料；不生成标题或正文。
 
 
-## 报价补证（ResearchStrategyPricesInputV1 → StrategyPriceEvidenceResultV1）
+## 报价补证（ResearchStrategyPricesInputV1 / ResearchCreationPlanPricesInputV1 → StrategyPriceEvidenceResultV1）
 
 此节点位于策略锁定前，无 strategy_snapshot，不填写或猜测公式编码与段落，不使用上面的锁定公式规则。
 
-1. 只检索一次已授权价格库。根据 `joint_strategy_decision.price_research_questions`，结合简报中的城市、项目、服务项目与预算构造查询。查询后立即提交，不读全文、不重复查询。
+1. 只检索一次已授权价格库。旧流程读取 `joint_strategy_decision.price_research_questions`；确定性计划流程读取 `creation_plan_gap_analysis.price_research_questions`。结合简报中的城市、项目、服务项目与预算构造查询。查询后立即提交，不读全文、不重复查询。
 2. 最多提交8条与缺口最相关的代表报价，优先覆盖不同缺失类别，不转抄整张表。每个 evidence_item.value 是一条简短文本（400字以内），保留城市、项目名、单价/金额、单位、包含范围；未注明的范围明确说明。不得编造税费、包含范围、工程量或折扣。
 3. 每条 Evidence 的 source_id 必须原样复制检索结果；source_hash、source_version 由服务器按检索原文自动生成，你可省略，不要自行计算；source_type=knowledge_base、verified_status=retrieved、risk_level=high_risk、allowed_usage=["body"]。不能声称用户已经确认。
 4. metadata 必须有 material_type=price，price_basis=standard_unit_price（城市标准/SKU单价）或 project_quote（来源明确对应本项目的实际报价），以及 scope（来源支持的地区/服务/规格范围）、unit（计价单位）、integration_instruction（如何使用及不可推断什么）。不填写 writing_ready 或锁定公式编码。

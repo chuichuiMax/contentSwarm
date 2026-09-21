@@ -131,6 +131,64 @@ def test_unsupported_number_tokens_ignore_keycap_emoji_only():
     assert unsupported_number_tokens("1️⃣ 看范围，2⃣ 核材料，另收99元", {"items": []}) == ["99元"]
 
 
+def test_square_meter_aliases_are_equivalent_but_changed_area_is_blocked():
+    evidence = {"items": [{"id": "ev-area", "value": "115平"}]}
+
+    assert unsupported_number_tokens("这套115㎡三室二厅先核对范围", evidence) == []
+    assert unsupported_number_tokens("这套115平方米三室二厅先核对范围", evidence) == []
+    assert unsupported_number_tokens("这套115.0平米三室二厅先核对范围", evidence) == []
+    assert unsupported_number_tokens("这套116㎡三室二厅先核对范围", evidence) == ["116㎡"]
+
+
+def test_derived_numeric_evidence_keeps_its_declared_unit():
+    evidence = {
+        "items": [
+            {
+                "value": 10680,
+                "source_type": "human_confirmation",
+                "metadata": {"unit": "元"},
+            }
+        ]
+    }
+
+    assert unsupported_number_tokens("程序计算参考为10680元", evidence) == []
+
+
+def test_structured_trade_amounts_supply_their_declared_units():
+    evidence = {
+        "items": [
+            {
+                "value": [
+                    {"trade": "砌筑找平", "amount": 6800, "unit": "元"},
+                    {"trade": "防水施工", "amount": 5200, "unit": "元"},
+                ],
+                "source_type": "manual_input",
+            }
+        ]
+    }
+
+    assert unsupported_number_tokens("砌筑找平6800元，防水施工5200元", evidence) == []
+
+
+def test_nested_labor_aux_breakdown_inherits_declared_unit():
+    evidence = {
+        "items": [
+            {
+                "id": "ev-labor-aux",
+                "source_type": "manual_input",
+                "value": {
+                    "labor_total": 12800,
+                    "auxiliary_total": 9000,
+                    "unit": "元",
+                    "trades": [{"trade": "基层处理", "labor_amount": 3600, "auxiliary_amount": 2200}],
+                },
+            }
+        ]
+    }
+
+    assert unsupported_number_tokens("人工合计12800元，辅材合计9000元，基层3600元+2200元", evidence) == []
+
+
 def test_persona_numeric_fields_supply_only_their_declared_units():
     evidence = {
         "items": [

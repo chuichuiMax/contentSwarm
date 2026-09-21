@@ -1,6 +1,25 @@
 package render
 
-import "testing"
+import (
+	"testing"
+
+	"golang.org/x/image/font/gofont/gobold"
+	"golang.org/x/image/font/gofont/goregular"
+	"golang.org/x/image/font/opentype"
+)
+
+func isolateFontRegistry(t *testing.T) {
+	t.Helper()
+	fontMu.Lock()
+	previous := fontReg
+	fontReg = map[fontKey]*opentype.Font{}
+	fontMu.Unlock()
+	t.Cleanup(func() {
+		fontMu.Lock()
+		fontReg = previous
+		fontMu.Unlock()
+	})
+}
 
 func TestEffectiveFontWeightSupportsTemplateStyleFormats(t *testing.T) {
 	tests := []struct {
@@ -36,5 +55,49 @@ func TestEffectiveFontItalicSupportsTemplateStyleFormats(t *testing.T) {
 	}
 	if effectiveFontItalic(map[string]any{"fontStyle": "Regular"}) {
 		t.Fatal("regular style should not be italic")
+	}
+}
+
+func TestSystemFontUsesOneDeterministicCJKFamilyAndNearestWeight(t *testing.T) {
+	isolateFontRegistry(t)
+	regular, err := opentype.Parse(goregular.TTF)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bold, err := opentype.Parse(gobold.TTF)
+	if err != nil {
+		t.Fatal(err)
+	}
+	registerParsedFont("NotoSansSC", 400, regular)
+	registerParsedFont("NotoSansSC", 700, bold)
+
+	if got := lookupFont("system", 900); got != bold {
+		t.Fatal("system title did not resolve to the nearest Simplified Chinese bold face")
+	}
+	if got := lookupFont("system-ui", 400); got != regular {
+		t.Fatal("system-ui body text did not resolve to the Simplified Chinese regular face")
+	}
+}
+
+func TestFallbackFontOrderPrefersSansAndIsStable(t *testing.T) {
+	isolateFontRegistry(t)
+	regular, err := opentype.Parse(goregular.TTF)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bold, err := opentype.Parse(gobold.TTF)
+	if err != nil {
+		t.Fatal(err)
+	}
+	registerParsedFont("NotoSerifCJK0", 700, regular)
+	registerParsedFont("NotoSansSC", 700, bold)
+
+	for range 20 {
+		if got := fontCovering('A', "Missing Family", 900); got != bold {
+			t.Fatal("fallback selection mixed serif and sans faces across glyphs")
+		}
+	}
+	if fallbackFamilyRank('长', "notosanssc") >= fallbackFamilyRank('长', "notosansjp") {
+		t.Fatal("Simplified Chinese glyphs should prefer Noto Sans SC")
 	}
 }

@@ -29,6 +29,16 @@ class ContentAgentSpec:
 
 CONTENT_AGENT_SPECS = (
     ContentAgentSpec(
+        slug="content-fact-extraction-agent",
+        name="创作事实抽取智能体",
+        description="只从用户本次输入原文摘录缺失业务变量，不参与策略、公式或参考选择。",
+        skills=("content-fact-extractor",),
+        reasoning_effort="low",
+        model_call_timeout_seconds=45,
+        model_retry_times=0,
+        config_version=1,
+    ),
+    ContentAgentSpec(
         slug="content-strategy-agent",
         name="内容策略智能体",
         description="分析内容价值、从候选集中确定内容方向，并解释固定规则结果及排序候选公式。",
@@ -228,6 +238,7 @@ CONTENT_AGENT_SPECS = (
 )
 
 LEGACY_CONTENT_AGENT_NAMES = {
+    "content-fact-extraction-agent": "创作事实抽取 Agent",
     "content-strategy-agent": "内容策略 Agent",
     "content-research-agent": "内容调研 Agent",
     "content-viral-asset-agent": "爆款资产准备 Agent",

@@ -86,6 +86,7 @@ def _payload(serial_no: str, images: list[dict], *, type_name: str = "施工报�
             "prices": [
                 {"format": "单价面积", "content": "防水 6 元/㎡ × 20㎡ = 120 元"},
             ],
+            "titlePrice": {"label": "整套人工合计", "displayText": "1.16w"},
             "mySite": "长沙市雨花区某某小区",
         },
         "tags": ["报价透明", "长沙装修"],
@@ -248,12 +249,21 @@ async def test_dangjia_create_compile_run_and_idempotent_replay(test_client, adm
         assert form_values["pain"] == ["想搞清楚120平三室两厅的施工报价明细"]
         assert form_values["project_type"] == "三室两厅"
         assert form_values["area"] == "120平"
-        assert form_values["budget"] == "【单价面积】防水 6 元/㎡ × 20㎡ = 120 元"
+        assert "budget" not in form_values
+        assert form_values["quote_format"] == "单价面积"
+        assert form_values["location"] == "长沙市"
         assert "水电改造" in form_values["craft_and_materials"]
         assert form_values["project_site"] == "长沙市雨花区某某小区"
         assert form_values["content_tags"] == ["报价透明", "长沙装修"]
         assert form_values["type_name"] == "施工报价"
         assert task["content_type_code"] == "CT03"
+        runtime = task["runtime_config_snapshot"]
+        assert runtime["dangjia_request_fingerprint"]
+        assert runtime["trusted_external_material_snapshot"]["title_price"]["display_text"] == "1.16w"
+        assert (
+            runtime["trusted_external_material_snapshot"]["quote_block"]["original_content"]
+            == "防水 6 元/㎡ × 20㎡ = 120 元"
+        )
         assert task["brief"]["persona"]["description"].startswith("30岁，5年装修工龄，服务城市长沙市。")
 
         visual = task["brief"]["visual_material"]
@@ -282,6 +292,11 @@ async def test_dangjia_create_compile_run_and_idempotent_replay(test_client, adm
         assert replay_body["task_id"] == task_id
         assert replay_body["serial_no"] == serial_no
         assert replay_body["run_id"] == run_id
+
+        changed_payload = {**payload, "tags": [*payload["tags"], "新标签"]}
+        conflict = await test_client.post("/api/dangjia/content/tasks", json=changed_payload, headers=admin_headers)
+        assert conflict.status_code == 409, conflict.text
+        assert conflict.json()["detail"]["error"]["code"] == "DANGJIA_REQUEST_CONFLICT"
     finally:
         if task_id:
             deleted = await test_client.delete(f"/api/content/tasks/{task_id}", headers=admin_headers)

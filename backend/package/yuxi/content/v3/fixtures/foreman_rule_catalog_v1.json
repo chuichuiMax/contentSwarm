@@ -77,7 +77,7 @@
       "suitable_scenes": ["人工工价行情", "单项人工价格"],
       "sentence_patterns": ["{location}{project}怎么收费，先看单价和包含范围"],
       "tag_schema": {"business_mode": "F", "price_basis": ["standard_unit_price", "project_quote"]},
-      "variable_schema": ["location", "product", "price"],
+      "variable_schema": ["location", "product", "title_price"],
       "risk_rules": ["标准单价必须明确标注为参考", "标准单价不得冒充本案成交或结算价格", "不得倒推工程量或小计"]
     },
     {
@@ -89,7 +89,7 @@
       "suitable_scenes": ["卫生间", "厨房", "局部翻新", "按面积计价"],
       "sentence_patterns": ["{location}{area}{business}，按{price}计算"],
       "tag_schema": {"business_mode": "G", "calculation": "deterministic"},
-      "variable_schema": ["location", "quantity", "product", "price"],
+      "variable_schema": ["location", "quantity", "product", "title_price"],
       "risk_rules": ["面积、单价和总价必须是同一项目口径", "计算不一致时阻断发布", "标准单价不可直接乘以项目面积推导成交总价"]
     },
     {
@@ -101,7 +101,7 @@
       "suitable_scenes": ["半包", "硬装", "全屋基础施工"],
       "sentence_patterns": ["{location}{area}{business}，各工种总价这样分"],
       "tag_schema": {"business_mode": "H", "evidence": ["工种总价", "包含项"]},
-      "variable_schema": ["location", "quantity", "product", "price"],
+      "variable_schema": ["location", "quantity", "product", "title_price"],
       "risk_rules": ["各工种总价必须来自同一真实报价", "合计不一致时阻断发布", "不得补造未提供的分项"]
     },
     {
@@ -113,7 +113,7 @@
       "suitable_scenes": ["半包", "硬装", "真实账单"],
       "sentence_patterns": ["这份{business}总价里，人工和辅材分别花在哪"],
       "tag_schema": {"business_mode": "I", "evidence": ["人工合计", "辅材合计", "工种拆分"]},
-      "variable_schema": ["product", "price", "process"],
+      "variable_schema": ["product", "title_price", "process"],
       "risk_rules": ["人工、辅材和总价必须来自同一真实报价", "合计不一致时阻断发布", "透明优势必须有服务证据"]
     }
   ],
@@ -124,8 +124,16 @@
       "industry_scope": ["decoration"],
       "suitable_scenes": ["单价+面积", "工种总价", "人工+辅材"],
       "core_goal": "用地域搜索词和真实项目口径快速说明业务与价格。",
-      "reference_examples": [],
-      "variable_schema": ["location", "quantity", "product", "price"],
+      "reference_examples": ["天津135平叠拼半包8.9w"],
+      "source_content": {
+        "slot_schema": [
+          {"code": "location", "label": "地域", "variable_codes": ["location"], "lexicon_codes": []},
+          {"code": "area_or_house_type", "label": "面积/房型", "variable_codes": ["quantity", "product"], "lexicon_codes": ["title.house_type"]},
+          {"code": "business", "label": "业务", "variable_codes": ["scene"], "lexicon_codes": ["title.positioning"]},
+          {"code": "price", "label": "价格", "variable_codes": ["title_price", "price"], "lexicon_codes": []}
+        ]
+      },
+      "variable_schema": ["location", "quantity", "product", "title_price"],
       "compatible_methods": ["FRM01", "FRM07", "FRM08", "FRM09"],
       "risk_rules": ["只组合二至四个核心变量", "价格和面积必须有证据", "标题主卖点必须在正文开头兑现"]
     },
@@ -135,7 +143,15 @@
       "industry_scope": ["decoration"],
       "suitable_scenes": ["报价案例", "需求解决"],
       "core_goal": "用需求和真实价格承接搜索，再说明有证据的结果。",
-      "reference_examples": [],
+      "reference_examples": ["深圳90年代老小区翻新，4.2w爸妈觉得值"],
+      "source_content": {
+        "slot_schema": [
+          {"code": "location", "label": "地域", "variable_codes": ["location"], "lexicon_codes": []},
+          {"code": "need_or_business", "label": "需求/业务", "variable_codes": ["pain", "scene", "product"], "lexicon_codes": ["title.positioning"]},
+          {"code": "price", "label": "价格", "variable_codes": ["title_price", "price"], "lexicon_codes": []},
+          {"code": "result", "label": "结果", "variable_codes": ["result"], "lexicon_codes": ["title.beneficial_result"]}
+        ]
+      },
       "variable_schema": ["location", "product", "price", "result"],
       "compatible_methods": ["FRM01", "FRM02", "FRM03", "FRM07", "FRM08", "FRM09"],
       "risk_rules": ["结果必须是已发生且可核验的事实", "计划和目标不得写成完工结果"]
@@ -146,7 +162,14 @@
       "industry_scope": ["decoration"],
       "suitable_scenes": ["真实案例", "价格营销"],
       "core_goal": "先给真实价格，再用克制的结果表达形成阅读动力。",
-      "reference_examples": [],
+      "reference_examples": ["半包6w的家，装成这样我真的已经尽力"],
+      "source_content": {
+        "slot_schema": [
+          {"code": "price", "label": "价格", "variable_codes": ["title_price", "price"], "lexicon_codes": []},
+          {"code": "house_or_business", "label": "房屋/业务", "variable_codes": ["product", "scene"], "lexicon_codes": []},
+          {"code": "emotional_result", "label": "情绪结果", "variable_codes": ["result"], "lexicon_codes": ["title.oral_emotion", "title.positive_result"]}
+        ]
+      },
       "variable_schema": ["price", "product", "result"],
       "compatible_methods": ["FRM01", "FRM02", "FRM07", "FRM08", "FRM09"],
       "risk_rules": ["不得夸大情绪或结果", "没有真实结果时省略结果变量"]
@@ -157,7 +180,15 @@
       "industry_scope": ["decoration"],
       "suitable_scenes": ["预算有限", "旧房改造", "局部翻新"],
       "core_goal": "精准匹配本地业主顾虑并交代房屋与价格口径。",
-      "reference_examples": [],
+      "reference_examples": ["长沙预算有限，82㎡半包4.5W"],
+      "source_content": {
+        "slot_schema": [
+          {"code": "location", "label": "地域", "variable_codes": ["location"], "lexicon_codes": []},
+          {"code": "audience_or_pain", "label": "人群/痛点", "variable_codes": ["audience", "pain"], "lexicon_codes": ["title.audience", "title.pain"]},
+          {"code": "house", "label": "房屋", "variable_codes": ["product"], "lexicon_codes": ["title.house_type"]},
+          {"code": "price", "label": "价格", "variable_codes": ["title_price", "price"], "lexicon_codes": []}
+        ]
+      },
       "variable_schema": ["location", "audience", "product", "price"],
       "compatible_methods": ["FRM01", "FRM03", "FRM07", "FRM08", "FRM09"],
       "risk_rules": ["不得制造焦虑", "价格必须与所述房屋或业务口径一致"]
@@ -168,7 +199,14 @@
       "industry_scope": ["decoration"],
       "suitable_scenes": ["痛点解决", "工艺展示", "价格透明"],
       "core_goal": "突出当前场景唯一核心利益点，避免卖点堆叠。",
-      "reference_examples": [],
+      "reference_examples": ["长沙半包报价公开，170㎡大平层10W出头"],
+      "source_content": {
+        "slot_schema": [
+          {"code": "location", "label": "地域", "variable_codes": ["location"], "lexicon_codes": []},
+          {"code": "business", "label": "业务", "variable_codes": ["scene", "product"], "lexicon_codes": ["title.positioning"]},
+          {"code": "benefit", "label": "用户最关心的利益点", "variable_codes": ["advantages", "advantage"], "lexicon_codes": ["title.beneficial_result"]}
+        ]
+      },
       "variable_schema": ["location", "product", "advantages"],
       "compatible_methods": ["FRM01", "FRM03", "FRM04", "FRM07", "FRM08", "FRM09"],
       "risk_rules": ["单标题只突出一个核心利益点", "利益点必须由当前证据支持"]
@@ -179,7 +217,15 @@
       "industry_scope": ["decoration"],
       "suitable_scenes": ["工长案例", "报价自荐"],
       "core_goal": "让真实工长身份与本地业务、案例或价格共同建立信任。",
-      "reference_examples": [],
+      "reference_examples": ["深圳工长自荐｜67㎡两房改造4.5W"],
+      "source_content": {
+        "slot_schema": [
+          {"code": "location", "label": "地域", "variable_codes": ["location"], "lexicon_codes": []},
+          {"code": "identity", "label": "身份", "variable_codes": ["persona_fact"], "lexicon_codes": []},
+          {"code": "business_or_case", "label": "业务/案例", "variable_codes": ["scene", "product", "result"], "lexicon_codes": ["title.positioning", "title.positive_result"]},
+          {"code": "price", "label": "价格", "variable_codes": ["title_price", "price"], "lexicon_codes": []}
+        ]
+      },
       "variable_schema": ["location", "persona_fact", "product", "price"],
       "compatible_methods": ["FRM01", "FRM02", "FRM05", "FRM07", "FRM08", "FRM09"],
       "risk_rules": ["身份和价格都必须可核验", "不得编造从业年限或案例"]
@@ -190,8 +236,15 @@
       "industry_scope": ["decoration"],
       "suitable_scenes": ["项目单价", "人工工价行情"],
       "core_goal": "以地域、时间或标准口径提供可搜索的工价参考。",
-      "reference_examples": [],
-      "variable_schema": ["location", "price"],
+      "reference_examples": ["深圳装修｜2026装修各工种工费标准"],
+      "source_content": {
+        "slot_schema": [
+          {"code": "location", "label": "地域", "variable_codes": ["location"], "lexicon_codes": []},
+          {"code": "labor_price", "label": "装修工价", "variable_codes": ["title_price", "price", "title_price_label"], "lexicon_codes": []},
+          {"code": "year_or_standard", "label": "年份/标准", "variable_codes": ["process", "quote_type", "title_price_label"], "lexicon_codes": ["title.instruction_value"]}
+        ]
+      },
+      "variable_schema": ["location", "title_price"],
       "compatible_methods": ["FRM06"],
       "risk_rules": ["年份、标准和工价必须来自同一来源版本", "标准单价必须标注参考口径"]
     },
@@ -201,7 +254,14 @@
       "industry_scope": ["decoration"],
       "suitable_scenes": ["单项工价", "工艺项目说明"],
       "core_goal": "围绕一个具体施工项目说明真实单价或验收标准。",
-      "reference_examples": [],
+      "reference_examples": ["长沙装修看这里，全房拆除工价很全"],
+      "source_content": {
+        "slot_schema": [
+          {"code": "location", "label": "地域", "variable_codes": ["location"], "lexicon_codes": []},
+          {"code": "project", "label": "项目", "variable_codes": ["title_price_label", "product"], "lexicon_codes": []},
+          {"code": "unit_price_or_standard", "label": "单价/标准", "variable_codes": ["title_price", "price", "process"], "lexicon_codes": ["title.instruction_value"]}
+        ]
+      },
       "variable_schema": ["location", "product", "price"],
       "compatible_methods": ["FRM04", "FRM06"],
       "risk_rules": ["单价与项目名称、单位、包含范围必须完整对应", "工艺标准必须有核验资料"]
@@ -212,7 +272,15 @@
       "industry_scope": ["decoration"],
       "suitable_scenes": ["按面积案例", "半包", "硬装"],
       "core_goal": "清楚交代本地项目面积、业务类型和真实总价。",
-      "reference_examples": [],
+      "reference_examples": ["东莞99㎡三室一厅半包报价清单"],
+      "source_content": {
+        "slot_schema": [
+          {"code": "location", "label": "地域", "variable_codes": ["location"], "lexicon_codes": []},
+          {"code": "area", "label": "面积", "variable_codes": ["quantity"], "lexicon_codes": []},
+          {"code": "business", "label": "业务", "variable_codes": ["scene", "product"], "lexicon_codes": ["title.positioning"]},
+          {"code": "total_price", "label": "总价", "variable_codes": ["title_price", "price"], "lexicon_codes": []}
+        ]
+      },
       "variable_schema": ["location", "quantity", "product", "price"],
       "compatible_methods": ["FRM01", "FRM07", "FRM08", "FRM09"],
       "risk_rules": ["总价必须说明报价类型和包含范围", "预算不得写成结算总价"]
@@ -223,7 +291,15 @@
       "industry_scope": ["decoration"],
       "suitable_scenes": ["半包总价", "硬装总价"],
       "core_goal": "先给总价钩子，再补齐业务、地域与面积口径。",
-      "reference_examples": [],
+      "reference_examples": ["5.8W半包落地｜长沙装修108平三房"],
+      "source_content": {
+        "slot_schema": [
+          {"code": "total_price", "label": "总价", "variable_codes": ["title_price", "price"], "lexicon_codes": []},
+          {"code": "business_mode", "label": "半包/硬装", "variable_codes": ["scene", "product"], "lexicon_codes": ["title.positioning"]},
+          {"code": "location", "label": "地域", "variable_codes": ["location"], "lexicon_codes": []},
+          {"code": "area", "label": "面积", "variable_codes": ["quantity"], "lexicon_codes": []}
+        ]
+      },
       "variable_schema": ["price", "product", "location", "quantity"],
       "compatible_methods": ["FRM01", "FRM07", "FRM08", "FRM09"],
       "risk_rules": ["总价、面积和业务必须属于同一真实项目", "不得省略报价类型"]
@@ -234,7 +310,15 @@
       "industry_scope": ["decoration"],
       "suitable_scenes": ["人工辅材拆分", "真实账单"],
       "core_goal": "突出人工与辅材的透明拆分和真实总价。",
-      "reference_examples": [],
+      "reference_examples": ["长沙147㎡全屋装修实价单公开"],
+      "source_content": {
+        "slot_schema": [
+          {"code": "location", "label": "地域", "variable_codes": ["location"], "lexicon_codes": []},
+          {"code": "area_or_business", "label": "面积/业务", "variable_codes": ["quantity", "scene", "product"], "lexicon_codes": ["title.positioning"]},
+          {"code": "labor_or_auxiliary", "label": "人工/辅材", "variable_codes": ["title_price_label", "process"], "lexicon_codes": ["title.instruction_value"]},
+          {"code": "total_price", "label": "总价", "variable_codes": ["title_price", "price"], "lexicon_codes": []}
+        ]
+      },
       "variable_schema": ["location", "quantity", "product", "price"],
       "compatible_methods": ["FRM01", "FRM09"],
       "risk_rules": ["人工、辅材和总价必须来自同一份报价", "计算不一致时不得发布"]
@@ -245,7 +329,14 @@
       "industry_scope": ["decoration"],
       "suitable_scenes": ["工长自荐", "工艺展示", "日常工作"],
       "core_goal": "以真实本地身份说明正在做的装修业务或现场工作。",
-      "reference_examples": [],
+      "reference_examples": ["坐标长沙，一个实在的装修工长自荐🙏"],
+      "source_content": {
+        "slot_schema": [
+          {"code": "location", "label": "地域", "variable_codes": ["location"], "lexicon_codes": []},
+          {"code": "identity", "label": "身份", "variable_codes": ["persona_fact"], "lexicon_codes": ["title.audience"]},
+          {"code": "business", "label": "业务", "variable_codes": ["scene", "product"], "lexicon_codes": ["title.positioning"]}
+        ]
+      },
       "variable_schema": ["location", "persona_fact", "product"],
       "compatible_methods": ["FRM02", "FRM04", "FRM05"],
       "risk_rules": ["身份和业务必须来自真实资料", "标题主卖点必须在正文开头兑现"]
@@ -332,9 +423,9 @@
       "business_pains": ["不知道单项怎么收费", "单价包含范围不清"],
       "structure_schema": ["项目单价钩子", "项目分类", "真实单项工价", "适用条件和包含范围", "常见项目说明", "避坑或判断方法", "具体行动引导"],
       "reference_examples": [],
-      "required_variables": ["product", "price", "quote_type"],
-      "output_schema": {"sections": 7, "cta_required": true, "price_basis_required": true},
-      "risk_rules": ["标准单价必须保留地区、单位、范围和标准参考口径", "不得据此推导实际成交、结算或节省结果"]
+      "required_variables": ["product", "title_price_label", "quote_block", "quote_type"],
+      "output_schema": {"sections": 5, "cta_required": true, "locked_quote_block_required": true, "locked_quote_block_insertion": "after-opening-paragraph-v1"},
+      "risk_rules": ["标题价格与报价口径只使用已确认字段", "正文不得输出或改写锁定报价块中的项目和数字"]
     },
     {
       "code": "FRB07",
@@ -346,9 +437,9 @@
       "business_pains": ["不会按面积核算", "单价与总价关系不清"],
       "structure_schema": ["真实案例信息", "已确认面积", "同口径单价", "程序校验后的计算结果", "重点施工项目", "同口径总价", "具体行动引导"],
       "reference_examples": [],
-      "required_variables": ["product", "quantity", "price", "quote_type"],
-      "output_schema": {"sections": 7, "cta_required": true, "deterministic_calculation_required": true},
-      "risk_rules": ["面积、单价和总价不是同一项目口径时不得计算", "计算不一致时阻断发布", "标准单价可独立展示但不得乘算本案总价"]
+      "required_variables": ["product", "quantity", "title_price_label", "quote_block", "quote_type"],
+      "output_schema": {"sections": 5, "cta_required": true, "locked_quote_block_required": true, "locked_quote_block_insertion": "after-opening-paragraph-v1"},
+      "risk_rules": ["标题价格与报价口径只使用已确认字段", "正文不得计算、输出或改写锁定报价块中的项目和数字"]
     },
     {
       "code": "FRB08",
@@ -360,9 +451,9 @@
       "business_pains": ["不知道钱花在哪个工种", "包含项不清楚"],
       "structure_schema": ["真实总价钩子", "面积或户型", "各工种真实总价", "核心包含项", "预算解释", "具体行动引导"],
       "reference_examples": [],
-      "required_variables": ["product", "price", "quote_type"],
-      "output_schema": {"sections": 6, "cta_required": true, "sum_validation_required": true},
-      "risk_rules": ["只使用同一报价中的工种金额", "合计不一致时阻断发布", "没有的工种分项不得补齐"]
+      "required_variables": ["product", "title_price_label", "quote_block", "quote_type"],
+      "output_schema": {"sections": 5, "cta_required": true, "locked_quote_block_required": true, "locked_quote_block_insertion": "after-opening-paragraph-v1"},
+      "risk_rules": ["标题价格与报价口径只使用已确认字段", "正文不得核算、输出或改写锁定报价块中的工种金额"]
     },
     {
       "code": "FRB09",
@@ -374,9 +465,9 @@
       "business_pains": ["人工与材料混在一起", "账单难核对"],
       "structure_schema": ["真实总价钩子", "人工合计", "辅材合计", "各工种真实拆分", "为什么这样花", "有证据的透明服务优势", "具体行动引导"],
       "reference_examples": [],
-      "required_variables": ["product", "price", "process", "quote_type"],
-      "output_schema": {"sections": 7, "cta_required": true, "sum_validation_required": true},
-      "risk_rules": ["人工、辅材、工种拆分和总价必须同源", "合计不一致时阻断发布", "不得虚构辅材品牌、数量或成交金额"]
+      "required_variables": ["product", "title_price_label", "quote_block", "process", "quote_type"],
+      "output_schema": {"sections": 5, "cta_required": true, "locked_quote_block_required": true, "locked_quote_block_insertion": "after-opening-paragraph-v1"},
+      "risk_rules": ["标题价格与报价口径只使用已确认字段", "正文不得核算、输出或改写锁定报价块中的人工辅材数据"]
     }
   ],
   "combination_rules": [
@@ -497,11 +588,11 @@
       "title_formula_candidate_codes": ["FRT07", "FRT08"],
       "body_formula_candidate_codes": ["FRB06"],
       "scenario_description": "展示某一工种或施工项目的真实单价、单位和包含范围",
-      "required_variable_codes": ["product", "price", "quote_type"],
+      "required_variable_codes": ["product", "title_price", "title_price_label", "quote_block", "quote_type"],
       "required_evidence_types": [],
       "priority": 850,
       "conditions": {"price_available": true},
-      "hard_conditions": {"unsupported_numbers": "block", "price_basis_required": true, "title_claim_body_alignment": true},
+      "hard_conditions": {"unsupported_numbers": "block", "locked_quote_block_required": true, "title_claim_body_alignment": true},
       "score_weights": {"variable_coverage": 2, "evidence_coverage": 3},
       "source_metadata": {"source": "foreman-rule-catalog-v1", "source_row": 6, "content_direction_name": "项目单价"},
       "recommendation_reason": "标准单价或项目单价证据完整时使用"
@@ -518,11 +609,11 @@
       "title_formula_candidate_codes": ["FRT01", "FRT02", "FRT03", "FRT04", "FRT05", "FRT06", "FRT09", "FRT10"],
       "body_formula_candidate_codes": ["FRB07"],
       "scenario_description": "卫生间、厨房或局部翻新，面积、单价与总价均为同一项目口径",
-      "required_variable_codes": ["product", "quantity", "price", "quote_type"],
+      "required_variable_codes": ["product", "quantity", "title_price", "title_price_label", "quote_block", "quote_type"],
       "required_evidence_types": [],
       "priority": 840,
       "conditions": {"price_available": true},
-      "hard_conditions": {"unsupported_numbers": "block", "deterministic_calculation_required": true, "quote_type_required_if_price": true, "title_claim_body_alignment": true},
+      "hard_conditions": {"unsupported_numbers": "block", "locked_quote_block_required": true, "title_claim_body_alignment": true},
       "score_weights": {"variable_coverage": 2, "evidence_coverage": 3},
       "source_metadata": {"source": "foreman-rule-catalog-v1", "source_row": 7, "content_direction_name": "单价+面积"},
       "recommendation_reason": "只有同口径面积和单价可由程序校验时使用"
@@ -539,11 +630,11 @@
       "title_formula_candidate_codes": ["FRT01", "FRT02", "FRT03", "FRT04", "FRT05", "FRT06", "FRT09", "FRT10"],
       "body_formula_candidate_codes": ["FRB08"],
       "scenario_description": "半包、硬装或全屋基础施工，已有同一报价中的各工种总价",
-      "required_variable_codes": ["product", "price", "quote_type"],
+      "required_variable_codes": ["product", "title_price", "title_price_label", "quote_block", "quote_type"],
       "required_evidence_types": [],
       "priority": 830,
       "conditions": {"price_available": true},
-      "hard_conditions": {"unsupported_numbers": "block", "sum_validation_required": true, "quote_type_required_if_price": true, "title_claim_body_alignment": true},
+      "hard_conditions": {"unsupported_numbers": "block", "locked_quote_block_required": true, "title_claim_body_alignment": true},
       "score_weights": {"variable_coverage": 2, "evidence_coverage": 3},
       "source_metadata": {"source": "foreman-rule-catalog-v1", "source_row": 8, "content_direction_name": "工种总价"},
       "recommendation_reason": "各工种金额可同源核对时使用"
@@ -560,11 +651,11 @@
       "title_formula_candidate_codes": ["FRT01", "FRT02", "FRT03", "FRT04", "FRT05", "FRT06", "FRT09", "FRT10", "FRT11"],
       "body_formula_candidate_codes": ["FRB09"],
       "scenario_description": "半包、硬装或真实账单，人工、辅材、工种拆分和总价来自同一报价",
-      "required_variable_codes": ["product", "price", "process", "quote_type"],
+      "required_variable_codes": ["product", "title_price", "title_price_label", "quote_block", "process", "quote_type"],
       "required_evidence_types": [],
       "priority": 820,
       "conditions": {"price_available": true},
-      "hard_conditions": {"unsupported_numbers": "block", "sum_validation_required": true, "quote_type_required_if_price": true, "max_persona_advantages": 3, "title_claim_body_alignment": true},
+      "hard_conditions": {"unsupported_numbers": "block", "locked_quote_block_required": true, "max_persona_advantages": 3, "title_claim_body_alignment": true},
       "score_weights": {"variable_coverage": 2, "evidence_coverage": 3},
       "source_metadata": {"source": "foreman-rule-catalog-v1", "source_row": 9, "content_direction_name": "人工+辅材"},
       "recommendation_reason": "人工与辅材拆分可以同源核对时使用"

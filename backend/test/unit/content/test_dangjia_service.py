@@ -12,6 +12,7 @@ from yuxi.services.dangjia_service import (
     build_dangjia_brief,
     build_dangjia_form_values,
     build_persona_description,
+    build_trusted_quote_snapshot,
 )
 
 VALID_TEMPLATE_ID = "b585947e-8413-4dd5-a7b5-d1486ec81882"
@@ -52,6 +53,7 @@ def make_payload(
                 "prices": [
                     {"format": price_format, "content": f"{price_format}测试报价"} for price_format in price_formats
                 ],
+                "titlePrice": {"label": "整套人工合计", "displayText": "1.16w"},
                 "mySite": "湖南省长沙市岳麓区梅溪湖街道金茂府",
             },
             "tags": ["营销报价", "中式风格"],
@@ -73,13 +75,15 @@ def test_persona_description_composes_all_fields():
     assert "有耐心" in description
 
 
-def test_form_values_map_quotation_and_prices():
+def test_form_values_keep_quote_content_out_of_public_brief():
     values = build_dangjia_form_values(make_payload())
     assert values["external_serial_no"] == "202609141600"
     assert values["external_source"] == "dangjia"
     assert values["project_type"] == "三室二厅"
     assert values["area"] == "115平"
-    assert values["budget"] == "【工种总价】工种总价测试报价"
+    assert "budget" not in values
+    assert values["quote_format"] == "工种总价"
+    assert values["location"] == "长沙市"
     assert "水电" in values["craft_and_materials"]
     assert values["advantage"] == ["决策快效率高", "自有工人无转包"]
     assert values["project_site"] == "湖南省长沙市岳麓区梅溪湖街道金茂府"
@@ -152,7 +156,25 @@ def test_resolve_ct_code_rejects_unknown_or_conflicting_quotation_formats():
     payload = make_payload(price_formats=("单价面积", "工种总价"))
     with pytest.raises(HTTPException) as conflict:
         _resolve_ct_code(payload.requirementType)
-    assert conflict.value.detail["error"]["code"] == "DANGJIA_PRICE_FORMAT_CONFLICT"
+    assert conflict.value.detail["error"]["code"] == "DANGJIA_PRICE_COUNT_INVALID"
+
+
+def test_resolve_ct_code_requires_confirmed_title_price():
+    payload = make_payload()
+    payload.requirementType.titlePrice = None
+    with pytest.raises(HTTPException) as exc:
+        _resolve_ct_code(payload.requirementType)
+    assert exc.value.detail["error"]["code"] == "DANGJIA_TITLE_PRICE_REQUIRED"
+
+
+def test_trusted_quote_snapshot_preserves_original_content_bytes():
+    payload = make_payload(price_formats=("单价面积",))
+    payload.requirementType.prices[0].content = "  拆除：1000元；\n水电：2400元  "
+    snapshot = build_trusted_quote_snapshot(payload, content_type_code="CT03")
+    assert snapshot is not None
+    assert snapshot["title_price"] == {"label": "整套人工合计", "display_text": "1.16w"}
+    assert snapshot["quote_type"] == "standard_unit_price"
+    assert snapshot["quote_block"]["original_content"] == "  拆除：1000元；\n水电：2400元  "
 
 
 def test_brief_builds_visual_material_with_cover_first():
@@ -170,7 +192,7 @@ def test_brief_builds_visual_material_with_cover_first():
     assert visual.photo_composition.layout_id == "grid-4"
     assert [slot.image_item_id for slot in visual.photo_composition.slots][0] == "mli_cover"
     assert brief.persona["description"]
-    assert brief.form_values["budget"]
+    assert "budget" not in brief.form_values
 
 
 def test_brief_single_image_has_no_composition():

@@ -11,11 +11,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.content.control.workflow.content_node_input import ContentNodeInputAssembler
 from yuxi.content.model.contracts import ContractDomainContext
+from yuxi.content.model.materials import build_formula_lexicon_constraints
 from yuxi.services.agent_delegation_service import AgentDelegationRequest, AgentDelegationService
 from yuxi.storage.postgres.models_business import User
 from yuxi.storage.postgres.models_content import ContentNodeRun, ContentTask
 
 PROHIBITED_ACTIONS = {
+    "extract_creation_facts": ("只摘录用户原文事实", "不得选择创作策略、公式或爆款", "不得推断或补造原文没有的值"),
     "research_strategy_prices": ("只检索价格库", "不得把标准单价转换为本项目成交金额", "不得代替人工确认"),
     "reselect_creation_strategy": ("不得再次查询知识库", "不得把标准单价映射为实际成交明细", "不生成正文"),
     "select_creation_strategy": ("不提交规则库外的组合组、创作手法或公式", "不编造事实", "不生成正文"),
@@ -49,9 +51,16 @@ PROHIBITED_ACTIONS = {
 }
 
 
+def _draft_hash(draft: dict[str, Any]) -> str:
+    canonical = json.dumps(draft, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
 class AgentNodeResultMapper:
     @staticmethod
     def to_state(node_id: str, result: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
+        if node_id == "extract_creation_facts":
+            return {"extracted_creation_facts": result}
         if node_id in {"select_creation_strategy", "reselect_creation_strategy"} and "strategy" in result:
             return {"joint_strategy_decision": result, "strategy_selection": result["strategy"]}
         if node_id == "select_creation_strategy":
@@ -159,6 +168,7 @@ class AgentNodeResultMapper:
         if node_id == "generate_body":
             return {"content_draft": result}
         if node_id == "generate_content":
+            draft = result["draft"]
             return {
                 "selected_title": {
                     "id": "agent-selected-title",
@@ -166,7 +176,15 @@ class AgentNodeResultMapper:
                     "selected_by": "agent",
                 },
                 "content_outline": result["outline"],
-                "content_draft": result["draft"],
+                "creative_content_draft": draft,
+                "content_draft": draft,
+                "draft_revision": int(state.get("draft_revision") or 0) + 1,
+                "creative_draft_hash": _draft_hash(draft),
+                "final_draft_hash": None,
+                "reviewed_draft_hash": None,
+                "review_report": None,
+                "locked_block_composition": None,
+                "composed_content_validation_report": None,
             }
         if node_id == "persona_style_polish":
             draft = dict(state.get("content_draft") or {})
@@ -179,7 +197,15 @@ class AgentNodeResultMapper:
                 },
             }
         if node_id == "semantic_review":
-            return {"review_report": result}
+            reviewed_draft_hash = state.get("final_draft_hash") or _draft_hash(state.get("content_draft") or {})
+            return {
+                "review_report": {
+                    **result,
+                    "draft_revision": int(state.get("draft_revision") or 0),
+                    "reviewed_draft_hash": reviewed_draft_hash,
+                },
+                "reviewed_draft_hash": reviewed_draft_hash,
+            }
         if node_id == "plan_visuals":
             canonical = json.dumps(result, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
             return {
@@ -212,8 +238,14 @@ class AgentNodeHandler:
         if node_run is None or task is None or user is None:
             raise ValueError("Agent 节点缺少任务、用户或节点 Run")
 
+        if node["id"] == "extract_creation_facts" and not (
+            (state.get("creation_plan_gap_analysis") or {}).get("missing_variable_codes")
+        ):
+            return {"extracted_creation_facts": {"facts": [], "unresolved_variable_codes": []}}
+
         if node["id"] == "research_strategy_prices" and not (
             (state.get("joint_strategy_decision") or {}).get("price_research_questions")
+            or (state.get("creation_plan_gap_analysis") or {}).get("price_research_questions")
         ):
             return {
                 "strategy_price_evidence_collection": {
@@ -295,9 +327,16 @@ class AgentNodeHandler:
         cover_asset_ids = list((state.get("cover_job") or {}).get("asset_ids") or [])
         visual_material = (state.get("runtime_config_snapshot") or {}).get("visual_material") or {}
         required_source_asset_ids = [visual_material["image_asset_id"]] if visual_material.get("image_asset_id") else []
+        persona_review_required = node["id"] == "semantic_review"
+        if persona_review_required and state.get("production_pack"):
+            from yuxi.content.v3.modular_rules import requires_persona_review
+
+            persona_review_required = requires_persona_review(state)
+        expression_policy = (state.get("production_pack") or {}).get("expression_policy") or {}
+        emoji_review_required = node["id"] == "semantic_review" and expression_policy.get("emoji_allowed", True)
         locked_values = {
-            "require_emoji_review": node["id"] == "semantic_review",
-            "require_persona_review": node["id"] == "semantic_review",
+            "require_emoji_review": emoji_review_required,
+            "require_persona_review": persona_review_required,
             "require_composition_review": node["id"] == "semantic_review"
             and bool((state.get("strategy_snapshot") or {}).get("direction_blueprint")),
             "creation_mode": "viral_rewrite",
@@ -322,13 +361,14 @@ class AgentNodeHandler:
             for item in (state.get("review_report") or {}).get("checks", [])
             if item.get("status") == "blocked"
         }
+        generation_draft = state.get("creative_content_draft") or state.get("content_draft") or {}
         if (
             node["id"] == "generate_content"
             and (state.get("validation_report") or {}).get("status") in {"passed", "warning"}
             and blocked_review_codes
             and blocked_review_codes <= {"EMOJI_COVERAGE", "EMOJI_APPROPRIATENESS", "EMOJI_RESTRICTIONS"}
         ):
-            locked_values["emoji_repair_body"] = state["content_draft"]["body"]
+            locked_values["emoji_repair_body"] = generation_draft["body"]
         if (
             node["id"] == "generate_content"
             and (state.get("validation_report") or {}).get("status") in {"passed", "warning"}
@@ -342,9 +382,11 @@ class AgentNodeHandler:
                 "EMOJI_RESTRICTIONS",
             }
         ):
-            paragraphs = [part.strip() for part in re.split(r"\n\s*\n", state["content_draft"]["body"]) if part.strip()]
+            paragraphs = [part.strip() for part in re.split(r"\n\s*\n", generation_draft["body"]) if part.strip()]
             locked_values["persona_repair_middle"] = paragraphs[1:-1]
         assembly_state = state
+        if node["id"] == "generate_content" and generation_draft:
+            assembly_state = {**state, "content_draft": generation_draft}
         if node["id"] == "plan_visuals":
             from yuxi.content.control.visual_template_fields import missing_required_template_fields
             from yuxi.content.v3.modular_rules import derive_visual_intent
@@ -394,6 +436,60 @@ class AgentNodeHandler:
             strategy_snapshot=state.get("strategy_snapshot") or {},
             viral_candidate_collection=state.get("viral_candidate_collection") or {},
         )
+        formula_lexicons = state.get("formula_lexicon_bundle") or {}
+        if formula_lexicons:
+            production_pack = state.get("production_pack") or {}
+            if production_pack:
+                formula_lexicons = production_pack.get("formula_lexicon_bundle") or formula_lexicons
+                constraints = build_formula_lexicon_constraints(
+                    materials=production_pack.get("materials") or [],
+                    formula_lexicon_bundle=formula_lexicons,
+                    material_quality_report=production_pack.get("material_quality_report") or None,
+                )
+                lexicon_terms = {
+                    scope: {code: frozenset(terms) for code, terms in (constraints.get(scope) or {}).items()}
+                    for scope in ("title", "body")
+                }
+                selection = constraints.get("selection") or {}
+                locked_lexicon_terms = {
+                    scope: {
+                        code: tuple(str(term) for term in terms) for code, terms in (selection.get(scope) or {}).items()
+                    }
+                    for scope in ("title", "body")
+                }
+            else:
+                lexicon_terms = {"title": {}, "body": {}}
+                locked_lexicon_terms = {"title": {}, "body": {}}
+                for scope in ("title", "body"):
+                    for entry in formula_lexicons.get(scope) or []:
+                        code = str(entry.get("code") or "")
+                        terms = frozenset(
+                            term.strip()
+                            for chunk in entry.get("chunks") or []
+                            for term in str(chunk).splitlines()
+                            if term.strip()
+                        )
+                        if code and terms:
+                            lexicon_terms[scope][code] = terms
+            domain_context = replace(
+                domain_context,
+                allowed_title_lexicon_terms=lexicon_terms["title"],
+                allowed_body_lexicon_terms=lexicon_terms["body"],
+                locked_title_lexicon_terms=locked_lexicon_terms["title"],
+                locked_body_lexicon_terms=locked_lexicon_terms["body"],
+                normalize_generation_evidence_ids=True,
+                locked_required_body_evidence_ids=tuple(
+                    sorted(
+                        {
+                            str(evidence_id)
+                            for material in production_pack.get("materials") or []
+                            if set(material.get("variable_codes") or [])
+                            & {"calculated_total", "trade_breakdown", "labor_aux_breakdown"}
+                            for evidence_id in material.get("evidence_ids") or []
+                        }
+                    )
+                ),
+            )
         required_skills = tuple(node["required_skills"])
         if node["id"] == "generate_content" and "viral-author-core" in required_skills:
             from yuxi.content.v3.modular_rules import select_modular_generation_skills

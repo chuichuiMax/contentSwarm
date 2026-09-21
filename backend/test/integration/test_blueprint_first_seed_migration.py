@@ -3,8 +3,8 @@
 from sqlalchemy import select
 import pytest
 
-from yuxi.content.v3.joint_workflow import PLATFORM_WORKFLOW_EXPRESSION_GUIDANCE_ID
-from yuxi.content.v3.seed import _activate_v3_seed_data
+from yuxi.content.v3.joint_workflow import PLATFORM_WORKFLOW_STANDARDIZED_FACTORY_ID
+from yuxi.content.v3.seed import _activate_v3_seed_data, _ensure_workflow_v3
 from yuxi.content.v3.workflow import PLATFORM_WORKFLOW_V3_ID
 from yuxi.storage.postgres.manager import pg_manager
 from yuxi.storage.postgres.models_content import ContentTask, ContentWorkflowVersion, IndustryTemplateVersion
@@ -18,7 +18,9 @@ async def test_existing_default_upgrade_preserves_historical_task_versions():
             try:
                 template = await db.get(IndustryTemplateVersion, "industry-decoration-v3")
                 template.default_workflow_version_id = PLATFORM_WORKFLOW_V3_ID
-                target = await db.get(ContentWorkflowVersion, PLATFORM_WORKFLOW_EXPRESSION_GUIDANCE_ID)
+                await _ensure_workflow_v3(db)
+                await db.flush()
+                target = await db.get(ContentWorkflowVersion, PLATFORM_WORKFLOW_STANDARDIZED_FACTORY_ID)
                 target.status = "draft"
                 history_query = select(
                     ContentTask.id,
@@ -30,7 +32,7 @@ async def test_existing_default_upgrade_preserves_historical_task_versions():
                 for _ in range(2):
                     await _activate_v3_seed_data(db)
                     await db.flush()
-                    assert template.default_workflow_version_id == PLATFORM_WORKFLOW_EXPRESSION_GUIDANCE_ID
+                    assert template.default_workflow_version_id == PLATFORM_WORKFLOW_STANDARDIZED_FACTORY_ID
                     assert target.status == "published"
                     assert (await db.execute(history_query)).all() == history
             finally:

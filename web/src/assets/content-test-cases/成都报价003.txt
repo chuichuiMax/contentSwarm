@@ -1,0 +1,69 @@
+{
+    "serialNo": "003",
+    "persona": {
+        "age": "45",
+        "workYears": "18",
+        "serviceCity": "成都",
+        "introduction": "在成都装修这行扎扎实实做了18年。自己对接、自己盯场、自己带队施工，做事踏实，干活认真不敷衍，实打实的工艺，把每一套工地都亲自管好、做好",
+        "skills": [
+            "工长",
+            "水电",
+            "泥瓦"
+        ],
+        "honors": {
+            "ownerRecommendCount": "10",
+            "servedSiteCount": "10"
+        },
+        "tone": "靠谱",
+        "serviceAdvantages": [
+            "决策快效率高",
+            "自有工人无转包"
+        ]
+    },
+    "requirementType": {
+        "typeName": "施工报价",
+        "quotationInfo": {
+            "houseArea": "115平",
+            "houseType": "四室一厅"
+        },
+        "prices": [
+            {
+                "format": "工种总价",
+                "content": " 拆除施工：1695；泥瓦施工：8465； 水电施工：5700；木工施工：2788； 油漆施工：5060；所有部分总计：32708"
+            }
+        ],
+        "titlePrice": {
+            "label": "所有部分总计",
+            "displayText": "32708元"
+        },
+        "mySite": "成都青羊老小区"
+    },
+    "tags": [
+        "营销报价",
+        "旧房局改",
+        "泥瓦",
+        "中式风格"
+    ],
+    "images": [
+        {
+            "templateId": "1",
+            "objectKey": "f291b03265274e6a88941b1c8b95bd38.jpg",
+            "objectUrl": "https://dangjia-dev.obs.cn-south-1.myhuaweicloud.com/f291b03265274e6a88941b1c8b95bd38.jpg"
+        },
+        {
+            "templateId": "",
+            "objectKey": "5c8b589e816149b2b91ffbf21d6688d0.jpg",
+            "objectUrl": "https://dangjia-dev.obs.cn-south-1.myhuaweicloud.com/5c8b589e816149b2b91ffbf21d6688d0.jpg"
+        },
+        {
+            "templateId": "",
+            "objectKey": "b48ac650f362436e999dc904a1e3317d.jpg",
+            "objectUrl": "https://dangjia-dev.obs.cn-south-1.myhuaweicloud.com/b48ac650f362436e999dc904a1e3317d.jpg"
+        },
+        {
+            "templateId": "",
+            "objectKey": "6ec6c8d5dd034c03923ff0d47f2d3610.jpg",
+            "objectUrl": "https://dangjia-dev.obs.cn-south-1.myhuaweicloud.com/6ec6c8d5dd034c03923ff0d47f2d3610.jpg"
+        }
+    ]
+}

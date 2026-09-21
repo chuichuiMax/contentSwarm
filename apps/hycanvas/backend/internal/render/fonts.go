@@ -9,9 +9,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"unicode"
 
 	"golang.org/x/image/font"
 	"golang.org/x/image/font/opentype"
@@ -93,24 +95,42 @@ func registerParsedFont(family string, weight int, f *opentype.Font) {
 	fontReg[fontKey{normFamily(family), weight}] = f
 }
 
-// lookupFont returns the registered font nearest in weight for the family, or
-// nil when the family has no registered faces (caller falls back).
+// lookupFont returns the registered font nearest in weight for the family.
+// Generic browser families resolve to one stable Simplified Chinese sans face
+// so a single run cannot mix random CJK collection members glyph by glyph.
 func lookupFont(family string, weight int) *opentype.Font {
 	fontMu.RLock()
 	defer fontMu.RUnlock()
 	fam := normFamily(family)
+	if best := lookupFamilyFontLocked(fam, weight); best != nil {
+		return best
+	}
+	if fam == "" || fam == "system" || fam == "systemui" || fam == "system-ui" || fam == "sansserif" || fam == "sans-serif" {
+		for _, fallback := range []string{"notosanssc", "notosansjp", "notosanskr", "notosanstc", "notosanshk"} {
+			if best := lookupFamilyFontLocked(fallback, weight); best != nil {
+				return best
+			}
+		}
+	}
+	return nil
+}
+
+func lookupFamilyFontLocked(family string, weight int) *opentype.Font {
 	var best *opentype.Font
 	bestDist := 1 << 30
+	bestWeight := 0
 	for k, f := range fontReg {
-		if k.family != fam {
+		if k.family != family {
 			continue
 		}
 		d := k.weight - weight
 		if d < 0 {
 			d = -d
 		}
-		if d < bestDist {
+		preferTie := d == bestDist && ((weight >= 500 && k.weight > bestWeight) || (weight < 500 && (bestWeight == 0 || k.weight < bestWeight)))
+		if d < bestDist || preferTie {
 			bestDist = d
+			bestWeight = k.weight
 			best = f
 		}
 	}
@@ -145,12 +165,63 @@ func fontCovering(r rune, preferFamily string, weight int) *opentype.Font {
 	}
 	fontMu.RLock()
 	defer fontMu.RUnlock()
-	for _, f := range fontReg {
+	keys := make([]fontKey, 0, len(fontReg))
+	for key := range fontReg {
+		keys = append(keys, key)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		left, right := keys[i], keys[j]
+		leftFamily, rightFamily := fallbackFamilyRank(r, left.family), fallbackFamilyRank(r, right.family)
+		if leftFamily != rightFamily {
+			return leftFamily < rightFamily
+		}
+		leftWeight, rightWeight := left.weight-weight, right.weight-weight
+		if leftWeight < 0 {
+			leftWeight = -leftWeight
+		}
+		if rightWeight < 0 {
+			rightWeight = -rightWeight
+		}
+		if leftWeight != rightWeight {
+			return leftWeight < rightWeight
+		}
+		if left.weight != right.weight {
+			if weight >= 500 {
+				return left.weight > right.weight
+			}
+			return left.weight < right.weight
+		}
+		return left.family < right.family
+	})
+	for _, key := range keys {
+		f := fontReg[key]
 		if coversRune(f, r) {
 			return f
 		}
 	}
 	return nil
+}
+
+func fallbackFamilyRank(r rune, family string) int {
+	preferred := []string{"notosanssc", "notosansjp", "notosanskr", "notosanstc", "notosanshk"}
+	switch {
+	case unicode.In(r, unicode.Hiragana, unicode.Katakana):
+		preferred = []string{"notosansjp", "notosanssc", "notosanstc", "notosanshk", "notosanskr"}
+	case unicode.In(r, unicode.Hangul):
+		preferred = []string{"notosanskr", "notosanssc", "notosansjp", "notosanstc", "notosanshk"}
+	}
+	for index, candidate := range preferred {
+		if family == candidate {
+			return index
+		}
+	}
+	if strings.Contains(family, "mono") {
+		return 30
+	}
+	if strings.Contains(family, "serif") {
+		return 20
+	}
+	return 10
 }
 
 // RegisteredFamilies lists the registered family names, for startup logging so

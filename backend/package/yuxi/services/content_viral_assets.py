@@ -10,16 +10,48 @@ from fastapi import HTTPException
 from sqlalchemy import case, func, literal, or_, select
 
 from yuxi.content.catalog import INDUSTRY_CONFIG
-from yuxi.content.model.viral_assets import ViralArticleSource, ViralAssetImport, extract_article_records
+from yuxi.content.model.viral_assets import (
+    ViralArticleSource,
+    ViralAssetCorrectionInput,
+    ViralAssetImport,
+    ViralAssetReviewInput,
+    extract_article_records,
+    validate_prepared_asset_v2,
+)
 from yuxi.repositories.viral_asset_repository import ViralAssetRepository, asset_dict
 from yuxi.services.run_queue_service import get_arq_pool
-from yuxi.storage.postgres.models_content import ContentViralArticleVersion
+from yuxi.storage.postgres.models_content import (
+    ContentRuleVersion,
+    ContentViralArticleVersion,
+    VariableDefinition,
+)
 from yuxi.storage.postgres.models_knowledge import KnowledgeBase, KnowledgeFile
+from yuxi.utils.datetime_utils import utc_now_naive
 
 
 def preparation_skill_hash() -> str:
     path = Path(__file__).parents[1] / "agents/skills/buildin/viral-asset-preparer/SKILL.md"
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+async def published_variable_codes(db) -> set[str]:
+    return set(
+        (
+            await db.execute(
+                select(VariableDefinition.code)
+                .join(ContentRuleVersion, ContentRuleVersion.id == VariableDefinition.rule_version_id)
+                .where(
+                    ContentRuleVersion.status == "published",
+                    VariableDefinition.enabled.is_(True),
+                )
+            )
+        ).scalars()
+    )
+
+
+def reference_card_variable_codes(prepared_json: dict) -> set[str]:
+    card = (prepared_json or {}).get("reference_card") or {}
+    return {str(code) for slot in card.get("required_slots") or [] for code in slot.get("variable_codes") or [] if code}
 
 
 async def accessible_asset_kbs(user) -> list[str]:
@@ -125,6 +157,7 @@ async def search_ready_viral_assets(
                     asset.kb_id.in_(allowed),
                     asset.industry_slug == industry_slug,
                     asset.status == "ready",
+                    card["schema_version"].as_integer() == 2,
                     *([card["content_type_code"].as_string() == content_type_code] if content_type_code else []),
                     asset.preparation_skill_hash == preparation_skill_hash(),
                     or_(
@@ -139,12 +172,18 @@ async def search_ready_viral_assets(
             )
         ).scalars()
     )
+    if not rows:
+        return []
+    allowed_variable_codes = await published_variable_codes(db)
     result = []
-    for row in rows:
+    for rank, row in enumerate(rows):
         if not await check_asset_source(db, row):
             row.status, row.error_message = "invalidated", "原文已更新，请重新准备"
             continue
         if row.preparation_skill_hash != preparation_skill_hash():
+            continue
+        if reference_card_variable_codes(row.prepared_json) - allowed_variable_codes:
+            row.status, row.error_message = "invalidated", "参考槽位引用的变量已停用，请重新准备"
             continue
         item = asset_dict(row)
         card = item["reference_card"]
@@ -152,6 +191,7 @@ async def search_ready_viral_assets(
             **{
                 key: card[key]
                 for key in (
+                    "schema_version",
                     "audience",
                     "scene",
                     "goal",
@@ -162,7 +202,19 @@ async def search_ready_viral_assets(
                 )
             },
             "required_slots": [
-                {key: slot[key] for key in ("name", "description", "required")} for slot in card["required_slots"]
+                {
+                    key: slot[key]
+                    for key in (
+                        "slot_key",
+                        "name",
+                        "description",
+                        "variable_codes",
+                        "match_mode",
+                        "evidence_required",
+                        "required",
+                    )
+                }
+                for slot in card["required_slots"]
             ],
         }
         result.append(
@@ -182,6 +234,7 @@ async def search_ready_viral_assets(
                 )
             }
         )
+        result[-1]["retrieval_score"] = len(rows) - rank
         if include_structure:
             result[-1]["structure_preview"] = {
                 key: row.prepared_json["reference_blueprint"][key]
@@ -268,11 +321,16 @@ async def list_viral_assets(db, user, *, industry_slug=None, ready_only=False, l
         ready_only=ready_only,
         limit=limit,
     )
+    allowed_variable_codes = await published_variable_codes(db)
     for asset in assets:
         if asset.status == "ready" and not await check_asset_source(db, asset):
             asset.status, asset.error_message = "invalidated", "源文件已更新或删除，请重新准备"
         elif asset.status == "ready" and asset.preparation_skill_hash != preparation_skill_hash():
             asset.status, asset.error_message = "invalidated", "准备标准已更新，请重新导入"
+        elif asset.status == "ready" and (asset.prepared_json or {}).get("schema_version") != 2:
+            asset.status, asset.error_message = "invalidated", "参考卡契约已升级，请重新准备"
+        elif asset.status == "ready" and reference_card_variable_codes(asset.prepared_json) - allowed_variable_codes:
+            asset.status, asset.error_message = "invalidated", "参考槽位引用的变量已停用，请重新准备"
     await db.commit()
     return {"items": [asset_dict(asset) for asset in assets if not ready_only or asset.status == "ready"]}
 
@@ -289,3 +347,132 @@ async def retry_viral_asset(db, user, asset_id: str):
     asset.attempt += 1
     await enqueue_asset(db, asset)
     return {"asset": asset_dict(asset)}
+
+
+async def review_viral_asset(db, user, asset_id: str, payload: ViralAssetReviewInput):
+    asset = await require_asset(db, user, asset_id, for_update=True)
+    prepared = dict(asset.prepared_json or {})
+    if payload.action in {"approve", "enable"}:
+        if payload.action == "approve" and asset.status != "needs_review":
+            raise HTTPException(409, "只有待审核资产可以通过审核")
+        if payload.action == "enable" and asset.status != "invalidated":
+            raise HTTPException(409, "只有已停用资产可以重新启用")
+        if not await check_asset_source(db, asset) or asset.preparation_skill_hash != preparation_skill_hash():
+            raise HTTPException(409, "原文或准备标准已变化，请重新准备")
+        try:
+            allowed_variable_codes = await published_variable_codes(db)
+            if not allowed_variable_codes:
+                raise HTTPException(409, "已发布变量目录为空，不能发布爆款资产")
+            contract_payload = {
+                key: prepared[key]
+                for key in (
+                    "schema_version",
+                    "status",
+                    "source_hash",
+                    "reference_card",
+                    "reference_blueprint",
+                    "blueprint_anchors",
+                    "issues",
+                )
+                if key in prepared
+            }
+            result = validate_prepared_asset_v2(
+                contract_payload,
+                ViralArticleSource.model_validate(asset.source_json),
+                allowed_variable_codes=allowed_variable_codes,
+            )
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        if result.status != "prepared":
+            raise HTTPException(409, "准备结果仍有未解决问题，不能发布")
+        asset.status, asset.error_message = "ready", None
+    elif payload.action == "reject":
+        if asset.status != "needs_review":
+            raise HTTPException(409, "只有待审核资产可以驳回")
+        asset.status, asset.error_message = "needs_review", payload.reason
+    else:
+        if asset.status != "ready":
+            raise HTTPException(409, "只有已发布资产可以停用")
+        asset.status, asset.error_message = "invalidated", payload.reason or "运营已停用"
+    review_entry = {
+        "action": payload.action,
+        "reason": payload.reason,
+        "reviewed_by": str(user.uid),
+        "reviewed_at": utc_now_naive().isoformat(),
+    }
+    prepared["review"] = review_entry
+    prepared["review_history"] = [*(prepared.get("review_history") or []), review_entry]
+    asset.prepared_json = prepared
+    await db.commit()
+    return {"asset": asset_dict(asset, include_source=True)}
+
+
+async def correct_viral_asset(db, user, asset_id: str, payload: ViralAssetCorrectionInput):
+    asset = await require_asset(db, user, asset_id, for_update=True)
+    if asset.status != "needs_review":
+        raise HTTPException(409, "只能修正待审核资产；已发布资产请先停用并重新准备")
+    if not await check_asset_source(db, asset) or asset.preparation_skill_hash != preparation_skill_hash():
+        raise HTTPException(409, "原文或准备标准已变化，请重新准备")
+    prepared = dict(asset.prepared_json or {})
+    card = dict(prepared.get("reference_card") or {})
+    existing_slots = list(card.get("required_slots") or [])
+    if len(existing_slots) != len(payload.required_slots):
+        raise HTTPException(422, "为保留原文锚点，修正时不能新增或删除槽位，请重新准备")
+    card.update(
+        content_type_code=payload.content_type_code,
+        content_type_reason=payload.content_type_reason,
+        required_slots=[
+            {**slot.model_dump(mode="json"), "anchor": existing_slots[index]["anchor"]}
+            for index, slot in enumerate(payload.required_slots)
+        ],
+    )
+    prepared["reference_card"] = card
+    contract_payload = {
+        key: prepared[key]
+        for key in (
+            "schema_version",
+            "status",
+            "source_hash",
+            "reference_card",
+            "reference_blueprint",
+            "blueprint_anchors",
+            "issues",
+        )
+        if key in prepared
+    }
+    try:
+        validate_prepared_asset_v2(
+            contract_payload,
+            ViralArticleSource.model_validate(asset.source_json),
+            allowed_variable_codes=await published_variable_codes(db),
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    review_entry = {
+        "action": "correct",
+        "reason": payload.reason,
+        "reviewed_by": str(user.uid),
+        "reviewed_at": utc_now_naive().isoformat(),
+    }
+    prepared["review"] = review_entry
+    prepared["review_history"] = [*(prepared.get("review_history") or []), review_entry]
+    asset.prepared_json = prepared
+    asset.error_message = "运营已修正类型或槽位，等待审核发布"
+    await db.commit()
+    return {"asset": asset_dict(asset, include_source=True)}
+
+
+async def reprepare_viral_assets(db, user, asset_ids: list[str]):
+    repo = ViralAssetRepository(db)
+    queued = []
+    for asset_id in dict.fromkeys(asset_ids):
+        asset = await require_asset(db, user, asset_id)
+        if not await check_asset_source(db, asset):
+            raise HTTPException(409, f"资产 {asset_id} 原文已更新，请从源文件重新识别")
+        source = ViralArticleSource.model_validate(asset.source_json)
+        queued.append(await repo.register(source, skill_hash=preparation_skill_hash(), uid=str(user.uid)))
+    await db.commit()
+    for asset in queued:
+        if asset.status == "pending":
+            await enqueue_asset(db, asset)
+    return {"items": [asset_dict(asset) for asset in queued]}

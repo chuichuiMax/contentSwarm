@@ -21,12 +21,15 @@ from yuxi.content.model.contracts.joint_strategy import (
     validate_joint_strategy,
 )
 from yuxi.content.model.contracts.strategy import SelectStrategyInputV2, StrategyDecisionV2, validate_strategy_decision
+from yuxi.content.model.materials import FrozenProductionPackV1
 from yuxi.content.model.viral_document import ViralDocumentResultV1, validate_document_result
 from yuxi.content.model.viral_assets import (
     ViralArticleSource,
     ViralAssetPreparationInputV1,
     ViralAssetPreparationResultV1,
+    ViralAssetPreparationResultV2,
     validate_prepared_asset,
+    validate_prepared_asset_v2,
 )
 
 
@@ -114,6 +117,63 @@ class GenerateContentPromptV1(StrictContract):
     content_draft: dict[str, Any] | None = None
 
 
+class GenerationRepairConstraintsV1(StrictContract):
+    """回修时显式告诉模型哪些已通过内容不可改动。"""
+
+    mode: Literal["persona_edges_only", "emoji_only"]
+    original_body: str
+    immutable_title: dict[str, Any]
+    immutable_outline: dict[str, Any]
+    immutable_topics: tuple[str, ...]
+    immutable_middle_paragraphs: tuple[str, ...] = ()
+    instruction: str
+
+
+class LockedBlockPromptV1(StrictContract):
+    block_id: Literal["quote_block"]
+    block_type: Literal["verbatim_quote"]
+    label: str
+    insertion_policy: Literal["after-opening-paragraph-v1"]
+    render_policy: Literal["semicolon-lines-v1"]
+    char_count: int = Field(ge=1)
+    creative_body_min_chars: int = Field(ge=1)
+    creative_body_max_chars: int = Field(ge=1)
+    instruction: str
+
+
+class GenerationProductionPackViewV1(StrictContract):
+    """冻结生产包的模型安全视图；不含原文、来源 Hash 和审计冻结标识。"""
+
+    schema_version: Literal[1] = 1
+    production_order: dict[str, Any]
+    material_manifest: dict[str, Any]
+    material_quality_report: dict[str, Any]
+    materials: tuple[dict[str, Any], ...]
+    strategy_snapshot: dict[str, Any]
+    formula_lexicon_bundle: dict[str, Any]
+    reference_snapshot: dict[str, Any]
+    expression_guidance: dict[str, Any] | None = None
+    expression_policy: dict[str, Any] | None = None
+    writing_request: str | None = None
+    channel_profile: dict[str, Any]
+    persona_profile: dict[str, Any]
+    content_rule_bundle: dict[str, Any]
+    locked_blocks: tuple[LockedBlockPromptV1, ...] = ()
+
+
+class StandardizedGenerateContentPromptV1(StrictContract):
+    """标准生产工作流的模型视图；所有创作资料只来自已冻结生产包。"""
+
+    production_pack: GenerationProductionPackViewV1
+    lexicon_constraints: dict[str, Any] = Field(min_length=1)
+    validation_report: dict[str, Any] | None = None
+    review_report: dict[str, Any] | None = None
+    selected_title: dict[str, Any] | None = None
+    content_outline: dict[str, Any] | None = None
+    content_draft: dict[str, Any] | None = None
+    repair_constraints: GenerationRepairConstraintsV1 | None = None
+
+
 class SemanticReviewPromptV1(StrictContract):
     """已校验审核输入的模型视图，保留所有成稿、事实及选中参考蓝图。"""
 
@@ -131,6 +191,8 @@ class SemanticReviewPromptV1(StrictContract):
     evidence_bundle: dict[str, Any]
     runtime_config_snapshot: dict[str, Any] = Field(default_factory=dict)
     expression_guidance: dict[str, Any] | None = None
+    expression_policy: dict[str, Any] | None = None
+    locked_content_context: dict[str, Any] | None = None
 
 
 class AnalyzeContentValueInputV1(StrictContract):
@@ -211,6 +273,19 @@ class ResearchStrategyPricesInputV1(StrictContract):
     content_brief: dict[str, Any] = Field(min_length=1)
     evidence_bundle: dict[str, Any] = Field(min_length=1)
     joint_strategy_decision: JointStrategyDecisionV2
+    runtime_config_snapshot: dict[str, Any]
+
+
+class ResearchCreationPlanPricesInputV1(StrictContract):
+    content_brief: dict[str, Any] = Field(min_length=1)
+    evidence_bundle: dict[str, Any] = Field(min_length=1)
+    creation_plan_gap_analysis: dict[str, Any] = Field(min_length=1)
+    runtime_config_snapshot: dict[str, Any]
+
+
+class ExtractCreationFactsInputV1(StrictContract):
+    content_brief: dict[str, Any] = Field(min_length=1)
+    creation_plan_gap_analysis: dict[str, Any] = Field(min_length=1)
     runtime_config_snapshot: dict[str, Any]
 
 
@@ -401,6 +476,7 @@ class GenerateContentInputV1(StrictContract):
     selected_title: dict[str, Any] | None = None
     content_outline: dict[str, Any] | None = None
     content_draft: dict[str, Any] | None = None
+    production_pack: FrozenProductionPackV1 | None = None
 
     @model_validator(mode="after")
     def verify_formula_lexicon_bundle(self) -> GenerateContentInputV1:
@@ -443,6 +519,20 @@ class GenerateContentInputV1(StrictContract):
                     raise ValueError(f"装修内容生成的必选{scope}词库未完整加载")
             if not bundle.get("bundle_hash"):
                 raise ValueError("装修内容生成的必选词库包缺少 hash")
+        if self.production_pack is not None:
+            pack = self.production_pack
+            strategy = self.strategy_snapshot.model_dump(mode="json")
+            if pack.strategy_snapshot != strategy:
+                raise ValueError("冻结生产包的策略快照与生成输入不一致")
+            if pack.evidence_bundle_hash != self.evidence_bundle.get("bundle_hash"):
+                raise ValueError("冻结生产包的 EvidenceBundle Hash 与生成输入不一致")
+            if pack.formula_lexicon_bundle_hash != bundle.get("bundle_hash"):
+                raise ValueError("冻结生产包的公式词库 Hash 与生成输入不一致")
+            if pack.channel_profile != self.channel_profile or pack.persona_profile != self.persona_profile:
+                raise ValueError("冻结生产包的渠道或人设配置与生成输入不一致")
+            runtime_rules = self.runtime_config_snapshot.get("content_rule_bundle") or {}
+            if pack.content_rule_bundle.get("bundle_hash") != runtime_rules.get("bundle_hash"):
+                raise ValueError("冻结生产包的内容规则 Hash 与生成输入不一致")
         return self
 
 
@@ -461,6 +551,8 @@ class SemanticReviewInputV1(StrictContract):
     evidence_bundle: dict[str, Any] = Field(min_length=1)
     runtime_config_snapshot: dict[str, Any] = Field(default_factory=dict)
     expression_guidance: dict[str, Any] | None = None
+    expression_policy: dict[str, Any] | None = None
+    locked_content_context: dict[str, Any] | None = None
 
 
 class PlanVisualsInputV1(StrictContract):
@@ -525,6 +617,8 @@ INPUT_CONTRACT_REGISTRY: dict[str, type[StrictContract]] = {
         JointStrategyInputV1,
         ReevaluateJointStrategyInputV1,
         ResearchStrategyPricesInputV1,
+        ResearchCreationPlanPricesInputV1,
+        ExtractCreationFactsInputV1,
         ViralAssetPreparationInputV1,
         SelectContentDirectionInputV1,
         ExplainStrategyInputV1,
@@ -546,6 +640,7 @@ INPUT_CONTRACT_REGISTRY: dict[str, type[StrictContract]] = {
         PersonaStylePolishInputV1,
         GenerateContentInputV1,
         GenerateContentPromptV1,
+        StandardizedGenerateContentPromptV1,
         SemanticReviewPromptV1,
         JointStrategyPromptV1,
         SemanticReviewInputV1,
@@ -665,6 +760,17 @@ class StrategyPriceEvidenceResultV1(PriceEvidenceCollectionResultV1):
                 if not str(item.metadata.get(key) or "").strip():
                     raise ValueError(f"报价缺少 {key}")
         return self
+
+
+class ExtractedCreationFactV1(StrictContract):
+    variable_code: str = Field(min_length=1, pattern=r"^[a-z][a-z0-9_]*$")
+    value: str = Field(min_length=1, max_length=4000)
+    source_quote: str = Field(min_length=1, max_length=4000)
+
+
+class ExtractedCreationFactsResultV1(StrictContract):
+    facts: list[ExtractedCreationFactV1] = Field(max_length=50)
+    unresolved_variable_codes: list[str] = Field(default_factory=list)
 
 
 class ComplianceEvidenceCollectionResultV1(EvidenceCollectionResultV1):
@@ -816,6 +922,18 @@ class ContentReviewResultV1(StrictContract):
         return self
 
 
+class StandardizedReviewCheckV1(ReviewCheckV1):
+    """标准生产审核只输出判断，证据关系沿用已冻结的段落映射。"""
+
+    evidence_ids: list[str] = Field(default_factory=list, max_length=0)
+
+
+class StandardizedContentReviewResultV1(ContentReviewResultV1):
+    """避免审核模型重复抄写不透明 Evidence ID 造成非业务性失败。"""
+
+    checks: list[StandardizedReviewCheckV1]
+
+
 class VisualSizeV1(StrictContract):
     width: int = Field(gt=0)
     height: int = Field(gt=0)
@@ -876,6 +994,7 @@ CONTRACT_REGISTRY: dict[str, type[StrictContract]] = {
         JointStrategyDecisionV1,
         JointStrategyDecisionV2,
         ViralAssetPreparationResultV1,
+        ViralAssetPreparationResultV2,
         ViralDocumentResultV1,
         DirectionSelectionResultV1,
         StrategyExplanationResultV1,
@@ -883,6 +1002,7 @@ CONTRACT_REGISTRY: dict[str, type[StrictContract]] = {
         BusinessRuleEvidenceCollectionResultV1,
         PriceEvidenceCollectionResultV1,
         StrategyPriceEvidenceResultV1,
+        ExtractedCreationFactsResultV1,
         ComplianceEvidenceCollectionResultV1,
         ViralCandidateCollectionResultV1,
         ViralReferenceSelectionResultV1,
@@ -895,6 +1015,7 @@ CONTRACT_REGISTRY: dict[str, type[StrictContract]] = {
         GeneratedContentResultV1,
         PersonaPolishResultV1,
         ContentReviewResultV1,
+        StandardizedContentReviewResultV1,
         VisualPlanResultV1,
         CoverJobSubmissionResultV1,
         VisualReviewResultV1,
@@ -903,10 +1024,18 @@ CONTRACT_REGISTRY: dict[str, type[StrictContract]] = {
 
 
 class ContractDomainValidationError(ValueError):
-    def __init__(self, code: str, field_path: str, message: str):
+    def __init__(
+        self,
+        code: str,
+        field_path: str,
+        message: str,
+        *,
+        correction_paths: tuple[str, ...] = (),
+    ):
         super().__init__(message)
         self.code = code
         self.field_path = field_path
+        self.correction_paths = correction_paths or ((field_path,) if field_path else ())
 
 
 def _extract_supported_numbers(value: Any) -> set[str]:
@@ -945,7 +1074,14 @@ class ContractDomainContext:
     locked_body_calling_section_ids: tuple[str, ...] = ()
     allowed_body_variant_keys: frozenset[str] = frozenset()
     required_title_lexicon_codes: frozenset[str] = frozenset()
+    allowed_title_lexicon_codes: frozenset[str] = frozenset()
+    allowed_title_lexicon_terms: dict[str, frozenset[str]] = field(default_factory=dict)
+    locked_title_lexicon_terms: dict[str, tuple[str, ...]] = field(default_factory=dict)
     allowed_body_lexicon_codes: frozenset[str] = frozenset()
+    allowed_body_lexicon_terms: dict[str, frozenset[str]] = field(default_factory=dict)
+    locked_body_lexicon_terms: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    locked_required_body_evidence_ids: tuple[str, ...] = ()
+    normalize_generation_evidence_ids: bool = False
     body_variant_lexicon_codes: dict[str, frozenset[str]] = field(default_factory=dict)
     allowed_evidence_by_usage: dict[str, frozenset[str]] = field(default_factory=dict)
     allowed_asset_ids: frozenset[str] = frozenset()
@@ -1026,6 +1162,15 @@ class ContractDomainContext:
         formula = formula_selection_snapshot
         match = match_decision_snapshot
         locks = locked_values
+        title_formula = deepcopy((strategy_snapshot or {}).get("title_formula") or {})
+        from yuxi.content.v3.title_formula_slots import (
+            enrich_decoration_title_formula,
+            required_title_lexicon_codes,
+        )
+
+        title_formula = enrich_decoration_title_formula(title_formula)
+        required_title_codes = required_title_lexicon_codes(title_formula)
+        title_lexicon_codes = frozenset(title_formula.get("lexicon_codes") or [])
         material_requirements = [
             requirement
             for requirement in (product_material_requirements or {}).get("requirements") or []
@@ -1063,9 +1208,8 @@ class ContractDomainContext:
                     or []
                 )
             ),
-            required_title_lexicon_codes=frozenset(
-                ((strategy_snapshot or {}).get("title_formula") or {}).get("lexicon_codes") or []
-            ),
+            required_title_lexicon_codes=required_title_codes,
+            allowed_title_lexicon_codes=title_lexicon_codes,
             allowed_body_lexicon_codes=frozenset(
                 ((((strategy_snapshot or {}).get("body_formula") or {}).get("body_calling") or {}).get("lexicon_calls"))
                 or []
@@ -1168,41 +1312,107 @@ def _validate_evidence_ids(ids: list[str], usage: str, context: ContractDomainCo
         )
 
 
-def _validate_outline_calling_contract(result: OutlineResultV1, context: ContractDomainContext) -> None:
+def _validate_outline_calling_contract(
+    result: OutlineResultV1,
+    context: ContractDomainContext,
+    *,
+    field_prefix: str = "",
+) -> None:
+    def field_path(name: str) -> str:
+        return f"{field_prefix}.{name}" if field_prefix else name
+
     expected_ids = context.locked_body_calling_section_ids
     if expected_ids:
         actual_ids = tuple(section.section_id for section in result.sections)
         if actual_ids != expected_ids:
             raise ContractDomainValidationError(
                 "body_calling_section_order_invalid",
-                "sections",
+                field_path("sections"),
                 f"正文大纲必须按锁定调用规则输出段落: {', '.join(expected_ids)}",
             )
     if context.allowed_body_variant_keys:
         if result.variant_key not in context.allowed_body_variant_keys:
             raise ContractDomainValidationError(
                 "body_calling_variant_invalid",
-                "variant_key",
+                field_path("variant_key"),
                 "正文公式要求从允许的单一维度中选择一个 variant_key",
             )
     elif result.variant_key is not None:
         raise ContractDomainValidationError(
             "body_calling_variant_unexpected",
-            "variant_key",
+            field_path("variant_key"),
             "当前正文公式不允许选择额外反差维度",
         )
 
 
 def _validate_formula_lexicon_usage(result: GeneratedContentResultV1, context: ContractDomainContext) -> None:
     title_codes = {item.code for item in result.title.lexicon_usage}
-    if context.required_title_lexicon_codes and title_codes != context.required_title_lexicon_codes:
+    unexpected_title_codes = title_codes - context.allowed_title_lexicon_codes
+    if context.allowed_title_lexicon_codes and unexpected_title_codes:
+        raise ContractDomainValidationError(
+            "title_formula_lexicon_usage_invalid",
+            "title.lexicon_usage",
+            f"标题使用了锁定公式之外的词库: {', '.join(sorted(unexpected_title_codes))}",
+        )
+    missing_title_codes = context.required_title_lexicon_codes - title_codes
+    if missing_title_codes:
         raise ContractDomainValidationError(
             "title_formula_lexicon_usage_incomplete",
             "title.lexicon_usage",
-            "标题必须使用锁定公式对应的全部必选词库",
+            f"标题必须使用锁定公式要求的词库，当前缺少: {', '.join(sorted(missing_title_codes))}",
+        )
+    invalid_title_terms: list[str] = []
+    missing_title_terms: list[str] = []
+    for usage in result.title.lexicon_usage:
+        allowed_terms = context.allowed_title_lexicon_terms.get(usage.code)
+        if allowed_terms is not None:
+            invalid_title_terms.extend(
+                f"{usage.code}:{term}" for term in sorted(set(usage.selected_terms) - set(allowed_terms))
+            )
+        missing_title_terms.extend(term for term in usage.selected_terms if term not in result.title.text)
+    if invalid_title_terms or missing_title_terms:
+        messages = []
+        if invalid_title_terms:
+            allowed = "；".join(
+                f"{code}={','.join(sorted(terms))}"
+                for code, terms in sorted(context.allowed_title_lexicon_terms.items())
+            )
+            messages.append("候选外词条 " + "、".join(invalid_title_terms) + f"；可用候选：{allowed}")
+        if missing_title_terms:
+            messages.append("标题未逐字使用 " + "、".join(missing_title_terms))
+        raise ContractDomainValidationError(
+            "title_lexicon_term_invalid" if invalid_title_terms else "title_lexicon_term_unused",
+            "title.lexicon_usage" if invalid_title_terms else "title.text",
+            "；".join(messages),
+            correction_paths=("title.lexicon_usage", "title.text"),
         )
 
     body_codes = {item.code for item in result.draft.lexicon_usage}
+    invalid_body_terms: list[str] = []
+    missing_body_terms: list[str] = []
+    for usage in result.draft.lexicon_usage:
+        allowed_terms = context.allowed_body_lexicon_terms.get(usage.code)
+        if allowed_terms is not None:
+            invalid_body_terms.extend(
+                f"{usage.code}:{term}" for term in sorted(set(usage.selected_terms) - set(allowed_terms))
+            )
+        missing_body_terms.extend(term for term in usage.selected_terms if term not in result.draft.body)
+    if invalid_body_terms or missing_body_terms:
+        messages = []
+        if invalid_body_terms:
+            allowed = "；".join(
+                f"{code}={','.join(sorted(terms))}"
+                for code, terms in sorted(context.allowed_body_lexicon_terms.items())
+            )
+            messages.append("候选外词条 " + "、".join(invalid_body_terms) + f"；可用候选：{allowed}")
+        if missing_body_terms:
+            messages.append("正文未逐字使用 " + "、".join(missing_body_terms))
+        raise ContractDomainValidationError(
+            "body_lexicon_term_invalid" if invalid_body_terms else "body_lexicon_term_unused",
+            "draft.lexicon_usage" if invalid_body_terms else "draft.body",
+            "；".join(messages),
+            correction_paths=("draft.lexicon_usage", "draft.body"),
+        )
     if context.allowed_body_lexicon_codes:
         unexpected = body_codes - context.allowed_body_lexicon_codes
         if unexpected:
@@ -1257,6 +1467,11 @@ def validate_content_node_result(
             result = validate_document_result(result.model_dump(), context.viral_document)
         except ValueError as exc:
             raise ContractDomainValidationError("viral_document_invalid", "articles", str(exc)) from exc
+    elif isinstance(result, ViralAssetPreparationResultV2):
+        try:
+            result = validate_prepared_asset_v2(payload, ViralArticleSource.model_validate(context.viral_source))
+        except ValueError as exc:
+            raise ContractDomainValidationError("viral_asset_invalid", "reference_blueprint", str(exc)) from exc
     elif isinstance(result, ViralAssetPreparationResultV1):
         try:
             result = validate_prepared_asset(payload, ViralArticleSource.model_validate(context.viral_source))
@@ -1719,10 +1934,12 @@ def validate_content_node_result(
             for index, item in enumerate(result.draft.paragraph_evidence)
         )
         errors = []
+        correction_paths = []
         for path, usage, ids in evidence_fields:
             unknown = sorted(set(ids) - context.allowed_evidence_by_usage.get(usage, frozenset()))
             if unknown:
                 errors.append(f"{path}: {', '.join(unknown)}")
+                correction_paths.append(path)
         if errors:
             allowed = {
                 usage: sorted(context.allowed_evidence_by_usage.get(usage, frozenset())) for usage in ("title", "body")
@@ -1734,6 +1951,7 @@ def validate_content_node_result(
                 + "; ".join(errors)
                 + "；允许的 ID 按用途列出："
                 + json.dumps(allowed, ensure_ascii=False),
+                correction_paths=tuple(correction_paths),
             )
         if context.creation_mode == "viral_rewrite":
             if len(context.selected_viral_reference_ids) != 1:
@@ -1746,7 +1964,7 @@ def validate_content_node_result(
         _require_equal(result.title.formula_code, context.locked_title_formula_code, "title.formula_code")
         _validate_numbers(result.title.text, context, "title.text", "title")
         _require_equal(result.outline.body_formula_code, context.locked_body_formula_code, "outline.body_formula_code")
-        _validate_outline_calling_contract(result.outline, context)
+        _validate_outline_calling_contract(result.outline, context, field_prefix="outline")
         _require_equal(result.draft.body_formula_code, context.locked_body_formula_code, "draft.body_formula_code")
         _validate_numbers("\n".join([result.draft.body, *result.draft.topics]), context, "draft.body", "body")
         if len(result.draft.body) > 650:
@@ -1911,6 +2129,109 @@ class ContentNodeResultCollector:
     runtime_context: Any
     submission_count: int = 0
     result: dict[str, Any] | None = None
+    failed_payload: dict[str, Any] | None = None
+    correction_paths: tuple[str, ...] = ()
+
+    @staticmethod
+    def _value_at_path(payload: dict[str, Any], field_path: str) -> Any:
+        current: Any = payload
+        for part in field_path.split("."):
+            current = current[int(part)] if isinstance(current, list) else current[part]
+        return deepcopy(current)
+
+    @staticmethod
+    def _set_value_at_path(payload: dict[str, Any], field_path: str, value: Any) -> None:
+        parts = field_path.split(".")
+        current: Any = payload
+        for part in parts[:-1]:
+            current = current[int(part)] if isinstance(current, list) else current[part]
+        final = parts[-1]
+        if isinstance(current, list):
+            current[int(final)] = value
+        else:
+            current[final] = value
+
+    def _apply_correction_scope(self, payload: dict[str, Any]) -> dict[str, Any]:
+        if self.contract_name != "GeneratedContentResultV1" or self.failed_payload is None or not self.correction_paths:
+            return payload
+        corrected = deepcopy(self.failed_payload)
+        try:
+            for field_path in self.correction_paths:
+                self._set_value_at_path(corrected, field_path, self._value_at_path(payload, field_path))
+        except (IndexError, KeyError, TypeError, ValueError):
+            return payload
+        return corrected
+
+    def _with_locked_generation_metadata(self, payload: dict[str, Any]) -> dict[str, Any]:
+        if self.contract_name != "GeneratedContentResultV1":
+            return payload
+        normalized = {
+            key: value.model_dump(mode="python") if isinstance(value, BaseModel) else deepcopy(value)
+            for key, value in payload.items()
+        }
+        title = normalized.get("title")
+        outline = normalized.get("outline")
+        draft = normalized.get("draft")
+        if isinstance(title, dict) and self.domain_context.locked_title_formula_code:
+            title["formula_code"] = self.domain_context.locked_title_formula_code
+            if self.domain_context.locked_title_lexicon_terms:
+                title["lexicon_usage"] = [
+                    {
+                        "code": code,
+                        "selected_terms": [term for term in terms if term in str(title.get("text") or "")],
+                    }
+                    for code, terms in sorted(self.domain_context.locked_title_lexicon_terms.items())
+                    if any(term in str(title.get("text") or "") for term in terms)
+                ]
+        if self.domain_context.locked_body_formula_code:
+            if isinstance(outline, dict):
+                outline["body_formula_code"] = self.domain_context.locked_body_formula_code
+            if isinstance(draft, dict):
+                draft["body_formula_code"] = self.domain_context.locked_body_formula_code
+                if self.domain_context.locked_body_lexicon_terms:
+                    draft["lexicon_usage"] = [
+                        {"code": code, "selected_terms": list(terms)}
+                        for code, terms in sorted(self.domain_context.locked_body_lexicon_terms.items())
+                    ]
+        if self.domain_context.normalize_generation_evidence_ids:
+            allowed_title = self.domain_context.allowed_evidence_by_usage.get("title", frozenset())
+            allowed_body = self.domain_context.allowed_evidence_by_usage.get("body", frozenset())
+            if isinstance(title, dict):
+                title["evidence_ids"] = [
+                    evidence_id for evidence_id in title.get("evidence_ids") or [] if evidence_id in allowed_title
+                ]
+            if isinstance(outline, dict):
+                for section in outline.get("sections") or []:
+                    section["evidence_ids"] = [
+                        evidence_id for evidence_id in section.get("evidence_ids") or [] if evidence_id in allowed_body
+                    ]
+            if isinstance(draft, dict):
+                paragraphs = [
+                    paragraph
+                    for paragraph in draft.get("paragraph_evidence") or []
+                    if paragraph.get("paragraph_id") != "system-required-materials"
+                ]
+                for paragraph in paragraphs:
+                    paragraph["evidence_ids"] = [
+                        evidence_id
+                        for evidence_id in paragraph.get("evidence_ids") or []
+                        if evidence_id in allowed_body
+                    ]
+                if self.domain_context.locked_required_body_evidence_ids:
+                    paragraphs.append(
+                        {
+                            "paragraph_id": "system-required-materials",
+                            "evidence_ids": list(self.domain_context.locked_required_body_evidence_ids),
+                        }
+                    )
+                draft["paragraph_evidence"] = paragraphs
+        if isinstance(outline, dict):
+            allowed_variants = self.domain_context.allowed_body_variant_keys
+            if not allowed_variants:
+                outline["variant_key"] = None
+            elif len(allowed_variants) == 1:
+                outline["variant_key"] = next(iter(allowed_variants))
+        return normalized
 
     def _with_verified_knowledge_provenance(self, payload: dict[str, Any]) -> dict[str, Any]:
         evidence_contracts = {
@@ -1967,6 +2288,8 @@ class ContentNodeResultCollector:
             "content.tool.called",
             event_payload,
         )
+        normalized_payload = self._with_locked_generation_metadata(payload)
+        candidate_payload = self._with_locked_generation_metadata(self._apply_correction_scope(normalized_payload))
         try:
             if self.submission_count:
                 raise ContractDomainValidationError(
@@ -2020,7 +2343,7 @@ class ContentNodeResultCollector:
                     )
             validated = validate_content_node_result(
                 self.contract_name,
-                self._with_verified_knowledge_provenance(payload),
+                self._with_verified_knowledge_provenance(candidate_payload),
                 self.domain_context,
             )
             self.result = validated.model_dump(mode="json")
@@ -2028,10 +2351,13 @@ class ContentNodeResultCollector:
         except Exception as exc:
             failure_payload = {**event_payload, "error_type": type(exc).__name__}
             if isinstance(exc, ContractDomainValidationError):
+                self.failed_payload = deepcopy(candidate_payload)
+                self.correction_paths = exc.correction_paths
                 failure_payload.update(
                     {
                         "error_code": exc.code,
                         "error_field_path": exc.field_path,
+                        "correction_paths": list(exc.correction_paths),
                         "message": str(exc),
                     }
                 )

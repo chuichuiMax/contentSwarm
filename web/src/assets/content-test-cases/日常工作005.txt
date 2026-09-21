@@ -1,0 +1,60 @@
+{
+      "serialNo": "005",
+    "persona": {
+        "age": "45",
+        "workYears": "21",
+        "serviceCity": "长沙市",
+        "introduction": "我从事装修行业21年了，在长沙有自己的施工队，之前在各大装修公司做过项目经理、服务过的工地案例500套以上，基本上靠业主转介绍",
+        "skills": [
+            "工长",
+            "拆除",
+            "水电"
+            "泥瓦"
+        ],
+        "honors": {
+            "ownerRecommendCount": "10",
+            "servedSiteCount": "10"
+        },
+        "tone": "做事靠谱",
+        "serviceAdvantages": [
+            "装修经验丰富",
+            "自有工人无转包"
+        ]
+    },
+    "requirementType": {
+        "typeName": "日常",
+        "quotationInfo": {
+
+        },
+        "prices": [
+
+        ],
+        "mySite": "湖南省长沙市雨花区雨花大厦"
+    },
+    "tags": [
+        "泥瓦",
+        "工地巡检"
+    ],
+    "images": [
+        {
+            "templateId": "1",
+            "objectKey": "f291b03265274e6a88941b1c8b95bd38.jpg",
+            "objectUrl": "https://dangjia-dev.obs.cn-south-1.myhuaweicloud.com/f291b03265274e6a88941b1c8b95bd38.jpg"
+        },
+        {
+            "templateId": "",
+            "objectKey": "5c8b589e816149b2b91ffbf21d6688d0.jpg",
+            "objectUrl": "https://dangjia-dev.obs.cn-south-1.myhuaweicloud.com/5c8b589e816149b2b91ffbf21d6688d0.jpg"
+        },
+        {
+            "templateId": "",
+            "objectKey": "b48ac650f362436e999dc904a1e3317d.jpg",
+            "objectUrl": "https://dangjia-dev.obs.cn-south-1.myhuaweicloud.com/b48ac650f362436e999dc904a1e3317d.jpg"
+        },
+        {
+            "templateId": "",
+            "objectKey": "6ec6c8d5dd034c03923ff0d47f2d3610.jpg",
+            "objectUrl": "https://dangjia-dev.obs.cn-south-1.myhuaweicloud.com/6ec6c8d5dd034c03923ff0d47f2d3610.jpg"
+        }
+    ]
+}
