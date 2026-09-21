@@ -11,6 +11,8 @@ from yuxi.content.v3.modular_rules import (
     GENERATION_SKILLS,
     MODULAR_RULE_BUNDLE_VERSION,
     build_modular_rule_bundle,
+    required_review_codes,
+    requires_persona_review,
     select_modular_generation_skills,
 )
 from yuxi.content.validators import validate_modular_content
@@ -79,6 +81,39 @@ def test_repair_routes_only_to_the_module_for_the_blocking_code():
         "viral-author-core",
         "viral-title-author",
     )
+
+
+def test_standardized_review_only_requires_persona_when_manifest_declares_persona_materials():
+    payload = {
+        "production_pack": {
+            "material_manifest": {"requirements": [{"variable_code": "product"}, {"variable_code": "price"}]}
+        },
+        "strategy_snapshot": {},
+        "evidence_bundle": {"items": []},
+        "content_brief": {"form_values": {}},
+    }
+
+    assert requires_persona_review(payload) is False
+    assert not {"PERSONA_OPENING", "PERSONA_CLOSING", "PERSONA_GROUNDING"} & set(required_review_codes(payload))
+
+    payload["production_pack"]["material_manifest"]["requirements"].append({"variable_code": "persona_fact"})
+
+    assert requires_persona_review(payload) is True
+    assert {"PERSONA_OPENING", "PERSONA_CLOSING", "PERSONA_GROUNDING"} <= set(required_review_codes(payload))
+
+
+def test_standardized_review_follows_frozen_emoji_policy():
+    payload = {
+        "production_pack": {
+            "material_manifest": {"requirements": []},
+            "expression_policy": {"emoji_allowed": False, "required_categories": []},
+        },
+        "strategy_snapshot": {},
+        "evidence_bundle": {"items": []},
+        "content_brief": {"form_values": {}},
+    }
+
+    assert not {"EMOJI_COVERAGE", "EMOJI_APPROPRIATENESS", "EMOJI_RESTRICTIONS"} & set(required_review_codes(payload))
 
 
 def test_hard_checks_cover_topic_cta_layout_mechanical_and_price_scope():

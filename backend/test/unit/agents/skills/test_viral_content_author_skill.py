@@ -29,7 +29,7 @@ def test_first_generation_injects_only_relevant_sections(author_source):
     assert "## Emoji 禁用" not in instructions
     assert "写作前沿用锁定策略" in instructions
     assert "必须组成能自然朗读的中文短句" in instructions
-    assert "元素拥挤时主动删到二至四个" in instructions
+    assert "元素拥挤时先删除公式外元素" in instructions
     assert "标题与正文围绕同一核心主题" in instructions
     assert "VIRAL_AUTHOR_" not in instructions
     assert len(instructions) <= 14_000
@@ -52,6 +52,22 @@ def test_repair_with_emoji_ban_omits_first_and_emoji_coverage(author_source):
     assert "## 报价口径（本次涉及价格时执行）" not in instructions
     assert "直接删除该短语" in instructions
     assert "不得为了句子更丰富新增服务名词" in instructions
+
+
+def test_modular_author_preserves_locked_slots_and_exact_evidence_ids():
+    title_spec = next(item for item in BUILTIN_SKILLS if item.slug == "viral-title-author")
+    title_instructions = (Path(title_spec.source_dir) / "SKILL.md").read_text(encoding="utf-8")
+    core_spec = next(item for item in BUILTIN_SKILLS if item.slug == "viral-author-core")
+    core_instructions = (Path(core_spec.source_dir) / "SKILL.md").read_text(encoding="utf-8")
+    body_spec = next(item for item in BUILTIN_SKILLS if item.slug == "viral-body-author")
+    body_instructions = (Path(body_spec.source_dir) / "SKILL.md").read_text(encoding="utf-8")
+
+    assert "每个对象是必填槽位" in title_instructions
+    assert "`persona_fact` 槽位可用已核验身份或年限表达" in title_instructions
+    assert "`title.lexicon_usage` 只登记标题中实际出现的冻结词条" in title_instructions
+    assert "Evidence ID 必须从错误消息的允许列表或输入逐字复制" in core_instructions
+    assert "一次修正错误消息列出的全部位置" in core_instructions
+    assert "所有 Evidence ID 只能从输入逐字复制" in body_instructions
 
 
 def test_missing_versioned_section_fails_explicitly():
@@ -85,3 +101,11 @@ def test_modular_persona_rules_require_three_layer_opening_and_relevant_advantag
     assert rules["runtime_rules"]["relevant_advantage_count"] == {"min": 2, "max": 3}
     assert reviewer.version == "1.1.0"
     assert "少于 2 项、超过 3 项、机械罗列、不相关或无 Evidence 时阻断" in review_instructions
+    assert "不能因标题自然或主题一致就放行缺槽标题" in review_instructions
+    assert "不能把“只登记未使用词条”判为通过" in review_instructions
+    assert "没有时不得将正文人设追加为标题门禁" in review_instructions
+    assert "表达词本身不等于业务结果或数字承诺" in review_instructions
+    assert "不得要求额外 Evidence" in review_instructions
+    assert "该段不是模型创作内容" in review_instructions
+    assert "正常出现不得判为模型重复报价" in review_instructions
+    assert "value 是运营要求的替换结果" in review_instructions

@@ -4,9 +4,12 @@ from copy import deepcopy
 
 from yuxi.content.control.workflow.generation_input import (
     project_generation_input,
+    project_locked_quote_safe_input,
     project_review_input,
     project_visual_input,
+    project_visual_review_input,
 )
+from yuxi.content.model.locked_blocks import render_semicolon_lines
 
 
 def test_generation_projection_keeps_writing_facts_and_removes_audit_duplicates():
@@ -248,6 +251,15 @@ def test_review_projection_preserves_final_draft_and_reference_facts():
             "snapshot_hash": "expression-rules",
             "sources": [{"role": "concrete_expression", "chunks": [{"content": "动作化表达"}]}],
         },
+        "expression_policy": {
+            "emoji_allowed": True,
+            "minimum_semantic_categories": 3,
+            "required_categories": [
+                {"code": "verified_data", "target": "数据"},
+                {"code": "identity_trust", "target": "身份"},
+                {"code": "process_action", "target": "动作"},
+            ],
+        },
     }
     original = deepcopy(payload)
 
@@ -264,6 +276,7 @@ def test_review_projection_preserves_final_draft_and_reference_facts():
     assert view["runtime_config_snapshot"]["content_rule_bundle"]["bundle_hash"] == "rules"
     assert "viral-modular-reviewer" in view["runtime_config_snapshot"]["content_rule_bundle"]["active_modules"]
     assert view["expression_guidance"] == payload["expression_guidance"]
+    assert view["expression_policy"] == payload["expression_policy"]
     assert view["runtime_config_snapshot"]["required_review_codes"] == [
         "EMOJI_COVERAGE",
         "EMOJI_APPROPRIATENESS",
@@ -327,3 +340,88 @@ def test_visual_projection_exposes_exact_locked_values_and_visual_evidence_allow
     assert view["required_source_asset_ids"] == ["asset-1"]
     assert view["allowed_visual_evidence_ids"] == ["ev-visual"]
     assert view["evidence_bundle"] == payload["evidence_bundle"]
+
+
+def test_visual_projections_hide_composed_locked_quote_from_models():
+    original = "拆除：1000元；水电：2400元"
+    rendered = render_semicolon_lines(original)
+    evidence_bundle = {
+        "items": [
+            {
+                "id": "ev-quote",
+                "variable_codes": ["quote_block"],
+                "value": {"original_content": original},
+                "allowed_usage": ["body"],
+            }
+        ]
+    }
+    strategy_snapshot = {
+        "content_direction": "CT03",
+        "selected_group_id": "group-1",
+        "creation_methods": ["M1"],
+        "creation_method_definitions": [{"code": "M1", "name": "单价面积型", "variable_schema": []}],
+        "title_formula": {"code": "T1"},
+        "body_formula": {"code": "B1"},
+        "rule_version_id": "rules-v3",
+        "match_snapshot_id": "match-1",
+        "formula_snapshot_id": "formula-1",
+    }
+    strategy_snapshot["snapshot_hash"] = hashlib.sha256(
+        json.dumps(strategy_snapshot, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    visual_payload = {
+        "selected_title": {"text": "长沙装修1.16w"},
+        "content_draft": {"body": f"开场。\n\n{rendered}\n\n结尾。"},
+        "strategy_snapshot": strategy_snapshot,
+        "evidence_bundle": evidence_bundle,
+        "media_evidence_items": [],
+        "artifact_version": {"id": "artifact-1"},
+        "channel_profile": {},
+        "runtime_config_snapshot": {},
+    }
+
+    plan_view = project_visual_input(visual_payload)
+    review_view = project_visual_review_input(
+        {
+            "selected_title": visual_payload["selected_title"],
+            "content_draft": visual_payload["content_draft"],
+            "visual_plan": {"cover": "quote"},
+            "cover_job": {"id": "job-1"},
+            "cover_assets": [{"id": "asset-1"}],
+            "evidence_bundle": evidence_bundle,
+        }
+    )
+
+    for view in (plan_view, review_view):
+        serialized = json.dumps(view, ensure_ascii=False)
+        assert original not in serialized
+        assert rendered not in serialized
+        assert "锁定报价块已由程序插入" in view["content_draft"]["body"]
+
+
+def test_default_agent_projection_hides_server_snapshot_and_quote_evidence():
+    original = "拆除：1000元；水电：2400元"
+    payload = {
+        "runtime_config_snapshot": {
+            "creation_mode": "viral_rewrite",
+            "trusted_external_material_snapshot": {"quote_block": {"original_content": original}},
+        },
+        "evidence_bundle": {
+            "items": [
+                {
+                    "id": "ev-quote",
+                    "variable_codes": ["quote_block"],
+                    "value": {"original_content": original, "content_hash": "secret"},
+                    "source_hash": "secret",
+                }
+            ]
+        },
+    }
+
+    view = project_locked_quote_safe_input(payload)
+
+    assert view is not None
+    serialized = json.dumps(view, ensure_ascii=False)
+    assert original not in serialized
+    assert "trusted_external_material_snapshot" not in serialized
+    assert "source_hash" not in serialized

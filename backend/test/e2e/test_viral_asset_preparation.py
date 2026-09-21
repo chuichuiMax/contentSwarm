@@ -92,11 +92,18 @@ async def test_full_article_prepared_by_managed_agent_and_reused():
                 if result["status"] not in {"pending", "running"}:
                     break
                 await asyncio.sleep(2)
-            assert result["status"] == "ready", result.get("error_message") or result["status"]
+            assert result["status"] == "needs_review", result.get("error_message") or result["status"]
             assert result["source"]["body"] == body
             assert result["preparation"]["source_hash"] == source.source_hash
             assert result["preparation"]["reference_blueprint"]["content_block_sequence"]
             assert result["agent_run_id"]
+            response = await client.post(
+                f"/api/content/viral-assets/{asset_id}/review",
+                headers=headers,
+                json={"action": "approve", "reason": "E2E 核验通过"},
+            )
+            assert response.status_code == 200, response.text
+            assert response.json()["asset"]["status"] == "ready"
             response = await client.post(f"/api/content/viral-assets/{asset_id}/retry", headers=headers)
             assert response.status_code == 409
     finally:

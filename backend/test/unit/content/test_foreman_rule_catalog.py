@@ -3,6 +3,7 @@ from __future__ import annotations
 from copy import deepcopy
 
 from yuxi.content.catalog import CONTENT_TYPES, VARIABLES
+from yuxi.content.model.materials import build_material_manifest, create_production_order
 from yuxi.content.model.strategy import build_strategy_candidates
 from yuxi.content.rules import BODY_FORMULAS, METHODS, TITLE_FORMULAS
 from yuxi.content.v3.foreman_rules import (
@@ -141,6 +142,43 @@ def test_foreman_catalog_keeps_nine_modes_and_twelve_title_structures() -> None:
         for item in catalog["combination_rules"]
         if set(item["body_formula_candidate_codes"]) & price_modes
     )
+
+
+def test_each_foreman_title_formula_compiles_a_material_manifest_with_one_of_groups() -> None:
+    bundle = import_foreman_rules(_source_bundle())
+
+    for title_code in sorted(TITLE_CODES):
+        rule = next(item for item in bundle["combination_rules"] if title_code in item["title_formula_candidate_codes"])
+        direction = rule["content_type_codes"][0]
+        catalog = build_strategy_candidates(
+            bundle,
+            industry_slug="decoration",
+            direction_code=direction,
+            rule_version_id="content-rules-platform-test",
+        )
+        selected_rule = next(item for item in catalog["source_rules"] if item["id"] == rule["id"])
+        method_codes = [item["method_code"] for item in selected_rule["method_members"]]
+        order = create_production_order(
+            task_id=f"task-{title_code.lower()}",
+            catalog=catalog,
+            group_id=selected_rule["id"],
+            creation_method_codes=method_codes,
+            title_formula_code=title_code,
+            body_formula_code=selected_rule["body_formula_candidate_codes"][0],
+        )
+
+        manifest = build_material_manifest(catalog=catalog, order=order)
+        formula = next(item for item in catalog["title_formulas"] if item["code"] == title_code)
+        requirement_by_code = {item.variable_code: item for item in manifest.requirements}
+        for slot in formula["source_content"]["slot_schema"]:
+            variable_codes = slot["variable_codes"]
+            if not variable_codes:
+                continue
+            group = f"title:{slot['code']}"
+            assert any(
+                group in (requirement_by_code[code].validation_schema.get("alternative_groups") or [])
+                for code in variable_codes
+            )
 
 
 def test_import_scopes_legacy_rules_away_from_decoration_and_is_idempotent() -> None:
