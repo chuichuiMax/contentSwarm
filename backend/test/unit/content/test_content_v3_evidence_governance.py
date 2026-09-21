@@ -6,6 +6,7 @@ import pytest
 from pydantic import ValidationError
 
 import yuxi.content.control.evidence.service as evidence_service_module
+import yuxi.content.control.workflow.deterministic_node as deterministic_node_module
 from yuxi.content.control.evidence import EvidenceApplicationService
 from yuxi.content.control.errors import ContentApplicationError
 from yuxi.content.control.workflow.deterministic_node import V3DeterministicNodeHandler
@@ -121,6 +122,74 @@ async def test_freeze_node_rejects_existing_evidence_id_with_changed_content():
                 "evidence_collection": {"evidence_items": [conflicting], "citations": []},
             },
             node_run_id="node-1",
+        )
+
+
+@pytest.mark.asyncio
+async def test_merge_research_reuses_identical_existing_evidence_on_retry(monkeypatch):
+    existing = _item("ev-existing", source_type="knowledge_base", status="retrieved")
+
+    async def empty_expression_knowledge(_state):
+        return {"evidence_items": [], "citations": [], "expression_guidance": None}
+
+    class ValidatedResult:
+        def __init__(self, payload):
+            self.payload = payload
+
+        def model_dump(self, **_kwargs):
+            return self.payload
+
+    monkeypatch.setattr(deterministic_node_module, "load_expression_knowledge", empty_expression_knowledge)
+    monkeypatch.setattr(
+        deterministic_node_module,
+        "validate_content_node_result",
+        lambda _contract, payload, _context: ValidatedResult(payload),
+    )
+    result = await V3DeterministicNodeHandler._merge_research_evidence(
+        db=SimpleNamespace(),
+        node_run_id="node-1",
+        state={
+            "runtime_config_snapshot": {"creation_mode": "viral_rewrite", "rule_version_id": "rules-v1"},
+            "formula_selection_snapshot": {},
+            "evidence_bundle": {"items": [existing.model_dump(mode="json")]},
+            "business_rule_evidence_collection": {
+                "evidence_items": [existing.model_dump(mode="json")],
+                "citations": [existing.source_id],
+            },
+            "price_evidence_collection": {},
+            "compliance_evidence_collection": {},
+            "viral_reference_selection": {},
+            "viral_candidate_collection": {"evidence_items": []},
+        },
+    )
+
+    assert result["evidence_collection"]["evidence_items"] == []
+
+
+@pytest.mark.asyncio
+async def test_merge_research_rejects_changed_existing_evidence_on_retry(monkeypatch):
+    existing = _item("ev-existing", source_type="knowledge_base", status="retrieved")
+    changed = existing.model_dump(mode="json")
+    changed["value"] = "changed"
+
+    async def empty_expression_knowledge(_state):
+        return {"evidence_items": [], "citations": [], "expression_guidance": None}
+
+    monkeypatch.setattr(deterministic_node_module, "load_expression_knowledge", empty_expression_knowledge)
+    with pytest.raises(EvidenceGovernanceError, match="内容不一致"):
+        await V3DeterministicNodeHandler._merge_research_evidence(
+            db=SimpleNamespace(),
+            node_run_id="node-1",
+            state={
+                "runtime_config_snapshot": {"creation_mode": "viral_rewrite", "rule_version_id": "rules-v1"},
+                "formula_selection_snapshot": {},
+                "evidence_bundle": {"items": [existing.model_dump(mode="json")]},
+                "business_rule_evidence_collection": {"evidence_items": [changed]},
+                "price_evidence_collection": {},
+                "compliance_evidence_collection": {},
+                "viral_reference_selection": {},
+                "viral_candidate_collection": {"evidence_items": []},
+            },
         )
 
 

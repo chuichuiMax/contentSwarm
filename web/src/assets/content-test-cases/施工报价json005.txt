@@ -1,0 +1,69 @@
+{
+    "serialNo": "005",
+    "persona": {
+        "age": "35",
+        "workYears": "10",
+        "serviceCity": "长沙市",
+        "introduction": "我从事装修行业10年了，在长沙有自己的施工队，都是手艺很好的师傅、我服务了长沙很多工地，业主都特别满意我的手艺，我干活认真负责，把你的装修需求告诉我，我给你一个梦想中的家",
+        "skills": [
+            "工长",
+            "水电",
+            "泥瓦"
+        ],
+        "honors": {
+            "ownerRecommendCount": "10",
+            "servedSiteCount": "10"
+        },
+        "tone": "有耐心",
+        "serviceAdvantages": [
+            "装修经验丰富",
+            "自有工人无转包"
+        ]
+    },
+    "requirementType": {
+        "typeName": "施工报价",
+        "quotationInfo": {
+            "houseArea": "120平",
+            "houseType": "三室二厅"
+        },
+        "prices": [
+            {
+                "format": "单价面积",
+                "content": "拆除卫生间：1000 元 / 间×2/间=2000元；挖回填层（4㎡内）：450 元 / 间×2/间=900元；铲墙：20 元 /㎡ ×30㎡ =600 元；水电改造：1200 元 / 间×2/间=2400元；马桶安装（非壁挂式）：60 元 / 个；暗装淋浴花洒预埋：120 元 / 套×2套=240元；泥瓦全包：2500 元 / 间×2间=5000元；石膏板吊顶（平顶）：70 元 /㎡ ×10㎡ =280 元；整套人工合计：12060元"
+            }
+        ],
+        "titlePrice": {
+            "label": "整套人工合计",
+            "displayText": "1.206w"
+        },
+        "mySite": "湖南省长沙市岳麓区天顶街道长房云时代"
+    },
+    "tags": [
+        "营销报价",
+        "旧房改造",
+        "水电",
+        "现代风格"
+    ],
+    "images": [
+        {
+            "templateId": "1",
+            "objectKey": "f291b03265274e6a88941b1c8b95bd38.jpg",
+            "objectUrl": "https://dangjia-dev.obs.cn-south-1.myhuaweicloud.com/f291b03265274e6a88941b1c8b95bd38.jpg"
+        },
+        {
+            "templateId": "",
+            "objectKey": "5c8b589e816149b2b91ffbf21d6688d0.jpg",
+            "objectUrl": "https://dangjia-dev.obs.cn-south-1.myhuaweicloud.com/5c8b589e816149b2b91ffbf21d6688d0.jpg"
+        },
+        {
+            "templateId": "",
+            "objectKey": "b48ac650f362436e999dc904a1e3317d.jpg",
+            "objectUrl": "https://dangjia-dev.obs.cn-south-1.myhuaweicloud.com/b48ac650f362436e999dc904a1e3317d.jpg"
+        },
+        {
+            "templateId": "",
+            "objectKey": "6ec6c8d5dd034c03923ff0d47f2d3610.jpg",
+            "objectUrl": "https://dangjia-dev.obs.cn-south-1.myhuaweicloud.com/6ec6c8d5dd034c03923ff0d47f2d3610.jpg"
+        }
+    ]
+}

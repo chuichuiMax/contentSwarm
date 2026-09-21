@@ -1,0 +1,59 @@
+{
+      "serialNo": "006",
+    "persona": {
+        "age": "39",
+        "workYears": "15",
+        "serviceCity": "长沙市",
+        "introduction": "我从事装修行业15年了，在长沙有自己的施工队，师傅手艺都很好、我服务了长沙很多工地，业主都特别满意我的服务，我做事会非常抠细节，一点没做好都不行，必须按工艺标准做好",
+        "skills": [
+            "工长",
+            "水电",
+            "泥瓦"
+        ],
+        "honors": {
+            "ownerRecommendCount": "10",
+            "servedSiteCount": "10"
+        },
+        "tone": "有耐心、细心",
+        "serviceAdvantages": [
+            "装修经验丰富",
+            "自有工人无转包"
+        ]
+    },
+    "requirementType": {
+        "typeName": "日常",
+        "quotationInfo": {
+
+        },
+        "prices": [
+
+        ],
+        "mySite": "湖南省长沙市岳麓区云顶梅西湖"
+    },
+    "tags": [
+        "水电",
+        "工地巡检"
+    ],
+    "images": [
+        {
+            "templateId": "1",
+            "objectKey": "f291b03265274e6a88941b1c8b95bd38.jpg",
+            "objectUrl": "https://dangjia-dev.obs.cn-south-1.myhuaweicloud.com/f291b03265274e6a88941b1c8b95bd38.jpg"
+        },
+        {
+            "templateId": "",
+            "objectKey": "5c8b589e816149b2b91ffbf21d6688d0.jpg",
+            "objectUrl": "https://dangjia-dev.obs.cn-south-1.myhuaweicloud.com/5c8b589e816149b2b91ffbf21d6688d0.jpg"
+        },
+        {
+            "templateId": "",
+            "objectKey": "b48ac650f362436e999dc904a1e3317d.jpg",
+            "objectUrl": "https://dangjia-dev.obs.cn-south-1.myhuaweicloud.com/b48ac650f362436e999dc904a1e3317d.jpg"
+        },
+        {
+            "templateId": "",
+            "objectKey": "6ec6c8d5dd034c03923ff0d47f2d3610.jpg",
+            "objectUrl": "https://dangjia-dev.obs.cn-south-1.myhuaweicloud.com/6ec6c8d5dd034c03923ff0d47f2d3610.jpg"
+        }
+    ]
+}

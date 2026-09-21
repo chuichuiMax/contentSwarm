@@ -13,9 +13,9 @@ description: 按锁定创作类型、公式和唯一爆款结构，用本次真�
 2. 从 `evidence_bundle.items` 选唯一 `allowed_usage` 含 `style_reference`、`metadata.material_type=viral_example`、`metadata.usage_mode=structure_reference_only` 且 `metadata.selected_reference=true` 的参考。必须读取完整 `reference_blueprint` 和 `selection_basis.structure_fillability`；`unfilled_required_slots` 不为空不能继续。其他候选、参考原文、参考数字和人物不是本篇事实来源。
 3. 内部建立一次“参考结构 → 本次信息 → Evidence ID”映射：逐槽对应 `title_pattern`/`title_slot_sequence`，逐块对应 `opening_hook`、`content_block_sequence`、`narrative_structure`、`paragraph_rhythm`、`list_pattern`、`emotion_curve`、`emoji_pattern` 和 `interaction_style`。不把映射表输出给读者。必须让标题钩子、首段、信息块顺序、列表类型、节奏、情绪推进和结尾互动在成稿中可辨识；参考中独立的信息块要以可辨的短段、清单或小标题分别承接，不把承接范围、报价原则、团队证据和口碑压成一段。不能退化为通用案例介绍。
 4. 先执行 `direction_blueprint.layer_sequence` 与每层 `phrase_composition`：`fixed` 仅用指定组，`all` 使用有事实支持的全部组，`random` 在 `allowed_groups` 内满足 `min_groups`/`max_groups`。创作类型的层级和组数高于参考蓝图。项目单价只写人工单价、无独立证据层；单价+面积、工种总价、人工+辅材按施工报价和真实报价组合；工艺、日常工作只把已有工地照片或工艺节点作为对应证据。不同报价类型不可互换。
-5. 写作前沿用锁定策略，明确本次装修场景、读者需求或痛点、一个有据的核心卖点、标题公式、正文模式和具体咨询理由；不重新选择创作类型或公式。标题从有据的地域、业务、房屋、需求、风格、人群、价格、结果、身份词中选二至四个核心元素，只突出这个主卖点，并结合参考标题槽位、渠道长度和真实搜索词；自荐态度、受众等进入标题时也占一个元素，城市名与“本地”视为同一地域元素，不重复堆叠。标题必须组成能自然朗读的中文短句，可用冒号或动作词连接，不能把“地域+身份+态度+人群+业务”等名词直接串接；元素拥挤时主动删到二至四个。缺证据时少用元素，不为凑数补事实。面积、预算、地区、工期、完工、效果、结算等词只能表达本次输入原意：有预算不等于预算内完工，预计不等于已完成，方案不等于结算。标题事实使用允许 `title` 的 Evidence ID；`style_reference` 不进入标题 `evidence_ids`。
+5. 写作前沿用锁定策略，明确本次装修场景、读者需求或痛点、一个有据的核心卖点、标题公式、正文模式和具体咨询理由；不重新选择创作类型或公式。逐项执行 `title_formula.source_content.slot_schema`：每个对象是一项必填槽位，同一对象内的 `variable_codes` 和 `lexicon_codes` 按 one-of 选择一个有据表达；“面积/房型”“需求/业务”等斜杠不表示两项都写。再读取 `title_formula.reference_examples`，只学习槽位顺序、连接方式、节奏和标点，示例里的城市、面积、户型、价格、结果和身份都不是本篇事实。标题只突出一个主卖点，并结合渠道长度和真实搜索词；城市名与“本地”视为同一地域元素，不重复堆叠。标题必须组成能自然朗读的中文短句，可用冒号或动作词连接，不能把名词直接串接；元素拥挤时先删除公式外元素，再在 one-of 槽位内改用更短来源。面积、预算、地区、工期、完工、效果、结算等词只能表达本次输入原意：有预算不等于预算内完工，预计不等于已完成，方案不等于结算。标题事实使用允许 `title` 的 Evidence ID；`style_reference` 不进入标题 `evidence_ids`。
 6. 大纲 `outline.sections` 严格按 `body_formula.body_calling.sections` 的 `id` 和顺序输出；没有调用契约时按锁定 `body_formula.structure_schema`。每段的 `goal` 写实际写作目的，`evidence_ids` 只列允许用于正文的真实来源。存在 `variants` 时仅选一个 `variant_key`，全文不混维度；无变体时不填。正文逐段兑现 `instruction`、`fill_rule`、`fact_source` 和锁定结构，不把“旧况、数据、过程、结果”等段落任务写成读者可见的报幕句。在锁定层级与爆款结构允许、且本次事实存在时，优先承接钩子、案例背景、业主需求、解决方案、真实报价、施工/工艺、人设优势、结果/反馈、CTA；缺失的报价或结果不补造，也不为套此顺序改变锁定模式。
-7. `formula_lexicon_bundle.required=true` 时读取标题和正文的全部必需词库。标题覆盖标题公式要求的编码；正文每段只用其 `lexicon_calls` 和所选变体词库。把实际使用的编码、原样词条记入 `title.lexicon_usage`、`draft.lexicon_usage`，不得虚报。词库只提供表达，不提供事实、数字、身份或承诺。
+7. `formula_lexicon_bundle.required=true` 时读取标题和正文的全部公式词库。标题按 `slot_schema` 从 one-of 来源中选择，只把最终标题实际逐字使用的编码、原样词条记入 `title.lexicon_usage`，未采用的同槽词库不得虚报；正文每段仍须使用其 `lexicon_calls` 和所选变体词库，并把实际使用项记入 `draft.lexicon_usage`。词库只提供表达，不提供事实、数字、身份或承诺。
 8. 一次生成标题、大纲、正文和话题。`draft.body` 的程序字符数（含换行和 Emoji）必须在 200～650 之间，优先控制在 450～550；只合并重复的事实解释，不能为压字数合并参考中独立的信息块或删去必要的小标题/逐项说明。保留锁定公式、首尾人设、报价口径和真实 CTA。正文事实逐段匹配 `paragraph_evidence`；只能使用对应 `allowed_usage` 的冻结证据，不能把参考证据填入事实引用。标题、正文和话题中的每个阿拉伯数字都先与当前 Evidence 核对；Skill 中的“二至三项优势、200～650 字、3～8 个话题”等数量只用于内部写作，不能照搬到成稿。无据数字改为不含数字的真实表述。全部价格、客户、案例、结果、服务范围和承诺必须有当前资料依据；遵守渠道实际约束。
 
 ## 爆款结构和自然表达
@@ -34,6 +34,7 @@ description: 按锁定创作类型、公式和唯一爆款结构，用本次真�
 <!-- VIRAL_AUTHOR_EMOJI_BEGIN -->
 ## Emoji 的语义覆盖
 
+- 标准生产流程以 `payload.production_pack.expression_policy` 为唯一执行口径。`emoji_allowed=false` 时不使用 Emoji；允许时逐项落实 `required_categories` 的 `semantic_role` 和 `target`，不得自行用泛化“三类语义”替换已冻结类别。
 - 先遵守用户和渠道的禁用、少量或克制要求。允许时按正文实际存在的语义锚点覆盖：痛点/疑问、人物判断/情绪变化、不同数据类别、独立事项或步骤、风险提醒、互动行动。不适用的类别不添加，不能为放 Emoji 编造情绪或事实。面积、预算、时间是不同数据类别；报价工种、材料、验收动作等独立事项逐项导航，连续同类内容可以清晰分组。一个场景图标不能代替情绪、数据和整组事项。
 - Emoji 紧贴所修饰的词组或动作；叙事分散型保留句中或转折附近的自然位置，不全部塞在段首、句末或段末。清单连续型允许多行行首图标，混合型兼顾叙事和逐项导航。`emoji_pattern` 是参考的布局描述，不是成稿数量上限或使用许可；参考无表情也不覆盖本次内容的功能需要。专业人设选准确符号，不机械删除。Markdown 项目符号、编号、分隔线和封禁词替换用符号不算功能型 Emoji。
 - 同一语义锚点通常只用一个贴切符号，删去无意义重复、错配与挡阅读的堆叠。数字 Emoji 不代替价格、面积、时间或 Evidence ID。明确禁用时正文不使用 Emoji，标题也遵守渠道规则。
@@ -67,7 +68,7 @@ description: 按锁定创作类型、公式和唯一爆款结构，用本次真�
 
 ## 工具校验拒绝后的局部纠错
 
-如果 `submit_content_node_result` 返回契约或证据校验错误，本节点仍要重交完整结构化结果，但只修改错误消息指出的字段和最小原文位置。修正文数字时保留标题 `text`、`formula_code`、`evidence_ids`、**全部必选词库的 `lexicon_usage`**、大纲、无关正文段落与引用不变；修标题时保留无关正文。提交前重新核对标题和正文各自的必选词库编码与原样词条，不能为了消除一个错误引入另一个错误。不得把工具纠错当作改选策略或重写全文。
+如果 `submit_content_node_result` 返回契约或证据校验错误，本节点仍要重交完整结构化结果，但只修改错误消息指出的字段和最小原文位置。修正文数字时保留标题 `text`、`formula_code`、`evidence_ids`、标题实际使用的 `lexicon_usage`、大纲、无关正文段落与引用不变；修标题时保留无关正文。提交前重新核对标题实际使用项和正文必选词库的编码与原样词条，不能为了消除一个错误引入另一个错误。不得把工具纠错当作改选策略或重写全文。
 
 <!-- VIRAL_AUTHOR_REPAIR_BEGIN -->
 ## 阻断后的定点回修

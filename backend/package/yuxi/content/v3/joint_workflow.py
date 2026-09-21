@@ -4,10 +4,12 @@ from copy import deepcopy
 
 from yuxi.content.v3.modular_rules import (
     COVER_SKILL,
+    DETERMINISTIC_PLAN_WORKFLOW_ID,
     EXPRESSION_GUIDANCE_WORKFLOW_ID,
     GENERATION_SKILLS,
     MODULAR_WORKFLOW_ID,
     REVIEW_SKILL,
+    STANDARDIZED_FACTORY_WORKFLOW_ID,
 )
 from yuxi.content.v3.workflow import WORKFLOW_V3, _agent, _fixed, _human
 
@@ -168,3 +170,121 @@ guided_generation = next(node for node in WORKFLOW_EXPRESSION_GUIDANCE["nodes"] 
 guided_generation["state_inputs"].append("expression_guidance")
 guided_review = next(node for node in WORKFLOW_EXPRESSION_GUIDANCE["nodes"] if node["id"] == "semantic_review")
 guided_review["state_inputs"].append("expression_guidance")
+
+
+# V6 在任何内容生成模型调用前，用固定规则冻结类型、公式、手法、参考和槽位映射。
+PLATFORM_WORKFLOW_DETERMINISTIC_PLAN_ID = DETERMINISTIC_PLAN_WORKFLOW_ID
+WORKFLOW_DETERMINISTIC_PLAN = deepcopy(WORKFLOW_EXPRESSION_GUIDANCE)
+WORKFLOW_DETERMINISTIC_PLAN["selection_policy"] = "deterministic_creation_plan_v1"
+removed_plan_nodes = {"select_creation_strategy", "reselect_creation_strategy", "lock_creation_strategy"}
+plan_nodes = []
+for node in WORKFLOW_DETERMINISTIC_PLAN["nodes"]:
+    if node["id"] in removed_plan_nodes:
+        continue
+    if node["id"] == "prepare_strategy_candidates":
+        node = _fixed("prepare_creation_plan_inputs")
+    elif node["id"] == "research_strategy_prices":
+        node = deepcopy(node)
+        node["input_contract"] = "ResearchCreationPlanPricesInputV1"
+        node["state_inputs"] = [
+            "content_brief",
+            "evidence_bundle",
+            "creation_plan_gap_analysis",
+            "runtime_config_snapshot",
+        ]
+    plan_nodes.append(node)
+WORKFLOW_DETERMINISTIC_PLAN["nodes"] = plan_nodes
+prepare_index = next(
+    index
+    for index, node in enumerate(WORKFLOW_DETERMINISTIC_PLAN["nodes"])
+    if node["id"] == "prepare_creation_plan_inputs"
+)
+WORKFLOW_DETERMINISTIC_PLAN["nodes"][prepare_index + 1 : prepare_index + 1] = [
+    _agent(
+        "extract_creation_facts",
+        "content-fact-extraction-agent",
+        "content-fact-extractor",
+        "ExtractCreationFactsInputV1",
+        "ExtractedCreationFactsResultV1",
+        state_inputs=("content_brief", "creation_plan_gap_analysis", "runtime_config_snapshot"),
+        max_tool_calls=1,
+        token_budget=5000,
+        timeout_seconds=60,
+    ),
+    _fixed("merge_extracted_creation_facts"),
+]
+merge_index = next(
+    index for index, node in enumerate(WORKFLOW_DETERMINISTIC_PLAN["nodes"]) if node["id"] == "merge_strategy_prices"
+)
+WORKFLOW_DETERMINISTIC_PLAN["nodes"].insert(merge_index + 1, _fixed("build_creation_plan"))
+plan_segment = {
+    "prepare_strategy_candidates",
+    "select_creation_strategy",
+    "research_strategy_prices",
+    "confirm_strategy_prices",
+    "merge_strategy_prices",
+    "reselect_creation_strategy",
+    "lock_creation_strategy",
+}
+WORKFLOW_DETERMINISTIC_PLAN["edges"] = [
+    edge for edge in WORKFLOW_DETERMINISTIC_PLAN["edges"] if not set(edge) & plan_segment
+]
+WORKFLOW_DETERMINISTIC_PLAN["edges"].extend(
+    [source, target]
+    for source, target in zip(
+        [
+            "normalize_evidence",
+            "prepare_creation_plan_inputs",
+            "extract_creation_facts",
+            "merge_extracted_creation_facts",
+            "research_strategy_prices",
+            "confirm_strategy_prices",
+            "merge_strategy_prices",
+            "build_creation_plan",
+        ],
+        [
+            "prepare_creation_plan_inputs",
+            "extract_creation_facts",
+            "merge_extracted_creation_facts",
+            "research_strategy_prices",
+            "confirm_strategy_prices",
+            "merge_strategy_prices",
+            "build_creation_plan",
+            "load_formula_lexicons",
+        ],
+    )
+)
+
+
+# V8 延续标准化生产包，并让审核结果复用冻结稿件证据映射，不再由模型抄写 Evidence ID。
+PLATFORM_WORKFLOW_STANDARDIZED_FACTORY_ID = STANDARDIZED_FACTORY_WORKFLOW_ID
+WORKFLOW_STANDARDIZED_FACTORY = deepcopy(WORKFLOW_DETERMINISTIC_PLAN)
+WORKFLOW_STANDARDIZED_FACTORY["selection_policy"] = "standardized_factory_v1"
+freeze_index = next(
+    index for index, node in enumerate(WORKFLOW_STANDARDIZED_FACTORY["nodes"]) if node["id"] == "freeze_evidence_bundle"
+)
+WORKFLOW_STANDARDIZED_FACTORY["nodes"][freeze_index + 1 : freeze_index + 1] = [
+    _fixed("validate_material_gate"),
+    _fixed("freeze_production_pack"),
+]
+generation = next(node for node in WORKFLOW_STANDARDIZED_FACTORY["nodes"] if node["id"] == "generate_content")
+generation["state_inputs"].append("production_pack")
+standardized_review = next(node for node in WORKFLOW_STANDARDIZED_FACTORY["nodes"] if node["id"] == "semantic_review")
+standardized_review["output_contract"] = "StandardizedContentReviewResultV1"
+approval_index = next(
+    index for index, node in enumerate(WORKFLOW_STANDARDIZED_FACTORY["nodes"]) if node["id"] == "human_content_approval"
+)
+WORKFLOW_STANDARDIZED_FACTORY["nodes"][approval_index:approval_index] = [
+    _fixed("compose_locked_quote_block"),
+    _fixed("validate_composed_content"),
+]
+WORKFLOW_STANDARDIZED_FACTORY["edges"].remove(["freeze_evidence_bundle", "generate_content"])
+WORKFLOW_STANDARDIZED_FACTORY["edges"].extend(
+    [
+        ["freeze_evidence_bundle", "validate_material_gate"],
+        ["validate_material_gate", "freeze_production_pack"],
+        ["freeze_production_pack", "generate_content"],
+        ["compose_locked_quote_block", "validate_composed_content"],
+        ["validate_composed_content", "semantic_review"],
+    ]
+)

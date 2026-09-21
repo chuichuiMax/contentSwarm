@@ -20,6 +20,13 @@ _SKILLS_ROOT = Path(__file__).resolve().parent
 
 BUILTIN_SKILLS: list[BuiltinSkillSpec] = [
     BuiltinSkillSpec(
+        slug="content-fact-extractor",
+        display_name="创作事实抽取",
+        version="1.0.0",
+        source_dir=_SKILLS_ROOT / "content-fact-extractor",
+        description="仅从用户原文摘录计划缺少的业务变量，不参与策略选择。",
+    ),
+    BuiltinSkillSpec(
         slug="viral-document-detector",
         display_name="爆款文档识别",
         version="1.0.1",
@@ -57,7 +64,7 @@ BUILTIN_SKILLS: list[BuiltinSkillSpec] = [
     BuiltinSkillSpec(
         slug="viral-asset-preparer",
         display_name="爆款素材准备",
-        version="1.3.0",
+        version="2.0.0",
         source_dir=_SKILLS_ROOT / "viral-asset-preparer",
         description="在入库时核验单篇完整原文并生成有原文锚点的参考卡和结构蓝图。",
     ),

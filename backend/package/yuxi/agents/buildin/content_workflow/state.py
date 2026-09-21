@@ -31,7 +31,12 @@ class ContentWorkflowState(TypedDict, total=False):
     evidence_bundle: dict[str, Any]
     title_candidates: list[dict[str, Any]]
     selected_title: dict[str, Any] | None
+    creative_content_draft: dict[str, Any] | None
     content_draft: dict[str, Any] | None
+    draft_revision: int
+    creative_draft_hash: str | None
+    final_draft_hash: str | None
+    reviewed_draft_hash: str | None
     validation_report: dict[str, Any] | None
     title_validation_report: dict[str, Any] | None
     review_report: dict[str, Any] | None
@@ -50,6 +55,15 @@ class ContentWorkflowState(TypedDict, total=False):
     reference_candidates: list[dict[str, Any]]
     reference_search_queries: list[str]
     strategy_price_evidence_collection: dict[str, Any]
+    creation_plan_gap_analysis: dict[str, Any]
+    production_order: dict[str, Any]
+    material_manifest: dict[str, Any]
+    standardized_materials: list[dict[str, Any]]
+    material_quality_report: dict[str, Any]
+    production_pack: dict[str, Any]
+    locked_block_composition: dict[str, Any]
+    composed_content_validation_report: dict[str, Any]
+    extracted_creation_facts: dict[str, Any]
     joint_strategy_decision: dict[str, Any]
     strategy_selection: dict[str, Any]
     match_decision_snapshot: dict[str, Any]

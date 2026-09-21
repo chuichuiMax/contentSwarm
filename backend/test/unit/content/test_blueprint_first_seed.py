@@ -6,15 +6,20 @@ import pytest
 from yuxi.content.catalog import INDUSTRY_CONFIG
 from yuxi.content.model.workflows.definition import workflow_definition_hash
 from yuxi.content.v3.joint_workflow import (
+    PLATFORM_WORKFLOW_DETERMINISTIC_PLAN_ID,
     PLATFORM_WORKFLOW_EXPRESSION_GUIDANCE_ID,
     PLATFORM_WORKFLOW_MODULAR_AUTHOR_ID,
     PLATFORM_WORKFLOW_PRICE_RECOVERY_ID,
+    PLATFORM_WORKFLOW_STANDARDIZED_FACTORY_ID,
     PLATFORM_WORKFLOW_VIRAL_AUTHOR_ID,
     WORKFLOW_EXPRESSION_GUIDANCE,
+    WORKFLOW_DETERMINISTIC_PLAN,
     WORKFLOW_MODULAR_AUTHOR,
     WORKFLOW_VIRAL_AUTHOR,
+    WORKFLOW_STANDARDIZED_FACTORY,
 )
 from yuxi.content.v3.seed import PLATFORM_RULE_V3_ID, _activate_v3_seed_data
+from yuxi.content.v3.modular_rules import STANDARDIZED_FACTORY_WORKFLOW_V1_ID
 from yuxi.content.v3.workflow import PLATFORM_WORKFLOW_V3_ID
 from yuxi.storage.postgres.models_content import (
     ContentRuleVersion,
@@ -49,6 +54,18 @@ class SeedDatabase:
                 definition_json=deepcopy(WORKFLOW_EXPRESSION_GUIDANCE),
                 definition_hash=workflow_definition_hash(WORKFLOW_EXPRESSION_GUIDANCE),
             ),
+            (ContentWorkflowVersion, PLATFORM_WORKFLOW_DETERMINISTIC_PLAN_ID): SimpleNamespace(
+                status="draft",
+                published_at=None,
+                definition_json=deepcopy(WORKFLOW_DETERMINISTIC_PLAN),
+                definition_hash=workflow_definition_hash(WORKFLOW_DETERMINISTIC_PLAN),
+            ),
+            (ContentWorkflowVersion, PLATFORM_WORKFLOW_STANDARDIZED_FACTORY_ID): SimpleNamespace(
+                status="draft",
+                published_at=None,
+                definition_json=deepcopy(WORKFLOW_STANDARDIZED_FACTORY),
+                definition_hash=workflow_definition_hash(WORKFLOW_STANDARDIZED_FACTORY),
+            ),
         }
         if previous_id:
             for slug in INDUSTRY_CONFIG:
@@ -74,12 +91,15 @@ class SeedDatabase:
 @pytest.mark.parametrize(
     ("previous_id", "created_by", "expected_id"),
     [
-        (None, "system", PLATFORM_WORKFLOW_EXPRESSION_GUIDANCE_ID),
-        (PLATFORM_WORKFLOW_V3_ID, "system", PLATFORM_WORKFLOW_EXPRESSION_GUIDANCE_ID),
-        (PLATFORM_WORKFLOW_PRICE_RECOVERY_ID, "system", PLATFORM_WORKFLOW_EXPRESSION_GUIDANCE_ID),
-        (PLATFORM_WORKFLOW_VIRAL_AUTHOR_ID, "system", PLATFORM_WORKFLOW_EXPRESSION_GUIDANCE_ID),
-        (PLATFORM_WORKFLOW_MODULAR_AUTHOR_ID, "system", PLATFORM_WORKFLOW_EXPRESSION_GUIDANCE_ID),
-        (PLATFORM_WORKFLOW_EXPRESSION_GUIDANCE_ID, "system", PLATFORM_WORKFLOW_EXPRESSION_GUIDANCE_ID),
+        (None, "system", PLATFORM_WORKFLOW_STANDARDIZED_FACTORY_ID),
+        (PLATFORM_WORKFLOW_V3_ID, "system", PLATFORM_WORKFLOW_STANDARDIZED_FACTORY_ID),
+        (PLATFORM_WORKFLOW_PRICE_RECOVERY_ID, "system", PLATFORM_WORKFLOW_STANDARDIZED_FACTORY_ID),
+        (PLATFORM_WORKFLOW_VIRAL_AUTHOR_ID, "system", PLATFORM_WORKFLOW_STANDARDIZED_FACTORY_ID),
+        (PLATFORM_WORKFLOW_MODULAR_AUTHOR_ID, "system", PLATFORM_WORKFLOW_STANDARDIZED_FACTORY_ID),
+        (PLATFORM_WORKFLOW_EXPRESSION_GUIDANCE_ID, "system", PLATFORM_WORKFLOW_STANDARDIZED_FACTORY_ID),
+        (PLATFORM_WORKFLOW_DETERMINISTIC_PLAN_ID, "system", PLATFORM_WORKFLOW_STANDARDIZED_FACTORY_ID),
+        (STANDARDIZED_FACTORY_WORKFLOW_V1_ID, "system", PLATFORM_WORKFLOW_STANDARDIZED_FACTORY_ID),
+        (PLATFORM_WORKFLOW_STANDARDIZED_FACTORY_ID, "system", PLATFORM_WORKFLOW_STANDARDIZED_FACTORY_ID),
         ("content-workflow-blueprint-first-v1", "system", "content-workflow-blueprint-first-v1"),
         ("custom-workflow", "system", "custom-workflow"),
         (PLATFORM_WORKFLOW_V3_ID, "admin", PLATFORM_WORKFLOW_V3_ID),
@@ -112,6 +132,14 @@ async def test_seed_defaults_to_blueprint_first_without_overwriting_custom_templ
         assert expression.status == "published"
         assert expression.published_at is not None
         assert expression.definition_json == WORKFLOW_EXPRESSION_GUIDANCE
+        deterministic = await db.get(ContentWorkflowVersion, PLATFORM_WORKFLOW_DETERMINISTIC_PLAN_ID)
+        assert deterministic.status == "published"
+        assert deterministic.published_at is not None
+        assert deterministic.definition_json == WORKFLOW_DETERMINISTIC_PLAN
+        standardized = await db.get(ContentWorkflowVersion, PLATFORM_WORKFLOW_STANDARDIZED_FACTORY_ID)
+        assert standardized.status == "published"
+        assert standardized.published_at is not None
+        assert standardized.definition_json == WORKFLOW_STANDARDIZED_FACTORY
 
 
 @pytest.mark.asyncio

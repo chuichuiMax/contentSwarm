@@ -59,6 +59,27 @@ def load_foreman_rule_catalog(
     for item in [*payload["methods"], *payload["title_formulas"], *payload["content_formulas"]]:
         if item.get("industry_scope") != ["decoration"]:
             raise ForemanRuleValidationError(f"装修工长规则 {item.get('code')} 缺少行业范围")
+    for formula in payload["title_formulas"]:
+        examples = formula.get("reference_examples") or []
+        slots = (formula.get("source_content") or {}).get("slot_schema") or []
+        if not examples or any(not isinstance(example, str) or not example.strip() for example in examples):
+            raise ForemanRuleValidationError(f"标题公式 {formula['code']} 缺少有效参考示例")
+        if not slots or len({slot.get("code") for slot in slots}) != len(slots):
+            raise ForemanRuleValidationError(f"标题公式 {formula['code']} 的槽位定义缺失或重复")
+        for slot in slots:
+            variable_codes = slot.get("variable_codes") or []
+            lexicon_codes = slot.get("lexicon_codes") or []
+            if (
+                not slot.get("code")
+                or not slot.get("label")
+                or (not variable_codes and not lexicon_codes)
+                or len(variable_codes) != len(set(variable_codes))
+                or len(lexicon_codes) != len(set(lexicon_codes))
+            ):
+                raise ForemanRuleValidationError(f"标题公式 {formula['code']} 的槽位 {slot.get('code')} 无效")
+        declared_variables = {code for slot in slots for code in slot.get("variable_codes") or []}
+        if not set(formula.get("variable_schema") or []).issubset(declared_variables):
+            raise ForemanRuleValidationError(f"标题公式 {formula['code']} 的变量没有完整映射到标题槽位")
     for group in groups:
         methods = [member.get("method_code") for member in group.get("method_members") or []]
         if len(methods) != 1 or methods[0] not in METHOD_CODES or group.get("combination_type") != "single":
@@ -136,23 +157,52 @@ def import_foreman_rules(bundle: dict[str, Any]) -> dict[str, Any]:
     result["combination_rules"] = [
         item for item in result.get("combination_rules") or [] if item.get("industry_scope") != ["decoration"]
     ] + foreman_groups
-    if not any(item.get("code") == "quote_type" for item in result.get("variables") or []):
-        result.setdefault("variables", []).append(
-            {
-                "code": "quote_type",
-                "name": "报价口径",
-                "value_type": "string",
-                "unit_schema": {},
-                "evidence_policy": {"required": True},
-                "sensitivity": "high_risk",
-                "allowed_usages": ["title", "body"],
-                "validation_schema": {
-                    "allowed_values": ["standard_unit_price", "project_quote", "budget", "settlement"]
-                },
-                "enabled": True,
-                "sort_order": len(result["variables"]),
-            }
-        )
+    quote_variables = {
+        "quote_type": {
+            "name": "报价口径",
+            "value_type": "string",
+            "allowed_usages": ["body"],
+            "validation_schema": {"enum": ["standard_unit_price", "project_quote", "budget", "settlement"]},
+        },
+        "title_price": {
+            "name": "标题价格",
+            "value_type": "string",
+            "allowed_usages": ["title"],
+            "validation_schema": {"minLength": 1, "maxLength": 100},
+        },
+        "title_price_label": {
+            "name": "标题价格口径",
+            "value_type": "string",
+            "allowed_usages": ["title", "body"],
+            "validation_schema": {"minLength": 1, "maxLength": 100},
+        },
+        "quote_block": {
+            "name": "锁定报价原文",
+            "value_type": "object",
+            "allowed_usages": ["body"],
+            "validation_schema": {},
+        },
+    }
+    variables = result.setdefault("variables", [])
+    existing_by_code = {item.get("code"): item for item in variables}
+    for code, definition in quote_variables.items():
+        payload = {
+            "code": code,
+            **definition,
+            "unit_schema": {},
+            "evidence_policy": {
+                "required": True,
+                "review_policy": "user_confirmed",
+                "allowed_sources": ["business_record"],
+            },
+            "sensitivity": "high_risk",
+            "enabled": True,
+            "sort_order": existing_by_code.get(code, {}).get("sort_order", len(variables)),
+        }
+        if code in existing_by_code:
+            variables[variables.index(existing_by_code[code])] = payload
+        else:
+            variables.append(payload)
     return result
 
 

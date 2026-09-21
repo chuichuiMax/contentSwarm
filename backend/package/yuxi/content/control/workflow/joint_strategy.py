@@ -12,6 +12,7 @@ from yuxi.content.control.errors import ContentApplicationError
 from yuxi.content.control.strategy.recommend_v3 import StrategyPreviewActor
 from yuxi.content.infrastructure.postgres.strategy_preview_repository import PostgresStrategyPreviewRepository
 from yuxi.content.model.contracts.joint_strategy import StrategySnapshotV2, validate_joint_strategy
+from yuxi.content.v3.title_formula_slots import enrich_decoration_title_formula
 from yuxi.services.content_viral_assets import (
     check_asset_source,
     preparation_skill_hash,
@@ -48,6 +49,10 @@ async def prepare_strategy_candidates(*, db, state, node_run_id):
         auto_direction=auto_direction,
     )
     catalog = result["strategy_candidates"]
+    if catalog.get("industry_slug") == "decoration":
+        catalog["title_formulas"] = [
+            enrich_decoration_title_formula(item) for item in catalog.get("title_formulas") or []
+        ]
     candidates = deepcopy(catalog)
     # 在线决策只看适用条件和公式说明；完整规则保留在锁定目录中供创作使用。
     candidates.pop("source_rules")
