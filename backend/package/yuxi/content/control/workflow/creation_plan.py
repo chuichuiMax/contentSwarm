@@ -513,6 +513,11 @@ async def merge_extracted_creation_facts(*, db, state: dict[str, Any], node_run_
 
     requested = set((state.get("creation_plan_gap_analysis") or {}).get("missing_variable_codes") or [])
     extracted = state.get("extracted_creation_facts") or {"facts": []}
+    list_variable_codes = {
+        str(item.get("code") or "")
+        for item in (state.get("strategy_catalog") or {}).get("variables") or []
+        if item.get("value_type") == "list"
+    }
 
     def strings(value: Any) -> list[str]:
         if isinstance(value, str):
@@ -526,19 +531,25 @@ async def merge_extracted_creation_facts(*, db, state: dict[str, Any], node_run_
     source_texts = strings(state["content_brief"])
     additions = []
     seen_codes = set()
+    seen_facts = set()
     for fact in extracted.get("facts") or []:
         code = str(fact.get("variable_code") or "")
         value = str(fact.get("value") or "").strip()
         quote = str(fact.get("source_quote") or "").strip()
-        if code not in requested or code in seen_codes:
+        if code not in requested:
             raise ContentApplicationError(
-                "CONTENT_PLAN_CONFIGURATION_INVALID", "事实抽取提交了未请求或重复的变量", "invalid"
+                "CONTENT_PLAN_CONFIGURATION_INVALID", f"事实抽取提交了未请求的变量：{code}", "invalid"
+            )
+        if (code, quote) in seen_facts or (code in seen_codes and code not in list_variable_codes):
+            raise ContentApplicationError(
+                "CONTENT_PLAN_CONFIGURATION_INVALID", f"事实抽取重复提交了单值变量或相同事实：{code}", "invalid"
             )
         if not quote or value != quote or not any(quote in text for text in source_texts):
             raise ContentApplicationError(
                 "CONTENT_PLAN_CONFIGURATION_INVALID", f"变量 {code} 的抽取值不是用户原文逐字引用", "invalid"
             )
         seen_codes.add(code)
+        seen_facts.add((code, quote))
         source_hash = hashlib.sha256(
             json.dumps([state["task_id"], code, quote], ensure_ascii=False).encode()
         ).hexdigest()

@@ -543,3 +543,102 @@ async def test_verbatim_extracted_fact_is_frozen_and_recomputes_plan(monkeypatch
     assert frozen_item["value"] == "最担心增项"
     assert frozen_item["metadata"]["extraction_mode"] == "verbatim"
     assert result["creation_plan_gap_analysis"]["has_missing"] is False
+
+
+@pytest.mark.asyncio
+async def test_list_variable_accepts_multiple_distinct_verbatim_facts(monkeypatch):
+    from yuxi.content.control.workflow.deterministic_node import V3DeterministicNodeHandler
+
+    freeze = AsyncMock(
+        return_value={
+            "evidence_bundle": {
+                "items": [
+                    {
+                        "variable_codes": ["advantages"],
+                        "value": "决策快效率高",
+                        "verified_status": "user_confirmed",
+                    },
+                    {
+                        "variable_codes": ["advantages"],
+                        "value": "自有工人无转包",
+                        "verified_status": "user_confirmed",
+                    },
+                ],
+                "bundle_hash": "f" * 64,
+            }
+        }
+    )
+    monkeypatch.setattr(V3DeterministicNodeHandler, "_freeze_evidence_bundle", freeze)
+    extraction_state = {
+        **state(),
+        "strategy_catalog": deepcopy(catalog()),
+        "content_brief": {
+            "user_request": '"serviceAdvantages": ["决策快效率高", "自有工人无转包"]',
+            "form_values": {"pain": "担心报价不透明"},
+        },
+        "creation_plan_gap_analysis": {"missing_variable_codes": ["advantages"]},
+        "extracted_creation_facts": {
+            "facts": [
+                {
+                    "variable_code": "advantages",
+                    "value": "决策快效率高",
+                    "source_quote": "决策快效率高",
+                },
+                {
+                    "variable_code": "advantages",
+                    "value": "自有工人无转包",
+                    "source_quote": "自有工人无转包",
+                },
+            ]
+        },
+    }
+    extraction_state["strategy_catalog"]["variables"].append(
+        {
+            "code": "advantages",
+            "value_type": "list",
+            "unit_schema": {},
+            "evidence_policy": {"required": False},
+            "sensitivity": "normal",
+            "allowed_usages": ["body"],
+            "validation_schema": {},
+        }
+    )
+
+    result = await merge_extracted_creation_facts(
+        db=SimpleNamespace(),
+        state=extraction_state,
+        node_run_id="node-1",
+    )
+
+    frozen_items = freeze.await_args.kwargs["state"]["evidence_collection"]["evidence_items"]
+    assert [item["value"] for item in frozen_items] == ["决策快效率高", "自有工人无转包"]
+    assert result["creation_plan_gap_analysis"]["has_missing"] is False
+
+
+@pytest.mark.asyncio
+async def test_scalar_variable_still_rejects_multiple_facts():
+    extraction_state = {
+        **state(),
+        "content_brief": {
+            "user_request": "长沙老房翻新，我从事装修行业10年了",
+            "form_values": {"pain": "担心报价不透明"},
+        },
+        "creation_plan_gap_analysis": {"missing_variable_codes": ["missing"]},
+        "extracted_creation_facts": {
+            "facts": [
+                {"variable_code": "missing", "value": "长沙", "source_quote": "长沙"},
+                {
+                    "variable_code": "missing",
+                    "value": "我从事装修行业10年了",
+                    "source_quote": "我从事装修行业10年了",
+                },
+            ]
+        },
+    }
+
+    with pytest.raises(ContentApplicationError, match="重复提交了单值变量"):
+        await merge_extracted_creation_facts(
+            db=SimpleNamespace(),
+            state=extraction_state,
+            node_run_id="node-1",
+        )
