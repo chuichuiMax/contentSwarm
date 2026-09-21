@@ -318,6 +318,17 @@ def migrate_system_content_agent(agent: Agent, spec: ContentAgentSpec, *, now=No
     context = (agent.config_json or {}).get("context")
     if agent.created_by == "system" and agent.updated_by != "system":
         additive_migrations = {
+            "content-visual-agent": {
+                3: (
+                    ("viral-cover-matcher",),
+                    {
+                        "content-visual-planner",
+                        "content-cover-generator",
+                        "content-visual-reviewer",
+                    },
+                    {},
+                ),
+            },
             "content-price-research-agent": {
                 5: (
                     (),

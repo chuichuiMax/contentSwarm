@@ -1377,6 +1377,48 @@ def test_system_content_agent_migration_does_not_overwrite_user_changes():
     assert existing.updated_by == "user-1"
 
 
+def test_visual_agent_additive_migration_installs_viral_cover_matcher():
+    spec = next(item for item in CONTENT_AGENT_SPECS if item.slug == "content-visual-agent")
+    existing = Agent(
+        slug=spec.slug,
+        backend_id="ChatbotAgent",
+        name=spec.name,
+        config_json={
+            "context": {
+                "skills": [
+                    "content-visual-planner",
+                    "content-cover-generator",
+                    "content-visual-reviewer",
+                    "user-extra-skill",
+                ],
+                "skill_tool_allowlist": list(spec.skill_tools),
+                "model": "provider:user-model",
+            }
+        },
+        enabled=True,
+        config_version=3,
+        is_subagent=False,
+        created_by="system",
+        updated_by="user-1",
+    )
+
+    assert migrate_system_content_agent(existing, spec) is True
+    assert existing.config_version == 4
+    assert existing.updated_by == "user-1"
+    assert existing.config_json["context"]["model"] == "provider:user-model"
+    assert existing.config_json["context"]["skills"] == [
+        "content-visual-planner",
+        "content-cover-generator",
+        "content-visual-reviewer",
+        "user-extra-skill",
+        "viral-cover-matcher",
+    ]
+    validate_existing_content_agent(existing, spec)
+
+    assert migrate_system_content_agent(existing, spec) is False
+    assert existing.config_json["context"]["skills"].count("viral-cover-matcher") == 1
+
+
 def test_research_agent_additive_migration_preserves_user_configuration():
     spec = next(item for item in CONTENT_AGENT_SPECS if item.slug == "content-research-agent")
     existing = Agent(
