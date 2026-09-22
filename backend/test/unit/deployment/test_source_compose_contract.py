@@ -93,7 +93,7 @@ def test_external_config_and_data_roots_are_used():
     compose = load_compose()
 
     for name in ("api", "worker", "xhs-browser-gateway", "mineru-api"):
-        assert compose["services"][name]["env_file"] == ["${CONFIG_ROOT:?CONFIG_ROOT must be set}/.env.prod"]
+        assert compose["services"][name]["env_file"] == ["${CONFIG_ROOT:?CONFIG_ROOT must be set}/.env.config"]
 
     data_services = ("api", "worker", "xhs-browser-gateway", "sandbox-provisioner", "hycanvas-db", "hycanvas-app")
     data_services += ("graph", "etcd", "minio", "milvus", "postgres", "redis", "paddlex")

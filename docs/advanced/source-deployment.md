@@ -43,7 +43,7 @@ docker build -f docker/runtime/hycanvas-runtime-base.Dockerfile \
 ├── repo/                 # Git 工作区，只保存代码
 ├── config/
 │   ├── .env.source       # Compose 路径、镜像与必填密钥
-│   └── .env.prod         # 完整业务配置与模型供应商密钥
+│   └── .env.config       # 完整业务配置与模型供应商密钥
 ├── releases/             # <git-sha>/、current、previous
 ├── data/                 # 数据库、对象存储和业务持久化数据
 └── cache/                # pnpm、npm、Go 构建缓存
@@ -65,8 +65,8 @@ sudo install -d -m 0750 -o contentswarm -g contentswarm \
 
 ```bash
 cp /srv/contentswarm/repo/.env.source.template /srv/contentswarm/config/.env.source
-cp /srv/contentswarm/repo/.env.template /srv/contentswarm/config/.env.prod
-chmod 0600 /srv/contentswarm/config/.env.source /srv/contentswarm/config/.env.prod
+cp /srv/contentswarm/repo/.env.template /srv/contentswarm/config/.env.config
+chmod 0600 /srv/contentswarm/config/.env.source /srv/contentswarm/config/.env.config
 ```
 
 `.env.source` 至少要完成这些工作：
@@ -77,7 +77,7 @@ chmod 0600 /srv/contentswarm/config/.env.source /srv/contentswarm/config/.env.pr
 - 填写 JWT、数据库、MinIO、HyCanvas、XHS Gateway 等随机生产密钥；`HYCANVAS_API_KEY` 必须以 `hyk_` 开头。
 - 填写 `CONTENTSWARM_PUBLIC_URL`、`HYCANVAS_PUBLIC_URL` 和端口。
 
-`.env.prod` 保存模型供应商、远程素材等完整业务配置。它由 API 和可选解析服务读取，不进入 Git。不要把真实密钥复制回 `.env.source.template` 或提交到仓库。
+`.env.config` 保存模型供应商、远程素材等完整业务配置。它由 API 和可选解析服务读取，不进入 Git。不要把真实密钥复制回 `.env.source.template` 或提交到仓库。
 
 以下变量供部署脚本使用，建议写入仅部署账户可读的 shell 环境文件，执行发布前导出：
 
