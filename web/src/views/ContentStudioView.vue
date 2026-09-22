@@ -539,14 +539,11 @@ const selectedTemplate = computed(() =>
 const selectedIndustrySlug = computed(
   () => store.template?.slug || selectedTemplate.value?.slug || ''
 )
-const needsContentDirection = computed(
-  () =>
-    (store.task?.runtime_config_snapshot?.strategy_mode ||
-      selectedTemplate.value?.strategy_mode) === 'direction_scoped'
-  () =>
-    selectedTemplate.value?.strategy_mode === 'direction_scoped' &&
-    !selectedTemplate.value?.blueprint_first
-)
+const needsContentDirection = computed(() => {
+  const strategyMode =
+    store.task?.runtime_config_snapshot?.strategy_mode || selectedTemplate.value?.strategy_mode
+  return strategyMode === 'direction_scoped' && !selectedTemplate.value?.blueprint_first
+})
 const availableContentGoals = computed(() => store.contentGoals)
 const selectedIndustryPack = computed(() =>
   (store.bootstrap?.industry_packs || []).find(
