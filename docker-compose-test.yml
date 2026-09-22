@@ -222,6 +222,7 @@ services:
       RELEASE_ROOT: /releases
       CACHE_ROOT: /cache
       WORK_ROOT: /work/build
+      GOPROXY: ${GOPROXY:-https://proxy.golang.org,direct}
       VITE_BASE_PATH: ${VITE_BASE_PATH:-/boyun/}
       CONTENTSWARM_PUBLIC_URL: ${CONTENTSWARM_PUBLIC_URL:?CONTENTSWARM_PUBLIC_URL must be set}
     volumes:
