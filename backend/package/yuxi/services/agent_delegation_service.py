@@ -47,6 +47,7 @@ from yuxi.storage.postgres.models_content import ContentNodeRun
 
 # 节点总时间、单调用时间、默认推理强度；每个受控节点的重试与纠错共用两次调用。
 CONTENT_NODE_EXECUTION_LIMITS = {
+    "extract_creation_facts": (120, 45, "low"),
     "semantic_review": (120, 120, "medium"),
     "generate_content": (300, 120, "medium"),
     "select_creation_strategy": (150, 65, "low"),
@@ -137,7 +138,9 @@ def build_runtime_config_snapshot(*, agent: Agent, context, request: AgentDelega
     # 投影节点默认沿用已声明输入契约；确实更换模型视图结构的节点在下方覆盖。
     snapshot["model_input_contract"] = request.input_contract
     if request.node_run.node_id in CONTENT_NODE_EXECUTION_LIMITS:
-        if request.node_run.node_id == "generate_content":
+        if request.node_run.node_id == "extract_creation_facts":
+            snapshot["fact_extraction_execution_policy_version"] = 1
+        elif request.node_run.node_id == "generate_content":
             snapshot["generation_policy_version"] = (
                 4
                 if "viral-author-core" in request.required_skills

@@ -4,7 +4,7 @@
   "source": {
     "document": "装修工长一级内容方向组合表",
     "captured_at": "2026-09-11",
-    "catalog_revision": "foreman-direction-matrix-v3-locked-quote",
+    "catalog_revision": "foreman-direction-matrix-v4-ct01-frt12-only",
     "section": "选题类型、内容类型、层级组合、词组组合"
   },
   "groups": [
@@ -17,7 +17,7 @@
       "industry_scope": ["decoration"],
       "combination_type": "single",
       "method_members": [{"method_code": "FRM05", "role": "primary", "order": 1}],
-      "title_formula_candidate_codes": ["FRT06", "FRT12"],
+      "title_formula_candidate_codes": ["FRT12"],
       "body_formula_candidate_codes": ["FRB05"],
       "scenario_description": "一级方向自我介绍，按表格固定执行完整七层结构和对应词组抽取规则",
       "required_variable_codes": [],
@@ -291,7 +291,7 @@
       "industry_scope": ["decoration"],
       "combination_type": "single",
       "method_members": [{"method_code": "FRM02", "role": "primary", "order": 1}],
-      "title_formula_candidate_codes": ["FRT06", "FRT12"],
+      "title_formula_candidate_codes": ["FRT12"],
       "body_formula_candidate_codes": ["FRB02"],
       "scenario_description": "日常工作方向，固定使用日常工作内容词组和工地照片/工艺节点证据",
       "required_variable_codes": ["product", "process"],

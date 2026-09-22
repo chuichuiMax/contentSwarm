@@ -39,6 +39,7 @@ def catalog():
         "variables": [
             {
                 "code": "missing",
+                "name": "缺失业务字段",
                 "value_type": "string",
                 "unit_schema": {},
                 "evidence_policy": {"required": False},
@@ -183,6 +184,9 @@ def test_formula_locks_configured_default_and_reports_missing_input_without_fall
     assert result["eligible_reference_ids"] == ["asset-a"]
     assert result["has_missing"] is True
     assert result["missing_variable_codes"] == ["missing"]
+    assert result["missing_variable_definitions"] == [
+        {"code": "missing", "name": "缺失业务字段", "value_type": "string"}
+    ]
 
 
 def test_production_order_and_manifest_keep_default_formula_when_material_is_missing():
@@ -197,6 +201,138 @@ def test_production_order_and_manifest_keep_default_formula_when_material_is_mis
     assert order["title_formula_code"] == "T_MISSING"
     assert order["body_formula_code"] == "B01"
     assert {item["variable_code"] for item in manifest["requirements"]} == {"missing", "pain"}
+
+
+def craft_catalog():
+    from yuxi.content.v3.foreman_rules import load_foreman_rule_catalog
+
+    rules = load_foreman_rule_catalog()
+    return {
+        **catalog(),
+        "industry_slug": "decoration",
+        "direction_code": "CT06",
+        "methods": rules["methods"],
+        "title_formulas": rules["title_formulas"],
+        "content_formulas": rules["content_formulas"],
+        "source_rules": rules["combination_rules"],
+        "variables": [
+            {
+                "code": code,
+                "name": "人设事实" if code == "persona_fact" else code,
+                "value_type": "list" if code in {"process", "advantages", "advantage"} else "string",
+            }
+            for code in ("persona_fact", "product", "location", "process", "advantages", "advantage", "scene")
+        ],
+    }
+
+
+@pytest.mark.parametrize("persona_source", ["missing", "brief", "evidence", "rejected"])
+def test_craft_plan_extracts_manifest_persona_requirement(persona_source):
+    brief = {
+        "user_request": '{"persona":{"workYears":"5","introduction":"我从事装修行业五年了"}}',
+        "form_values": {
+            "product": "装修",
+            "location": "长沙",
+            "process": ["拆除"],
+            "advantages": ["自有工人无转包"],
+            "pain": "担心施工质量",
+        },
+    }
+    evidence = {"items": []}
+    if persona_source == "brief":
+        brief["form_values"]["persona_fact"] = "我从事装修行业五年了"
+    elif persona_source in {"evidence", "rejected"}:
+        evidence["items"].append(
+            {
+                "variable_codes": ["persona_fact"],
+                "value": "我从事装修行业五年了",
+                "verified_status": "rejected" if persona_source == "rejected" else "user_confirmed",
+            }
+        )
+
+    gaps = analyze_plan_gaps(
+        catalog=craft_catalog(),
+        references=[reference(content_type="CT06")],
+        content_brief=brief,
+        evidence_bundle=evidence,
+        runtime_config_snapshot={},
+    )
+
+    missing = persona_source in {"missing", "rejected"}
+    assert gaps["missing_variable_codes"] == (["persona_fact"] if missing else [])
+    assert gaps["has_missing"] is missing
+    assert gaps["missing_variable_definitions"] == (
+        [{"code": "persona_fact", "name": "人设事实", "value_type": "string"}] if missing else []
+    )
+    assert gaps["price_research_questions"] == []
+
+
+@pytest.mark.asyncio
+async def test_build_plan_blocks_missing_manifest_persona_before_reference_loading():
+    current = {
+        **state(),
+        "strategy_catalog": craft_catalog(),
+        "content_brief": {
+            "form_values": {
+                "product": "装修",
+                "location": "长沙",
+                "process": ["拆除"],
+                "advantages": ["自有工人无转包"],
+            }
+        },
+    }
+
+    with pytest.raises(ContentApplicationError, match="persona_fact") as caught:
+        await build_creation_plan(db=SimpleNamespace(), state=current, node_run_id="node-1")
+
+    assert caught.value.code == "CONTENT_PLAN_INPUT_MISSING"
+
+
+@pytest.mark.parametrize("value_code", [None, "process", "advantage", "advantages"])
+def test_persona_value_group_only_requests_one_missing_alternative(value_code):
+    rules = catalog()
+    rules["industry_slug"] = "decoration"
+    rules["variables"].extend(
+        {"code": code, "value_type": "string"}
+        for code in ("persona_fact", "process", "advantage", "advantages", "result")
+    )
+    values = {"pain": "担心增项", "persona_fact": "我做装修五年了", "result": "节点验收通过"}
+    if value_code:
+        values[value_code] = "按节点验收"
+
+    gaps = analyze_plan_gaps(
+        catalog=rules,
+        references=[reference()],
+        content_brief={"form_values": values},
+        evidence_bundle={"items": []},
+        runtime_config_snapshot={},
+    )
+
+    if value_code:
+        assert gaps["missing_variable_codes"] == []
+    else:
+        assert len(gaps["missing_variable_codes"]) == 1
+        assert set(gaps["missing_variable_codes"]) <= {"process", "advantage", "advantages"}
+
+
+def test_plan_does_not_request_program_derived_material_from_extractor():
+    rules = catalog()
+    rules["content_formulas"][0]["output_schema"] = {"deterministic_calculation_required": True}
+    brief = {"form_values": {"pain": "担心增项"}}
+    _, manifest = compile_production_order_and_manifest(
+        task_id="task-1", catalog=rules, fact_index=build_fact_index(brief, {"items": []})
+    )
+    assert any(item["requirement_id"] == "derived:calculated_total" for item in manifest["requirements"])
+
+    gaps = analyze_plan_gaps(
+        catalog=rules,
+        references=[reference()],
+        content_brief=brief,
+        evidence_bundle={"items": []},
+        runtime_config_snapshot={},
+    )
+
+    assert gaps["missing_variable_codes"] == []
 
 
 def test_reference_filter_and_tie_break_are_deterministic():

@@ -45,6 +45,7 @@ import MarkdownPreview from '@/components/common/MarkdownPreview.vue'
 import { contentApi } from '@/apis/content_api'
 import { materialLibraryApi } from '@/apis/material_library_api'
 import { employeeApi } from '@/apis/employee_api'
+import { CONTENT_TEST_CASES } from '@/data/contentTestCases'
 import { useContentStudioStore } from '@/stores/contentStudio'
 import { formatContentRequestJson } from '@/utils/contentRequestPayload'
 import { useUserStore } from '@/stores/user'
@@ -70,6 +71,13 @@ const store = useContentStudioStore()
 const userStore = useUserStore()
 
 const stage = ref(1)
+const creationSubmitting = ref(false)
+const isCreationView = computed(
+  () =>
+    stage.value === 1 ||
+    (stage.value === 2 && !store.task?.latest_run_id && !store.currentRun && !store.interrupt)
+)
+const briefLocked = computed(() => Boolean(store.task && store.task.current_stage !== 'brief'))
 const creation = reactive({
   industry_template_id: '',
   mode: 'pro',
@@ -81,6 +89,8 @@ const creation = reactive({
 const formValues = reactive({})
 const currentEmployee = ref(null)
 const contentRequestExpanded = ref(false)
+const selectedContentTestCaseId = ref()
+const quoteTestCaseTypeSyncing = ref(false)
 const selectedAngleId = ref('')
 const selectedTitleId = ref('')
 const selectedTitleFormulaCode = ref('')
@@ -186,6 +196,7 @@ const accumulatedWorkflowNarrative = ref([])
 const streamedWorkflowNarrative = ref('')
 const posterTemplateSyncIntervalMs = 10_000
 let draftSaveTimer = null
+const draftSaveRequests = new Set()
 let posterTemplateSyncTimer = null
 let workflowNarrativeTimer = null
 let coverLoadGeneration = 0
@@ -231,6 +242,19 @@ const selectedImageRootGalleryId = computed(
 const selectedHyCanvasTemplate = computed(
   () => hycanvasTemplates.value.find((item) => item.id === selectedHyCanvasTemplateId.value) || null
 )
+const currentContentType = computed(
+  () => store.task?.content_type_code || creation.content_type_code
+)
+const availableContentTestCases = computed(() => {
+  const category = { CT01: 'self-introduction', CT06: 'construction-craft', CT07: 'daily-work' }[
+    currentContentType.value
+  ]
+  return CONTENT_TEST_CASES.filter((item) =>
+    item.contentTypeCode
+      ? item.contentTypeCode === currentContentType.value
+      : Boolean(category) && item.category === category
+  )
+})
 const builtinCoverTemplates = computed(() =>
   hycanvasTemplates.value.filter((item) => item.zone !== 'featured')
 )
@@ -280,10 +304,6 @@ const creationMaterialSummary = computed(() => {
     conflicts: conflicts.length
   }
 })
-const selectCreationTemplate = (template) => {
-  creation.industry_template_id = template.id
-  creation.content_goal = template.default_goal
-}
 const resultVisualMaterial = computed(
   () =>
     store.artifact?.runtime_config_snapshot?.visual_material ||
@@ -520,6 +540,9 @@ const selectedIndustrySlug = computed(
   () => store.template?.slug || selectedTemplate.value?.slug || ''
 )
 const needsContentDirection = computed(
+  () =>
+    (store.task?.runtime_config_snapshot?.strategy_mode ||
+      selectedTemplate.value?.strategy_mode) === 'direction_scoped'
   () =>
     selectedTemplate.value?.strategy_mode === 'direction_scoped' &&
     !selectedTemplate.value?.blueprint_first
@@ -982,6 +1005,35 @@ const saveStatusLabel = computed(() => {
   return ''
 })
 
+const changeContentType = async (event) => {
+  const contentTypeCode = event.target.value
+  selectedContentTestCaseId.value = undefined
+  if (!store.task) {
+    creation.content_type_code = contentTypeCode
+    return
+  }
+  quoteTestCaseTypeSyncing.value = true
+  try {
+    window.clearTimeout(draftSaveTimer)
+    await Promise.all(draftSaveRequests)
+    await store.updateTask({ content_type_code: contentTypeCode })
+    creation.content_type_code = contentTypeCode
+    creationPlanPreview.value = null
+  } catch (error) {
+    message.error(error.message || '更新创作类型失败')
+  } finally {
+    quoteTestCaseTypeSyncing.value = false
+    scheduleBriefSave()
+  }
+}
+
+const applyContentTestCase = (caseId) => {
+  const testCase = availableContentTestCases.value.find((item) => item.id === caseId)
+  if (!testCase) return
+  formValues.user_request = testCase.content
+  message.success(`已载入案例：${testCase.label}`)
+}
+
 const stageFromTask = (task) => {
   if (!task) return 1
   if (task.current_stage === 'review') return task.latest_run_id ? 2 : 3
@@ -1073,6 +1125,7 @@ const onBusinessSelectChange = (key, value) => {
 const guardProcessNameSelect = (fieldKey, open) => {
   if (!open || fieldKey !== '工艺名称') return
   if (processNameNeedsTypeHint.value) message.warning(PROCESS_NAME_GUARD_HINT)
+  formValues.user_request = saved.user_request ?? store.task?.brief?.user_request ?? ''
 }
 
 const revokePreviewUrls = (urls) => {
@@ -1421,7 +1474,6 @@ const syncPosterTemplatesWhenVisible = () => {
 }
 
 const loadVisualMaterials = async () => {
-  if (!store.task) return
   materialSelectorLoading.value = true
   try {
     const [galleryResponse, layoutResponse] = await Promise.all([
@@ -1900,6 +1952,10 @@ onMounted(async () => {
     await loadCurrentEmployee()
     if (taskId.value) {
       await store.loadTask(taskId.value)
+      creation.industry_template_id = store.template?.id || ''
+      creation.content_goal = store.task.content_goal
+      await nextTick()
+      creation.content_type_code = store.task.content_type_code
       if (route.query.hycanvasReturn === '1' && route.query.designId && store.artifact?.id) {
         try {
           const synced = await contentApi.syncHyCanvasDesign(
@@ -1921,9 +1977,10 @@ onMounted(async () => {
       initializeVisualSelection()
       syncEditor()
       if (route.query.resultDetail === '1' && store.artifact) resultDetailOpen.value = true
-      if (stage.value === 1) await loadVisualMaterials()
-      else if (usesDeterministicPlan.value && !store.task?.latest_run_id)
-        await loadCreationPlanPreview()
+      if (isCreationView.value) {
+        await loadVisualMaterials()
+        if (briefLocked.value && usesDeterministicPlan.value) await loadCreationPlanPreview()
+      }
       if (
         !historicalOriginal.value &&
         store.task?.latest_run_id &&
@@ -1945,6 +2002,7 @@ onMounted(async () => {
       creation.industry_template_id = creationTemplates.value[0]?.id || ''
       creation.content_goal = selectedTemplate.value?.default_goal || 'acquire'
       initializeFormValues()
+      await loadVisualMaterials()
     }
   } catch (error) {
     message.error(error.message || '内容工作台加载失败')
@@ -1955,21 +2013,41 @@ const createTask = async () => {
   if (!creation.industry_template_id) {
     message.warning('请选择行业模板')
     return
+const ensureCreationTask = async () => {
+  if (store.task) return store.task
+  if (!creation.industry_template_id || !creation.content_goal) {
+    throw new Error('装修与家居模板尚未就绪，请刷新后重试')
   }
   if (!creation.content_goal) {
     message.warning('请选择内容目标')
     return
+  if (needsContentDirection.value && !creation.content_type_code) {
+    throw new Error('请选择创作类型')
   }
+  const task = await store.createTask({ ...creation, creation_mode: 'viral_rewrite' })
+  await router.replace(`/content/tasks/${task.id}`)
+  return task
+}
+
+const saveCreationDraft = async () => {
+  if (creationSubmitting.value || quoteTestCaseTypeSyncing.value || briefLocked.value) return false
+  creationSubmitting.value = true
   try {
-    const task = await store.createTask({ ...creation, creation_mode: 'viral_rewrite' })
-    await router.replace(`/content/tasks/${task.id}`)
-    initializeFormValues()
-    initializeVisualSelection()
-    await loadVisualMaterials()
-    message.success('内容任务已创建')
+    window.clearTimeout(draftSaveTimer)
+    await Promise.all(draftSaveRequests)
+    await ensureCreationTask()
+    await store.saveBrief(buildBrief())
+    return true
   } catch (error) {
-    message.error(error.message || '创建任务失败')
+    message.error(error.message || '保存草稿失败')
+    return false
+  } finally {
+    creationSubmitting.value = false
   }
+}
+
+const openCreationOcr = async () => {
+  if (briefLocked.value || (await saveCreationDraft())) ocrModalOpen.value = true
 }
 
 const buildBrief = () => ({
@@ -2010,10 +2088,16 @@ const buildBrief = () => ({
 })
 
 const scheduleBriefSave = () => {
-  if (!store.task || stage.value !== 1) return
+  if (!store.task || stage.value !== 1 || creationSubmitting.value) return
   window.clearTimeout(draftSaveTimer)
   draftSaveTimer = window.setTimeout(() => {
-    store.saveBrief(buildBrief()).catch(() => {})
+    const request = store.saveBrief(buildBrief())
+    draftSaveRequests.add(request)
+    request
+      .catch(() => {})
+      .finally(() => {
+        draftSaveRequests.delete(request)
+      })
   }, 800)
 }
 
@@ -2075,6 +2159,12 @@ const compileBrief = async () => {
     message.warning(`请填写${missing.label}`)
     return
   }
+const submitCreation = async () => {
+  if (creationSubmitting.value || quoteTestCaseTypeSyncing.value) return
+  if (!currentContentType.value && needsContentDirection.value) {
+    message.warning('请选择创作类型')
+    return
+  }
   if (!String(formValues.user_request || '').trim()) {
     message.warning('请填写内容需求')
     return
@@ -2087,19 +2177,23 @@ const compileBrief = async () => {
     message.warning('请选择一个封面模板（内置封面或精选封面）')
     return
   }
+  creationSubmitting.value = true
   try {
     window.clearTimeout(draftSaveTimer)
-    await store.compileBrief(buildBrief())
-    stage.value = 2
+    await Promise.all(draftSaveRequests)
+    await ensureCreationTask()
+    if (!briefLocked.value) await store.compileBrief(buildBrief())
     if (usesDeterministicPlan.value) await loadCreationPlanPreview()
-    message.success('业务简报已形成，创作计划预检完成')
+    await startGeneration()
   } catch (error) {
     const missingFields = error.response?.data?.detail?.error?.fields
     message.error(
       missingFields?.length
         ? `请补充：${missingFields.map((field) => field.label || field.field).join('、')}`
-        : error.message || '请补充必填业务信息'
+        : error.message || '启动内容生成失败'
     )
+  } finally {
+    creationSubmitting.value = false
   }
 }
 
@@ -2384,15 +2478,28 @@ const openVersions = async () => {
   <div
     ref="studioPageElement"
     class="content-studio-page"
-    :class="{ 'studio-production': stage === 2 }"
+    :class="{
+      'studio-production': stage === 2 && !isCreationView,
+      'studio-creation': isCreationView
+    }"
     @scroll.passive="trackWorkflowScroll"
   >
     <header class="studio-header">
       <div>
-        <div class="header-kicker">Yuxi Content Strategy Studio</div>
-        <h1>{{ store.task?.name || '新建内容任务' }}</h1>
-        <p>规则、事实和知识同源，关键节点由人确认。</p>
+        <div v-if="!isCreationView" class="header-kicker">Yuxi Content Strategy Studio</div>
+        <h1>{{ isCreationView ? '内容创作' : store.task?.name || '新建内容任务' }}</h1>
+        <div v-if="isCreationView" class="creation-context">
+          <span>{{ store.template?.name || selectedTemplate?.name }}</span>
+          <span>爆款仿写</span>
+        </div>
+        <p v-else>规则、事实和知识同源，关键节点由人确认。</p>
       </div>
+      <ContentStudioToolbar
+        v-if="isCreationView && !historicalOriginal"
+        :has-task="Boolean(store.task || currentContentType) && !creationSubmitting"
+        :is-admin="userStore.isAdmin"
+        @recognize-image="openCreationOcr"
+      />
     </header>
 
     <main v-if="!store.loading.bootstrap" class="studio-main">
@@ -2406,7 +2513,7 @@ const openVersions = async () => {
       </section>
       <template v-else>
         <ContentStudioToolbar
-          v-if="stage !== 2 || (!store.currentRun && !store.interrupt)"
+          v-if="!isCreationView && stage !== 2"
           :has-task="Boolean(store.task)"
           :is-admin="userStore.isAdmin"
           @recognize-image="ocrModalOpen = true"
@@ -2474,7 +2581,19 @@ const openVersions = async () => {
               <a-select
                 v-model:value="creation.content_type_code"
                 placeholder="请选择本次内容方向"
+        <section v-if="isCreationView" class="creation-form">
+          <fieldset
+            class="creation-fields"
+            :disabled="creationSubmitting || briefLocked"
+            :inert="creationSubmitting || briefLocked"
+          >
+            <div v-if="needsContentDirection" class="field-block creation-type-field">
+              <span id="creation-type-label">创作类型</span>
+              <a-radio-group
+                :value="currentContentType"
+                :disabled="quoteTestCaseTypeSyncing || briefLocked || creationSubmitting"
                 aria-labelledby="creation-type-label"
+                @change="changeContentType"
               >
                 <a-select-option
                   v-for="item in directionOptions"
@@ -2602,29 +2721,43 @@ const openVersions = async () => {
                   </section>
                 </div>
               </div>
+            <div class="field-block creation-request">
+              <div class="creation-request-heading">
+                <label id="content-request-label" for="content-request">内容需求</label>
+                <a-select
+                  v-model:value="selectedContentTestCaseId"
+                  allow-clear
+                  :disabled="quoteTestCaseTypeSyncing || !currentContentType || briefLocked"
+                  placeholder="载入案例"
+                  aria-label="选择具体案例"
+                  @change="applyContentTestCase"
+                >
+                  <a-select-option
+                    v-for="testCase in availableContentTestCases"
+                    :key="testCase.id"
+                    :value="testCase.id"
+                  >
+                    {{ testCase.label }}
+                  </a-select-option>
+                </a-select>
+              </div>
+              <a-textarea
+                id="content-request"
+                v-model:value="formValues.user_request"
+                :rows="6"
+                :readonly="briefLocked"
+                aria-labelledby="content-request-label"
+                placeholder="请直接描述想要生成的内容、业务信息和特殊要求"
+              />
             </div>
             <section class="visual-material-card">
-              <div class="visual-material-heading">
-                <div>
-                  <span class="section-kicker">视觉素材</span>
-                  <h3>选择图库与封面模板</h3>
-                  <p>
-                    可选图库图片作为 HyCanvas
-                    封面主图；内容生成并审核通过后，系统会按所选模板生成可继续编辑的封面。
-                  </p>
-                </div>
-                <a-button @click="router.push('/materials/images')">
-                  <FolderOpen :size="15" />管理素材库
-                </a-button>
-              </div>
-
               <a-spin :spinning="materialSelectorLoading">
                 <div class="material-selector-block">
                   <div class="material-selector-title">
-                    <div><Image :size="18" /><strong>选择图库图片</strong><em>可选 · 多选</em></div>
-                    <small
-                      >如需使用图库素材可选择，首张图片作为封面原图，最多可同时选择 9 张。</small
-                    >
+                    <div><Image :size="18" /><strong>图库图片</strong></div>
+                    <a-button type="text" size="small" @click="router.push('/materials/images')">
+                      <FolderOpen :size="15" />管理素材库
+                    </a-button>
                   </div>
                   <div
                     v-if="rootMaterialGalleries.length"
@@ -2641,7 +2774,7 @@ const openVersions = async () => {
                       }"
                       @click="openGallery(gallery.id)"
                     >
-                      <span class="gallery-folder-icon"><Folder :size="30" /></span>
+                      <span class="gallery-folder-icon"><Folder :size="20" /></span>
                       <span class="gallery-folder-copy">
                         <strong>{{ gallery.name }}</strong>
                         <small>{{ gallery.count }} 张图片素材</small>
@@ -2738,35 +2871,38 @@ const openVersions = async () => {
                         }}</small>
                       </div>
                     </div>
-                    <a-button
-                      v-if="selectedImageGalleryId"
-                      type="link"
-                      @click="openGallery(selectedImageGalleryId)"
-                    >
-                      更换
-                    </a-button>
-                    <a-button type="link" danger @click="clearSelectedGalleryImage">清除</a-button>
+                    <div class="selected-gallery-actions">
+                      <a-tooltip v-if="selectedImageGalleryId" title="更换图库图片">
+                        <a-button
+                          type="text"
+                          aria-label="更换图库图片"
+                          @click="openGallery(selectedImageGalleryId)"
+                        >
+                          <PencilLine :size="16" />
+                        </a-button>
+                      </a-tooltip>
+                      <a-tooltip title="清除图库图片">
+                        <a-button
+                          type="text"
+                          danger
+                          aria-label="清除图库图片"
+                          @click="clearSelectedGalleryImage"
+                        >
+                          <X :size="16" />
+                        </a-button>
+                      </a-tooltip>
+                    </div>
                   </div>
                 </div>
 
                 <div class="material-selector-block template-selector-block">
                   <div class="material-selector-title">
-                    <div>
-                      <LayoutTemplate :size="18" /><strong>HyCanvas 封面模板专区</strong
-                      ><em>必选 · 单选</em>
-                    </div>
+                    <div><LayoutTemplate :size="18" /><strong>封面模板</strong></div>
                     <a-radio-group v-model:value="coverTemplateTab" size="small">
                       <a-radio-button value="builtin">内置封面</a-radio-button>
                       <a-radio-button value="featured">精选封面</a-radio-button>
                     </a-radio-group>
                   </div>
-                  <small v-if="coverTemplateTab === 'builtin'" class="template-zone-hint"
-                    >标题、副标题和图库原图将在内容生成后自动填入，并保留可编辑设计稿。</small
-                  >
-                  <small v-else class="template-zone-hint"
-                    >精选封面仅作为风格参考图：与背景图一起交给 AI 自由创作，产出 PNG
-                    封面（需要已配置 image2 中转站）。</small
-                  >
                   <div class="poster-choice-grid">
                     <button
                       v-for="item in coverTemplateTab === 'builtin'
@@ -2808,12 +2944,145 @@ const openVersions = async () => {
                 </div>
               </a-spin>
             </section>
-            <div class="stage-actions">
-              <a-button type="primary" :loading="store.loading.saving" @click="compileBrief">
-                形成事实简报并进入 V3 生产
-              </a-button>
+          </fieldset>
+          <a-spin v-if="usesDeterministicPlan && briefLocked" :spinning="creationPlanLoading">
+            <section v-if="creationPlan" class="creation-plan-preview">
+              <header>
+                <strong>创作计划预览</strong><span>{{ creationPlan.rule_version_id }}</span>
+              </header>
+              <dl>
+                <div>
+                  <dt>创作类型</dt>
+                  <dd>{{ creationPlanTypeName }}</dd>
+                </div>
+                <div>
+                  <dt>标题公式</dt>
+                  <dd>
+                    {{ creationPlan.title_formula?.code || '待补资料' }} ·
+                    {{ creationPlan.title_formula?.name || '—' }}
+                  </dd>
+                </div>
+                <div>
+                  <dt>正文公式</dt>
+                  <dd>
+                    {{ creationPlan.body_formula?.code || '待补资料' }} ·
+                    {{ creationPlan.body_formula?.name || '—' }}
+                  </dd>
+                </div>
+                <div>
+                  <dt>创作手法</dt>
+                  <dd>
+                    {{
+                      creationPlan.creation_methods
+                        ?.map((item) => `${item.code} · ${item.name}`)
+                        .join('、') || '—'
+                    }}
+                  </dd>
+                </div>
+                <div>
+                  <dt>爆款参考</dt>
+                  <dd>
+                    {{
+                      creationPlan.reference?.title ||
+                      (creationPlanPreview?.requires_fact_extraction
+                        ? '事实抽取后按固定规则确定'
+                        : '没有同类型可填充资产')
+                    }}
+                  </dd>
+                </div>
+                <div>
+                  <dt>事实槽位</dt>
+                  <dd>{{ creationPlan.reference?.mapped_slots?.join('、') || '—' }}</dd>
+                </div>
+                <div>
+                  <dt>标准物料</dt>
+                  <dd>
+                    共 {{ creationMaterialSummary.total }} 项 · 当前就绪
+                    {{ creationMaterialSummary.ready }} 项 · 需审核
+                    {{ creationMaterialSummary.pendingReview }} 项
+                  </dd>
+                </div>
+                <div>
+                  <dt>质量门</dt>
+                  <dd>
+                    缺失 {{ creationMaterialSummary.missing }} 项 · 冲突
+                    {{ creationMaterialSummary.conflicts }} 项
+                  </dd>
+                </div>
+              </dl>
+              <a-alert
+                v-if="!creationPlanCanGenerate"
+                type="warning"
+                show-icon
+                message="创作计划尚未就绪"
+                :description="
+                  [
+                    ...(creationPlanGaps.missing_variable_codes || []).map(
+                      (code) => `缺少字段 ${code}`
+                    ),
+                    ...(creationPlanGaps.missing_evidence_types || []).map(
+                      (code) => `缺少 Evidence ${code}`
+                    ),
+                    ...(creationPlanGaps.conflicting_variable_codes || []).map(
+                      (code) => `字段冲突 ${code}`
+                    ),
+                    ...(!creationPlanGaps.eligible_reference_ids?.length
+                      ? ['没有同类型可填充且已审核的爆款资产']
+                      : [])
+                  ].join('；')
+                "
+              />
+              <a-alert
+                v-else-if="creationPlanPreview?.requires_fact_extraction"
+                type="info"
+                show-icon
+                message="启动后先做原文事实抽取"
+                :description="`将只从你的输入原文逐字提取：${(creationPlanGaps.missing_variable_codes || []).join('、')}；不会让模型选择策略。`"
+              />
+              <a-button v-if="!creationPlanCanGenerate" @click="loadCreationPlanPreview"
+                ><RefreshCw :size="15" />重新预检</a-button
+              >
+            </section>
+          </a-spin>
+          <footer class="creation-submit-bar">
+            <div v-if="!isQuickMode" class="creation-model">
+              <label for="creation-model">生成模型</label>
+              <a-input
+                id="creation-model"
+                v-model:value="modelSpec"
+                :disabled="creationSubmitting"
+                placeholder="系统默认模型"
+              />
             </div>
-          </template>
+            <span
+              class="creation-save-status"
+              :class="{ 'save-error': store.saveStatus === 'error' }"
+              role="status"
+            >
+              {{ briefLocked ? '简报已锁定' : saveStatusLabel }}
+            </span>
+            <a-tooltip title="保存草稿">
+              <a-button
+                class="creation-save-button"
+                aria-label="保存草稿"
+                :disabled="
+                  creationSubmitting ||
+                  quoteTestCaseTypeSyncing ||
+                  briefLocked ||
+                  materialSelectorLoading
+                "
+                @click="saveCreationDraft"
+                ><Save :size="17"
+              /></a-button>
+            </a-tooltip>
+            <a-button
+              type="primary"
+              :loading="creationSubmitting"
+              :disabled="quoteTestCaseTypeSyncing || materialSelectorLoading || creationPlanLoading"
+              @click="submitCreation"
+              ><Play :size="17" />开始生成</a-button
+            >
+          </footer>
         </section>
 
         <section
@@ -2821,131 +3090,7 @@ const openVersions = async () => {
           class="stage-panel"
           :class="{ 'completion-stage': workflowCompleted }"
         >
-          <div v-if="!store.currentRun && !store.interrupt" class="generation-start">
-            <Sparkles :size="30" />
-            <h3>事实简报已锁定</h3>
-            <p v-if="usesDeterministicPlan">
-              创作类型、公式、手法、爆款参考和事实槽位会在生成模型调用前确定；生成模型只负责按计划创作。
-            </p>
-            <p v-else>
-              固定工作流会在动态节点调用 Agent，Agent 再使用
-              Skill、知识库和工具，关键选择会暂停等待人工确认。
-            </p>
-            <a-spin v-if="usesDeterministicPlan" :spinning="creationPlanLoading">
-              <section v-if="creationPlan" class="creation-plan-preview">
-                <header>
-                  <strong>创作计划预览</strong><span>{{ creationPlan.rule_version_id }}</span>
-                </header>
-                <dl>
-                  <div>
-                    <dt>创作类型</dt>
-                    <dd>{{ creationPlanTypeName }}</dd>
-                  </div>
-                  <div>
-                    <dt>标题公式</dt>
-                    <dd>
-                      {{ creationPlan.title_formula?.code || '待补资料' }} ·
-                      {{ creationPlan.title_formula?.name || '—' }}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>正文公式</dt>
-                    <dd>
-                      {{ creationPlan.body_formula?.code || '待补资料' }} ·
-                      {{ creationPlan.body_formula?.name || '—' }}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>创作手法</dt>
-                    <dd>
-                      {{
-                        creationPlan.creation_methods
-                          ?.map((item) => `${item.code} · ${item.name}`)
-                          .join('、') || '—'
-                      }}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>爆款参考</dt>
-                    <dd>
-                      {{
-                        creationPlan.reference?.title ||
-                        (creationPlanPreview?.requires_fact_extraction
-                          ? '事实抽取后按固定规则确定'
-                          : '没有同类型可填充资产')
-                      }}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>事实槽位</dt>
-                    <dd>{{ creationPlan.reference?.mapped_slots?.join('、') || '—' }}</dd>
-                  </div>
-                  <div>
-                    <dt>标准物料</dt>
-                    <dd>
-                      共 {{ creationMaterialSummary.total }} 项 · 当前就绪
-                      {{ creationMaterialSummary.ready }} 项 · 需审核
-                      {{ creationMaterialSummary.pendingReview }} 项
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>质量门</dt>
-                    <dd>
-                      缺失 {{ creationMaterialSummary.missing }} 项 · 冲突
-                      {{ creationMaterialSummary.conflicts }} 项
-                    </dd>
-                  </div>
-                </dl>
-                <a-alert
-                  v-if="!creationPlanCanGenerate"
-                  type="warning"
-                  show-icon
-                  message="创作计划尚未就绪"
-                  :description="
-                    [
-                      ...(creationPlanGaps.missing_variable_codes || []).map(
-                        (code) => `缺少字段 ${code}`
-                      ),
-                      ...(creationPlanGaps.missing_evidence_types || []).map(
-                        (code) => `缺少 Evidence ${code}`
-                      ),
-                      ...(creationPlanGaps.conflicting_variable_codes || []).map(
-                        (code) => `字段冲突 ${code}`
-                      ),
-                      ...(!creationPlanGaps.eligible_reference_ids?.length
-                        ? ['没有同类型可填充且已审核的爆款资产']
-                        : [])
-                    ].join('；')
-                  "
-                />
-                <a-alert
-                  v-else-if="creationPlanPreview?.requires_fact_extraction"
-                  type="info"
-                  show-icon
-                  message="启动后先做原文事实抽取"
-                  :description="`将只从你的输入原文逐字提取：${(creationPlanGaps.missing_variable_codes || []).join('、')}；不会让模型选择策略。`"
-                />
-                <a-button v-if="!creationPlanCanGenerate" @click="loadCreationPlanPreview"
-                  ><RefreshCw :size="15" />重新预检</a-button
-                >
-              </section>
-            </a-spin>
-            <a-input
-              v-if="!isQuickMode"
-              v-model:value="modelSpec"
-              placeholder="可选：指定模型 spec；留空使用系统默认模型"
-            />
-            <a-button
-              type="primary"
-              size="large"
-              :disabled="!creationPlanCanGenerate"
-              @click="startGeneration"
-              ><Play :size="17" />开始生成</a-button
-            >
-          </div>
-
           <div
-            v-else
             class="run-layout"
             :class="{
               'completion-layout': workflowCompleted,
@@ -4045,6 +4190,10 @@ const openVersions = async () => {
 </template>
 
 <style scoped lang="less">
+:global(.app-layout:has(.studio-creation)) {
+  min-width: 0;
+}
+
 .content-studio-page {
   min-width: 0;
   min-height: 100vh;
@@ -4096,6 +4245,149 @@ const openVersions = async () => {
     max-width: none;
   }
 }
+.studio-creation {
+  background: var(--gray-0);
+  padding-bottom: 0;
+
+  .studio-header {
+    align-items: center;
+    padding-bottom: 20px;
+    border-bottom: 1px solid var(--gray-150);
+  }
+  .studio-header > div {
+    flex-shrink: 0;
+  }
+  .studio-header :deep(.content-studio-toolbar) {
+    width: auto;
+    margin: 0;
+  }
+  .studio-header h1 {
+    font-size: 22px;
+    margin: 0 0 6px;
+  }
+  .gallery-folder-grid {
+    grid-template-columns: repeat(auto-fill, minmax(145px, 1fr));
+    gap: 10px;
+  }
+  .gallery-folder-card {
+    min-height: 66px;
+    padding: 10px;
+    gap: 8px;
+    border-radius: 6px;
+  }
+  .gallery-folder-card:hover {
+    transform: none;
+  }
+  .gallery-folder-icon {
+    width: 30px;
+    height: 30px;
+    background: transparent;
+    color: var(--color-text-secondary);
+  }
+  .gallery-folder-copy {
+    gap: 2px;
+  }
+  .selected-gallery-image {
+    padding: 0;
+    border: 0;
+    background: transparent;
+  }
+  .selected-gallery-preview-grid {
+    flex: 0 1 208px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .gallery-selected-badge {
+    top: 2px;
+    right: 2px;
+    padding: 0 4px;
+  }
+  .material-selector-title {
+    align-items: center;
+  }
+  .creation-plan-preview {
+    width: 100%;
+    margin: 20px 0;
+    border-radius: 8px;
+  }
+}
+.creation-context {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  span + span {
+    border-left: 1px solid var(--gray-200);
+    padding-left: 10px;
+  }
+}
+.creation-fields {
+  min-width: 0;
+  padding: 0;
+  margin: 0;
+  border: 0;
+}
+.creation-request-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  label {
+    font-size: 13px;
+    font-weight: 600;
+  }
+  :deep(.ant-select) {
+    width: 240px;
+    max-width: 100%;
+  }
+}
+.creation-submit-bar {
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 24px;
+  padding: 16px 0;
+  border-top: 1px solid var(--gray-150);
+  background: var(--gray-0);
+  :deep(.ant-btn) {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+  }
+  :deep(.ant-btn-primary) {
+    min-width: 128px;
+  }
+  .creation-save-button {
+    width: 32px;
+    padding: 0;
+  }
+}
+.creation-model {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  label {
+    flex-shrink: 0;
+    font-size: 13px;
+  }
+  :deep(.ant-input) {
+    width: 240px;
+  }
+}
+.creation-save-status {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+  &.save-error {
+    color: var(--color-error-600);
+  }
+}
 .stage-panel {
   background: var(--gray-0);
   border: 1px solid var(--gray-150);
@@ -4124,8 +4416,6 @@ const openVersions = async () => {
   color: var(--color-text-secondary);
 }
 
-.setup-grid,
-.brief-layout,
 .review-layout {
   display: grid;
   grid-template-columns: minmax(0, 1.6fr) minmax(280px, 0.8fr);
@@ -4192,44 +4482,25 @@ const openVersions = async () => {
   margin-top: 24px;
   :deep(.ant-select) {
     width: 100%;
+  margin-bottom: 24px;
+  :deep(.ant-radio-group) {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  :deep(.ant-radio-button-wrapper) {
+    border: 1px solid var(--gray-200);
+    border-radius: 6px;
+  }
+  :deep(.ant-radio-button-wrapper::before) {
+    display: none;
+  }
+  :deep(.ant-radio-button-wrapper-checked) {
+    border-color: var(--main-color);
+    background: var(--main-10);
   }
 }
 
-.template-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
-}
-.template-card {
-  min-height: 116px;
-  padding: 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-  text-align: left;
-  border: 1px solid var(--gray-150);
-  border-radius: 8px;
-  background: var(--gray-0);
-  color: var(--color-text);
-  cursor: pointer;
-}
-.template-card:hover {
-  border-color: var(--main-300);
-  background: var(--main-10);
-}
-.template-card.selected {
-  border-color: var(--main-color);
-  background: var(--main-30);
-}
-.template-card strong {
-  font-size: 15px;
-}
-.template-card span,
-.template-card small {
-  color: var(--color-text-secondary);
-}
-
-.form-card,
 .facts-preview,
 .human-review-card,
 .running-card,
@@ -4240,20 +4511,10 @@ const openVersions = async () => {
   padding: 20px;
   background: var(--gray-0);
 }
-.form-card,
 .content-editor-card {
   display: flex;
   flex-direction: column;
   gap: 18px;
-}
-.dynamic-form {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 16px;
-}
-.dynamic-form .field-block:has(textarea),
-.dynamic-form .field-block:has(.ant-select-multiple) {
-  grid-column: 1 / -1;
 }
 .field-block {
   display: flex;
@@ -4415,35 +4676,15 @@ const openVersions = async () => {
   padding-left: 18px;
 }
 .visual-material-card {
-  margin-top: 20px;
-  padding: 20px;
-  border: 1px solid var(--gray-150);
-  border-radius: 8px;
-  background: var(--gray-0);
-}
-.visual-material-heading {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 20px;
-  padding-bottom: 16px;
-  border-bottom: 1px solid var(--gray-150);
-}
-.visual-material-heading h3 {
-  margin: 3px 0 5px;
-  font-size: 17px;
-}
-.visual-material-heading p {
-  margin: 0;
-  color: var(--color-text-secondary);
-  font-size: 13px;
+  margin-top: 24px;
+  border-top: 1px solid var(--gray-150);
 }
 .section-kicker {
   color: var(--main-700);
   font-size: 12px;
   font-weight: 600;
 }
-.visual-material-heading :deep(.ant-btn),
+.material-selector-title :deep(.ant-btn),
 .template-manage-link {
   display: inline-flex;
   align-items: center;
@@ -4479,11 +4720,6 @@ const openVersions = async () => {
 .material-selector-title small {
   color: var(--color-text-tertiary);
   text-align: right;
-}
-.template-zone-hint {
-  display: block;
-  margin: -6px 0 10px;
-  color: var(--color-text-tertiary);
 }
 .template-sync-status {
   display: inline-flex;
@@ -4574,6 +4810,18 @@ const openVersions = async () => {
 .selected-gallery-image small {
   color: var(--color-text-tertiary);
   font-size: 11px;
+}
+.selected-gallery-actions {
+  display: flex;
+  gap: 4px;
+  :deep(.ant-btn) {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    padding: 0;
+  }
 }
 .selected-gallery-image strong {
   overflow: hidden;
@@ -4875,25 +5123,6 @@ const openVersions = async () => {
   justify-content: space-between;
 }
 
-.generation-start {
-  max-width: 560px;
-  margin: 50px auto;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 12px;
-  text-align: center;
-}
-.generation-start h3,
-.generation-start p {
-  margin: 0;
-}
-.generation-start p {
-  color: var(--color-text-secondary);
-}
-.generation-start :deep(.ant-input) {
-  max-width: 500px;
-}
 .completion-stage {
   padding: 0;
   border: 0;
@@ -6158,8 +6387,6 @@ const openVersions = async () => {
   .panel-heading {
     flex-direction: column;
   }
-  .setup-grid,
-  .brief-layout,
   .review-layout {
     grid-template-columns: 1fr;
   }
@@ -6189,8 +6416,9 @@ const openVersions = async () => {
     padding-right: 0;
     overflow: visible;
   }
-  .template-grid {
-    grid-template-columns: 1fr 1fr;
+  .studio-creation .studio-header {
+    align-items: flex-start;
+    gap: 12px;
   }
 }
 
@@ -6235,18 +6463,37 @@ const openVersions = async () => {
   .hycanvas-fields {
     grid-template-columns: 1fr;
   }
-  .dynamic-form .field-block {
-    grid-column: auto;
-  }
   .stage-actions,
   .stage-actions.split,
   .editor-actions {
     width: 100%;
     flex-direction: column;
   }
-  .visual-material-heading,
   .material-selector-title {
     flex-direction: column;
+  }
+  .studio-creation .material-selector-title {
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .studio-creation .gallery-folder-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .creation-model {
+    width: 100%;
+    :deep(.ant-input) {
+      width: 100%;
+      min-width: 0;
+    }
+  }
+  .creation-submit-bar {
+    gap: 10px;
+    padding: 12px 0;
+  }
+  .creation-save-status {
+    margin-left: 0;
+    margin-right: auto;
   }
   .content-case-heading {
     align-items: flex-start;

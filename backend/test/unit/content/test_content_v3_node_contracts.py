@@ -39,6 +39,32 @@ DOMAIN_CONTEXT = ContractDomainContext(
 )
 
 
+def test_extracted_creation_fact_requires_value_to_equal_verbatim_source_quote():
+    contract = get_contract_model("ExtractedCreationFactsResultV1")
+
+    with pytest.raises(ValidationError, match="value 必须与 source_quote 完全相同"):
+        contract.model_validate(
+            {
+                "facts": [
+                    {
+                        "variable_code": "product",
+                        "value": "装修行业",
+                        "source_quote": '"introduction": "我从事装修行业10年了"',
+                    }
+                ],
+                "unresolved_variable_codes": [],
+            }
+        )
+
+    accepted = contract.model_validate(
+        {
+            "facts": [{"variable_code": "product", "value": "装修行业", "source_quote": "装修行业"}],
+            "unresolved_variable_codes": [],
+        }
+    )
+    assert accepted.facts[0].value == "装修行业"
+
+
 VALID_PAYLOADS = {
     "ContentDirectionDecisionResultV1": {
         "value_points": ["value"],
@@ -434,6 +460,19 @@ def test_visual_plan_must_use_exactly_the_task_locked_gallery_image():
         validate_content_node_result("VisualPlanResultV1", payload, context)
 
     assert exc_info.value.code == "visual_source_locked"
+
+
+def test_visual_plan_locked_artifact_error_includes_expected_id_for_agent_correction():
+    context = replace(DOMAIN_CONTEXT, artifact_version_id="cav-locked-version")
+    payload = deepcopy(VALID_PAYLOADS["VisualPlanResultV1"])
+    payload["artifact_version_id"] = "wrong-version"
+
+    with pytest.raises(ContractDomainValidationError) as exc_info:
+        validate_content_node_result("VisualPlanResultV1", payload, context)
+
+    assert exc_info.value.code == "locked_value_changed"
+    assert exc_info.value.field_path == "artifact_version_id"
+    assert str(exc_info.value) == "artifact_version_id 必须逐字等于锁定值：cav-locked-version"
 
 
 def test_visual_plan_over_template_limit_is_returned_to_agent_for_revision():
@@ -925,9 +964,7 @@ async def test_generated_content_uses_locked_formula_and_variant_metadata():
     assert result["draft"]["body_formula_code"] == "B1"
     assert result["outline"]["variant_key"] is None
     assert result["outline"]["sections"][0]["evidence_ids"] == ["e-body"]
-    assert result["title"]["lexicon_usage"] == [
-        {"code": "title.audience", "selected_terms": ["装修业主"]}
-    ]
+    assert result["title"]["lexicon_usage"] == [{"code": "title.audience", "selected_terms": ["装修业主"]}]
     assert result["draft"]["lexicon_usage"] == [{"code": "body.pain", "selected_terms": ["返工"]}]
     assert result["draft"]["paragraph_evidence"] == [
         {"paragraph_id": "p1", "evidence_ids": []},
