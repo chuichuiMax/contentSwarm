@@ -1,28 +1,20 @@
 <script setup>
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import { Search } from 'lucide-vue-next'
 
 import { variableApi } from '@/apis/variable_api'
 import PageHeader from '@/components/shared/PageHeader.vue'
 
-const SERVICE_ENTRIES = ['装修家居', '好评笔记']
-const PORT_OPTIONS = [
-  { value: 'pc', label: 'PC' },
-  { value: 'app', label: '小程序' }
-]
-const EDITION_OPTIONS = [
-  { value: 'quick', label: '简化版' },
-  { value: 'pro', label: '专业版' }
-]
-
-const activeServiceEntry = ref(SERVICE_ENTRIES[0])
+const DEFAULT_SERVICE_ENTRY = '装修家居'
+const DEFAULT_PORTS = ['pc', 'app']
+const DEFAULT_EDITIONS = ['quick', 'pro']
 
 const emptyForm = () => ({
   name: '',
-  service_entry: activeServiceEntry.value,
-  ports: ['pc'],
-  editions: ['quick'],
+  service_entry: DEFAULT_SERVICE_ENTRY,
+  ports: [...DEFAULT_PORTS],
+  editions: [...DEFAULT_EDITIONS],
   enabled: true
 })
 
@@ -31,23 +23,21 @@ const saving = ref(false)
 const togglingId = ref('')
 const keywordInput = ref('')
 const keyword = ref('')
+const page = ref(1)
+const pageSize = ref(20)
 const variables = ref([])
 const modalOpen = ref(false)
 const editingId = ref('')
 const form = reactive(emptyForm())
 
-const modalTitle = computed(() => (editingId.value ? '编辑变量' : '新增变量'))
-const displayedVariables = computed(() =>
-  variables.value.filter((item) => item.service_entry === activeServiceEntry.value)
-)
-
-const optionLabels = (options, values) => {
-  const selected = Array.isArray(values) ? values : []
-  return options
-    .filter((item) => selected.includes(item.value))
-    .map((item) => item.label)
-    .join('，') || '-'
-}
+const modalTitle = computed(() => (editingId.value ? '编辑业务参数' : '新增业务参数'))
+const tablePagination = computed(() => ({
+  current: page.value,
+  pageSize: pageSize.value,
+  showSizeChanger: true,
+  showTotal: (total) => `共 ${total} 条`,
+  pageSizeOptions: ['10', '20', '50']
+}))
 
 const formatCreatedAt = (value) => {
   if (!value) return '-'
@@ -63,7 +53,7 @@ const loadVariables = async () => {
     const response = await variableApi.listVariables({ keyword: keyword.value })
     variables.value = response.variables || []
   } catch (error) {
-    message.error(error.message || '加载变量失败')
+    message.error(error.message || '加载业务参数失败')
   } finally {
     loading.value = false
   }
@@ -71,7 +61,13 @@ const loadVariables = async () => {
 
 const handleSearch = () => {
   keyword.value = keywordInput.value.trim()
+  page.value = 1
   void loadVariables()
+}
+
+const handleTableChange = (pagination) => {
+  page.value = pagination.current
+  pageSize.value = pagination.pageSize
 }
 
 const openCreate = () => {
@@ -84,9 +80,9 @@ const openEdit = (item) => {
   editingId.value = item.id
   Object.assign(form, {
     name: item.name,
-    service_entry: item.service_entry,
-    ports: Array.isArray(item.ports) && item.ports.length ? [...item.ports] : ['pc', 'app'],
-    editions: Array.isArray(item.editions) && item.editions.length ? [...item.editions] : ['quick', 'pro'],
+    service_entry: item.service_entry || DEFAULT_SERVICE_ENTRY,
+    ports: Array.isArray(item.ports) && item.ports.length ? [...item.ports] : [...DEFAULT_PORTS],
+    editions: Array.isArray(item.editions) && item.editions.length ? [...item.editions] : [...DEFAULT_EDITIONS],
     enabled: item.enabled
   })
   modalOpen.value = true
@@ -100,44 +96,30 @@ const closeModal = () => {
 
 const saveVariable = async () => {
   const name = form.name.trim()
-  const serviceEntry = String(form.service_entry || '').trim()
   if (!name) {
-    message.warning('请输入变量名称')
-    return
-  }
-  if (!serviceEntry) {
-    message.warning('请选择服务入口')
-    return
-  }
-  if (!form.ports.length) {
-    message.warning('请选择端口')
-    return
-  }
-  if (!form.editions.length) {
-    message.warning('请选择版本')
+    message.warning('请输入参数名称')
     return
   }
   saving.value = true
   try {
     const payload = {
       name,
-      service_entry: serviceEntry,
-      ports: form.ports,
-      editions: form.editions,
+      service_entry: form.service_entry || DEFAULT_SERVICE_ENTRY,
+      ports: form.ports.length ? form.ports : [...DEFAULT_PORTS],
+      editions: form.editions.length ? form.editions : [...DEFAULT_EDITIONS],
       enabled: form.enabled
     }
     if (editingId.value) {
       await variableApi.updateVariable(editingId.value, payload)
-      message.success('变量已更新')
+      message.success('业务参数已更新')
     } else {
       await variableApi.createVariable(payload)
-      message.success('变量已创建')
+      message.success('业务参数已创建')
     }
     closeModal()
-    activeServiceEntry.value = serviceEntry
     await loadVariables()
   } catch (error) {
-    message.error(error.message || '保存变量失败')
+    message.error(error.message || '保存业务参数失败')
   } finally {
     saving.value = false
   }
@@ -157,7 +139,7 @@ const toggleEnabled = async (item, enabled) => {
 
 const removeVariable = (item) => {
   Modal.confirm({
-    title: `删除变量「${item.name}」`,
+    title: `删除业务参数「${item.name}」`,
     content: '删除后不可恢复。',
     okText: '删除',
     okType: 'danger',
@@ -165,10 +147,10 @@ const removeVariable = (item) => {
     async onOk() {
       try {
         await variableApi.deleteVariable(item.id)
-        message.success('变量已删除')
+        message.success('业务参数已删除')
         await loadVariables()
       } catch (error) {
-        message.error(error.message || '删除变量失败')
+        message.error(error.message || '删除业务参数失败')
         return Promise.reject(error)
       }
     }
@@ -176,11 +158,16 @@ const removeVariable = (item) => {
 }
 
 onMounted(loadVariables)
+
+watch([variables, pageSize], () => {
+  const maxPage = Math.max(1, Math.ceil(variables.value.length / pageSize.value))
+  if (page.value > maxPage) page.value = maxPage
+})
 </script>
 
 <template>
   <div class="variable-config-view">
-    <PageHeader title="变量配置" :show-border="true" />
+    <PageHeader title="业务参数配置" :show-border="true" />
 
     <div class="variable-config-content">
       <div class="variable-toolbar">
@@ -201,40 +188,21 @@ onMounted(loadVariables)
         <a-button type="primary" class="add-btn" @click="openCreate">新增</a-button>
       </div>
 
-      <nav class="service-entry-tabs" aria-label="服务入口">
-        <button
-          v-for="entry in SERVICE_ENTRIES"
-          :key="entry"
-          type="button"
-          class="service-entry-tab"
-          :class="{ active: activeServiceEntry === entry }"
-          @click="activeServiceEntry = entry"
-        >
-          {{ entry }}
-        </button>
-      </nav>
-
       <a-table
         class="variable-table"
-        :data-source="displayedVariables"
+        :data-source="variables"
         :loading="loading"
-        :pagination="false"
+        :pagination="tablePagination"
         :bordered="true"
         row-key="id"
+        @change="handleTableChange"
       >
         <a-table-column title="序号" key="index" :width="80" align="center">
-          <template #default="{ index }">{{ index + 1 }}</template>
+          <template #default="{ index }">{{ (page - 1) * pageSize + index + 1 }}</template>
         </a-table-column>
         <a-table-column title="编码" data-index="variable_code" key="variable_code" :width="128" />
-        <a-table-column title="变量" key="name" :width="160">
+        <a-table-column title="业务参数" key="name" :width="160">
           <template #default="{ record }">{{ record.name }}</template>
-        </a-table-column>
-        <a-table-column title="服务入口" data-index="service_entry" key="service_entry" :width="120" />
-        <a-table-column title="端口" key="ports" :width="148">
-          <template #default="{ record }">{{ optionLabels(PORT_OPTIONS, record.ports) }}</template>
-        </a-table-column>
-        <a-table-column title="版本" key="editions" :width="148">
-          <template #default="{ record }">{{ optionLabels(EDITION_OPTIONS, record.editions) }}</template>
         </a-table-column>
         <a-table-column title="状态" key="enabled" :width="132">
           <template #default="{ record }">
@@ -279,30 +247,8 @@ onMounted(loadVariables)
         :label-col="{ style: { width: '92px' } }"
         :wrapper-col="{ style: { flex: 1 } }"
       >
-        <a-form-item label="变量" required>
-          <a-input v-model:value="form.name" placeholder="请输入变量名称" allow-clear />
-        </a-form-item>
-        <a-form-item label="服务类型" required>
-          <a-select
-            v-model:value="form.service_entry"
-            placeholder="请选择服务入口"
-            allow-clear
-            :options="SERVICE_ENTRIES.map((name) => ({ value: name, label: name }))"
-          />
-        </a-form-item>
-        <a-form-item label="端口" required>
-          <a-checkbox-group v-model:value="form.ports" class="option-checks">
-            <a-checkbox v-for="option in PORT_OPTIONS" :key="option.value" :value="option.value">
-              {{ option.label }}
-            </a-checkbox>
-          </a-checkbox-group>
-        </a-form-item>
-        <a-form-item label="版本" required>
-          <a-checkbox-group v-model:value="form.editions" class="option-checks">
-            <a-checkbox v-for="option in EDITION_OPTIONS" :key="option.value" :value="option.value">
-              {{ option.label }}
-            </a-checkbox>
-          </a-checkbox-group>
+        <a-form-item label="业务参数" required>
+          <a-input v-model:value="form.name" placeholder="请输入业务参数名称" allow-clear />
         </a-form-item>
         <a-form-item label="状态" required>
           <a-radio-group v-model:value="form.enabled" class="status-radios">
@@ -337,7 +283,7 @@ onMounted(loadVariables)
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  margin-bottom: 12px;
+  margin-bottom: 16px;
 
   .search-input {
     width: 360px;
@@ -370,54 +316,14 @@ onMounted(loadVariables)
   }
 }
 
-.service-entry-tabs {
-  display: flex;
-  gap: 32px;
-  margin-bottom: 0;
-  padding: 0 4px;
-  border-bottom: 1px solid var(--gray-150);
-}
-
-.service-entry-tab {
-  position: relative;
-  padding: 10px 2px 12px;
-  border: none;
-  background: transparent;
-  color: var(--gray-500);
-  font-size: 14px;
-  font-weight: 500;
-  line-height: 22px;
-  cursor: pointer;
-
-  &:hover {
-    color: var(--gray-800);
-  }
-
-  &.active {
-    color: var(--main-color);
-
-    &::after {
-      content: '';
-      position: absolute;
-      left: 0;
-      right: 0;
-      bottom: -1px;
-      height: 2px;
-      background: var(--main-color);
-      border-radius: 1px;
-    }
-  }
-}
-
 .variable-table {
   :deep(.ant-table) {
     background: var(--gray-0);
   }
 
   :deep(.ant-table-container) {
-    border-radius: 0;
+    border-radius: 8px;
     border-color: var(--gray-150);
-    border-top: none;
   }
 
   :deep(.ant-table-thead > tr > th) {
@@ -436,6 +342,10 @@ onMounted(loadVariables)
 
   :deep(.ant-switch-checked) {
     background: var(--color-success-500);
+  }
+
+  :deep(.ant-table-pagination) {
+    margin: 16px 0 0;
   }
 }
 
@@ -458,55 +368,21 @@ onMounted(loadVariables)
   display: inline-flex;
   justify-content: center;
   gap: 8px;
-
-  :deep(.ant-btn) {
-    min-width: 64px;
-    height: 28px;
-    padding: 0 12px;
-    border-radius: 6px;
-  }
 }
 
 .variable-form {
-  padding: 8px 12px 0;
+  margin-top: 8px;
+}
 
-  :deep(.ant-form-item) {
-    margin-bottom: 18px;
-  }
-
-  :deep(.ant-form-item-label > label) {
-    color: var(--color-text);
-  }
-
-  :deep(.ant-form-item-label > label.ant-form-item-required:not(.ant-form-item-required-mark-optional)::before) {
-    margin-inline-end: 4px;
-    color: var(--color-error-500);
-  }
-
-  :deep(.ant-input-affix-wrapper),
-  :deep(.ant-input),
-  :deep(.ant-select-selector) {
-    border-radius: 20px;
-  }
-
-  .option-checks,
-  .status-radios {
-    display: flex;
-    align-items: center;
-    gap: 48px;
-  }
+.status-radios {
+  display: flex;
+  gap: 16px;
 }
 
 .variable-form-footer {
   display: flex;
-  justify-content: center;
-  gap: 16px;
-  padding: 8px 0 4px;
-
-  :deep(.ant-btn) {
-    min-width: 88px;
-    height: 36px;
-    border-radius: 8px;
-  }
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 8px;
 }
 </style>

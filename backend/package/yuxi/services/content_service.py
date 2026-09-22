@@ -13,6 +13,25 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.content.generation import SKILL_VERSIONS, refine_generated_content, review_generated_content
 from yuxi.content.rules import CONTENT_GOALS
+from yuxi.content.service_entry_form import (
+    BRAND_NAME,
+    CONTENT_TYPE_NAME_TO_DIRECTION,
+    LEGACY_QUOTE_TYPE_NAME,
+    catalog_select_options,
+    configured_business_variable_fields,
+    content_direction_from_form_values,
+    is_managed_content_type_name,
+    is_quote_content_type_name,
+)
+from yuxi.services.business_variable_service import list_business_variables
+from yuxi.services.content_type_service import list_content_types
+from yuxi.services.process_standard_service import (
+    list_enabled_process_names_by_type,
+    list_enabled_process_type_names,
+)
+from yuxi.services.resident_population_service import list_enabled_resident_population_names
+from yuxi.services.target_audience_service import list_enabled_target_audience_names
+from yuxi.services.variable_service import SERVICE_ENTRIES, list_variables
 from yuxi.content.schemas import (
     ContentArtifactAIEdit,
     ContentArtifactUpdate,
@@ -407,7 +426,14 @@ def _parse_content_studio_quote_case(
     if not isinstance(raw_payload, dict):
         return None
     requirement = raw_payload.get("requirementType")
-    if not isinstance(requirement, dict) or str(requirement.get("typeName") or "").strip() != "施工报价":
+    type_name = str(requirement.get("typeName") or "").strip() if isinstance(requirement, dict) else ""
+    if not is_quote_content_type_name(type_name):
+        return None
+    prices = requirement.get("prices") if isinstance(requirement, dict) else None
+    quotation = requirement.get("quotationInfo") if isinstance(requirement, dict) else None
+    if type_name != LEGACY_QUOTE_TYPE_NAME and not (
+        isinstance(prices, list) and prices and isinstance(quotation, dict)
+    ):
         return None
 
     # Local import avoids a module cycle: Dangjia's HTTP orchestration calls this service.
@@ -520,6 +546,63 @@ def _parse_content_studio_quote_case(
     }
 
 
+def _studio_content_type_name(raw_payload: dict[str, Any]) -> str:
+    content_type = raw_payload.get("contentType")
+    if isinstance(content_type, dict):
+        name = str(content_type.get("typeName") or "").strip()
+        if name:
+            return name
+    requirement = raw_payload.get("requirementType")
+    if isinstance(requirement, dict):
+        return str(requirement.get("typeName") or "").strip()
+    return ""
+
+
+def _parse_content_studio_production_pack(user_request: str) -> dict[str, Any] | None:
+    """把任务页生产前资料包中的 facts 提升为工厂变量。"""
+    try:
+        raw_payload = json.loads(user_request)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(raw_payload, dict):
+        return None
+    type_name = _studio_content_type_name(raw_payload)
+    if not is_managed_content_type_name(type_name):
+        return None
+    facts = raw_payload.get("facts")
+    if not isinstance(facts, dict):
+        return None
+    variables = {
+        str(key).strip(): value
+        for key, value in facts.items()
+        if str(key).strip() and value not in (None, "", [], {})
+    }
+    if not variables:
+        return None
+    if variables.get("advantage") and not variables.get("advantages"):
+        variables["advantages"] = variables["advantage"]
+    if variables.get("pain") and not variables.get("pain_points"):
+        variables["pain_points"] = variables["pain"]
+    content_type = raw_payload.get("contentType") if isinstance(raw_payload.get("contentType"), dict) else {}
+    content_type_code = (
+        str(content_type.get("contentTypeCode") or "").strip() or CONTENT_TYPE_NAME_TO_DIRECTION.get(type_name)
+    )
+    audience = variables.get("audience")
+    if isinstance(audience, str) and audience.strip():
+        audience = [audience.strip()]
+    if not isinstance(audience, list):
+        audience = []
+    persona_fact = str(variables.get("persona_fact") or "").strip()
+    return {
+        "type_name": type_name,
+        "content_type_code": content_type_code,
+        "business_variables": variables,
+        "brand": {"name": BRAND_NAME},
+        "audience": audience,
+        "persona": {"description": persona_fact} if persona_fact else {},
+    }
+
+
 def compile_content_brief(
     *, task: ContentTask, template: Any, brief: ContentBriefPayload
 ) -> tuple[dict[str, Any], list[dict[str, str]]]:
@@ -528,6 +611,8 @@ def compile_content_brief(
     content_type_code = getattr(task, "content_type_code", None)
     if user_request:
         quote_case = _parse_content_studio_quote_case(user_request, content_type_code=content_type_code)
+        production_pack = None if quote_case else _parse_content_studio_production_pack(user_request)
+        structured = quote_case or production_pack
         existing_snapshot = (getattr(task, "runtime_config_snapshot_json", None) or {}).get(
             "trusted_external_material_snapshot"
         )
@@ -550,30 +635,55 @@ def compile_content_brief(
         normalized_user_request = (
             quote_case["sanitized_user_request"] if quote_case is not None else user_request
         )
-        normalized_variables = quote_case["business_variables"] if quote_case is not None else {}
+        normalized_variables = structured["business_variables"] if structured is not None else {}
+        form_values = dict(raw.get("form_values") or {})
+        form_values["user_request"] = normalized_user_request
+        reserved = {
+            "brand_name",
+            "audience",
+            "persona",
+            "required_terms",
+            "forbidden_terms",
+            "knowledge_scope",
+            "user_request",
+        }
+        form_variables = {
+            key: value
+            for key, value in form_values.items()
+            if key not in reserved and value not in (None, "", [])
+        }
+        resolved_type_code = (
+            (structured or {}).get("content_type_code")
+            or content_direction_from_form_values(form_values)
+            or content_type_code
+        )
+        inject_quote_type = bool(quote_type) and quote_case is None and (
+            production_pack is None or is_quote_content_type_name(production_pack.get("type_name"))
+        )
         compiled = {
             "task_id": task.id,
             "industry": template.slug,
             "content_goal": task.content_goal,
-            "content_type_code": content_type_code,
+            "content_type_code": resolved_type_code,
             "industry_pack_version_id": getattr(task, "industry_pack_version_id", None),
             "channel_profile_version_id": getattr(task, "channel_profile_version_id", None),
             "persona_profile_version_id": getattr(task, "persona_profile_version_id", None),
             "mode": task.mode,
-            "brand": quote_case["brand"] if quote_case is not None else {},
-            "audience": quote_case["audience"] if quote_case is not None else [],
+            "brand": structured["brand"] if structured is not None else {},
+            "audience": structured["audience"] if structured is not None else [],
             "business_variables": {
                 "user_request": normalized_user_request,
-                **({"quote_type": quote_type} if quote_type and quote_case is None else {}),
+                **({"quote_type": quote_type} if inject_quote_type else {}),
                 **normalized_variables,
+                **form_variables,
             },
-            "persona": quote_case["persona"] if quote_case is not None else {},
+            "persona": structured["persona"] if structured is not None else {},
             "required_terms": [],
             "forbidden_terms": [],
             "attachments": [],
             "locked_fields": [],
             "user_request": normalized_user_request,
-            "form_values": {"user_request": normalized_user_request},
+            "form_values": form_values,
             "material_confirmations": [],
             "visual_material": raw.get("visual_material"),
         }
@@ -679,6 +789,13 @@ async def get_content_bootstrap(db: AsyncSession, user: User) -> dict[str, Any]:
         "industry_templates": templates,
         "content_goals": CONTENT_GOALS,
         "content_types": (rule_bundle or {}).get("content_types") or [],
+        "content_variables": (await list_variables(db))["variables"],
+        "managed_content_types": (await list_content_types(db))["content_types"],
+        "target_audiences": await list_enabled_target_audience_names(db),
+        "resident_populations": await list_enabled_resident_population_names(db),
+        "process_types": await list_enabled_process_type_names(db),
+        "process_names_by_type": await list_enabled_process_names_by_type(db),
+        "business_variable_bindings": (await list_business_variables(db))["business_variables"],
         "industry_packs": await repo.list_industry_packs(),
         "channel_profiles": await repo.list_channel_profiles(),
         "personas": await repo.list_personas(user),
@@ -902,7 +1019,9 @@ async def create_content_task(db: AsyncSession, user: User, payload: ContentTask
     locked_workflow_hash = workflow_version.definition_hash or workflow_definition_hash(
         workflow_version.definition_json or {}
     )
-    goal = payload.content_goal or template.default_goal
+    goal = str(payload.content_goal or "").strip()
+    if not goal:
+        raise _content_error(422, "CONTENT_GOAL_REQUIRED", "请选择内容目标")
     if goal not in {item["code"] for item in CONTENT_GOALS}:
         raise _content_error(422, "CONTENT_GOAL_INVALID", "内容目标无效")
     bundle = await repo.get_rule_bundle(rule_version.id)
@@ -920,12 +1039,14 @@ async def create_content_task(db: AsyncSession, user: User, payload: ContentTask
         "standardized_factory_v1",
     }
     mode = selection_policy["industry_modes"].get(template.slug, selection_policy["default_mode"])
-    automatic = workflow_version.definition_json.get("selection_policy") in {
+    automatic = selection_policy_name in {
         "blueprint_first_v1",
         "modular_viral_author_v1",
+        "deterministic_creation_plan_v1",
+        "standardized_factory_v1",
     }
-    if (joint or deterministic_plan) and not automatic and mode == "direction_scoped" and not content_type_code:
-        raise _content_error(422, "CONTENT_DIRECTION_REQUIRED", "请先选择本次内容方向")
+    if automatic:
+        content_type_code = None
     if content_types and (not automatic or content_type_code) and (not joint or mode == "direction_scoped"):
         type_map = {item["code"]: item for item in content_types}
         scoped_direction_codes = _scoped_content_type_codes(bundle or {}, template.slug, goal)
@@ -1193,7 +1314,37 @@ async def save_content_brief(
         if raw_user_request
         else None
     )
+    form_values = raw_brief.get("form_values") or {}
+    service_entry = form_values.get("mp_service_entry")
+    content_type_id = str(form_values.get("mp_content_type_id") or "").strip()
+    if compile_now and service_entry == "装修家居" and not content_type_id:
+        raise _content_error(422, "CONTENT_TYPE_REQUIRED", "请选择内容类型")
+    form_fields = None
+    if service_entry in SERVICE_ENTRIES:
+        form_fields = configured_business_variable_fields(
+            (await list_business_variables(db))["business_variables"],
+            service_entry=str(service_entry),
+            content_type_id=content_type_id or None,
+            port="pc",
+            select_options=catalog_select_options(
+                target_audiences=await list_enabled_target_audience_names(db),
+                resident_populations=await list_enabled_resident_population_names(db),
+                process_types=await list_enabled_process_type_names(db),
+                process_names_by_type=await list_enabled_process_names_by_type(db),
+            ),
+        )
     compiled, missing = compile_content_brief(task=task, template=template, brief=brief)
+    if compile_now and form_fields:
+        for field in form_fields:
+            if not field.get("required"):
+                continue
+            value = (compiled.get("form_values") or {}).get(field["key"])
+            if value in (None, "", []):
+                missing.append({"field": field["key"], "label": field.get("label") or field["key"]})
+    direction = content_direction_from_form_values(form_values)
+    if direction:
+        compiled["content_type_code"] = direction
+        task.content_type_code = direction
     selection = brief.visual_material
     requested_image_item_id = selection.image_item_id if selection else None
     requested_poster_template_id = selection.poster_template_id if selection else None

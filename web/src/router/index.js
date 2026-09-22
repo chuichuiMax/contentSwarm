@@ -28,6 +28,12 @@ const router = createRouter({
       meta: { requiresAuth: false }
     },
     {
+      path: '/share/case/:shareId',
+      name: 'CaseShare',
+      component: () => import('../views/CaseShareView.vue'),
+      meta: { requiresAuth: false }
+    },
+    {
       path: '/auth/oidc/callback', // oidc登录回调页面
       name: 'OIDCCallback',
       component: () => import('@/views/OIDCCallbackView.vue'),
@@ -233,9 +239,33 @@ const router = createRouter({
           meta: { keepAlive: false, requiresAuth: true }
         },
         {
+          path: 'target-audiences',
+          name: 'TargetAudienceConfigComp',
+          component: () => import('../views/TargetAudienceConfigView.vue'),
+          meta: { keepAlive: false, requiresAuth: true }
+        },
+        {
+          path: 'resident-populations',
+          name: 'ResidentPopulationConfigComp',
+          component: () => import('../views/ResidentPopulationConfigView.vue'),
+          meta: { keepAlive: false, requiresAuth: true }
+        },
+        {
           path: 'variables',
           name: 'VariableConfigComp',
           component: () => import('../views/VariableConfigView.vue'),
+          meta: { keepAlive: false, requiresAuth: true },
+        },
+        {
+          path: 'business-variables',
+          name: 'BusinessVariableConfigComp',
+          component: () => import('../views/BusinessVariableConfigView.vue'),
+          meta: { keepAlive: false, requiresAuth: true },
+        },
+        {
+          path: 'process-standards',
+          name: 'ProcessStandardConfigComp',
+          component: () => import('../views/ProcessStandardConfigView.vue'),
           meta: { keepAlive: false, requiresAuth: true },
         }
       ]

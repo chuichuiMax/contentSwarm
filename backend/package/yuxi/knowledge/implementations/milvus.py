@@ -697,7 +697,8 @@ class MilvusKB(KnowledgeBase):
             if "error" in file_meta:
                 self.files_meta[file_id].pop("error", None)
 
-            # Update status and add to processing queue
+            # 先入队再落库 INDEXING，避免列表轮询把进行中的入库误标为失败
+            self._add_to_processing_queue(file_id)
             self.files_meta[file_id]["status"] = FileStatus.INDEXING
             self.files_meta[file_id]["updated_at"] = utc_isoformat()
             if operator_id:
@@ -712,9 +713,6 @@ class MilvusKB(KnowledgeBase):
             self.files_meta[file_id]["processing_params"] = params
             await self._persist_file(file_id)
             logger.debug(f"[index_file] file_id={file_id}, processing_params={params}")
-
-        # Add to processing queue
-        self._add_to_processing_queue(file_id)
 
         try:
             # Read markdown
@@ -742,6 +740,7 @@ class MilvusKB(KnowledgeBase):
             # Update status
             async with self._metadata_lock:
                 self.files_meta[file_id]["status"] = FileStatus.INDEXED
+                self.files_meta[file_id].pop("error", None)
                 self.files_meta[file_id].update(chunk_stats)
                 self.files_meta[file_id]["updated_at"] = utc_isoformat()
                 if operator_id:

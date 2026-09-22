@@ -11,7 +11,7 @@ from yuxi.knowledge.chunking.ragflow_like.presets import ensure_chunk_defaults_i
 from yuxi.knowledge.schemas import FindOutputSchema, FindWindowSchema, SearchOutputSchema, SearchResultSchema
 from yuxi.knowledge.utils import resolve_processing_params, sanitize_processing_params
 from yuxi.utils import logger
-from yuxi.utils.datetime_utils import coerce_any_to_utc_datetime, utc_isoformat
+from yuxi.utils.datetime_utils import coerce_any_to_utc_datetime, utc_isoformat, utc_now
 
 
 class FileStatus:
@@ -22,6 +22,18 @@ class FileStatus:
     INDEXING = "indexing"
     INDEXED = "indexed"
     ERROR_INDEXING = "error_indexing"
+
+
+# 列表轮询会检查 parsing/indexing。刚写入状态、尚未入队，或向量化还在跑时，不能立刻当成中断。
+PROCESSING_STALE_SECONDS = 180
+
+
+def _is_processing_stale(file_info: dict[str, Any], *, now=None) -> bool:
+    updated = coerce_any_to_utc_datetime(file_info.get("updated_at"))
+    if updated is None:
+        return True
+    current = now or utc_now()
+    return (current - updated).total_seconds() > PROCESSING_STALE_SECONDS
 
 
 class KnowledgeBaseException(Exception):
@@ -307,17 +319,15 @@ class KnowledgeBase(ABC):
         if "error" in file_meta:
             self.files_meta[file_id].pop("error", None)
 
-        # Update status to PARSING and add to processing queue
+        # 先入队再落库 PARSING，避免列表轮询把进行中的任务误标为失败
+        self._add_to_processing_queue(file_id)
         self.files_meta[file_id]["status"] = FileStatus.PARSING
         self.files_meta[file_id]["updated_at"] = utc_isoformat()
         if operator_id:
             self.files_meta[file_id]["updated_by"] = operator_id
-        await self._persist_file(file_id)
-
-        # Add to processing queue
-        self._add_to_processing_queue(file_id)
 
         try:
+            await self._persist_file(file_id)
             from yuxi.knowledge.parser.unified import Parser
 
             # Prepare params
@@ -335,6 +345,7 @@ class KnowledgeBase(ABC):
 
             # Update metadata
             self.files_meta[file_id]["status"] = FileStatus.PARSED
+            self.files_meta[file_id].pop("error", None)
             self.files_meta[file_id]["markdown_file"] = markdown_file_path
             self.files_meta[file_id]["updated_at"] = utc_isoformat()
             if operator_id:
@@ -1346,19 +1357,21 @@ class KnowledgeBase(ABC):
                     current_status = file_info.get("status")
 
                     if current_status in intermediate_states:
-                        # 检查文件是否真的在处理队列中
-                        if not self._is_file_in_processing_queue(file_id):
-                            error_status = intermediate_states[current_status]
-                            logger.warning(
-                                f"File {file_id} has {current_status} status but is not in processing queue, "
-                                f"marking as {error_status}"
-                            )
-                            self.files_meta[file_id]["status"] = error_status
-                            self.files_meta[file_id]["error"] = (
-                                f"{current_status.capitalize()} interrupted - process not found in queue"
-                            )
-                            self.files_meta[file_id]["updated_at"] = utc_isoformat()
-                            status_changed = True
+                        if self._is_file_in_processing_queue(file_id):
+                            continue
+                        if not _is_processing_stale(file_info):
+                            continue
+                        error_status = intermediate_states[current_status]
+                        logger.warning(
+                            f"File {file_id} has {current_status} status but is not in processing queue, "
+                            f"marking as {error_status}"
+                        )
+                        self.files_meta[file_id]["status"] = error_status
+                        self.files_meta[file_id]["error"] = (
+                            f"{current_status.capitalize()} interrupted - process not found in queue"
+                        )
+                        self.files_meta[file_id]["updated_at"] = utc_isoformat()
+                        status_changed = True
 
             # 如果有状态变更，保存元数据
             if status_changed:

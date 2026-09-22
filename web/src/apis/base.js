@@ -188,6 +188,62 @@ export function apiPost(url, data = {}, options = {}, requiresAuth = true, respo
   )
 }
 
+function readXhrErrorMessage(status, payload, statusText) {
+  const detail = payload?.detail
+  if (typeof detail === 'string') return detail
+  if (detail?.error?.message) return detail.error.message
+  if (detail?.message) return detail.message
+  if (payload?.message) return payload.message
+  if (status === 401) return '认证失败，请重新登录'
+  if (status === 403) return '没有权限执行此操作'
+  return `请求失败: ${status}, ${statusText}`
+}
+
+export function apiPostFormWithProgress(url, formData, { onProgress } = {}) {
+  const userStore = useUserStore()
+  if (!userStore.isLoggedIn) return Promise.reject(new Error('用户未登录'))
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+    xhr.open('POST', apiUrl(url))
+    Object.entries(userStore.getAuthHeaders()).forEach(([key, value]) => {
+      xhr.setRequestHeader(key, value)
+    })
+    xhr.upload.onprogress = (event) => {
+      if (!event.lengthComputable) return
+      onProgress?.({
+        loaded: event.loaded,
+        total: event.total,
+        percent: Math.min(99, Math.round((event.loaded / event.total) * 100)),
+        phase: event.loaded >= event.total ? 'processing' : 'sending'
+      })
+    }
+    xhr.onload = () => {
+      let payload = null
+      try {
+        payload = xhr.responseText ? JSON.parse(xhr.responseText) : null
+      } catch {
+        payload = null
+      }
+      if (xhr.status >= 200 && xhr.status < 300) {
+        onProgress?.({ percent: 100, phase: 'done' })
+        resolve(payload)
+        return
+      }
+      if (xhr.status === 401) {
+        const isTokenExpired = JSON.stringify(payload || '').includes('令牌已过期') || JSON.stringify(payload || '').includes('token expired')
+        message.error(isTokenExpired ? '登录已过期，请重新登录' : '认证失败，请重新登录')
+        if (userStore.isLoggedIn) userStore.logout()
+        setTimeout(() => {
+          window.location.href = '/login'
+        }, 1500)
+      }
+      reject(new Error(readXhrErrorMessage(xhr.status, payload, xhr.statusText)))
+    }
+    xhr.onerror = () => reject(new Error('网络错误，上传中断'))
+    xhr.send(formData)
+  })
+}
+
 export function apiAdminPost(url, data = {}, options = {}, responseType = 'json') {
   checkAdminPermission()
   return apiPost(url, data, options, true, responseType)

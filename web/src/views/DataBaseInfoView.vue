@@ -267,9 +267,14 @@
           />
         </a-form-item>
 
-        <a-form-item label="爆款创作类型">
-          <a-select v-model:value="editForm.viral_content_type" :options="CREATION_TYPE_OPTIONS" allow-clear placeholder="普通资料库不绑定；爆款库请选择一个类型" />
-          <span>每库只对应一种类型，修改后按新类型筛选参考文章。</span>
+        <a-form-item label="内容类型">
+          <a-select
+            v-model:value="editForm.viral_content_type"
+            :options="contentTypeOptions"
+            allow-clear
+            placeholder="普通资料库不绑定；爆款库请选择一个内容类型"
+          />
+          <span>每库只对应一种内容类型，修改后按新类型筛选参考文章。</span>
         </a-form-item>
 
         <a-form-item v-if="!isConnector" label="自动生成问题" name="auto_generate_questions">
@@ -361,7 +366,8 @@
 </template>
 
 <script setup>
-import { CREATION_TYPE_OPTIONS } from '@/utils/content_creation_types'
+import { contentTypeApi } from '@/apis/content_type_api'
+import { contentTypeSelectOptions } from '@/utils/content_creation_types'
 import { computed, defineAsyncComponent, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDatabaseStore } from '@/stores/database'
@@ -926,9 +932,23 @@ const deleteDatabase = () => {
   store.deleteDatabase()
 }
 
+const managedContentTypes = ref([])
+const contentTypeOptions = computed(() => contentTypeSelectOptions(managedContentTypes.value))
+
+const loadContentTypes = async () => {
+  try {
+    const response = await contentTypeApi.listContentTypes()
+    managedContentTypes.value = response.content_types || []
+  } catch (error) {
+    managedContentTypes.value = []
+    console.warn('加载内容类型失败:', error)
+  }
+}
+
 onMounted(() => {
   loadDepartments()
   loadUsers()
+  loadContentTypes()
 })
 </script>
 

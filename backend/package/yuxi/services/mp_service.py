@@ -44,7 +44,7 @@ from yuxi.storage.postgres.models_content import ContentArtifact, ContentEmploye
 from yuxi.utils.auth_utils import AuthUtils
 from yuxi.utils.datetime_utils import format_utc_datetime, shanghai_now, utc_now_naive
 
-BRAND_NAME = "鸿扬家居"
+BRAND_NAME = "鸿扬家装"
 INDUSTRY_SLUG = "decoration"
 SMS_TTL_SECONDS = 300
 WECHAT_SESSION_TTL_SECONDS = 600

@@ -54,7 +54,10 @@ async def test_creation_card_submits_viral_mode_on_desktop_and_narrow_screen():
                 await expect(page.get_by_text("使用模式", exact=True)).to_have_count(0)
                 await expect(page.get_by_text("原创模式", exact=True)).to_have_count(0)
                 await page.locator(".template-card").filter(has_text="装修").first.click()
-                await page.locator(".creation-type-field").get_by_text("工种总价", exact=True).click()
+                await page.locator(".content-goal-field .ant-select").click()
+                await page.locator(".ant-select-dropdown:not(.ant-select-dropdown-hidden)").get_by_text(
+                    "获客转化"
+                ).click()
                 selected = group.locator(".selected")
                 await expect(selected).to_have_count(1)
                 await expect(selected).to_have_text("爆款仿写")

@@ -10,6 +10,7 @@ const encodeQuery = (params = {}) => {
 }
 
 export const employeeApi = {
+  getMyEmployee: () => apiGet('/api/employees/me'),
   listEmployees: (params) => apiGet(`/api/employees${encodeQuery(params)}`),
   createEmployee: (payload) => apiPost('/api/employees', payload),
   updateEmployee: (employeePk, payload) => apiPatch(`/api/employees/${employeePk}`, payload),

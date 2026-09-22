@@ -155,13 +155,24 @@ def _with_member_count(
 
 
 async def list_roles(
-    db: AsyncSession, keyword: str | None = None, enabled: bool | None = None
+    db: AsyncSession,
+    keyword: str | None = None,
+    enabled: bool | None = None,
+    *,
+    include_member_counts: bool = True,
 ) -> dict[str, Any]:
     await ensure_default_roles(db)
     items = await RoleRepository(db).list_roles(
         keyword=keyword.strip() if keyword else None,
         enabled=enabled,
     )
+    if not include_member_counts:
+        return {
+            "roles": [
+                {**item.to_dict(member_count=0), "is_system": is_system_role(item)} for item in items
+            ],
+            "total": len(items),
+        }
     employee_counts = await EmployeeRepository(db).count_by_role()
     user_counts = await UserRepository().count_by_role_with_db(db)
     return {

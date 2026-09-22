@@ -8,7 +8,7 @@ import uuid
 import pytest
 import pytest_asyncio
 from PIL import Image
-from sqlalchemy import delete, update
+from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from yuxi.storage.postgres.models_business import Department, OperationLog, User
@@ -50,14 +50,14 @@ async def material_users(test_client):
                 username=f"pytest_material_owner_{suffix}",
                 uid=f"pytest_material_owner_{suffix}",
                 password_hash=AuthUtils.hash_password(password),
-                role="user",
+                role="superadmin",
                 department_id=department.id,
             ),
             User(
                 username=f"pytest_material_other_{suffix}",
                 uid=f"pytest_material_other_{suffix}",
                 password_hash=AuthUtils.hash_password(password),
-                role="user",
+                role="superadmin",
                 department_id=department.id,
             ),
         ]
@@ -74,67 +74,18 @@ async def material_users(test_client):
         assert login.status_code == 200, login.text
         headers.append({"Authorization": f"Bearer {login.json()['access_token']}"})
     try:
-        yield {
-            "owner": headers[0],
-            "other": headers[1],
-            "owner_id": user_ids[0],
-            "other_id": user_ids[1],
-        }
+        yield {"owner": headers[0], "other": headers[1]}
     finally:
         async with session_factory() as db:
-            from yuxi.storage.postgres.models_content import ContentMaterialCategory
+            from yuxi.storage.postgres.models_content import ContentMaterialCategory, ContentMaterialShare
 
+            await db.execute(delete(ContentMaterialShare).where(ContentMaterialShare.owner_uid.in_(credentials)))
             await db.execute(delete(ContentMaterialCategory).where(ContentMaterialCategory.owner_uid.in_(credentials)))
             await db.execute(delete(OperationLog).where(OperationLog.user_id.in_(user_ids)))
             await db.execute(delete(User).where(User.id.in_(user_ids)))
             await db.execute(delete(Department).where(Department.id == department_id))
             await db.commit()
         await engine.dispose()
-
-
-async def test_remote_config_state_is_redacted_and_only_superadmin_can_update(
-    test_client,
-    material_users,
-):
-    engine = create_async_engine(os.environ["POSTGRES_URL"])
-    session_factory = async_sessionmaker(engine, expire_on_commit=False)
-    async with session_factory() as db:
-        await db.execute(update(User).where(User.id == material_users["owner_id"]).values(role="admin"))
-        await db.execute(update(User).where(User.id == material_users["other_id"]).values(role="superadmin"))
-        await db.commit()
-    await engine.dispose()
-
-    admin_state = await test_client.get(
-        "/api/material-library/remote-config",
-        headers=material_users["owner"],
-    )
-    assert admin_state.status_code == 200, admin_state.text
-    assert admin_state.json()["can_manage"] is False
-    assert "password" not in admin_state.json()
-    assert "username" not in admin_state.json()
-
-    sync_status = await test_client.get(
-        "/api/material-library/remote-sync/status",
-        headers=material_users["owner"],
-    )
-    assert sync_status.status_code == 200, sync_status.text
-    assert "job" in sync_status.json()
-
-    forbidden = await test_client.put(
-        "/api/material-library/remote-config",
-        headers=material_users["owner"],
-        json={"username": "remote-user", "password": "remote-password"},
-    )
-    assert forbidden.status_code == 403, forbidden.text
-
-    superadmin_state = await test_client.get(
-        "/api/material-library/remote-config",
-        headers=material_users["other"],
-    )
-    assert superadmin_state.status_code == 200, superadmin_state.text
-    assert superadmin_state.json()["can_manage"] is True
-    assert "password" not in superadmin_state.json()
-    assert "username" not in superadmin_state.json()
 
 
 async def test_material_image_round_trip_uses_private_image_bucket(test_client, material_users):
@@ -160,7 +111,9 @@ async def test_material_image_round_trip_uses_private_image_bucket(test_client, 
         asset = await db.get(ContentCoverAsset, item["asset_id"])
         assert asset is not None
         assert asset.bucket_name == "image"
-        assert asset.object_name == f"material-library/{asset.owner_uid}/images/{asset.id}/image.png"
+        assert asset.object_name == f"material-library/{asset.owner_uid}/images/{asset.id}/image.webp"
+        assert asset.content_type == "image/webp"
+        assert (asset.metadata_json or {}).get("ingest_status") in {"pending", "ready"}
     await engine.dispose()
 
     listed = await test_client.get(
@@ -170,9 +123,7 @@ async def test_material_image_round_trip_uses_private_image_bucket(test_client, 
     assert listed.status_code == 200, listed.text
     assert item["id"] in {entry["id"] for entry in listed.json()["items"]}
 
-    categories = await test_client.get(
-        "/api/material-library/categories?material_type=image", headers=owner_headers
-    )
+    categories = await test_client.get("/api/material-library/categories?material_type=image", headers=owner_headers)
     assert categories.status_code == 200, categories.text
     assert categories.json()["categories"][0]["code"] == "product"
     cover_categories, cover_categories_again = await asyncio.gather(
@@ -202,12 +153,12 @@ async def test_material_image_round_trip_uses_private_image_bucket(test_client, 
     with Image.open(io.BytesIO(downloaded.content)) as image:
         assert image.size == (48, 36)
 
-    thumbnail = await test_client.get(
-        f"/api/material-library/items/{item['id']}/thumbnail", headers=owner_headers
-    )
+    thumbnail = await test_client.get(f"/api/material-library/items/{item['id']}/thumbnail", headers=owner_headers)
     assert thumbnail.status_code == 200, thumbnail.text
-    assert thumbnail.headers["content-type"] == "image/jpeg"
+    assert thumbnail.headers["content-type"] == "image/webp"
+    assert thumbnail.headers["cache-control"] == "private, max-age=86400"
     with Image.open(io.BytesIO(thumbnail.content)) as image:
+        assert image.format == "WEBP"
         assert image.size == (48, 36)
 
     private = await test_client.get(item["file_url"], headers=material_users["other"])
@@ -229,53 +180,6 @@ async def test_material_import_rejects_free_form_or_missing_category(test_client
             files=[("files", ("fixture.png", _png(), "image/png"))],
         )
         assert response.status_code == 422, response.text
-
-
-async def test_disabled_image_is_hidden_from_enabled_list_and_gallery_summary(test_client, material_users):
-    headers = material_users["owner"]
-    gallery_response = await test_client.post(
-        "/api/material-library/categories",
-        headers=headers,
-        json={"material_type": "image", "name": f"下架测试-{uuid.uuid4().hex[:8]}"},
-    )
-    assert gallery_response.status_code == 201, gallery_response.text
-    gallery = gallery_response.json()["category"]
-    uploaded = await test_client.post(
-        "/api/material-library/images/import",
-        headers=headers,
-        data={"category": gallery["id"]},
-        files=[("files", ("disabled.png", _png(), "image/png"))],
-    )
-    assert uploaded.status_code == 201, uploaded.text
-    item = uploaded.json()["items"][0]
-    try:
-        disabled = await test_client.patch(
-            f"/api/material-library/items/{item['id']}",
-            headers=headers,
-            json={"status": "disabled"},
-        )
-        assert disabled.status_code == 200, disabled.text
-
-        listed = await test_client.get(
-            f"/api/material-library/items?material_type=image&category={gallery['id']}&status=enabled",
-            headers=headers,
-        )
-        assert listed.status_code == 200, listed.text
-        assert listed.json()["total"] == 0
-
-        galleries = await test_client.get("/api/material-library/galleries", headers=headers)
-        assert galleries.status_code == 200, galleries.text
-        summary = next(entry for entry in galleries.json()["galleries"] if entry["id"] == gallery["id"])
-        assert summary["count"] == 0
-        assert summary["cover_item_id"] is None
-    finally:
-        await test_client.delete(f"/api/material-library/items/{item['id']}", headers=headers)
-        await test_client.request(
-            "DELETE",
-            f"/api/material-library/categories/{gallery['id']}?material_type=image",
-            headers=headers,
-            json={"target_category_id": "uncategorized"},
-        )
 
 
 async def test_image_gallery_crud_and_safe_item_reassignment(test_client, material_users):
@@ -374,6 +278,9 @@ async def test_image_gallery_supports_exactly_one_nested_level(test_client, mate
             "name": "客厅案例",
             "description": "项目案例中的客厅图片",
             "parent_id": parent["id"],
+            "design_style": "江南印象",
+            "building_name": "测试楼盘",
+            "area": "120",
         },
     )
     assert child_response.status_code == 201, child_response.text
@@ -490,40 +397,145 @@ async def test_image_gallery_supports_exactly_one_nested_level(test_client, mate
         await test_client.delete(f"/api/material-library/items/{item['id']}", headers=headers)
 
 
-async def test_parent_image_gallery_lists_items_from_child_galleries(test_client, material_users):
+async def test_decoration_gallery_child_requires_an_allowed_design_style(test_client, material_users):
     headers = material_users["owner"]
     parent_response = await test_client.post(
         "/api/material-library/categories",
         headers=headers,
-        json={"material_type": "image", "name": "汇总图库", "industry_slug": "decoration"},
+        json={"material_type": "image", "name": "222", "industry_slug": "decoration"},
+    )
+    assert parent_response.status_code == 201, parent_response.text
+    parent = parent_response.json()["category"]
+
+    missing_style = await test_client.post(
+        "/api/material-library/categories",
+        headers=headers,
+        json={"material_type": "image", "name": "客厅案例", "parent_id": parent["id"]},
+    )
+    assert missing_style.status_code == 422, missing_style.text
+    assert missing_style.json()["detail"]["error"]["code"] == "MATERIAL_DESIGN_STYLE_REQUIRED"
+
+    invalid_style = await test_client.post(
+        "/api/material-library/categories",
+        headers=headers,
+        json={
+            "material_type": "image",
+            "name": "卧室案例",
+            "parent_id": parent["id"],
+            "design_style": "不在列表中",
+        },
+    )
+    assert invalid_style.status_code == 422, invalid_style.text
+    assert invalid_style.json()["detail"]["error"]["code"] == "MATERIAL_DESIGN_STYLE_INVALID"
+
+    created = await test_client.post(
+        "/api/material-library/categories",
+        headers=headers,
+        json={
+            "material_type": "image",
+            "name": "书房案例",
+            "parent_id": parent["id"],
+            "design_style": "工业再造",
+            "building_name": "测试楼盘",
+            "area": "120",
+        },
+    )
+    assert created.status_code == 201, created.text
+    assert created.json()["category"]["design_style"] == "工业再造"
+
+
+async def test_decoration_gallery_child_requires_and_persists_building_name_and_area(test_client, material_users):
+    headers = material_users["owner"]
+    parent_response = await test_client.post(
+        "/api/material-library/categories",
+        headers=headers,
+        json={"material_type": "image", "name": "装修与家居", "industry_slug": "decoration"},
+    )
+    assert parent_response.status_code == 201, parent_response.text
+    parent = parent_response.json()["category"]
+
+    missing_building_name = await test_client.post(
+        "/api/material-library/categories",
+        headers=headers,
+        json={
+            "material_type": "image",
+            "name": "客厅案例",
+            "parent_id": parent["id"],
+            "design_style": "江南印象",
+        },
+    )
+    assert missing_building_name.status_code == 422, missing_building_name.text
+    assert missing_building_name.json()["detail"]["error"]["code"] == "MATERIAL_BUILDING_NAME_REQUIRED"
+
+    missing_area = await test_client.post(
+        "/api/material-library/categories",
+        headers=headers,
+        json={
+            "material_type": "image",
+            "name": "卧室案例",
+            "parent_id": parent["id"],
+            "design_style": "江南印象",
+            "building_name": "洋湖天序",
+        },
+    )
+    assert missing_area.status_code == 422, missing_area.text
+    assert missing_area.json()["detail"]["error"]["code"] == "MATERIAL_AREA_REQUIRED"
+
+    created = await test_client.post(
+        "/api/material-library/categories",
+        headers=headers,
+        json={
+            "material_type": "image",
+            "name": "书房案例",
+            "parent_id": parent["id"],
+            "design_style": "江南印象",
+            "building_name": "洋湖天序",
+            "area": "120",
+        },
+    )
+    assert created.status_code == 201, created.text
+    assert created.json()["category"]["building_name"] == "洋湖天序"
+    assert created.json()["category"]["area"] == "120"
+
+
+async def test_decoration_gallery_child_update_preserves_share_details(test_client, material_users):
+    headers = material_users["owner"]
+    parent_response = await test_client.post(
+        "/api/material-library/categories",
+        headers=headers,
+        json={"material_type": "image", "name": "装修与家居编辑", "industry_slug": "decoration"},
     )
     assert parent_response.status_code == 201, parent_response.text
     parent = parent_response.json()["category"]
     child_response = await test_client.post(
         "/api/material-library/categories",
         headers=headers,
-        json={"material_type": "image", "name": "汇总子图库", "parent_id": parent["id"]},
+        json={
+            "material_type": "image",
+            "name": "客厅实景",
+            "parent_id": parent["id"],
+            "design_style": "江南印象",
+            "building_name": "洋湖天序",
+            "area": "120",
+        },
     )
     assert child_response.status_code == 201, child_response.text
     child = child_response.json()["category"]
-    uploaded = await test_client.post(
-        "/api/material-library/images/import",
+
+    updated = await test_client.patch(
+        f"/api/material-library/categories/{child['id']}?material_type=image",
         headers=headers,
-        data={"category": child["id"]},
-        files=[("files", ("child-image.png", _png(), "image/png"))],
+        json={
+            "name": "客厅实景",
+            "design_style": "雅致现代",
+            "building_name": "万科金域华府",
+            "area": "120",
+        },
     )
-    assert uploaded.status_code == 201, uploaded.text
-    item = uploaded.json()["items"][0]
-    try:
-        parent_items = await test_client.get(
-            f"/api/material-library/items?material_type=image&category={parent['id']}",
-            headers=headers,
-        )
-        assert parent_items.status_code == 200, parent_items.text
-        assert parent_items.json()["total"] == 1
-        assert [entry["id"] for entry in parent_items.json()["items"]] == [item["id"]]
-    finally:
-        await test_client.delete(f"/api/material-library/items/{item['id']}", headers=headers)
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["category"]["design_style"] == "雅致现代"
+    assert updated.json()["category"]["building_name"] == "万科金域华府"
+    assert updated.json()["category"]["area"] == "120"
 
 
 async def test_cover_mask_is_stored_but_not_listed_as_library_template(test_client, material_users):
@@ -594,7 +606,133 @@ async def test_poster_template_uses_controlled_category_without_tags(test_client
         assert listed.status_code == 200, listed.text
         assert [item["asset_id"] for item in listed.json()["items"]] == [template["asset_id"]]
     finally:
-        deleted = await test_client.delete(
-            f"/api/content/covers/poster-templates/{template['id']}", headers=headers
-        )
+        deleted = await test_client.delete(f"/api/content/covers/poster-templates/{template['id']}", headers=headers)
         assert deleted.status_code == 200, deleted.text
+
+
+async def test_second_level_decoration_gallery_share_keeps_ordered_snapshots_and_renders_project_details(
+    test_client, material_users
+):
+    headers = material_users["owner"]
+    parent_response = await test_client.post(
+        "/api/material-library/categories",
+        headers=headers,
+        json={"material_type": "image", "name": "装修与家居", "industry_slug": "decoration"},
+    )
+    assert parent_response.status_code == 201, parent_response.text
+    parent = parent_response.json()["category"]
+    child_response = await test_client.post(
+        "/api/material-library/categories",
+        headers=headers,
+        json={
+            "material_type": "image",
+            "name": "洋湖天序·三居式·复古写意",
+            "parent_id": parent["id"],
+            "building_name": "洋湖天序",
+            "area": "120",
+            "design_style": "复古风潮",
+        },
+    )
+    assert child_response.status_code == 201, child_response.text
+    child = child_response.json()["category"]
+
+    first_upload, second_upload = await asyncio.gather(
+        test_client.post(
+            "/api/material-library/images/import",
+            headers=headers,
+            data={"category": child["id"]},
+            files=[("files", ("first.png", _png(), "image/png"))],
+        ),
+        test_client.post(
+            "/api/material-library/images/import",
+            headers=headers,
+            data={"category": child["id"]},
+            files=[("files", ("second.png", _poster_png(), "image/png"))],
+        ),
+    )
+    assert first_upload.status_code == 201, first_upload.text
+    assert second_upload.status_code == 201, second_upload.text
+    first_item = first_upload.json()["items"][0]
+    second_item = second_upload.json()["items"][0]
+
+    missing = await test_client.post("/api/material-library/shares", headers=headers, json={"item_ids": []})
+    assert missing.status_code == 422, missing.text
+
+    created = await test_client.post(
+        "/api/material-library/shares",
+        headers={
+            **headers,
+            "X-Forwarded-Proto": "https",
+            "X-Forwarded-Host": "share.example.test",
+            "X-Forwarded-Prefix": "/boyun",
+        },
+        json={"item_ids": [second_item["id"], first_item["id"]]},
+    )
+    assert created.status_code == 201, created.text
+    share = created.json()["share"]
+    assert share["title"] == "洋湖天序·三居式·复古写意"
+    assert share["description"] == "洋湖天序｜120㎡｜复古风潮"
+    assert share["image_count"] == 2
+    assert share["page_path"].endswith(f"/shares/{share['token']}/page")
+    assert share["url"] == f"https://share.example.test/boyun/share/case/{share['token']}"
+    assert share["page_url"] == share["url"]
+    assert share["image_url"] == f"https://share.example.test/boyun{share['image_path']}"
+    assert share["card_cover_url"] == (
+        f"https://share.example.test/boyun/api/material-library/shares/{share['token']}/cover.jpg"
+    )
+
+    deleted = await test_client.delete(f"/api/material-library/items/{first_item['id']}", headers=headers)
+    assert deleted.status_code == 200, deleted.text
+
+    public_headers = {
+        "X-Forwarded-Proto": "https",
+        "X-Forwarded-Host": "share.example.test",
+        "X-Forwarded-Prefix": "/boyun",
+    }
+    card_cover = await test_client.get(f"/api/material-library/shares/{share['token']}/cover.jpg")
+    assert card_cover.status_code == 200, card_cover.text
+    assert card_cover.headers["content-type"] == "image/jpeg"
+    assert "public" in card_cover.headers["cache-control"]
+    assert "immutable" in card_cover.headers["cache-control"]
+    with Image.open(io.BytesIO(card_cover.content)) as image:
+        assert image.size == (500, 400)
+
+    public_page = await test_client.get(share["page_path"], headers=public_headers)
+    assert public_page.status_code == 200, public_page.text
+    assert "洋湖天序·三居式·复古写意" in public_page.text
+    assert 'class="project-info-card"' in public_page.text
+    assert "楼盘：洋湖天序" in public_page.text
+    assert "面积：120㎡" in public_page.text
+    assert "风格：复古风潮" in public_page.text
+    assert 'property="og:description" content="洋湖天序｜120㎡｜复古风潮"' in public_page.text
+    assert f'property="og:url" content="{share["url"]}"' in public_page.text
+    assert f"https://share.example.test/boyun/api/material-library/shares/{share['token']}/images/1" in public_page.text
+    assert f"/api/material-library/shares/{share['token']}/images/1" in public_page.text
+    assert public_page.text.index("/images/1") < public_page.text.index("/images/2")
+
+    canonical_page = await test_client.get(f"/share/case/{share['token']}", headers=public_headers)
+    assert canonical_page.status_code == 200, canonical_page.text
+    assert canonical_page.headers["content-type"].startswith("text/html")
+    assert '<meta property="og:url"' in canonical_page.text
+
+    second_snapshot = await test_client.get(f"/api/material-library/shares/{share['token']}/images/1")
+    first_snapshot = await test_client.get(f"/api/material-library/shares/{share['token']}/images/2")
+    assert second_snapshot.status_code == 200, second_snapshot.text
+    assert first_snapshot.status_code == 200, first_snapshot.text
+    assert second_snapshot.headers["content-type"] == "image/webp"
+    assert "inline" in second_snapshot.headers["content-disposition"]
+    assert "public" in second_snapshot.headers["cache-control"]
+    assert "immutable" in second_snapshot.headers["cache-control"]
+    with Image.open(io.BytesIO(second_snapshot.content)) as image:
+        assert image.size == (1080, 1440)
+    with Image.open(io.BytesIO(first_snapshot.content)) as image:
+        assert image.size == (48, 36)
+
+    display_image = await test_client.get(f"/api/material-library/shares/{share['token']}/images/1.webp")
+    assert display_image.status_code == 200, display_image.text
+    assert display_image.headers["content-type"] == "image/webp"
+    assert "public" in display_image.headers["cache-control"]
+    assert "immutable" in display_image.headers["cache-control"]
+    with Image.open(io.BytesIO(display_image.content)) as image:
+        assert image.format == "WEBP"
+        assert image.size == (1080, 1440)

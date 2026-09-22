@@ -6,7 +6,11 @@ from fastapi import HTTPException
 
 import yuxi.services.content_service as content_service
 from yuxi.content.schemas import ContentBriefPayload
-from yuxi.services.content_service import _parse_content_studio_quote_case, compile_content_brief
+from yuxi.services.content_service import (
+    _parse_content_studio_production_pack,
+    _parse_content_studio_quote_case,
+    compile_content_brief,
+)
 
 
 def _quote_request(*, price_format: str = "单价面积", title_price: dict | None = None) -> str:
@@ -95,8 +99,8 @@ def test_compile_brief_accepts_single_user_request_without_legacy_required_field
     assert compiled["business_variables"]["user_request"] == "杭州装修公司，做爆款仿写小红书内容"
 
 
-def test_compile_single_user_request_discards_stale_legacy_form_values():
-    task = SimpleNamespace(id="ct_latest", content_goal="acquire", mode="pro")
+def test_compile_user_request_keeps_content_type_and_business_variables():
+    task = SimpleNamespace(id="ct_latest", content_goal="acquire", mode="pro", content_type_code=None)
     template = SimpleNamespace(
         slug="decoration",
         quick_form_schema=[],
@@ -109,18 +113,26 @@ def test_compile_single_user_request_discards_stale_legacy_form_values():
         user_request="最新需求：只生成一篇杭州小户型收纳改造笔记",
         brand={"name": "旧品牌"},
         audience=["旧人群"],
-        business_variables={"project_type": "旧项目"},
-        form_values={"user_request": "旧输入", "brand_name": "旧品牌", "project_type": "旧项目"},
+        business_variables={"目标人群": "刚需改善"},
+        form_values={
+            "user_request": "旧输入",
+            "mp_service_entry": "装修家居",
+            "mp_content_type_id": "NRLX0001",
+            "mp_content_type_name": "工艺施工展示",
+            "目标人群": "刚需改善",
+        },
     )
 
     compiled, missing = compile_content_brief(task=task, template=template, brief=brief)
 
     assert missing == []
     assert compiled["user_request"] == "最新需求：只生成一篇杭州小户型收纳改造笔记"
-    assert compiled["form_values"] == {"user_request": "最新需求：只生成一篇杭州小户型收纳改造笔记"}
-    assert compiled["business_variables"] == {
-        "user_request": "最新需求：只生成一篇杭州小户型收纳改造笔记"
-    }
+    assert compiled["content_type_code"] == "CT05"
+    assert compiled["form_values"]["user_request"] == "最新需求：只生成一篇杭州小户型收纳改造笔记"
+    assert compiled["form_values"]["mp_content_type_id"] == "NRLX0001"
+    assert compiled["form_values"]["mp_content_type_name"] == "工艺施工展示"
+    assert compiled["business_variables"]["目标人群"] == "刚需改善"
+    assert compiled["business_variables"]["mp_content_type_id"] == "NRLX0001"
     assert compiled["brand"] == {}
     assert compiled["audience"] == []
 
@@ -171,6 +183,266 @@ def test_compile_standard_quote_case_builds_sanitized_production_facts(
     assert parsed is not None
     assert parsed["trusted_snapshot"]["quote_type"] == quote_type
     assert parsed["trusted_snapshot"]["quote_block"]["original_content"] == "拆除：1000元；水电：2400元"
+
+
+def test_compile_production_pack_promotes_facts_to_factory_variables():
+    task = SimpleNamespace(id="ct_pack", content_goal="acquire", mode="pro", content_type_code=None)
+    template = SimpleNamespace(slug="decoration", quick_form_schema=[], pro_form_schema=[])
+    request = {
+        "serialNo": "H06380",
+        "contentType": {
+            "typeName": "工艺施工展示",
+            "contentTypeId": "6c79d8ca-1774-4e79-a622-213104f1e7b8",
+            "contentTypeCode": "CT05",
+        },
+        "persona": {"name": "朱穆", "employeeCode": "H06380"},
+        "businessVariables": {"工艺名称": "HYB-吊顶与背景墙造型实现工艺", "项目阶段": "拆改阶段"},
+        "facts": {
+            "persona_fact": "朱穆，27岁，新媒体运营，工号H06380。",
+            "process": ["个性定制系统", "HYB-吊顶与背景墙造型实现工艺"],
+            "advantage": ["项目施工鸿扬家装"],
+            "result": "拆改阶段按工艺规范落实HYB-吊顶与背景墙造型实现工艺",
+            "audience": ["三口之家"],
+        },
+    }
+    user_request = json.dumps(request, ensure_ascii=False)
+
+    compiled, missing = compile_content_brief(
+        task=task,
+        template=template,
+        brief=ContentBriefPayload(
+            user_request=user_request,
+            form_values={"mp_content_type_name": "工艺施工展示", "工艺名称": "HYB-吊顶与背景墙造型实现工艺"},
+        ),
+    )
+
+    assert missing == []
+    assert compiled["content_type_code"] == "CT05"
+    assert compiled["business_variables"]["persona_fact"] == "朱穆，27岁，新媒体运营，工号H06380。"
+    assert compiled["business_variables"]["process"] == ["个性定制系统", "HYB-吊顶与背景墙造型实现工艺"]
+    assert compiled["business_variables"]["advantages"] == ["项目施工鸿扬家装"]
+    assert compiled["persona"]["description"] == "朱穆，27岁，新媒体运营，工号H06380。"
+    assert compiled["audience"] == ["三口之家"]
+    assert compiled["brand"] == {"name": "鸿扬家装"}
+    assert "quote_type" not in compiled["business_variables"]
+    parsed = _parse_content_studio_production_pack(user_request)
+    assert parsed is not None
+    assert parsed["content_type_code"] == "CT05"
+
+
+def test_compile_quotation_list_pack_keeps_price_facts_without_locked_quote():
+    task = SimpleNamespace(id="ct_quote_list", content_goal="acquire", mode="pro", content_type_code=None)
+    template = SimpleNamespace(slug="decoration", quick_form_schema=[], pro_form_schema=[])
+    request = {
+        "serialNo": "H06380",
+        "contentType": {
+            "typeName": "装修报价清单",
+            "contentTypeId": "5cbde95f-7cff-4ab3-8ba7-3d67d7326034",
+            "contentTypeCode": "CT02",
+        },
+        "facts": {
+            "persona_fact": "朱穆，27岁，管理员，工号H06380。",
+            "process": ["定制化家装交付"],
+            "advantage": ["项目施工鸿扬家装"],
+            "product": "洋湖天旭定制化家装项目",
+            "price": ["基础 12万", "木制品 6万"],
+            "quote_type": "budget",
+            "quantity": "137㎡",
+            "audience": ["五口之家"],
+        },
+    }
+    user_request = json.dumps(request, ensure_ascii=False)
+
+    compiled, missing = compile_content_brief(
+        task=task,
+        template=template,
+        brief=ContentBriefPayload(user_request=user_request),
+    )
+
+    assert missing == []
+    assert compiled["content_type_code"] == "CT02"
+    assert compiled["business_variables"]["price"] == ["基础 12万", "木制品 6万"]
+    assert compiled["business_variables"]["quote_type"] == "budget"
+    assert compiled["business_variables"]["quantity"] == "137㎡"
+    assert compiled["business_variables"]["process"] == ["定制化家装交付"]
+    assert _parse_content_studio_quote_case(user_request, content_type_code="CT02") is None
+
+
+def test_compile_case_share_pack_keeps_price_facts_without_locked_quote():
+    task = SimpleNamespace(id="ct_case_share", content_goal="acquire", mode="pro", content_type_code=None)
+    template = SimpleNamespace(slug="decoration", quick_form_schema=[], pro_form_schema=[])
+    request = {
+        "serialNo": "H06380",
+        "contentType": {
+            "typeName": "装修案例分享",
+            "contentTypeId": "2bbe1451-9fec-4cf0-9c59-8aa797900bbb",
+            "contentTypeCode": "CT01",
+        },
+        "facts": {
+            "persona_fact": "朱穆，27岁，管理员，工号H06380。",
+            "process": ["定制化家装交付"],
+            "advantage": ["项目施工鸿扬家装"],
+            "result": "新芙蓉之都 122㎡ 复合写意 施工鸿扬家装",
+            "product": "新芙蓉之都定制化家装项目",
+            "location": "测试 · 新芙蓉之都",
+            "scene": "复合写意",
+            "audience": ["四口之家", "毛坯"],
+            "quantity": "122㎡",
+            "price": ["基础 9.5万", "木制品 4万", "主材 5.5万"],
+            "quote_type": "budget",
+            "pain": "四口之家关心新芙蓉之都122㎡复合写意怎么从方案落到完工",
+        },
+    }
+    user_request = json.dumps(request, ensure_ascii=False)
+
+    compiled, missing = compile_content_brief(
+        task=task,
+        template=template,
+        brief=ContentBriefPayload(user_request=user_request),
+    )
+
+    assert missing == []
+    assert compiled["content_type_code"] == "CT01"
+    assert compiled["audience"] == ["四口之家", "毛坯"]
+    assert compiled["business_variables"]["process"] == ["定制化家装交付"]
+    assert compiled["business_variables"]["result"] == "新芙蓉之都 122㎡ 复合写意 施工鸿扬家装"
+    assert compiled["business_variables"]["price"] == ["基础 9.5万", "木制品 4万", "主材 5.5万"]
+    assert compiled["business_variables"]["quote_type"] == "budget"
+    assert compiled["business_variables"]["quantity"] == "122㎡"
+    assert compiled["business_variables"]["scene"] == "复合写意"
+    assert "quote_block" not in compiled["business_variables"]
+    assert _parse_content_studio_quote_case(user_request, content_type_code="CT01") is None
+
+
+def test_compile_knowledge_pack_promotes_pain_and_process_without_quote():
+    task = SimpleNamespace(id="ct_knowledge", content_goal="educate", mode="pro", content_type_code=None)
+    template = SimpleNamespace(slug="decoration", quick_form_schema=[], pro_form_schema=[])
+    request = {
+        "serialNo": "H06380",
+        "contentType": {
+            "typeName": "装修知识科普",
+            "contentTypeId": "95b91a82-ab50-4c78-b1dc-cdb469e50828",
+            "contentTypeCode": "CT06",
+        },
+        "facts": {
+            "persona_fact": "朱穆，27岁，管理员，工号H06380。",
+            "process": ["个性定制系统", "HYB-吊顶与背景墙造型实现工艺"],
+            "advantage": ["鸿扬家装定制化家装与工艺标准说明"],
+            "result": "看懂HYB-吊顶与背景墙造型实现工艺的判断标准与验收要点",
+            "product": "HYB-吊顶与背景墙造型实现工艺",
+            "scene": "复合写意",
+            "audience": ["毛坯"],
+            "pain": "毛坯不清楚HYB-吊顶与背景墙造型实现工艺该怎么判断、容易被话术带偏",
+        },
+    }
+    user_request = json.dumps(request, ensure_ascii=False)
+
+    compiled, missing = compile_content_brief(
+        task=task,
+        template=template,
+        brief=ContentBriefPayload(user_request=user_request),
+    )
+
+    assert missing == []
+    assert compiled["content_type_code"] == "CT06"
+    assert compiled["audience"] == ["毛坯"]
+    assert compiled["business_variables"]["process"] == ["个性定制系统", "HYB-吊顶与背景墙造型实现工艺"]
+    assert compiled["business_variables"]["pain"] == "毛坯不清楚HYB-吊顶与背景墙造型实现工艺该怎么判断、容易被话术带偏"
+    assert compiled["business_variables"]["pain_points"] == compiled["business_variables"]["pain"]
+    assert compiled["business_variables"]["scene"] == "复合写意"
+    assert "quote_type" not in compiled["business_variables"]
+    assert "quote_block" not in compiled["business_variables"]
+    assert _parse_content_studio_quote_case(user_request, content_type_code="CT06") is None
+
+
+def test_compile_persona_pack_promotes_persona_fact_and_advantage():
+    task = SimpleNamespace(id="ct_persona", content_goal="brand", mode="pro", content_type_code=None)
+    template = SimpleNamespace(slug="decoration", quick_form_schema=[], pro_form_schema=[])
+    request = {
+        "serialNo": "H06380",
+        "contentType": {
+            "typeName": "人设自荐",
+            "contentTypeId": "bbd42313-6031-4444-bc75-46d66836da83",
+            "contentTypeCode": "CT07",
+        },
+        "facts": {
+            "persona_fact": "朱穆，27岁，设计师，从业5年，服务长沙，工号H06380。",
+            "process": ["设计师服务"],
+            "advantage": ["设计师，5年", "鸿扬家装定制化家装交付"],
+            "result": "长沙设计师，从业5年，可对接咨询",
+            "product": "鸿扬家装设计师服务",
+            "location": "长沙",
+            "audience": ["毛坯"],
+            "pain": "毛坯不知道该找谁、怕遇上不靠谱的设计师",
+        },
+    }
+    user_request = json.dumps(request, ensure_ascii=False)
+
+    compiled, missing = compile_content_brief(
+        task=task,
+        template=template,
+        brief=ContentBriefPayload(user_request=user_request),
+    )
+
+    assert missing == []
+    assert compiled["content_type_code"] == "CT07"
+    assert compiled["audience"] == ["毛坯"]
+    assert compiled["persona"]["description"] == "朱穆，27岁，设计师，从业5年，服务长沙，工号H06380。"
+    assert compiled["business_variables"]["persona_fact"] == compiled["persona"]["description"]
+    assert compiled["business_variables"]["advantage"] == ["设计师，5年", "鸿扬家装定制化家装交付"]
+    assert compiled["business_variables"]["advantages"] == compiled["business_variables"]["advantage"]
+    assert compiled["business_variables"]["location"] == "长沙"
+    assert "quote_type" not in compiled["business_variables"]
+    assert "quote_block" not in compiled["business_variables"]
+    assert _parse_content_studio_quote_case(user_request, content_type_code="CT07") is None
+
+
+def test_quote_case_accepts_configured_quotation_list_type_name():
+    request = json.loads(_quote_request(price_format="项目单价"))
+    request["requirementType"]["typeName"] = "装修报价清单"
+
+    parsed = _parse_content_studio_quote_case(json.dumps(request, ensure_ascii=False), content_type_code="CT02")
+
+    assert parsed is not None
+    assert parsed["business_variables"]["type_name"] == "装修报价清单"
+    assert parsed["trusted_snapshot"]["content_type_code"] == "CT02"
+
+
+@pytest.mark.parametrize(
+    "type_name",
+    [
+        "工艺施工展示",
+        "装修避坑分享",
+        "装修省钱攻略",
+        "装修案例分享",
+        "装修知识科普",
+        "人设自荐",
+    ],
+)
+def test_configured_non_quote_type_names_are_not_compiled_as_quote_cases(type_name):
+    request = {
+        "serialNo": "H06380",
+        "persona": {"name": "朱穆", "employeeCode": "H06380"},
+        "requirementType": {
+            "typeName": type_name,
+            "contentTypeId": "6c79d8ca-1774-4e79-a622-213104f1e7b8",
+            "businessVariables": {"工艺名称": "HYB-吊顶与背景墙造型实现工艺"},
+        },
+    }
+
+    assert _parse_content_studio_quote_case(json.dumps(request, ensure_ascii=False), content_type_code="CT05") is None
+
+
+def test_quotation_list_without_quote_structure_is_not_compiled_as_quote_case():
+    request = {
+        "serialNo": "H06380",
+        "requirementType": {
+            "typeName": "装修报价清单",
+            "businessVariables": {"楼盘信息": "洋湖天街"},
+        },
+    }
+
+    assert _parse_content_studio_quote_case(json.dumps(request, ensure_ascii=False), content_type_code="CT02") is None
 
 
 def test_standard_quote_case_rejects_task_type_mismatch():

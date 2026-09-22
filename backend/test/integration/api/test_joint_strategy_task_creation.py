@@ -43,7 +43,15 @@ async def test_new_tasks_use_joint_policy_in_each_industry(test_client, rule_edi
         assert response.status_code == 200, response.text
 
 
-async def test_decoration_direction_requirement_matches_active_workflow(test_client, rule_editor_headers):  # noqa: F811
+async def test_decoration_create_requires_content_goal_not_direction(test_client, rule_editor_headers):  # noqa: F811
+    missing_goal = await test_client.post(
+        "/api/content/tasks",
+        headers=rule_editor_headers,
+        json={"industry_template_id": "industry-decoration-v3"},
+    )
+    assert missing_goal.status_code == 422, missing_goal.text
+    assert missing_goal.json()["detail"]["error"]["code"] == "CONTENT_GOAL_REQUIRED"
+
     response = await test_client.post(
         "/api/content/tasks",
         headers=rule_editor_headers,
@@ -52,14 +60,11 @@ async def test_decoration_direction_requirement_matches_active_workflow(test_cli
             "content_goal": "educate",
         },
     )
-    if response.status_code == 200:
-        task = response.json()["task"]
-        try:
-            assert task["workflow_version_id"] in BLUEPRINT_FIRST_WORKFLOW_IDS
-            assert task["content_type_code"] is None
-        finally:
-            deleted = await test_client.delete(f"/api/content/tasks/{task['id']}", headers=rule_editor_headers)
-            assert deleted.status_code == 200
-    else:
-        assert response.status_code == 422
-        assert "CONTENT_DIRECTION_REQUIRED" in response.text
+    assert response.status_code == 200, response.text
+    task = response.json()["task"]
+    try:
+        assert task["workflow_version_id"] in BLUEPRINT_FIRST_WORKFLOW_IDS
+        assert task["content_type_code"] is None
+    finally:
+        deleted = await test_client.delete(f"/api/content/tasks/{task['id']}", headers=rule_editor_headers)
+        assert deleted.status_code == 200

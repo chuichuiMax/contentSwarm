@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import { Plus, Search } from 'lucide-vue-next'
 
@@ -16,12 +16,21 @@ const saving = ref(false)
 const togglingId = ref('')
 const keywordInput = ref('')
 const keyword = ref('')
+const page = ref(1)
+const pageSize = ref(20)
 const contentTypes = ref([])
 const modalOpen = ref(false)
 const editingId = ref('')
 const form = reactive(emptyForm())
 
 const modalTitle = computed(() => (editingId.value ? '编辑内容类型' : '新增内容类型'))
+const tablePagination = computed(() => ({
+  current: page.value,
+  pageSize: pageSize.value,
+  showSizeChanger: true,
+  showTotal: (total) => `共 ${total} 条`,
+  pageSizeOptions: ['10', '20', '50']
+}))
 
 const formatCreatedAt = (value) => {
   if (!value) return '-'
@@ -45,7 +54,13 @@ const loadContentTypes = async () => {
 
 const handleSearch = () => {
   keyword.value = keywordInput.value.trim()
+  page.value = 1
   void loadContentTypes()
+}
+
+const handleTableChange = (pagination) => {
+  page.value = pagination.current
+  pageSize.value = pagination.pageSize
 }
 
 const openCreate = () => {
@@ -123,6 +138,11 @@ const removeContentType = (item) => {
 }
 
 onMounted(loadContentTypes)
+
+watch(contentTypes, (list) => {
+  const maxPage = Math.max(1, Math.ceil(list.length / pageSize.value))
+  if (page.value > maxPage) page.value = maxPage
+})
 </script>
 
 <template>
@@ -151,11 +171,12 @@ onMounted(loadContentTypes)
         class="content-type-table"
         :data-source="contentTypes"
         :loading="loading"
-        :pagination="false"
+        :pagination="tablePagination"
         row-key="id"
+        @change="handleTableChange"
       >
         <a-table-column title="序号" key="index" :width="72">
-          <template #default="{ index }">{{ index + 1 }}</template>
+          <template #default="{ index }">{{ (page - 1) * pageSize + index + 1 }}</template>
         </a-table-column>
         <a-table-column title="内容类型编码" data-index="type_code" key="type_code" />
         <a-table-column title="内容类型" data-index="name" key="name" />
@@ -260,6 +281,10 @@ onMounted(loadContentTypes)
     background: var(--gray-10);
     color: var(--gray-700);
     font-weight: 600;
+  }
+
+  :deep(.ant-table-pagination) {
+    margin: 16px 0 0;
   }
 }
 

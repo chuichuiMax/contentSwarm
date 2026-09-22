@@ -366,7 +366,7 @@ onUnmounted(() => {
     >
       <p>选择已解析的文件，系统自动识别行业、标题和完整正文，并准备参考卡与结构蓝图。</p>
       <a-form layout="vertical">
-        <a-form-item label="创作类型"
+        <a-form-item label="内容类型"
           ><a-select
             v-model:value="importType"
             :options="CREATION_TYPE_OPTIONS"
@@ -381,7 +381,7 @@ onUnmounted(() => {
             @change="loadFiles"
         /></a-form-item>
         <p v-if="importType && !mappedDatabases.length">
-          没有对应的爆款知识库，请在知识库创建或编辑时绑定该创作类型。
+          没有对应的爆款知识库，请在知识库创建或编辑时绑定该内容类型。
         </p>
         <a-form-item label="原文文件"
           ><a-select
@@ -533,7 +533,7 @@ onUnmounted(() => {
         message="修正只改机器元数据，原文锚点和结构蓝图保持不变。如需增删槽位，请重新准备资产。"
       />
       <a-form layout="vertical" class="correction-form">
-        <a-form-item label="创作类型"
+        <a-form-item label="内容类型"
           ><a-select
             v-model:value="correctionForm.content_type_code"
             :options="CREATION_TYPE_OPTIONS"

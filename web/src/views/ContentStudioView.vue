@@ -7,15 +7,18 @@ import {
   ArrowLeft,
   BookOpenCheck,
   CheckCircle2,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   CircleAlert,
   Clock3,
   Copy,
   ExternalLink,
+  ClipboardList,
   FileClock,
   Folder,
   FileText,
+  MessageSquare,
   FolderOpen,
   Image,
   LayoutTemplate,
@@ -41,12 +44,9 @@ import XiaohongshuAccountPublishModal from '@/components/content/XiaohongshuAcco
 import MarkdownPreview from '@/components/common/MarkdownPreview.vue'
 import { contentApi } from '@/apis/content_api'
 import { materialLibraryApi } from '@/apis/material_library_api'
-import {
-  CONSTRUCTION_QUOTE_TEST_CASE_TYPES,
-  CONTENT_TEST_CASE_CATEGORIES,
-  CONTENT_TEST_CASES
-} from '@/data/contentTestCases'
+import { employeeApi } from '@/apis/employee_api'
 import { useContentStudioStore } from '@/stores/contentStudio'
+import { formatContentRequestJson } from '@/utils/contentRequestPayload'
 import { useUserStore } from '@/stores/user'
 import {
   formatEvidenceReference,
@@ -79,10 +79,8 @@ const creation = reactive({
   name: ''
 })
 const formValues = reactive({})
-const selectedTestCaseCategory = ref()
-const selectedQuoteTestCaseType = ref()
-const selectedContentTestCaseId = ref()
-const quoteTestCaseTypeSyncing = ref(false)
+const currentEmployee = ref(null)
+const contentRequestExpanded = ref(false)
 const selectedAngleId = ref('')
 const selectedTitleId = ref('')
 const selectedTitleFormulaCode = ref('')
@@ -232,16 +230,6 @@ const selectedImageRootGalleryId = computed(
 )
 const selectedHyCanvasTemplate = computed(
   () => hycanvasTemplates.value.find((item) => item.id === selectedHyCanvasTemplateId.value) || null
-)
-const isQuoteTestCaseCategory = computed(
-  () => selectedTestCaseCategory.value === 'construction-quote'
-)
-const availableContentTestCases = computed(() =>
-  CONTENT_TEST_CASES.filter(
-    (item) =>
-      item.category === selectedTestCaseCategory.value &&
-      (!isQuoteTestCaseCategory.value || item.contentTypeCode === selectedQuoteTestCaseType.value)
-  )
 )
 const builtinCoverTemplates = computed(() =>
   hycanvasTemplates.value.filter((item) => item.zone !== 'featured')
@@ -532,8 +520,11 @@ const selectedIndustrySlug = computed(
   () => store.template?.slug || selectedTemplate.value?.slug || ''
 )
 const needsContentDirection = computed(
-  () => selectedTemplate.value?.strategy_mode === 'direction_scoped'
+  () =>
+    selectedTemplate.value?.strategy_mode === 'direction_scoped' &&
+    !selectedTemplate.value?.blueprint_first
 )
+const availableContentGoals = computed(() => store.contentGoals)
 const selectedIndustryPack = computed(() =>
   (store.bootstrap?.industry_packs || []).find(
     (item) => item.slug === selectedIndustrySlug.value && item.status === 'published'
@@ -567,16 +558,172 @@ const directionOptions = computed(() =>
       name: selectedIndustryPack.value?.content_type_aliases?.[item.code] || item.name
     }))
 )
-const activeFields = computed(() => {
-  if (!store.task) {
-    if (!selectedTemplate.value) return []
-    return creation.mode === 'quick'
-      ? selectedTemplate.value.quick_form_schema
-      : selectedTemplate.value.pro_form_schema
+const directionOptionLabel = (item) =>
+  [item.name, item.description].filter(Boolean).join(' · ')
+const studioServiceEntry = computed(
+  () => store.task?.brief?.form_values?.mp_service_entry || '装修家居'
+)
+const selectedContentTypeId = ref('')
+const studioContentTypes = computed(() => {
+  const enabledTypes = (store.managedContentTypes || []).filter((item) => item.enabled !== false)
+  const boundIds = new Set(
+    (store.businessVariableBindings || [])
+      .filter(
+        (item) =>
+          item.enabled &&
+          item.service_entry === '装修家居' &&
+          (item.ports || []).includes('pc') &&
+          item.content_type_id
+      )
+      .map((item) => item.content_type_id)
+  )
+  return enabledTypes.filter((item) => boundIds.has(item.id))
+})
+const selectedStudioContentType = computed(() =>
+  studioContentTypes.value.find((item) => item.id === selectedContentTypeId.value)
+)
+const PROCESS_NAME_GUARD_HINT = '请先选择工艺类型，或没有工艺类型，请联系管理员配置'
+const FIELD_SELECT_OPTIONS = {
+  外框面积: ['50-70㎡', '90-110㎡', '110-130㎡', '130-150㎡', '150-200㎡', '200-300㎡', '300㎡以上'],
+  设计风格: [
+    '复合写意',
+    '写意木构',
+    '江南印象',
+    '东方古雅',
+    '轻欧简美',
+    '欧美香颂',
+    '欧式田园',
+    '异域风情',
+    '新装饰主义',
+    '北欧之光',
+    '意境东方',
+    '复古风潮',
+    '雅致现代',
+    '工业再造',
+    '优雅缤纷',
+    '极简侘寂',
+    '仿材未来',
+    '艺术室界'
+  ],
+  项目阶段: ['拆改阶段', '水电阶段', '泥木阶段', '油漆阶段', '竣工交付']
+}
+const FIELD_PLACEHOLDERS = {
+  目标人群: '请选择目标人群',
+  居住人口: '请选择居住人口',
+  工艺类型: '请选择工艺类型',
+  工艺名称: '请选择工艺名称',
+  楼盘信息: '示例：洋湖天序',
+  项目阶段: '请选择项目阶段'
+}
+const DECORATION_QUOTE_KEYS = ['基础', '木制品', '主材']
+const FORM_FIELD_PRIORITY_KEYS = ['外框面积', '基础', '木制品', '主材']
+const FRAME_AREA_QUOTES = {
+  '50-70㎡': { 基础: '4-5万', 木制品: '2-3万', 主材: '2-3万' },
+  '90-110㎡': { 基础: '7-8万', 木制品: '3-4万', 主材: '4-5万' },
+  '110-130㎡': { 基础: '9-11万', 木制品: '4-5万', 主材: '5-6万' },
+  '130-150㎡': { 基础: '11-12万', 木制品: '5-6万', 主材: '6-7万' },
+  '150-200㎡': { 基础: '15-18万', 木制品: '6-8万', 主材: '7-8万' },
+  '200-300㎡': { 基础: '20-30万', 木制品: '9-11万', 主材: '8-10万' },
+  '300㎡以上': { 基础: '30万以上', 木制品: '11万以上', 主材: '16万以上' }
+}
+
+function prioritizeFormFields(fields) {
+  const rank = Object.fromEntries(FORM_FIELD_PRIORITY_KEYS.map((name, index) => [name, index]))
+  const fallback = FORM_FIELD_PRIORITY_KEYS.length
+  return fields
+    .map((field, index) => ({ field, index }))
+    .sort((a, b) => {
+      const aRank = rank[a.field.key] ?? fallback
+      const bRank = rank[b.field.key] ?? fallback
+      return aRank - bRank || a.index - b.index
+    })
+    .map((item) => item.field)
+}
+
+function discreteQuoteValues(low, high) {
+  const values = [low]
+  const half = low + 0.5
+  if (half <= high) values.push(half)
+  let integer = Math.floor(low) + 1
+  while (integer <= high) {
+    values.push(integer)
+    integer += 1
   }
-  return store.task.mode === 'quick'
-    ? store.template?.quick_form_schema || []
-    : store.template?.pro_form_schema || []
+  return values.map((value) => `${value}万`)
+}
+
+function expandQuoteRange(spec) {
+  const text = String(spec || '').trim()
+  const ranged = text.match(/^(\d+(?:\.\d+)?)-(\d+(?:\.\d+)?)万$/)
+  if (ranged) return discreteQuoteValues(Number(ranged[1]), Number(ranged[2]))
+  const floor = text.match(/^(\d+(?:\.\d+)?)万以上$/)
+  if (floor) {
+    const low = Number(floor[1])
+    return discreteQuoteValues(low, low + 10)
+  }
+  return text ? [text] : []
+}
+
+function pickTemporaryQuote(spec) {
+  const choices = expandQuoteRange(spec)
+  if (!choices.length) return ''
+  return choices[Math.floor(Math.random() * choices.length)]
+}
+
+const targetAudienceOptions = computed(() => store.bootstrap?.target_audiences || [])
+const residentPopulationOptions = computed(() => store.bootstrap?.resident_populations || [])
+const processTypeOptions = computed(() => store.bootstrap?.process_types || [])
+const processNamesByType = computed(() => store.bootstrap?.process_names_by_type || {})
+const fieldSelectOptions = computed(() => {
+  const selectedType = String(formValues['工艺类型'] || '').trim()
+  const processNames = selectedType ? processNamesByType.value[selectedType] || [] : []
+  const hasProcessCatalog = Object.keys(processNamesByType.value).length > 0
+  return {
+    ...FIELD_SELECT_OPTIONS,
+    ...(targetAudienceOptions.value.length ? { 目标人群: targetAudienceOptions.value } : {}),
+    ...(residentPopulationOptions.value.length ? { 居住人口: residentPopulationOptions.value } : {}),
+    ...(processTypeOptions.value.length ? { 工艺类型: processTypeOptions.value } : {}),
+    ...(hasProcessCatalog ? { 工艺名称: processNames } : {})
+  }
+})
+const activeFields = computed(() => {
+  const bindings = store.businessVariableBindings || []
+  const entry = studioServiceEntry.value
+  const contentTypeId = selectedContentTypeId.value
+  const fields = bindings
+    .filter((item) => {
+      if (!item.enabled || item.service_entry !== entry) return false
+      if (!(item.ports || []).includes('pc')) return false
+      if (entry === '好评笔记') return !item.content_type_id
+      return Boolean(contentTypeId) && item.content_type_id === contentTypeId
+    })
+    .map((item) => {
+      const name = item.variable_name
+      const hasProcessNameCatalog = Object.keys(processNamesByType.value).length > 0
+      const options =
+        name === '工艺名称' && hasProcessNameCatalog
+          ? fieldSelectOptions.value[name] || []
+          : fieldSelectOptions.value[name]
+      const isSelect = Boolean(options) || (name === '工艺名称' && hasProcessNameCatalog)
+      return {
+        key: name,
+        label: name,
+        type: isSelect ? 'select' : 'text',
+        required: Boolean(item.required),
+        options: isSelect ? options || [] : [],
+        placeholder: isSelect
+          ? FIELD_PLACEHOLDERS[name] || `请选择${name}`
+          : DECORATION_QUOTE_KEYS.includes(name)
+            ? '根据外框面积自动带出暂时金额'
+            : FIELD_PLACEHOLDERS[name] || `请输入${name}`
+      }
+    })
+  return prioritizeFormFields(fields)
+})
+const processNameNeedsTypeHint = computed(() => {
+  const hasTypeField = activeFields.value.some((field) => field.key === '工艺类型')
+  const selectedType = String(formValues['工艺类型'] || '').trim()
+  return !hasTypeField || !selectedType
 })
 const isQuickMode = computed(() => (store.task ? store.task.mode : creation.mode) === 'quick')
 const historicalOriginal = computed(
@@ -835,69 +982,6 @@ const saveStatusLabel = computed(() => {
   return ''
 })
 
-const changeTestCaseCategory = () => {
-  selectedContentTestCaseId.value = undefined
-  const currentContentTypeCode = store.task?.content_type_code || creation.content_type_code
-  selectedQuoteTestCaseType.value =
-    selectedTestCaseCategory.value === 'construction-quote' &&
-    CONSTRUCTION_QUOTE_TEST_CASE_TYPES.some((item) => item.value === currentContentTypeCode)
-      ? currentContentTypeCode
-      : undefined
-}
-
-const syncQuoteTestCaseContentType = async (contentTypeCode) => {
-  if (!contentTypeCode) return false
-  if (!store.task) {
-    creation.content_type_code = contentTypeCode
-    return true
-  }
-  if (store.task.content_type_code === contentTypeCode) return true
-  if (
-    store.task.status !== 'draft' ||
-    store.task.current_stage !== 'brief' ||
-    store.task.latest_run_id
-  ) {
-    return false
-  }
-
-  quoteTestCaseTypeSyncing.value = true
-  try {
-    await store.updateTask({ content_type_code: contentTypeCode })
-    creation.content_type_code = contentTypeCode
-    creationPlanPreview.value = null
-    return true
-  } finally {
-    quoteTestCaseTypeSyncing.value = false
-  }
-}
-
-const changeQuoteTestCaseType = () => {
-  selectedContentTestCaseId.value = undefined
-}
-
-const applyContentTestCase = async (caseId) => {
-  const testCase = CONTENT_TEST_CASES.find((item) => item.id === caseId)
-  if (!testCase) return
-  const currentContentTypeCode = store.task?.content_type_code || creation.content_type_code
-  if (testCase.contentTypeCode && testCase.contentTypeCode !== currentContentTypeCode) {
-    try {
-      if (!(await syncQuoteTestCaseContentType(testCase.contentTypeCode))) {
-        selectedContentTestCaseId.value = undefined
-        message.error(
-          `该案例用于“${testCase.contentTypeName}（${testCase.contentTypeCode}）”，当前任务的创作类型已冻结，请新建对应任务`
-        )
-        return
-      }
-    } catch (error) {
-      selectedContentTestCaseId.value = undefined
-      message.error(error.message || '同步案例创作类型失败')
-      return
-    }
-  }
-  formValues.user_request = testCase.content
-  message.success(`已载入案例：${testCase.label}`)
-}
-
 const stageFromTask = (task) => {
   if (!task) return 1
   if (task.current_stage === 'review') return task.latest_run_id ? 2 : 3
@@ -905,24 +989,90 @@ const stageFromTask = (task) => {
   return 1
 }
 
-const initializeFormValues = () => {
-  Object.keys(formValues).forEach((key) => delete formValues[key])
-  const saved = store.task?.brief?.form_values || {}
-  const hasSavedValues = Object.values(saved).some(
-    (value) =>
-      value !== undefined &&
-      value !== null &&
-      value !== '' &&
-      (!Array.isArray(value) || value.length)
-  )
-  activeFields.value.forEach((field) => {
-    if (field.type === 'channel')
-      formValues[field.key] = store.task?.channel_profile_version_id || ''
-    else if (hasSavedValues && saved[field.key] !== undefined)
-      formValues[field.key] = saved[field.key]
-    else if (field.type === 'tags') formValues[field.key] = []
-    else formValues[field.key] = ''
+const businessVariableSnapshot = computed(() =>
+  Object.fromEntries(activeFields.value.map((field) => [field.key, formValues[field.key] ?? '']))
+)
+
+const syncGeneratedContentRequest = () => {
+  formValues.user_request = formatContentRequestJson({
+    employee: currentEmployee.value,
+    user: {
+      username: userStore.username,
+      uid: userStore.uid,
+      phoneNumber: userStore.phoneNumber,
+      role: userStore.userRole,
+      departmentName: userStore.departmentName
+    },
+    contentType: selectedStudioContentType.value,
+    businessVariables: businessVariableSnapshot.value
   })
+}
+
+const loadCurrentEmployee = async () => {
+  try {
+    const response = await employeeApi.getMyEmployee()
+    currentEmployee.value = response.employee || null
+  } catch {
+    currentEmployee.value = null
+  }
+}
+
+const initializeFormValues = () => {
+  const saved = store.task?.brief?.form_values || {}
+  Object.keys(formValues).forEach((key) => delete formValues[key])
+  formValues.mp_service_entry = saved.mp_service_entry || '装修家居'
+  selectedContentTypeId.value = saved.mp_content_type_id || selectedContentTypeId.value || ''
+  const contentType = studioContentTypes.value.find((item) => item.id === selectedContentTypeId.value)
+  formValues.mp_content_type_id = selectedContentTypeId.value
+  formValues.mp_content_type_name = contentType?.name || saved.mp_content_type_name || ''
+  activeFields.value.forEach((field) => {
+    if (saved[field.key] !== undefined) formValues[field.key] = saved[field.key]
+    else formValues[field.key] = field.type === 'tags' ? [] : ''
+  })
+  syncGeneratedContentRequest()
+}
+
+const onContentTypeChange = (value) => {
+  selectedContentTypeId.value = value || ''
+  const saved = store.task?.brief?.form_values || {}
+  const contentType = studioContentTypes.value.find((item) => item.id === selectedContentTypeId.value)
+  formValues.mp_service_entry = '装修家居'
+  formValues.mp_content_type_id = selectedContentTypeId.value
+  formValues.mp_content_type_name = contentType?.name || ''
+  const keepKeys = new Set(['mp_service_entry', 'mp_content_type_id', 'mp_content_type_name'])
+  Object.keys(formValues).forEach((key) => {
+    if (!keepKeys.has(key)) delete formValues[key]
+  })
+  activeFields.value.forEach((field) => {
+    if (saved[field.key] !== undefined) formValues[field.key] = saved[field.key]
+    else formValues[field.key] = field.type === 'tags' ? [] : ''
+  })
+  syncGeneratedContentRequest()
+}
+
+const applyFrameAreaTemporaryQuotes = (frameArea) => {
+  const presentKeys = new Set(
+    activeFields.value.map((field) => field.key).filter((key) => DECORATION_QUOTE_KEYS.includes(key))
+  )
+  if (!presentKeys.size) return
+  const quotes = FRAME_AREA_QUOTES[frameArea]
+  for (const key of presentKeys) {
+    formValues[key] = quotes ? pickTemporaryQuote(quotes[key]) : ''
+  }
+}
+
+const onBusinessSelectChange = (key, value) => {
+  if (key === '外框面积') applyFrameAreaTemporaryQuotes(value)
+  if (key === '工艺类型') {
+    const allowed = processNamesByType.value[value] || []
+    const currentName = String(formValues['工艺名称'] || '').trim()
+    if (currentName && !allowed.includes(currentName)) formValues['工艺名称'] = undefined
+  }
+}
+
+const guardProcessNameSelect = (fieldKey, open) => {
+  if (!open || fieldKey !== '工艺名称') return
+  if (processNameNeedsTypeHint.value) message.warning(PROCESS_NAME_GUARD_HINT)
 }
 
 const revokePreviewUrls = (urls) => {
@@ -1747,6 +1897,7 @@ onMounted(async () => {
   )
   try {
     await store.loadBootstrap()
+    await loadCurrentEmployee()
     if (taskId.value) {
       await store.loadTask(taskId.value)
       if (route.query.hycanvasReturn === '1' && route.query.designId && store.artifact?.id) {
@@ -1801,12 +1952,12 @@ onMounted(async () => {
 })
 
 const createTask = async () => {
-  if (!creation.industry_template_id || !creation.content_goal) {
-    message.warning('装修与家居模板尚未就绪，请刷新后重试')
+  if (!creation.industry_template_id) {
+    message.warning('请选择行业模板')
     return
   }
-  if (needsContentDirection.value && !creation.content_type_code) {
-    message.warning('请选择创作类型')
+  if (!creation.content_goal) {
+    message.warning('请选择内容目标')
     return
   }
   try {
@@ -1825,13 +1976,23 @@ const buildBrief = () => ({
   user_request: String(formValues.user_request || '').trim(),
   brand: {},
   audience: [],
-  business_variables: {},
+  business_variables: Object.fromEntries(
+    activeFields.value
+      .map((field) => [field.key, formValues[field.key]])
+      .filter(([, value]) => value !== undefined && value !== null && value !== '')
+  ),
   persona: {},
   required_terms: [],
   forbidden_terms: [],
   attachments: [],
   locked_fields: [],
-  form_values: { user_request: String(formValues.user_request || '').trim() },
+  form_values: {
+    ...formValues,
+    user_request: String(formValues.user_request || '').trim(),
+    mp_service_entry: '装修家居',
+    mp_content_type_id: selectedContentTypeId.value,
+    mp_content_type_name: selectedStudioContentType.value?.name || ''
+  },
   visual_material:
     selectedImageItemId.value || selectedHyCanvasTemplateId.value
       ? {
@@ -1857,6 +2018,14 @@ const scheduleBriefSave = () => {
 }
 
 watch(formValues, scheduleBriefSave, { deep: true })
+watch(
+  [currentEmployee, selectedContentTypeId, businessVariableSnapshot],
+  () => {
+    if (stage.value !== 1) return
+    syncGeneratedContentRequest()
+  },
+  { deep: true }
+)
 watch([selectedImageItemId, selectedHyCanvasTemplateId, photoComposition], scheduleBriefSave, {
   deep: true
 })
@@ -1895,6 +2064,17 @@ onBeforeUnmount(() => {
 })
 
 const compileBrief = async () => {
+  if (!selectedContentTypeId.value) {
+    message.warning('请选择内容类型')
+    return
+  }
+  const missing = activeFields.value.find(
+    (field) => field.required && !String(formValues[field.key] || '').trim()
+  )
+  if (missing) {
+    message.warning(`请填写${missing.label}`)
+    return
+  }
   if (!String(formValues.user_request || '').trim()) {
     message.warning('请填写内容需求')
     return
@@ -2252,7 +2432,7 @@ const openVersions = async () => {
                 >
               </div>
               <p v-if="selectedTemplate?.blueprint_first" class="auto-strategy-hint">
-                选择创作类型并填写资料后，系统自动匹配参考结构与创作方式。
+                填写资料后，系统自动匹配参考结构与创作方式，无需选择内容方向。
               </p>
               <p v-else-if="selectedTemplate && !selectedTemplate.blueprint_first">
                 根据本次资料评分选择该行业的公式和创作手法。
@@ -2273,21 +2453,38 @@ const openVersions = async () => {
               </button>
             </div>
 
-            <div v-if="needsContentDirection" class="field-block creation-type-field">
-              <span id="creation-type-label">创作类型</span>
-              <a-radio-group
+            <label class="field-block content-goal-field">
+              <span id="content-goal-label">内容目标<em>*</em></span>
+              <a-select
+                v-model:value="creation.content_goal"
+                placeholder="请选择内容目标"
+                aria-labelledby="content-goal-label"
+              >
+                <a-select-option
+                  v-for="goal in availableContentGoals"
+                  :key="goal.code"
+                  :value="goal.code"
+                >
+                  {{ goal.name }} · {{ goal.description }}
+                </a-select-option>
+              </a-select>
+            </label>
+            <label v-if="needsContentDirection" class="field-block creation-type-field">
+              <span id="creation-type-label">一级内容方向</span>
+              <a-select
                 v-model:value="creation.content_type_code"
+                placeholder="请选择本次内容方向"
                 aria-labelledby="creation-type-label"
               >
-                <a-radio-button
+                <a-select-option
                   v-for="item in directionOptions"
                   :key="item.code"
                   :value="item.code"
                 >
-                  {{ item.name }}
-                </a-radio-button>
-              </a-radio-group>
-            </div>
+                  {{ directionOptionLabel(item) }}
+                </a-select-option>
+              </a-select>
+            </label>
 
             <div class="stage-actions">
               <a-button type="primary" :loading="store.loading.saving" @click="createTask">
@@ -2310,79 +2507,99 @@ const openVersions = async () => {
                   >
                 </div>
                 <div class="dynamic-form">
-                  <div class="field-block">
-                    <span id="content-request-label">内容需求</span>
-                    <div class="content-case-loader" aria-labelledby="content-case-loader-label">
-                      <div class="content-case-heading">
-                        <div>
-                          <FileText :size="17" />
-                          <strong id="content-case-loader-label">案例数据</strong>
-                        </div>
-                        <small>选择具体案例后会直接覆盖下方内容，方便快速测试。</small>
-                      </div>
-                      <div class="content-case-selects">
+                  <section class="brief-section task-section">
+                    <header class="brief-section-head">
+                      <ClipboardList :size="16" />
+                      <strong>任务</strong>
+                    </header>
+                    <label class="field-block content-type-field">
+                      <span>内容类型<em>*</em></span>
+                      <a-select
+                        :value="selectedContentTypeId"
+                        allow-clear
+                        placeholder="请选择内容类型"
+                        :options="studioContentTypes.map((item) => ({ label: item.name, value: item.id }))"
+                        @change="onContentTypeChange"
+                      />
+                    </label>
+                  </section>
+
+                  <section class="brief-section variables-section">
+                    <header class="brief-section-head">
+                      <MessageSquare :size="16" />
+                      <strong>业务变量</strong>
+                      <small>模板字段可由企业管理员配置</small>
+                    </header>
+                    <div class="variables-grid">
+                      <a-empty v-if="!selectedContentTypeId" description="请先选择内容类型" />
+                      <a-empty
+                        v-else-if="!activeFields.length"
+                        description="当前内容类型没有可用于 PC 的业务变量，请在业务变量配置中启用"
+                      />
+                      <label v-for="field in activeFields" :key="field.key" class="field-block">
+                        <span>{{ field.label }}<em v-if="field.required">*</em></span>
+                        <a-input
+                          v-if="field.type === 'text'"
+                          v-model:value="formValues[field.key]"
+                          :placeholder="field.placeholder || `请输入${field.label}`"
+                        />
+                        <a-textarea
+                          v-else-if="field.type === 'textarea'"
+                          v-model:value="formValues[field.key]"
+                          :rows="3"
+                          :placeholder="field.placeholder || `请输入${field.label}`"
+                        />
                         <a-select
-                          v-model:value="selectedTestCaseCategory"
+                          v-else-if="field.type === 'select'"
+                          v-model:value="formValues[field.key]"
                           allow-clear
-                          :class="{ 'quote-category-select': isQuoteTestCaseCategory }"
-                          placeholder="选择案例类型"
-                          aria-label="选择案例类型"
-                          @change="changeTestCaseCategory"
+                          :placeholder="field.placeholder || `请选择${field.label}`"
+                          :options="(field.options || []).map((item) => ({ label: item, value: item }))"
+                          @openChange="(open) => guardProcessNameSelect(field.key, open)"
+                          @change="(value) => onBusinessSelectChange(field.key, value)"
                         >
-                          <a-select-option
-                            v-for="category in CONTENT_TEST_CASE_CATEGORIES"
-                            :key="category.value"
-                            :value="category.value"
-                          >
-                            {{ category.label }}
-                          </a-select-option>
+                          <template v-if="field.key === '工艺名称' && processNameNeedsTypeHint" #notFoundContent>
+                            <span class="process-name-empty-hint">{{ PROCESS_NAME_GUARD_HINT }}</span>
+                          </template>
                         </a-select>
-                        <a-radio-group
-                          v-if="isQuoteTestCaseCategory"
-                          v-model:value="selectedQuoteTestCaseType"
-                          class="quote-case-types"
-                          :disabled="quoteTestCaseTypeSyncing"
-                          aria-label="选择施工报价类型"
-                          @change="changeQuoteTestCaseType"
-                        >
-                          <a-radio-button
-                            v-for="quoteType in CONSTRUCTION_QUOTE_TEST_CASE_TYPES"
-                            :key="quoteType.value"
-                            :value="quoteType.value"
-                          >
-                            {{ quoteType.label }}
-                          </a-radio-button>
-                        </a-radio-group>
                         <a-select
-                          v-model:value="selectedContentTestCaseId"
-                          allow-clear
-                          :class="{ 'quote-case-select': isQuoteTestCaseCategory }"
-                          :disabled="
-                            quoteTestCaseTypeSyncing ||
-                            !selectedTestCaseCategory ||
-                            (isQuoteTestCaseCategory && !selectedQuoteTestCaseType)
-                          "
-                          placeholder="选择具体案例"
-                          aria-label="选择具体案例"
-                          @change="applyContentTestCase"
-                        >
-                          <a-select-option
-                            v-for="testCase in availableContentTestCases"
-                            :key="testCase.id"
-                            :value="testCase.id"
-                          >
-                            {{ testCase.label }}
-                          </a-select-option>
-                        </a-select>
-                      </div>
+                          v-else-if="field.type === 'tags'"
+                          v-model:value="formValues[field.key]"
+                          mode="tags"
+                          :token-separators="[',', '，']"
+                          :placeholder="`输入${field.label}后回车`"
+                        />
+                      </label>
                     </div>
-                    <a-textarea
-                      v-model:value="formValues.user_request"
-                      :rows="6"
-                      aria-labelledby="content-request-label"
-                      placeholder="请直接描述想要生成的内容、业务信息和特殊要求"
-                    />
-                  </div>
+                  </section>
+
+                  <section class="brief-section content-request-section">
+                    <button
+                      type="button"
+                      class="brief-section-head content-request-toggle"
+                      :aria-expanded="contentRequestExpanded"
+                      aria-controls="content-request-json"
+                      @click="contentRequestExpanded = !contentRequestExpanded"
+                    >
+                      <FileText :size="16" />
+                      <strong id="content-request-label">内容需求</strong>
+                      <small>根据登录员工、内容类型和业务变量自动生成，点击展开查看 JSON</small>
+                      <ChevronDown
+                        :size="16"
+                        class="content-request-chevron"
+                        :class="{ expanded: contentRequestExpanded }"
+                      />
+                    </button>
+                    <div v-show="contentRequestExpanded" id="content-request-json" class="content-request-body">
+                      <a-textarea
+                        :value="formValues.user_request"
+                        :rows="12"
+                        readonly
+                        aria-labelledby="content-request-label"
+                        placeholder="选择内容类型并填写业务变量后自动生成"
+                      />
+                    </div>
+                  </section>
                 </div>
               </div>
             </div>
@@ -3970,12 +4187,11 @@ const openVersions = async () => {
   grid-template-columns: 1fr 1fr;
   margin-bottom: 20px;
 }
+.content-goal-field,
 .creation-type-field {
   margin-top: 24px;
-  :deep(.ant-radio-group) {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
+  :deep(.ant-select) {
+    width: 100%;
   }
 }
 
@@ -4057,60 +4273,76 @@ const openVersions = async () => {
 .field-block small {
   color: var(--color-text-tertiary);
 }
-.content-case-loader {
-  display: grid;
-  gap: 10px;
-  padding: 12px;
-  border: 1px solid var(--gray-150);
-  border-radius: 8px;
-  background: var(--gray-25);
+.brief-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 18px;
+  padding: 14px;
+  border-radius: 10px;
+  background: var(--gray-50);
 }
-.content-case-heading {
+.task-section,
+.variables-section,
+.content-request-section {
+  grid-column: 1 / -1;
+}
+.brief-section-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-.content-case-heading > div {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
+  gap: 8px;
   color: var(--color-text);
 }
-.content-case-heading > div svg {
-  color: var(--main-700);
+.brief-section-head strong {
+  font-size: 14px;
 }
-.content-case-heading small {
-  text-align: right;
+.brief-section-head small {
+  margin-left: auto;
+  color: var(--color-text-tertiary);
+  font-size: 12px;
 }
-.content-case-selects {
+.content-request-toggle {
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+}
+.content-request-chevron {
+  flex-shrink: 0;
+  color: var(--color-text-tertiary);
+  transition: transform 0.2s ease;
+}
+.content-request-chevron.expanded {
+  transform: rotate(180deg);
+}
+.content-request-body {
+  min-width: 0;
+}
+.content-type-field {
+  max-width: 420px;
+}
+.content-type-field em,
+.variables-grid em {
+  color: var(--color-error-700);
+  font-style: normal;
+}
+.variables-grid {
   display: grid;
-  grid-template-columns: minmax(150px, 0.7fr) minmax(220px, 1.3fr);
-  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px 16px;
 }
-.quote-case-types {
-  display: grid;
+.variables-grid > .ant-empty {
   grid-column: 1 / -1;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 8px;
 }
-.quote-case-types :deep(.ant-radio-button-wrapper) {
-  padding-inline: 10px;
-  border: 1px solid var(--gray-200);
-  border-radius: 6px;
-  text-align: center;
-}
-.quote-case-types :deep(.ant-radio-button-wrapper::before) {
-  display: none;
-}
-.quote-case-types :deep(.ant-radio-button-wrapper-checked) {
-  border-color: var(--main-600);
-  background: var(--main-50);
-  color: var(--main-700);
-}
-.quote-category-select,
-.quote-case-select {
+.variables-grid .field-block:has(textarea),
+.variables-grid .field-block:has(.ant-select-multiple) {
   grid-column: 1 / -1;
+}
+.process-name-empty-hint {
+  color: var(--color-text-tertiary);
 }
 .creation-mode-options {
   display: flex;
@@ -5995,7 +6227,8 @@ const openVersions = async () => {
     flex: 1;
   }
   .template-grid,
-  .dynamic-form {
+  .dynamic-form,
+  .variables-grid {
     grid-template-columns: 1fr;
   }
   .hycanvas-template-grid,
@@ -6018,20 +6251,6 @@ const openVersions = async () => {
   .content-case-heading {
     align-items: flex-start;
     flex-direction: column;
-  }
-  .content-case-heading small {
-    text-align: left;
-  }
-  .content-case-selects {
-    grid-template-columns: 1fr;
-  }
-  .quote-case-types {
-    grid-column: auto;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-  .quote-category-select,
-  .quote-case-select {
-    grid-column: auto;
   }
   .material-selector-title small {
     text-align: left;

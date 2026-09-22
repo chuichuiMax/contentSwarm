@@ -173,6 +173,19 @@ async def test_share_legacy_gallery_inherits_children_and_preserves_item_ids(tes
         assert available.status_code == 200
         anonymous = await test_client.get(f"/api/material-library/items/{item['id']}/file")
         assert anonymous.status_code in (401, 403)
+        created_share = await test_client.post(
+            "/api/material-library/shares",
+            headers=member,
+            json={"item_ids": [item["id"]]},
+        )
+        assert created_share.status_code == 201, created_share.text
+        share_token = created_share.json()["share"]["token"]
+        public_share = await test_client.get(f"/api/material-library/shares/{share_token}")
+        assert public_share.status_code == 200, public_share.text
+        assert public_share.json()["share"]["images"][0]["file_name"] == "child.png"
+        public_image = await test_client.get(f"/api/material-library/shares/{share_token}/images/1")
+        assert public_image.status_code == 200, public_image.text
+        assert public_image.headers["content-type"].startswith("image/")
         null_scope = await test_client.patch(
             f"/api/material-library/categories/{new_id}?material_type=image", headers=owner, json={"visibility": None}
         )
@@ -191,6 +204,10 @@ async def test_share_legacy_gallery_inherits_children_and_preserves_item_ids(tes
         assert private.status_code == 200, private.text
         hidden = await test_client.get(f"/api/material-library/items/{item['id']}/file", headers=member)
         assert hidden.status_code == 404
+        denied_share = await test_client.post(
+            "/api/material-library/shares", headers=member, json={"item_ids": [item["id"]]}
+        )
+        assert denied_share.status_code == 404, denied_share.text
         await test_client.delete(f"/api/material-library/items/{item['id']}", headers=owner)
     finally:
         async with async_sessionmaker(engine)() as db:

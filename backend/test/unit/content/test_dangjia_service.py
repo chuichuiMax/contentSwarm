@@ -126,7 +126,17 @@ def test_composition_layout_supports_grid_counts_only():
 
 
 def test_resolve_ct_code_maps_known_type_and_rejects_unknown():
-    for type_name, expected in {"自我介绍": "CT01", "工艺展示": "CT06", "日常工作": "CT07"}.items():
+    for type_name, expected in {
+        "工艺施工展示": "CT05",
+        "装修报价清单": "CT02",
+        "装修避坑分享": "CT03",
+        "装修省钱攻略": "CT04",
+        "装修案例分享": "CT01",
+        "装修知识科普": "CT06",
+        "人设自荐": "CT07",
+        "自我介绍": "CT01",
+        "日常工作": "CT07",
+    }.items():
         payload = make_payload(type_name=type_name)
         assert _resolve_ct_code(payload.requirementType) == expected
 

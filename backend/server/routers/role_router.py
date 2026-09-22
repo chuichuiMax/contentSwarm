@@ -23,10 +23,11 @@ roles = APIRouter(prefix="/roles", tags=["roles"])
 async def list_content_roles(
     keyword: str | None = Query(default=None),
     enabled: bool | None = Query(default=None),
+    include_member_counts: bool = Query(default=True),
     current_user: User = Depends(get_required_user),
     db: AsyncSession = Depends(get_db),
 ):
-    return await list_roles(db, keyword, enabled)
+    return await list_roles(db, keyword, enabled, include_member_counts=include_member_counts)
 
 
 @roles.get("/{role_pk}/employees")

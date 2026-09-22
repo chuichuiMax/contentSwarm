@@ -437,6 +437,51 @@ async def test_new_tasks_only_lock_v3_rule_pack_and_workflow(monkeypatch):
     assert created[0]["industry_pack_version_id"] == "industry-pack-decoration-v3"
 
 
+@pytest.mark.asyncio
+async def test_create_content_task_requires_content_goal(monkeypatch):
+    template = SimpleNamespace(
+        id="industry-decoration-v3",
+        slug="decoration",
+        status="published",
+        default_workflow_version_id=PLATFORM_WORKFLOW_VIRAL_AUTHOR_ID,
+        default_goal="brand",
+        default_strategy={},
+        name="装修与家居",
+    )
+    workflow = SimpleNamespace(
+        id=PLATFORM_WORKFLOW_VIRAL_AUTHOR_ID,
+        slug="enterprise-content",
+        status="published",
+        definition_json={"schema_version": 3, "nodes": []},
+        definition_hash="hash-v3",
+    )
+
+    class FakeRepo:
+        def __init__(self, db):
+            del db
+
+        async def get_template(self, template_id):
+            return template if template_id == template.id else None
+
+        async def get_workflow(self, workflow_id):
+            return workflow if workflow_id == workflow.id else None
+
+        async def get_published_rule_version(self, *, schema_version):
+            del schema_version
+            return SimpleNamespace(id="rules-v3")
+
+    monkeypatch.setattr(content_service, "ContentRepository", FakeRepo)
+    with pytest.raises(HTTPException) as exc_info:
+        await content_service.create_content_task(
+            SimpleNamespace(),
+            SimpleNamespace(uid="user-1"),
+            ContentTaskCreate(industry_template_id=template.id),
+        )
+
+    assert exc_info.value.status_code == 422
+    assert exc_info.value.detail["error"]["code"] == "CONTENT_GOAL_REQUIRED"
+
+
 def test_agent_tool_and_token_limits_fail_explicitly():
     context = SimpleNamespace(_content_node_max_tool_calls=1, _content_node_tool_scope=["allowed-tool"])
     request = SimpleNamespace(

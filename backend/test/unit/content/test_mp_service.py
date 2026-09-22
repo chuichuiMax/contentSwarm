@@ -125,7 +125,7 @@ def test_build_mp_brief_payload_maps_decoration_fields_to_v3_variables():
         content_code="NR20260825001",
     )
     values = brief.form_values
-    assert values["brand_name"] == "鸿扬家居"
+    assert values["brand_name"] == "鸿扬家装"
     assert values["project_type"] == "星河湾"
     assert values["area"] == "50-70㎡"
     assert values["mp_content_code"] == "NR20260825001"

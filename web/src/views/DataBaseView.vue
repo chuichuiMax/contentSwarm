@@ -75,9 +75,15 @@
         </div>
 
         <div class="form-section">
-          <h3 class="section-title">爆款创作类型</h3>
-          <a-select v-model:value="newDatabase.viral_content_type" :options="CREATION_TYPE_OPTIONS" allow-clear placeholder="普通资料库不绑定；爆款库请选择一个类型" style="width: 100%" />
-          <p>每个爆款知识库只对应一种创作类型，请上传该类型的完整参考文章。</p>
+          <h3 class="section-title">内容类型</h3>
+          <a-select
+            v-model:value="newDatabase.viral_content_type"
+            :options="contentTypeOptions"
+            allow-clear
+            placeholder="普通资料库不绑定；爆款库请选择一个内容类型"
+            style="width: 100%"
+          />
+          <p>每个爆款知识库只对应一种内容类型，请上传该类型的完整参考文章。</p>
         </div>
 
         <div v-if="selectedKbTypeInfo?.requires_embedding_model" class="form-grid two-columns">
@@ -250,7 +256,8 @@ import ExtensionCardGrid from '@/components/extensions/ExtensionCardGrid.vue'
 import InfoCard from '@/components/shared/InfoCard.vue'
 import dayjs, { parseToShanghai } from '@/utils/time'
 import { getKbTypeLabel, getKbTypeIcon, getKbTypeColor, kbUtils } from '@/utils/kb_utils'
-import { CREATION_TYPE_OPTIONS, CREATION_TYPE_NAMES } from '@/utils/content_creation_types'
+import { contentTypeApi } from '@/apis/content_type_api'
+import { CREATION_TYPE_NAMES, contentTypeSelectOptions } from '@/utils/content_creation_types'
 import { CHUNK_PRESET_OPTIONS, getChunkPresetDescription } from '@/utils/chunk_presets'
 
 const EmbeddingModelSelector = defineAsyncComponent(
@@ -518,7 +525,7 @@ const cardTags = (database) => {
     })
   }
   const creationType = CREATION_TYPE_NAMES[database.additional_params?.viral_content_type]
-  if (creationType) tags.push({ name: `爆款 · ${creationType}`, color: 'purple' })
+  if (creationType) tags.push({ name: `内容类型 · ${creationType}`, color: 'purple' })
   return tags
 }
 
@@ -536,8 +543,22 @@ watch(
   }
 )
 
+const managedContentTypes = ref([])
+const contentTypeOptions = computed(() => contentTypeSelectOptions(managedContentTypes.value))
+
+const loadContentTypes = async () => {
+  try {
+    const response = await contentTypeApi.listContentTypes()
+    managedContentTypes.value = response.content_types || []
+  } catch (error) {
+    managedContentTypes.value = []
+    console.warn('加载内容类型失败:', error)
+  }
+}
+
 onMounted(() => {
   loadSupportedKbTypes()
+  loadContentTypes()
   databaseStore.loadDatabases()
   // Start fetching the lightweight detail shell while the user scans the list.
   // The router reuses this module request when a knowledge base is opened.

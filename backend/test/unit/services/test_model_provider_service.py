@@ -150,6 +150,8 @@ def test_builtin_siliconflow_provider_includes_default_runnable_models():
     assert provider["capabilities"] == ["chat", "embedding", "rerank"]
     assert provider["embedding_base_url"] == "https://api.siliconflow.cn/v1/embeddings"
     assert provider["rerank_base_url"] == "https://api.siliconflow.cn/v1/rerank"
+    assert models["deepseek-ai/DeepSeek-V4-Flash"]["type"] == "chat"
+    assert "Pro/MiniMaxAI/MiniMax-M2.5" not in models
     assert models["Pro/BAAI/bge-m3"]["type"] == "embedding"
     assert models["Pro/BAAI/bge-m3"]["dimension"] == 1024
     assert "base_url_override" not in models["Pro/BAAI/bge-m3"]

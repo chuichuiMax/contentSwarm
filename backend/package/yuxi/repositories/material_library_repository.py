@@ -12,55 +12,19 @@ from yuxi.storage.postgres.models_content import (
     ContentCoverPosterTemplate,
     ContentMaterialCategory,
     ContentMaterialLibraryItem,
+    ContentMaterialShare,
+    ContentMaterialShareItem,
     ContentTask,
-    RemoteMaterialLibrarySetting,
 )
-from yuxi.utils.datetime_utils import utc_now_naive
+
+# 失败/取消的任务释放图库占用，便于重新选图生产；删除任务本来就不计入占用。
+IMAGE_OCCUPANCY_RELEASED_STATUSES = frozenset({"failed", "cancelled"})
 
 
 class MaterialLibraryRepository:
     def __init__(self, db: AsyncSession, *, include_shared: bool = False):
         self.db = db
         self.include_shared = include_shared
-
-    async def get_remote_setting(self, *, for_update: bool = False) -> RemoteMaterialLibrarySetting | None:
-        query = select(RemoteMaterialLibrarySetting).where(RemoteMaterialLibrarySetting.id == "global")
-        if for_update:
-            query = query.with_for_update()
-        return (await self.db.execute(query)).scalar_one_or_none()
-
-    async def upsert_remote_setting(
-        self,
-        *,
-        base_url: str,
-        username: str,
-        password: str,
-        verification_status: str,
-        verified_at,
-        updated_by: int | None,
-    ) -> RemoteMaterialLibrarySetting:
-        setting = await self.get_remote_setting(for_update=True)
-        if setting is None:
-            setting = RemoteMaterialLibrarySetting(
-                id="global",
-                base_url=base_url,
-                username=username,
-                password=password,
-                verification_status=verification_status,
-                verified_at=verified_at,
-                updated_by=updated_by,
-            )
-            self.db.add(setting)
-        else:
-            setting.base_url = base_url
-            setting.username = username
-            setting.password = password
-            setting.verification_status = verification_status
-            setting.verified_at = verified_at
-            setting.updated_by = updated_by
-            setting.updated_at = utc_now_naive()
-        await self.db.flush()
-        return setting
 
     def category_access(self, owner_uid: str):
         own = ContentMaterialCategory.owner_uid == owner_uid
@@ -203,25 +167,95 @@ class MaterialLibraryRepository:
             ).scalars()
         )
 
-    async def item_is_selected_by_task(self, item_id: str, owner_uid: str) -> bool:
-        return bool(
+    async def list_image_items_with_assets_and_categories(
+        self, owner_uid: str, item_ids: list[str]
+    ) -> list[tuple[ContentMaterialLibraryItem, ContentCoverAsset, ContentMaterialCategory]]:
+        if not item_ids:
+            return []
+        join = ContentMaterialLibraryItem.__table__.join(
+            ContentCoverAsset, ContentCoverAsset.id == ContentMaterialLibraryItem.asset_id
+        ).join(
+            ContentMaterialCategory,
+            self.category_join(),
+        )
+        return list(
             (
                 await self.db.execute(
-                    select(func.count(ContentTask.id)).where(
-                        ContentTask.created_by == owner_uid,
-                        ContentTask.selected_image_item_id == item_id,
-                        ContentTask.deleted_at.is_(None),
+                    select(ContentMaterialLibraryItem, ContentCoverAsset, ContentMaterialCategory)
+                    .select_from(join)
+                    .where(
+                        self.item_access(owner_uid),
+                        ContentMaterialLibraryItem.id.in_(item_ids),
+                        ContentMaterialLibraryItem.material_type == "image",
+                        ContentMaterialLibraryItem.status == "enabled",
+                        ContentMaterialLibraryItem.deleted_at.is_(None),
+                        ContentCoverAsset.deleted_at.is_(None),
+                        ContentMaterialCategory.deleted_at.is_(None),
                     )
                 )
-            ).scalar_one()
+            ).all()
         )
+
+    async def create_share(
+        self, share: ContentMaterialShare, items: list[ContentMaterialShareItem]
+    ) -> None:
+        self.db.add(share)
+        self.db.add_all(items)
+        await self.db.flush()
+
+    async def get_share_with_items(
+        self, token: str
+    ) -> tuple[ContentMaterialShare | None, list[ContentMaterialShareItem]]:
+        share = (
+            await self.db.execute(select(ContentMaterialShare).where(ContentMaterialShare.token == token))
+        ).scalar_one_or_none()
+        if share is None:
+            return None, []
+        items = list(
+            (
+                await self.db.execute(
+                    select(ContentMaterialShareItem)
+                    .where(ContentMaterialShareItem.share_id == share.id)
+                    .order_by(ContentMaterialShareItem.display_order)
+                )
+            ).scalars()
+        )
+        return share, items
+
+    async def item_is_selected_by_task(
+        self, item_id: str, owner_uid: str, *, exclude_task_id: str | None = None
+    ) -> bool:
+        filters = [
+            ContentTask.created_by == owner_uid,
+            ContentTask.selected_image_item_id == item_id,
+            ContentTask.deleted_at.is_(None),
+            ContentTask.status.notin_(IMAGE_OCCUPANCY_RELEASED_STATUSES),
+        ]
+        if exclude_task_id:
+            filters.append(ContentTask.id != exclude_task_id)
+        return bool((await self.db.execute(select(func.count(ContentTask.id)).where(*filters))).scalar_one())
+
+    async def list_selected_image_item_ids(
+        self, owner_uid: str, *, exclude_task_id: str | None = None
+    ) -> set[str]:
+        filters = [
+            ContentTask.created_by == owner_uid,
+            ContentTask.selected_image_item_id.is_not(None),
+            ContentTask.deleted_at.is_(None),
+            ContentTask.status.notin_(IMAGE_OCCUPANCY_RELEASED_STATUSES),
+        ]
+        if exclude_task_id:
+            filters.append(ContentTask.id != exclude_task_id)
+        rows = await self.db.execute(select(ContentTask.selected_image_item_id).where(*filters))
+        return {item_id for item_id in rows.scalars().all() if item_id}
 
     async def list_items(
         self,
         owner_uid: str,
         *,
         material_type: str,
-        category_ids: list[str] | None,
+        category: str | None,
+        category_ids: list[str] | None = None,
         status: str | None,
         query_text: str | None,
         page: int,
@@ -239,6 +273,8 @@ class MaterialLibraryRepository:
             filters.append(ContentMaterialCategory.visibility == scope)
         if category_ids:
             filters.append(ContentMaterialLibraryItem.category.in_(category_ids))
+        elif category:
+            filters.append(ContentMaterialLibraryItem.category == category)
         if status:
             filters.append(ContentMaterialLibraryItem.status == status)
         if query_text:
@@ -289,7 +325,6 @@ class MaterialLibraryRepository:
         filters = [
             self.item_access(owner_uid),
             ContentMaterialLibraryItem.material_type == material_type,
-            ContentMaterialLibraryItem.status == "enabled",
             ContentMaterialLibraryItem.deleted_at.is_(None),
             ContentCoverAsset.deleted_at.is_(None),
         ]
@@ -308,7 +343,7 @@ class MaterialLibraryRepository:
                     select(ContentMaterialLibraryItem)
                     .join(ContentCoverAsset, ContentCoverAsset.id == ContentMaterialLibraryItem.asset_id)
                     .where(*filters, ContentMaterialLibraryItem.category == category)
-                    .order_by(ContentMaterialLibraryItem.updated_at.desc())
+                    .order_by(ContentMaterialLibraryItem.created_at.desc())
                     .limit(1)
                 )
             ).scalar_one_or_none()

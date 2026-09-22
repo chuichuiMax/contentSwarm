@@ -2,8 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import html
 import io
 import json
+import logging
+import os
+import re
 import uuid
 from pathlib import Path
 from typing import Any, Literal
@@ -13,13 +17,24 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-
 from yuxi.repositories.content_cover_repository import ContentCoverRepository
-from yuxi.repositories.content_repository import ContentRepository
 from yuxi.repositories.material_library_repository import MaterialLibraryRepository
 from yuxi.services.material_library_categories import (
     list_material_categories,
     resolve_legacy_category,
+)
+from yuxi.services.material_upload_queue import (
+    INGEST_PENDING,
+    delete_material_display_cache,
+    encode_material_thumbnail,
+    enqueue_material_oss_upload,
+    ingest_status_of,
+    material_thumb_object_name,
+    material_upload_redis_key,
+    persist_material_thumbnail,
+    read_material_bytes,
+    stage_material_bytes,
+    stage_material_thumb,
 )
 from yuxi.storage.minio import StorageError, get_minio_client
 from yuxi.storage.postgres.models_business import OperationLog, User
@@ -28,15 +43,57 @@ from yuxi.storage.postgres.models_content import (
     ContentCoverPosterTemplate,
     ContentMaterialCategory,
     ContentMaterialLibraryItem,
+    ContentMaterialShare,
+    ContentMaterialShareItem,
 )
 from yuxi.utils.datetime_utils import utc_now_naive
 from yuxi.utils.upload_utils import read_upload_with_limit
 
+logger = logging.getLogger(__name__)
+
 MATERIAL_LIBRARY_BUCKET = "image"
-MAX_MATERIAL_BYTES = 20 * 1024 * 1024
+MAX_MATERIAL_BYTES = 100 * 1024 * 1024
 MAX_MATERIAL_DIMENSION = 8192
 MAX_MATERIAL_PIXELS = 40_000_000
 MATERIAL_THUMBNAIL_SIZE = (480, 480)
+SHARE_CARD_COVER_SIZE = (500, 400)
+SHARE_CARD_COVER_MAX_BYTES = 128 * 1024
+SHARE_DISPLAY_WEBP_MAX_WIDTH = 1440
+SHARE_DISPLAY_WEBP_QUALITY = 80
+DECORATION_GALLERY_INDUSTRY_SLUG = "decoration"
+DECORATION_GALLERY_DESIGN_STYLES = frozenset(
+    {
+        "复合写意",
+        "写意木构",
+        "江南印象",
+        "东方古雅",
+        "轻欧简美",
+        "欧美香颂",
+        "欧式田园",
+        "异域风情",
+        "新装饰主义",
+        "北欧之光",
+        "意境东方",
+        "雅致现代",
+        "工业再造",
+        "优雅缤纷",
+        "极简侘寂",
+        "仿生未来",
+        "复古风潮",
+        "艺术室界",
+    }
+)
+
+
+def _normalize_area_value(value: str | None) -> str | None:
+    if value is None:
+        return None
+    return re.sub(r"\s*(?:㎡|m(?:²|2))\s*$", "", value.strip(), flags=re.IGNORECASE).strip()
+
+
+def _display_area_value(value: str | None) -> str:
+    normalized = _normalize_area_value(value)
+    return f"{normalized}㎡" if normalized else ""
 
 
 class MaterialItemUpdate(BaseModel):
@@ -52,6 +109,20 @@ class MaterialItemUpdate(BaseModel):
         return value
 
 
+class MaterialShareCreate(BaseModel):
+    item_ids: list[str] = Field(min_length=1, max_length=1000)
+
+    @field_validator("item_ids")
+    @classmethod
+    def validate_item_ids(cls, value: list[str]) -> list[str]:
+        normalized = [item_id.strip() for item_id in value]
+        if any(not item_id for item_id in normalized):
+            raise ValueError("图片标识不能为空")
+        if len(set(normalized)) != len(normalized):
+            raise ValueError("同一张图片只能选择一次")
+        return normalized
+
+
 class MaterialCategoryCreate(BaseModel):
     visibility: Literal["private", "enterprise"] = "private"
     material_type: Literal["image", "cover_template"]
@@ -59,6 +130,9 @@ class MaterialCategoryCreate(BaseModel):
     description: str = Field(default="", max_length=255)
     parent_id: str | None = Field(default=None, max_length=64)
     industry_slug: str | None = Field(default=None, max_length=80)
+    design_style: str | None = Field(default=None, max_length=32)
+    building_name: str | None = Field(default=None, max_length=80)
+    area: str | None = Field(default=None, max_length=32)
 
     @field_validator("name")
     @classmethod
@@ -66,6 +140,11 @@ class MaterialCategoryCreate(BaseModel):
         if not value.strip():
             raise ValueError("名称不能为空")
         return value
+
+    @field_validator("area")
+    @classmethod
+    def normalize_area(cls, value: str | None) -> str | None:
+        return _normalize_area_value(value)
 
 
 class MaterialCategoryUpdate(BaseModel):
@@ -81,6 +160,9 @@ class MaterialCategoryUpdate(BaseModel):
     description: str | None = Field(default=None, max_length=255)
     sort_order: int | None = Field(default=None, ge=0, le=100000)
     industry_slug: str | None = Field(default=None, max_length=80)
+    design_style: str | None = Field(default=None, max_length=32)
+    building_name: str | None = Field(default=None, max_length=80)
+    area: str | None = Field(default=None, max_length=32)
 
     @field_validator("name")
     @classmethod
@@ -88,6 +170,11 @@ class MaterialCategoryUpdate(BaseModel):
         if value is not None and not value.strip():
             raise ValueError("名称不能为空")
         return value
+
+    @field_validator("area")
+    @classmethod
+    def normalize_area(cls, value: str | None) -> str | None:
+        return _normalize_area_value(value)
 
 
 class MaterialCategoryDelete(BaseModel):
@@ -124,11 +211,103 @@ def _audit(db: AsyncSession, user: User, operation: str, **details):
     db.add(OperationLog(user_id=user.id, operation=operation, details=json.dumps(details, ensure_ascii=False)))
 
 
+def _share_page_path(token: str) -> str:
+    return f"/api/material-library/shares/{token}/page"
+
+
+def _share_image_path(token: str, display_order: int) -> str:
+    return f"/api/material-library/shares/{token}/images/{display_order}"
+
+
+def _share_webp_image_path(token: str, display_order: int) -> str:
+    return f"{_share_image_path(token, display_order)}.webp"
+
+
+def _share_card_cover_path(token: str) -> str:
+    return f"/api/material-library/shares/{token}/cover.jpg"
+
+
+def _share_case_path(token: str) -> str:
+    return f"/share/case/{token}"
+
+
+def _share_public_url(path: str, public_base_url: str | None = None) -> str:
+    base_url = (public_base_url or os.getenv("MATERIAL_LIBRARY_SHARE_PUBLIC_BASE_URL", "")).strip().rstrip("/")
+    return f"{base_url}{path}" if base_url else path
+
+
+def _share_description(building_name: str | None, area: str | None, design_style: str | None) -> str:
+    if not building_name or not area or not design_style:
+        return ""
+    area_text = _display_area_value(area)
+    return f"{building_name}｜{area_text}｜{design_style}"
+
+
+def _material_image_object_name(owner_uid: str, asset_id: str) -> str:
+    return f"material-library/{owner_uid}/images/{asset_id}/image.webp"
+
+
+def _normalize_design_style(value: str | None) -> str | None:
+    text = (value or "").strip()
+    if not text:
+        return None
+    if text not in DECORATION_GALLERY_DESIGN_STYLES:
+        raise _error(422, "MATERIAL_STYLE_INVALID", "请选择有效的设计风格")
+    return text
+
+
+def _is_decoration_gallery(category: ContentMaterialCategory, parent: ContentMaterialCategory | None) -> bool:
+    return category.industry_slug == DECORATION_GALLERY_INDUSTRY_SLUG or (
+        parent is not None and parent.industry_slug == DECORATION_GALLERY_INDUSTRY_SLUG
+    )
+
+
+async def _resolve_upload_category(
+    db: AsyncSession,
+    user: User,
+    category_id: str,
+    design_style: str | None,
+) -> tuple[ContentMaterialCategory, str | None]:
+    owner_uid = _owner_uid(user)
+    repo = MaterialLibraryRepository(db, include_shared=True)
+    resolved = await resolve_material_category(
+        db,
+        owner_uid=owner_uid,
+        tenant_id=_tenant_id(user),
+        material_type="image",
+        category_id=category_id,
+    )
+    parent = await repo.get_category(owner_uid, "image", resolved.parent_id) if resolved.parent_id else None
+    style = _normalize_design_style(design_style) or resolved.design_style
+    if _is_decoration_gallery(resolved, parent) and not style:
+        raise _error(422, "MATERIAL_STYLE_REQUIRED", "装修图库上传请选择设计风格")
+    if resolved.parent_id is None and resolved.industry_slug == DECORATION_GALLERY_INDUSTRY_SLUG and style:
+        matches = [
+            child
+            for child in await repo.list_child_categories(owner_uid, "image", resolved.id)
+            if child.design_style == style
+        ]
+        if len(matches) == 1:
+            resolved = matches[0]
+        elif not matches:
+            raise _error(422, "MATERIAL_STYLE_GALLERY_MISSING", f"请先创建「{style}」风格的二级图库")
+        else:
+            raise _error(422, "MATERIAL_STYLE_GALLERY_AMBIGUOUS", "该风格有多个二级图库，请直接选择其中一个")
+    return resolved, style
+
+
 def _normalize_image(data: bytes) -> tuple[bytes, int, int, str]:
     try:
+        try:
+            from pillow_heif import register_heif_opener
+
+            register_heif_opener()
+        except Exception:
+            pass
         with Image.open(io.BytesIO(data)) as source:
-            if source.format not in {"JPEG", "PNG", "WEBP"}:
-                raise _error(400, "MATERIAL_FORMAT_UNSUPPORTED", "仅支持 JPG、PNG 或 WebP 图片")
+            # 不按扩展名/声明格式拦截：微信相册常把 HEIC/MPO/实况图标成 .jpg。
+            # 只要 Pillow（含 HEIF 插件）能解码，就统一转成 WebP 入库。
+            detected = (source.format or "").upper()
             image = ImageOps.exif_transpose(source)
             image.load()
             width, height = image.size
@@ -139,13 +318,29 @@ def _normalize_image(data: bytes) -> tuple[bytes, int, int, str]:
                 or width * height > MAX_MATERIAL_PIXELS
             ):
                 raise _error(400, "MATERIAL_DIMENSION_INVALID", "图片尺寸必须在 2–8192 像素且不超过 4000 万像素")
+            if image.mode in {"RGBA", "LA"} or (image.mode == "P" and "transparency" in image.info):
+                image = image.convert("RGBA")
+            else:
+                image = image.convert("RGB")
             output = io.BytesIO()
-            image.convert("RGBA").save(output, format="PNG", optimize=True)
-            return output.getvalue(), width, height, "image/png"
+            image.save(output, format="WEBP", quality=80, method=4)
+            logger.info(
+                "material image normalized format=%s size=%sx%s bytes_in=%s bytes_out=%s",
+                detected or "unknown",
+                width,
+                height,
+                len(data),
+                output.tell(),
+            )
+            return output.getvalue(), width, height, "image/webp"
     except HTTPException:
         raise
     except (UnidentifiedImageError, OSError, Image.DecompressionBombError) as exc:
-        raise _error(400, "MATERIAL_IMAGE_INVALID", "上传文件不是有效图片") from exc
+        raise _error(
+            400,
+            "MATERIAL_IMAGE_INVALID",
+            "无法识别该图片（请用系统相册导出为 JPG/PNG 后再传，勿直接传实况图/未解码原片）",
+        ) from exc
 
 
 def _make_image_thumbnail(data: bytes) -> bytes:
@@ -154,6 +349,37 @@ def _make_image_thumbnail(data: bytes) -> bytes:
         image.thumbnail(MATERIAL_THUMBNAIL_SIZE, Image.Resampling.LANCZOS)
         output = io.BytesIO()
         image.save(output, format="JPEG", quality=78, optimize=True)
+        return output.getvalue()
+
+
+def _make_share_card_cover(data: bytes) -> bytes:
+    with Image.open(io.BytesIO(data)) as source:
+        image = ImageOps.exif_transpose(source).convert("RGB")
+        image = ImageOps.fit(image, SHARE_CARD_COVER_SIZE, Image.Resampling.LANCZOS)
+        candidate = b""
+        for quality in (82, 75, 68, 60, 50):
+            output = io.BytesIO()
+            image.save(output, format="JPEG", quality=quality, optimize=True)
+            candidate = output.getvalue()
+            if len(candidate) <= SHARE_CARD_COVER_MAX_BYTES:
+                return candidate
+        return candidate
+
+
+def _make_share_display_webp(data: bytes) -> bytes:
+    with Image.open(io.BytesIO(data)) as source:
+        image = ImageOps.exif_transpose(source)
+        if image.width > SHARE_DISPLAY_WEBP_MAX_WIDTH:
+            height = round(image.height * SHARE_DISPLAY_WEBP_MAX_WIDTH / image.width)
+            image = image.resize((SHARE_DISPLAY_WEBP_MAX_WIDTH, height), Image.Resampling.LANCZOS)
+        has_alpha = image.mode in {"RGBA", "LA"} or (image.mode == "P" and "transparency" in image.info)
+        output = io.BytesIO()
+        image.convert("RGBA" if has_alpha else "RGB").save(
+            output,
+            format="WEBP",
+            quality=SHARE_DISPLAY_WEBP_QUALITY,
+            method=6,
+        )
         return output.getvalue()
 
 
@@ -177,6 +403,8 @@ def serialize_item(
             "height": asset.image_height,
             "sha256": asset.sha256,
             "file_url": f"/api/material-library/items/{item.id}/file",
+            "design_style": (item.metadata_json or {}).get("design_style") or category.design_style,
+            "storage_status": ingest_status_of(asset),
         }
     )
     if item.material_type == "cover_template":
@@ -244,6 +472,8 @@ async def ensure_material_categories(
 
 
 async def _industry_catalog(db: AsyncSession) -> dict[str, str]:
+    from yuxi.repositories.content_repository import ContentRepository
+
     return {item["slug"]: item["name"] for item in await ContentRepository(db).list_templates()}
 
 
@@ -325,23 +555,22 @@ async def import_material_images(
     files: list[UploadFile],
     *,
     category: str,
+    design_style: str | None = None,
 ) -> dict[str, Any]:
     if not files or len(files) > 50:
         raise _error(422, "MATERIAL_FILE_COUNT_INVALID", "每次必须上传 1–50 张图片")
     owner_uid = _owner_uid(user)
-    resolved_category = await resolve_material_category(
-        db,
-        owner_uid=owner_uid,
-        tenant_id=_tenant_id(user),
-        material_type="image",
-        category_id=category,
-    )
+    resolved_category, style = await _resolve_upload_category(db, user, category, design_style)
     category_id = resolved_category.id
     results: list[dict[str, Any]] = []
+    staged_ids: list[str] = []
     for index, file in enumerate(files):
         # 与范围调整互斥；每张上传独立提交，逐次重新校验图库权限。
         resolved_category = await MaterialLibraryRepository(db, include_shared=True).get_category(
-            owner_uid, "image", category_id, for_update=True,
+            owner_uid,
+            "image",
+            category_id,
+            for_update=True,
         )
         if resolved_category is None:
             raise _error(422, "MATERIAL_CATEGORY_INVALID", "图库不存在或共享范围已变更")
@@ -351,24 +580,18 @@ async def import_material_images(
             raw = await read_upload_with_limit(
                 file,
                 max_size_bytes=MAX_MATERIAL_BYTES,
-                too_large_message="图片过大，当前仅支持 20 MB 以内的文件",
+                too_large_message="图片过大，当前仅支持 100 MB 以内的文件",
             )
         except ValueError as exc:
             raise _error(400, "MATERIAL_IMAGE_TOO_LARGE", str(exc)) from exc
         normalized, width, height, content_type = _normalize_image(raw)
         if len(normalized) > MAX_MATERIAL_BYTES:
-            raise _error(400, "MATERIAL_IMAGE_TOO_LARGE", "图片规范化后超过 20 MB")
+            raise _error(400, "MATERIAL_IMAGE_TOO_LARGE", "图片规范化后超过 100 MB")
         asset_id = f"cca_{uuid.uuid4().hex}"
-        object_name = f"material-library/{owner_uid}/images/{asset_id}/image.png"
-        try:
-            uploaded = await get_minio_client().aupload_file(
-                bucket_name=MATERIAL_LIBRARY_BUCKET,
-                object_name=object_name,
-                data=normalized,
-                content_type=content_type,
-            )
-        except StorageError as exc:
-            raise _error(500, "MATERIAL_STORAGE_FAILED", "素材保存失败") from exc
+        object_name = _material_image_object_name(owner_uid, asset_id)
+        await stage_material_bytes(asset_id, normalized)
+        await stage_material_thumb(asset_id, encode_material_thumbnail(normalized))
+        staged_ids.append(asset_id)
         try:
             asset = await ContentCoverRepository(db).create_asset(
                 id=asset_id,
@@ -382,9 +605,13 @@ async def import_material_images(
                 image_width=width,
                 image_height=height,
                 sha256=hashlib.sha256(normalized).hexdigest(),
-                bucket_name=uploaded.bucket_name,
-                object_name=uploaded.object_name,
-                metadata_json={"original_content_type": file.content_type or ""},
+                bucket_name=MATERIAL_LIBRARY_BUCKET,
+                object_name=object_name,
+                metadata_json={
+                    "original_content_type": file.content_type or "",
+                    "ingest_status": INGEST_PENDING,
+                    "redis_key": material_upload_redis_key(asset_id),
+                },
             )
             item = await create_library_item_for_asset(
                 db,
@@ -392,15 +619,309 @@ async def import_material_images(
                 material_type="image",
                 name=Path(file.filename).stem,
                 category=resolved_category.id,
+                metadata={"design_style": style} if style else None,
             )
             _audit(db, user, "material.upload", item_id=item.id, category_id=resolved_category.id)
             await db.commit()
         except Exception:
             await db.rollback()
-            await get_minio_client().adelete_file(uploaded.bucket_name, uploaded.object_name)
+            await delete_material_display_cache(asset_id)
             raise
+        try:
+            await enqueue_material_oss_upload(asset_id)
+        except Exception:
+            logger.exception("material upload enqueue failed: asset=%s", asset_id)
+            raise _error(500, "MATERIAL_UPLOAD_QUEUE_FAILED", "素材已暂存，入库队列提交失败") from None
         results.append(serialize_item(item, asset, resolved_category))
-    return {"items": results, "summary": {"total": len(results), "created": len(results)}}
+    return {"items": results, "summary": {"total": len(results), "created": len(results), "queued": len(staged_ids)}}
+
+
+async def create_material_share(
+    db: AsyncSession,
+    user: User,
+    payload: MaterialShareCreate,
+    public_base_url: str | None = None,
+) -> dict[str, Any]:
+    owner_uid = _owner_uid(user)
+    repo = MaterialLibraryRepository(db, include_shared=True)
+    rows = await repo.list_image_items_with_assets_and_categories(owner_uid, payload.item_ids)
+    if len(rows) != len(payload.item_ids):
+        raise _error(404, "MATERIAL_NOT_FOUND", "所选图片不存在或无权访问")
+
+    selected = {item.id: (item, asset, category) for item, asset, category in rows}
+    ordered_rows = [selected[item_id] for item_id in payload.item_ids]
+    category = ordered_rows[0][2]
+    if category.parent_id is None:
+        raise _error(422, "MATERIAL_SHARE_CHILD_GALLERY_REQUIRED", "只能分享二级图库中的图片")
+    if any(item_category.id != category.id for _, _, item_category in ordered_rows):
+        raise _error(422, "MATERIAL_SHARE_GALLERY_MISMATCH", "请选择同一个二级图库中的图片")
+    if category.industry_slug == DECORATION_GALLERY_INDUSTRY_SLUG:
+        if not (category.design_style or "").strip():
+            raise _error(422, "MATERIAL_DESIGN_STYLE_REQUIRED", "请选择设计风格")
+        if not (category.building_name or "").strip():
+            raise _error(422, "MATERIAL_BUILDING_NAME_REQUIRED", "请输入楼盘名称")
+        if not (category.area or "").strip():
+            raise _error(422, "MATERIAL_AREA_REQUIRED", "请输入面积")
+
+    share = ContentMaterialShare(
+        id=f"mls_{uuid.uuid4().hex}",
+        token=uuid.uuid4().hex,
+        owner_uid=owner_uid,
+        category_id=category.id,
+        title=category.name,
+        building_name=category.building_name,
+        area=category.area,
+        design_style=category.design_style,
+    )
+    snapshots: list[ContentMaterialShareItem] = []
+    uploaded_objects: list[tuple[str, str]] = []
+    storage = get_minio_client()
+    try:
+        for display_order, (_, asset, _) in enumerate(ordered_rows, start=1):
+            data = await read_material_bytes(asset)
+            suffix = "webp" if (asset.content_type or "").endswith("webp") else "png"
+            object_name = f"material-library-shares/{owner_uid}/{share.id}/{display_order}.{suffix}"
+            uploaded = await storage.aupload_file(
+                bucket_name=MATERIAL_LIBRARY_BUCKET,
+                object_name=object_name,
+                data=data,
+                content_type=asset.content_type,
+            )
+            uploaded_objects.append((uploaded.bucket_name, uploaded.object_name))
+            display_object_name = f"{object_name}.display.webp"
+            display_data = await asyncio.to_thread(_make_share_display_webp, data)
+            display_uploaded = await storage.aupload_file(
+                bucket_name=MATERIAL_LIBRARY_BUCKET,
+                object_name=display_object_name,
+                data=display_data,
+                content_type="image/webp",
+            )
+            uploaded_objects.append((display_uploaded.bucket_name, display_uploaded.object_name))
+            snapshots.append(
+                ContentMaterialShareItem(
+                    share_id=share.id,
+                    display_order=display_order,
+                    original_file_name=asset.original_file_name,
+                    content_type=asset.content_type,
+                    file_size=asset.file_size,
+                    image_width=asset.image_width,
+                    image_height=asset.image_height,
+                    bucket_name=uploaded.bucket_name,
+                    object_name=uploaded.object_name,
+                )
+            )
+        await repo.create_share(share, snapshots)
+        await db.commit()
+    except StorageError as exc:
+        await db.rollback()
+        for bucket_name, object_name in uploaded_objects:
+            await storage.adelete_file(bucket_name, object_name)
+        raise _error(500, "MATERIAL_SHARE_STORAGE_FAILED", "分享图片快照保存失败") from exc
+    except Exception:
+        await db.rollback()
+        for bucket_name, object_name in uploaded_objects:
+            await storage.adelete_file(bucket_name, object_name)
+        raise
+
+    return {
+        "share": {
+            "id": share.token,
+            "url": _share_public_url(_share_case_path(share.token), public_base_url),
+            "cover_url": _share_image_path(share.token, 1) if snapshots else None,
+            "card_cover_url": (
+                _share_public_url(_share_card_cover_path(share.token), public_base_url) if snapshots else None
+            ),
+            "token": share.token,
+            "title": share.title,
+            "description": _share_description(share.building_name, share.area, share.design_style),
+            "image_count": len(snapshots),
+            "page_path": _share_page_path(share.token),
+            "image_path": _share_image_path(share.token, 1) if snapshots else None,
+            "page_url": _share_public_url(_share_case_path(share.token), public_base_url),
+            "image_url": _share_public_url(_share_image_path(share.token, 1), public_base_url) if snapshots else None,
+        }
+    }
+
+
+async def get_public_material_share(
+    db: AsyncSession, token: str
+) -> tuple[ContentMaterialShare, list[ContentMaterialShareItem]]:
+    share, items = await MaterialLibraryRepository(db).get_share_with_items(token)
+    if share is None:
+        raise _error(404, "MATERIAL_SHARE_NOT_FOUND", "分享不存在")
+    return share, items
+
+
+def serialize_public_material_share(
+    share: ContentMaterialShare, items: list[ContentMaterialShareItem]
+) -> dict[str, Any]:
+    ordered_items = sorted(items, key=lambda item: item.display_order)
+    return {
+        "share": {
+            "id": share.token,
+            "gallery_name": share.title,
+            "building_name": share.building_name,
+            "area": _normalize_area_value(share.area),
+            "design_style": share.design_style,
+            "cover_url": _share_image_path(share.token, 1) if ordered_items else None,
+            "cover_webp_url": _share_webp_image_path(share.token, 1) if ordered_items else None,
+            "card_cover_url": _share_card_cover_path(share.token) if ordered_items else None,
+            "images": [
+                {
+                    "order": item.display_order,
+                    "file_name": item.original_file_name,
+                    "url": _share_image_path(share.token, item.display_order),
+                    "webp_url": _share_webp_image_path(share.token, item.display_order),
+                }
+                for item in ordered_items
+            ],
+        }
+    }
+
+
+def render_public_material_share_page(
+    share: ContentMaterialShare,
+    items: list[ContentMaterialShareItem],
+    request_base_url: str,
+) -> str:
+    base_url = request_base_url.rstrip("/") or (
+        os.getenv("MATERIAL_LIBRARY_SHARE_PUBLIC_BASE_URL", "").strip().rstrip("/")
+    )
+    ordered_items = sorted(items, key=lambda item: item.display_order)
+    title = html.escape(share.title)
+    first_item = ordered_items[0] if ordered_items else None
+    first_image = f"{base_url}{_share_webp_image_path(share.token, first_item.display_order)}" if first_item else ""
+    card_cover = f"{base_url}{_share_card_cover_path(share.token)}" if first_item else ""
+    share_url = f"{base_url}{_share_case_path(share.token)}"
+    first_image_type = "image/jpeg" if first_item else ""
+    first_image_width = SHARE_CARD_COVER_SIZE[0] if first_item else ""
+    first_image_height = SHARE_CARD_COVER_SIZE[1] if first_item else ""
+    building_name = html.escape(share.building_name or "")
+    area = html.escape(_display_area_value(share.area))
+    design_style = html.escape(share.design_style or "")
+    description = html.escape(_share_description(share.building_name, share.area, share.design_style), quote=True)
+    details = ""
+    if building_name and area and design_style:
+        details = (
+            '<section class="project-info-card">'
+            f"<span>楼盘：{building_name}</span>"
+            f"<span>面积：{area}</span>"
+            f"<span>风格：{design_style}</span>"
+            "</section>"
+        )
+    hero = (
+        f'<section class="share-hero"><img src="{html.escape(first_image, quote=True)}" alt="{title} 首图"></section>'
+        if items
+        else ""
+    )
+    image_tags = []
+    for item in ordered_items:
+        image_url = f"{base_url}{_share_webp_image_path(share.token, item.display_order)}"
+        image_tags.append(
+            f'<img src="{html.escape(image_url, quote=True)}" '
+            f'alt="{title} 第 {item.display_order} 张" loading="lazy">'
+        )
+    images = "".join(image_tags)
+    return "\n".join(
+        [
+            "<!doctype html>",
+            '<html lang="zh-CN"><head><meta charset="utf-8">',
+            '<meta name="viewport" content="width=device-width, initial-scale=1">',
+            f"<title>{title}</title>",
+            f'<meta name="description" content="{description}">',
+            '<meta property="og:type" content="website">',
+            f'<meta property="og:url" content="{html.escape(share_url, quote=True)}">',
+            '<meta property="og:site_name" content="Yuxi">',
+            f'<meta property="og:title" content="{title}">',
+            f'<meta property="og:description" content="{description}">',
+            f'<meta property="og:image" content="{html.escape(card_cover, quote=True)}">',
+            f'<meta property="og:image:secure_url" content="{html.escape(card_cover, quote=True)}">',
+            f'<meta property="og:image:type" content="{first_image_type}">',
+            f'<meta property="og:image:width" content="{first_image_width}">',
+            f'<meta property="og:image:height" content="{first_image_height}">',
+            f'<meta name="twitter:title" content="{title}">',
+            f'<meta name="twitter:description" content="{description}">',
+            f'<meta name="twitter:image" content="{html.escape(first_image, quote=True)}">',
+            '<meta name="twitter:card" content="summary_large_image">',
+            "<style>",
+            "body{margin:0;background:#fff;color:#151616;font:16px/1.6 "
+            '-apple-system,BlinkMacSystemFont,"Noto Sans SC","Segoe UI",sans-serif}',
+            (
+                "header{display:flex;align-items:center;justify-content:center;"
+                "min-height:74px;padding:0 24px;background:#fff}"
+            ),
+            "h1{margin:0;font-size:21px;line-height:1.4;text-align:center}",
+            "main{max-width:720px;margin:auto;padding:0 0 36px}",
+            ".share-hero{height:min(53vw,382px);overflow:hidden;background:#eef0f0}",
+            ".share-hero img{display:block;width:100%;height:100%;margin:0;object-fit:cover}",
+            (
+                ".project-info-card{position:relative;z-index:1;display:grid;"
+                "grid-template-columns:1fr 1fr;gap:16px 24px;margin:-76px 28px 34px;"
+                "padding:38px 30px 28px;border-radius:16px;background:#fff;"
+                "box-shadow:0 5px 12px rgb(0 0 0 / 22%);font-size:18px;line-height:1.55}"
+            ),
+            ".project-info-card span:last-child{grid-column:1 / -1}",
+            ".case-section{padding:0 10px}",
+            "h2{display:flex;align-items:center;gap:16px;margin:0 18px 20px;font-size:22px;line-height:1.4}",
+            "h2::before{width:16px;height:35px;background:#ff1717;content:''}",
+            ".case-images img{display:block;width:100%;margin:0 0 24px;background:#fff}",
+            (
+                "@media (max-width:480px){header{min-height:62px;padding:0 16px}"
+                "h1{font-size:18px}.project-info-card{margin:-54px 18px 28px;"
+                "padding:28px 24px 22px;font-size:17px}.case-section{padding:0 10px}"
+                "h2{margin:0 18px 18px;font-size:20px}}"
+            ),
+            "</style></head><body>",
+            (
+                f"<header><h1>{title}</h1></header><main>{hero}{details}"
+                f'<section class="case-section"><h2>实景案例</h2>'
+                f'<div class="case-images">{images}</div></section></main></body></html>'
+            ),
+        ]
+    )
+
+
+async def get_public_material_share_image(db: AsyncSession, token: str, display_order: int) -> tuple[bytes, str, str]:
+    _, items = await get_public_material_share(db, token)
+    snapshot = next((item for item in items if item.display_order == display_order), None)
+    if snapshot is None:
+        raise _error(404, "MATERIAL_SHARE_IMAGE_NOT_FOUND", "分享图片不存在")
+    try:
+        data = await get_minio_client().adownload_file(snapshot.bucket_name, snapshot.object_name)
+    except StorageError as exc:
+        raise _error(500, "MATERIAL_SHARE_STORAGE_FAILED", "分享图片读取失败") from exc
+    return data, snapshot.content_type, snapshot.original_file_name
+
+
+async def get_public_material_share_display_webp(
+    db: AsyncSession, token: str, display_order: int
+) -> bytes:
+    _, items = await get_public_material_share(db, token)
+    snapshot = next((item for item in items if item.display_order == display_order), None)
+    if snapshot is None:
+        raise _error(404, "MATERIAL_SHARE_IMAGE_NOT_FOUND", "分享图片不存在")
+
+    storage = get_minio_client()
+    display_object_name = f"{snapshot.object_name}.display.webp"
+    try:
+        if await storage.astat_file(snapshot.bucket_name, display_object_name) is not None:
+            return await storage.adownload_file(snapshot.bucket_name, display_object_name)
+        source_data = await storage.adownload_file(snapshot.bucket_name, snapshot.object_name)
+        display_data = await asyncio.to_thread(_make_share_display_webp, source_data)
+        await storage.aupload_file(
+            bucket_name=snapshot.bucket_name,
+            object_name=display_object_name,
+            data=display_data,
+            content_type="image/webp",
+        )
+        return display_data
+    except StorageError as exc:
+        raise _error(500, "MATERIAL_SHARE_STORAGE_FAILED", "分享图片读取失败") from exc
+
+
+async def get_public_material_share_card_cover(db: AsyncSession, token: str) -> bytes:
+    data, _, _ = await get_public_material_share_image(db, token, 1)
+    return await asyncio.to_thread(_make_share_card_cover, data)
 
 
 async def list_material_items(
@@ -415,6 +936,8 @@ async def list_material_items(
     page_size: int,
     sort: str,
     scope: Literal["private", "enterprise"] | None = None,
+    include_descendants: bool = False,
+    exclude_task_id: str | None = None,
 ) -> dict[str, Any]:
     if material_type not in {"image", "cover_template"}:
         raise _error(422, "MATERIAL_TYPE_INVALID", "素材类型不存在")
@@ -438,13 +961,18 @@ async def list_material_items(
         else None
     )
     repo = MaterialLibraryRepository(db, include_shared=True)
-    category_ids = [resolved_category.id] if resolved_category else None
-    if resolved_category and material_type == "image" and resolved_category.parent_id is None:
-        children = await repo.list_child_categories(_owner_uid(user), material_type, resolved_category.id)
-        category_ids.extend(child.id for child in children)
+    category_ids = None
+    if resolved_category is not None and include_descendants:
+        children = await repo.list_child_categories(
+            resolved_category.owner_uid,
+            material_type,
+            resolved_category.id,
+        )
+        category_ids = [resolved_category.id, *(child.id for child in children)]
     rows, total = await repo.list_items(
         _owner_uid(user),
         material_type=material_type,
+        category=resolved_category.id if resolved_category else None,
         category_ids=category_ids,
         status=status,
         query_text=query,
@@ -455,22 +983,26 @@ async def list_material_items(
     )
     uploader_names = await MaterialLibraryRepository(db).uploader_names([item.owner_uid for item, _, _ in rows])
     posters_by_asset: dict[str, ContentCoverPosterTemplate] = {}
+    used_image_ids: set[str] = set()
     if material_type == "cover_template":
-        posters = await MaterialLibraryRepository(db, include_shared=True).list_poster_templates_by_asset_ids(
+        posters = await repo.list_poster_templates_by_asset_ids(
             _owner_uid(user),
             [asset.id for _, asset, _ in rows],
         )
         posters_by_asset = {poster.asset_id: poster for poster in posters}
+    elif material_type == "image":
+        used_image_ids = await repo.list_selected_image_item_ids(_owner_uid(user), exclude_task_id=exclude_task_id)
     await db.commit()
+    items = []
+    for item, asset, item_category in rows:
+        payload = serialize_item(item, asset, item_category, posters_by_asset.get(asset.id))
+        payload["can_manage"] = _can_manage_item(user, item, item_category)
+        payload["uploaded_by_name"] = uploader_names.get(item.owner_uid) or item.owner_uid
+        if material_type == "image":
+            payload["in_use"] = item.id in used_image_ids
+        items.append(payload)
     return {
-        "items": [
-            {
-                **serialize_item(item, asset, item_category, posters_by_asset.get(asset.id)),
-                "can_manage": _can_manage_item(user, item, item_category),
-                "uploaded_by_name": uploader_names.get(item.owner_uid, "已删除账号"),
-            }
-            for item, asset, item_category in rows
-        ],
+        "items": items,
         "total": total,
         "page": page,
         "page_size": page_size,
@@ -586,6 +1118,9 @@ async def create_material_category(
     visibility = payload.visibility
     parent = None
     industry_slug = None
+    design_style = None
+    building_name = None
+    area = None
     if payload.parent_id:
         if payload.material_type != "image":
             raise _error(422, "MATERIAL_CATEGORY_DEPTH_INVALID", "只有素材图片图库支持二级图库")
@@ -600,7 +1135,31 @@ async def create_material_category(
             raise _error(403, "MATERIAL_CATEGORY_FORBIDDEN", "只有管理员可管理企业共享图库")
         visibility = parent.visibility
         industry_slug = parent.industry_slug
+        design_style = (payload.design_style or "").strip()
+        building_name = (payload.building_name or "").strip()
+        area = (payload.area or "").strip()
+        if parent.industry_slug == DECORATION_GALLERY_INDUSTRY_SLUG:
+            if not design_style:
+                raise _error(422, "MATERIAL_DESIGN_STYLE_REQUIRED", "请选择设计风格")
+            if design_style not in DECORATION_GALLERY_DESIGN_STYLES:
+                raise _error(422, "MATERIAL_DESIGN_STYLE_INVALID", "设计风格不在可选范围内")
+            if not building_name:
+                raise _error(422, "MATERIAL_BUILDING_NAME_REQUIRED", "请输入楼盘名称")
+            if not area:
+                raise _error(422, "MATERIAL_AREA_REQUIRED", "请输入面积")
+        elif design_style or building_name or area:
+            raise _error(
+                422,
+                "MATERIAL_GALLERY_DETAILS_PARENT_INVALID",
+                "设计风格、楼盘名称和面积仅适用于装修与家居二级图库",
+            )
     elif payload.material_type == "image":
+        if payload.design_style or payload.building_name or payload.area:
+            raise _error(
+                422,
+                "MATERIAL_GALLERY_DETAILS_PARENT_INVALID",
+                "设计风格、楼盘名称和面积仅适用于装修与家居二级图库",
+            )
         industry_slug = await _validate_industry_slug(db, payload.industry_slug) or "uncategorized"
     if visibility == "enterprise" and (payload.material_type != "image" or not _is_admin(user)):
         raise _error(403, "MATERIAL_CATEGORY_FORBIDDEN", "只有管理员可创建企业共享图片图库")
@@ -613,6 +1172,9 @@ async def create_material_category(
             material_type=payload.material_type,
             parent_id=parent.id if parent else None,
             industry_slug=industry_slug,
+            design_style=design_style or None,
+            building_name=building_name or None,
+            area=area or None,
             name=payload.name.strip(),
             description=payload.description.strip(),
             sort_order=(max(item.sort_order for item in categories) + 10),
@@ -686,6 +1248,39 @@ async def update_material_category(
             raise _error(422, "MATERIAL_INDUSTRY_INHERITED", "只有一级图片图库可以设置行业")
         category.industry_slug = await _validate_industry_slug(db, changes["industry_slug"]) or "uncategorized"
         await repo.update_child_category_industry(_owner_uid(user), material_type, category.id, category.industry_slug)
+    detail_fields = ("design_style", "building_name", "area")
+    if any(field in changes for field in detail_fields):
+        if material_type != "image" or not category.parent_id:
+            if any(changes.get(field) for field in detail_fields):
+                raise _error(
+                    422,
+                    "MATERIAL_GALLERY_DETAILS_PARENT_INVALID",
+                    "设计风格、楼盘名称和面积仅适用于装修与家居二级图库",
+                )
+        else:
+            parent = await repo.get_category(_owner_uid(user), material_type, category.parent_id)
+            if parent is None or parent.industry_slug != DECORATION_GALLERY_INDUSTRY_SLUG:
+                if any(changes.get(field) for field in detail_fields):
+                    raise _error(
+                        422,
+                        "MATERIAL_GALLERY_DETAILS_PARENT_INVALID",
+                        "设计风格、楼盘名称和面积仅适用于装修与家居二级图库",
+                    )
+            else:
+                design_style = str(changes.get("design_style", category.design_style or "") or "").strip()
+                building_name = str(changes.get("building_name", category.building_name or "") or "").strip()
+                area = str(changes.get("area", category.area or "") or "").strip()
+                if not design_style:
+                    raise _error(422, "MATERIAL_DESIGN_STYLE_REQUIRED", "请选择设计风格")
+                if design_style not in DECORATION_GALLERY_DESIGN_STYLES:
+                    raise _error(422, "MATERIAL_DESIGN_STYLE_INVALID", "设计风格不在可选范围内")
+                if not building_name:
+                    raise _error(422, "MATERIAL_BUILDING_NAME_REQUIRED", "请输入楼盘名称")
+                if not area:
+                    raise _error(422, "MATERIAL_AREA_REQUIRED", "请输入面积")
+                category.design_style = design_style
+                category.building_name = building_name
+                category.area = area
     category.updated_at = utc_now_naive()
     _audit(db, user, "material.gallery.update", category_id=category.id, changes=changes)
     try:
@@ -818,19 +1413,27 @@ async def get_material_file(db: AsyncSession, user: User, item_id: str) -> tuple
     if asset is None:
         raise _error(404, "MATERIAL_ASSET_MISSING", "素材文件不存在")
     try:
-        data = await get_minio_client().adownload_file(asset.bucket_name, asset.object_name)
+        data = await read_material_bytes(asset)
     except StorageError as exc:
         raise _error(500, "MATERIAL_STORAGE_FAILED", "素材文件读取失败") from exc
     return data, asset.content_type, asset.original_file_name
 
 
 async def get_material_thumbnail(db: AsyncSession, user: User, item_id: str) -> tuple[bytes, str]:
-    data, _, file_name = await get_material_file(db, user, item_id)
+    repo = MaterialLibraryRepository(db, include_shared=True)
+    item = await repo.get_item_for_user(item_id, _owner_uid(user))
+    if item is None:
+        raise _error(404, "MATERIAL_NOT_FOUND", "素材不存在")
+    asset = await repo.get_asset(item.asset_id, item.owner_uid)
+    if asset is None:
+        raise _error(404, "MATERIAL_ASSET_MISSING", "素材文件不存在")
     try:
-        thumbnail = await asyncio.to_thread(_make_image_thumbnail, data)
+        thumbnail = await persist_material_thumbnail(asset)
+    except StorageError as exc:
+        raise _error(500, "MATERIAL_STORAGE_FAILED", "素材缩略图读取失败") from exc
     except (UnidentifiedImageError, OSError, Image.DecompressionBombError) as exc:
         raise _error(400, "MATERIAL_IMAGE_INVALID", "素材文件不是有效图片") from exc
-    return thumbnail, file_name
+    return thumbnail, Path(asset.original_file_name).stem
 
 
 async def delete_material_item(db: AsyncSession, user: User, item_id: str) -> dict[str, Any]:
@@ -860,10 +1463,17 @@ async def delete_material_item(db: AsyncSession, user: User, item_id: str) -> di
     )
     if referenced or poster_referenced or task_referenced or poster_task_referenced:
         raise _error(409, "MATERIAL_IN_USE", "素材正在被内容任务或封面任务使用，不能删除")
+    await delete_material_display_cache(asset.id)
+    storage = get_minio_client()
     try:
-        await get_minio_client().adelete_file(asset.bucket_name, asset.object_name)
+        await storage.adelete_file(asset.bucket_name, asset.object_name)
     except StorageError as exc:
-        raise _error(500, "MATERIAL_STORAGE_FAILED", "素材文件删除失败") from exc
+        if ingest_status_of(asset) != INGEST_PENDING:
+            raise _error(500, "MATERIAL_STORAGE_FAILED", "素材文件删除失败") from exc
+    try:
+        await storage.adelete_file(asset.bucket_name, material_thumb_object_name(asset.object_name))
+    except StorageError:
+        pass
     deleted_at = utc_now_naive()
     item.deleted_at = deleted_at
     asset.deleted_at = deleted_at

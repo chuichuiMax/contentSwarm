@@ -21,6 +21,15 @@ class VariableRepository:
         result = await self.db.execute(select(ContentVariable).where(ContentVariable.name == name))
         return result.scalar_one_or_none()
 
+    async def get_by_service_entry_and_name(self, service_entry: str, name: str) -> ContentVariable | None:
+        result = await self.db.execute(
+            select(ContentVariable).where(
+                ContentVariable.service_entry == service_entry,
+                ContentVariable.name == name,
+            )
+        )
+        return result.scalar_one_or_none()
+
     async def get_by_code(self, variable_code: str) -> ContentVariable | None:
         result = await self.db.execute(select(ContentVariable).where(ContentVariable.variable_code == variable_code))
         return result.scalar_one_or_none()

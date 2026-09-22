@@ -14,8 +14,10 @@ import {
   ScanText,
   Search,
   Settings2,
+  Share2,
   Trash2,
-  Upload
+  Upload,
+  X
 } from 'lucide-vue-next'
 
 import { contentApi } from '@/apis/content_api'
@@ -41,6 +43,7 @@ const remoteConfigSaving = ref(false)
 const remoteConfigState = ref(null)
 const resumeRemoteSync = ref(false)
 const remoteConfigForm = reactive({ username: '', password: '' })
+let remoteSyncPollTimer = 0
 const uploading = ref(false)
 const categories = ref([])
 const galleries = ref([])
@@ -52,13 +55,17 @@ const total = ref(0)
 const page = ref(1)
 const queryInput = ref('')
 const query = ref('')
+const designStyleFilter = ref('')
 const categoryFilter = ref('')
 const sort = ref('newest')
 const uploadOpen = ref(false)
 const selectedFiles = ref([])
 const uploadCategory = ref('')
+const uploadDesignStyle = ref('')
 const fileInput = ref(null)
+const folderInput = ref(null)
 const uploadDragging = ref(false)
+const uploadProgress = reactive({ percent: 0, loaded: 0, total: 0, phase: 'idle' })
 const previewItem = ref(null)
 const ocrReviewOpen = ref(false)
 const ocrReviewItem = ref(null)
@@ -71,54 +78,82 @@ const categorySaving = ref(false)
 const categoryEditorMode = ref('create')
 const editingCategory = ref(null)
 const categoryParentId = ref('')
-const categoryForm = reactive({ name: '', description: '', industry_slug: '', visibility: 'private' })
+const categoryForm = reactive({
+  name: '',
+  description: '',
+  industry_slug: '',
+  visibility: 'private',
+  design_style: '',
+  building_name: '',
+  area: ''
+})
 const categoryManagerOpen = ref(false)
 const deleteCategoryOpen = ref(false)
 const categoryDeleting = ref(false)
 const deletingCategory = ref(null)
 const deleteTargetCategory = ref('')
+const selectedShareItemIds = ref([])
+const shareOpen = ref(false)
+const shareCreating = ref(false)
+const shareUrlForManualCopy = ref('')
 const previewUrls = new Map()
-const maxUploadBytes = 20 * 1024 * 1024
+const maxUploadBytes = 100 * 1024 * 1024
 const supportedImageTypes = new Set(['image/png', 'image/jpeg', 'image/webp'])
-let remoteSyncPollTimer = null
-
-const remoteSyncPhaseLabel = computed(() => ({
-  queued: '等待后台任务',
-  starting: '准备同步',
-  authenticating: '验证远程账号',
-  discovering: '读取远程素材清单',
-  syncing: '下载并保存素材',
-  finalizing: '整理下架素材',
-  completed: '同步完成'
-}[remoteSyncJob.value?.phase] || '同步远程素材'))
-
-const remoteSyncCountLabel = computed(() => {
-  const job = remoteSyncJob.value
-  if (!job) return ''
-  if (job.total_assets) return `${job.processed_assets}/${job.total_assets} 张`
-  if (job.total_groups) return `${job.processed_groups}/${job.total_groups} 组`
-  return '正在准备'
-})
 
 const categoryMap = computed(() => Object.fromEntries(categories.value.map((item) => [item.code, item])))
 const currentGallery = computed(() => categoryMap.value[activeGallery.value])
 const parentGallery = computed(() => categoryMap.value[currentGallery.value?.parent_id] || null)
 const isTopLevelGallery = computed(() => Boolean(currentGallery.value && !currentGallery.value.parent_id))
+const isChildGallery = computed(() => Boolean(currentGallery.value?.parent_id))
 const orderedCategories = computed(() => {
   const roots = categories.value.filter((item) => !item.parent_id)
   return roots.flatMap((root) => [root, ...categories.value.filter((item) => item.parent_id === root.id)])
 })
 const uploadCategories = computed(() => orderedCategories.value.filter((item) => (item.visibility || 'private') === (currentGallery.value?.visibility || materialScope.value)))
 const uploadFileLimit = computed(() => materialType.value === 'image' ? 50 : 100)
+const selectedFilesTotalBytes = computed(() => selectedFiles.value.reduce((sum, file) => sum + file.size, 0))
+const uploadProgressText = computed(() => {
+  if (uploadProgress.phase === 'processing') return '文件已送达，正在转码入库…'
+  if (uploadProgress.phase === 'sending') {
+    return `已传输 ${uploadProgress.percent}% · ${formatSize(uploadProgress.loaded)} / ${formatSize(uploadProgress.total)}`
+  }
+  return ''
+})
 const deleteTargetOptions = computed(() => categories.value.filter((item) => item.id !== deletingCategory.value?.id && (deletingCategory.value?.visibility !== 'enterprise' || item.visibility === 'enterprise')))
+const decorationGalleryStyles = [
+  '复合写意', '写意木构', '江南印象', '轻欧简美', '欧美香颂', '新装饰主义', '北欧之光',
+  '意境东方', '雅致现代', '优雅缤纷', '极简侘寂', '复古风潮', '艺术室界'
+]
+const isDecorationGalleryChild = computed(() =>
+  ['create', 'edit'].includes(categoryEditorMode.value) &&
+  materialType.value === 'image' &&
+  categoryParentId.value &&
+  categoryMap.value[categoryParentId.value]?.industry_slug === 'decoration'
+)
+const isDecorationGalleryPage = computed(() =>
+  materialType.value === 'image' &&
+  isTopLevelGallery.value &&
+  currentGallery.value?.industry_slug === 'decoration'
+)
+const uploadTargetGallery = computed(() => categoryMap.value[uploadCategory.value] || null)
+const uploadTargetParent = computed(() => categoryMap.value[uploadTargetGallery.value?.parent_id] || null)
+const isDecorationUpload = computed(() =>
+  materialType.value === 'image' && Boolean(
+    uploadTargetGallery.value?.industry_slug === 'decoration' ||
+    uploadTargetParent.value?.industry_slug === 'decoration'
+  )
+)
 const filteredGalleries = computed(() => {
   const term = queryInput.value.trim().toLowerCase()
   const scoped = isGalleryRoot.value
     ? galleries.value.filter((item) => !item.parent_id && (item.visibility || 'private') === materialScope.value)
     : (isTopLevelGallery.value ? galleries.value.filter((item) => item.parent_id === activeGallery.value) : [])
-  const industryScoped = isGalleryRoot.value && industryFilter.value
-    ? scoped.filter((item) => (item.industry_slug || 'uncategorized') === industryFilter.value)
+  const styleScoped = isDecorationGalleryPage.value && designStyleFilter.value
+    ? scoped.filter((item) => item.design_style === designStyleFilter.value)
     : scoped
+  const industryScoped = isGalleryRoot.value && industryFilter.value
+    ? styleScoped.filter((item) => (item.industry_slug || 'uncategorized') === industryFilter.value)
+    : styleScoped
   if (!term) return industryScoped
   return industryScoped.filter((item) => `${item.name}${item.description}`.toLowerCase().includes(term))
 })
@@ -149,7 +184,7 @@ function releasePreviews() {
 }
 
 async function blobPreview(id, key = id) {
-  const response = await materialLibraryApi.getItemFile(id)
+  const response = await materialLibraryApi.getItemThumbnail(id)
   const url = URL.createObjectURL(await response.blob())
   previewUrls.set(key, url)
   return url
@@ -172,7 +207,10 @@ function openCreateCategory(parentId = '') {
     name: '',
     description: '',
     visibility: categoryParentId.value ? categoryMap.value[categoryParentId.value]?.visibility : materialScope.value,
-    industry_slug: categoryParentId.value ? (categoryMap.value[categoryParentId.value]?.industry_slug || '') : ''
+    industry_slug: categoryParentId.value ? (categoryMap.value[categoryParentId.value]?.industry_slug || '') : '',
+    design_style: '',
+    building_name: '',
+    area: ''
   })
   categoryEditorOpen.value = true
 }
@@ -185,7 +223,10 @@ function openEditCategory(category) {
     name: category.name,
     visibility: category.visibility || 'private',
     description: category.description || '',
-    industry_slug: category.industry_slug || ''
+    industry_slug: category.industry_slug || '',
+    design_style: category.design_style || '',
+    building_name: category.building_name || '',
+    area: category.area || ''
   })
   categoryEditorOpen.value = true
 }
@@ -195,12 +236,28 @@ async function saveCategory() {
   if (materialType.value === 'image' && !categoryParentId.value && !categoryForm.industry_slug) {
     return message.warning('请选择图库所属行业')
   }
+  if (isDecorationGalleryChild.value && !categoryForm.design_style) {
+    return message.warning('请选择设计风格')
+  }
+  if (isDecorationGalleryChild.value && !categoryForm.building_name.trim()) {
+    return message.warning('请输入楼盘名称')
+  }
+  if (isDecorationGalleryChild.value && !categoryForm.area.trim()) {
+    return message.warning('请输入面积')
+  }
   const payload = {
     name: categoryForm.name.trim(),
     description: categoryForm.description.trim(),
     ...(!categoryParentId.value ? { visibility: categoryForm.visibility } : {}),
     ...(materialType.value === 'image' && !categoryParentId.value
       ? { industry_slug: categoryForm.industry_slug }
+      : {}),
+    ...(isDecorationGalleryChild.value
+      ? {
+          design_style: categoryForm.design_style,
+          building_name: categoryForm.building_name.trim(),
+          area: categoryForm.area.trim()
+        }
       : {})
   }
   categorySaving.value = true
@@ -285,7 +342,6 @@ async function loadItems() {
     const response = await materialLibraryApi.listItems({
       material_type: materialType.value,
       category: materialType.value === 'image' ? activeGallery.value : categoryFilter.value,
-      status: 'enabled',
       query: query.value,
       sort: sort.value,
       page: page.value,
@@ -314,6 +370,8 @@ function search() {
 
 function enterGallery(gallery) {
   activeGallery.value = gallery.code
+  designStyleFilter.value = ''
+  selectedShareItemIds.value = []
   query.value = ''
   queryInput.value = ''
   page.value = 1
@@ -323,6 +381,8 @@ function enterGallery(gallery) {
 function leaveGallery() {
   const targetGallery = currentGallery.value?.parent_id || ''
   activeGallery.value = targetGallery
+  designStyleFilter.value = ''
+  selectedShareItemIds.value = []
   items.value = []
   query.value = ''
   queryInput.value = ''
@@ -337,24 +397,139 @@ function categoryOptionLabel(category) {
 
 function openUpload() {
   uploadCategory.value = activeGallery.value || uploadCategories.value[0]?.id || ''
+  uploadDesignStyle.value = currentGallery.value?.design_style || ''
   uploadOpen.value = true
 }
 
 function resetUpload() {
   selectedFiles.value = []
   uploadCategory.value = ''
+  uploadDesignStyle.value = ''
   uploadDragging.value = false
+  uploadProgress.percent = 0
+  uploadProgress.loaded = 0
+  uploadProgress.total = 0
+  uploadProgress.phase = 'idle'
   if (fileInput.value) fileInput.value.value = ''
+  if (folderInput.value) folderInput.value.value = ''
 }
 
-const chooseFiles = () => fileInput.value?.click()
+function isSupportedImageFile(file) {
+  if (!file || !/\.(png|jpe?g|webp)$/i.test(file.name)) return false
+  return !file.type || supportedImageTypes.has(file.type)
+}
+
+function attachRelativePath(file, relativePath) {
+  if (!relativePath || file.webkitRelativePath) return file
+  try {
+    Object.defineProperty(file, 'webkitRelativePath', { configurable: true, value: relativePath })
+  } catch {
+    // File 在部分浏览器上不可扩展
+  }
+  return file
+}
+
+async function collectImagesFromDirectoryHandle(directoryHandle, prefix = '') {
+  const files = []
+  for await (const entry of directoryHandle.values()) {
+    const relativePath = prefix ? `${prefix}/${entry.name}` : entry.name
+    if (entry.kind === 'file') {
+      files.push(attachRelativePath(await entry.getFile(), relativePath))
+    } else if (entry.kind === 'directory') {
+      files.push(...await collectImagesFromDirectoryHandle(entry, relativePath))
+    }
+  }
+  return files
+}
+
+async function collectFilesFromEntry(entry, prefix = '') {
+  const relativePath = prefix ? `${prefix}/${entry.name}` : entry.name
+  if (entry.isFile) {
+    const file = await new Promise((resolve, reject) => entry.file(resolve, reject))
+    return [attachRelativePath(file, relativePath)]
+  }
+  if (!entry.isDirectory) return []
+  const reader = entry.createReader()
+  const children = []
+  while (true) {
+    const batch = await new Promise((resolve, reject) => reader.readEntries(resolve, reject))
+    if (!batch.length) break
+    children.push(...batch)
+  }
+  const nested = []
+  for (const child of children) {
+    nested.push(...await collectFilesFromEntry(child, relativePath))
+  }
+  return nested
+}
+
+async function collectFilesFromDataTransfer(dataTransfer) {
+  const entries = Array.from(dataTransfer?.items || [])
+    .map((item) => item.webkitGetAsEntry?.())
+    .filter(Boolean)
+  if (!entries.length) return Array.from(dataTransfer?.files || [])
+  const files = []
+  for (const entry of entries) {
+    files.push(...await collectFilesFromEntry(entry))
+  }
+  return files
+}
+
+function addScannedFolderFiles(fileList) {
+  const images = Array.from(fileList || []).filter(isSupportedImageFile)
+  if (!images.length) {
+    message.warning('文件夹中没有可上传的 PNG、JPG、WebP 图片')
+    return
+  }
+  addSelectedFiles(images)
+}
+
+async function chooseFiles() {
+  if (typeof window.showOpenFilePicker === 'function') {
+    try {
+      const handles = await window.showOpenFilePicker({
+        multiple: true,
+        excludeAcceptAllOption: false,
+        types: [
+          {
+            description: '图片',
+            accept: {
+              'image/png': ['.png'],
+              'image/jpeg': ['.jpg', '.jpeg'],
+              'image/webp': ['.webp']
+            }
+          }
+        ]
+      })
+      addSelectedFiles(await Promise.all(handles.map((handle) => handle.getFile())))
+      return
+    } catch (error) {
+      if (error?.name === 'AbortError') return
+    }
+  }
+  fileInput.value?.click()
+}
+
+async function chooseFolder() {
+  if (uploading.value) return
+  if (typeof window.showDirectoryPicker === 'function') {
+    try {
+      const directory = await window.showDirectoryPicker({ mode: 'read' })
+      addScannedFolderFiles(await collectImagesFromDirectoryHandle(directory, directory.name))
+      return
+    } catch (error) {
+      if (error?.name === 'AbortError') return
+    }
+  }
+  folderInput.value?.click()
+}
 
 function addSelectedFiles(fileList) {
   const files = Array.from(fileList || [])
   if (!files.length) return
 
   const next = [...selectedFiles.value]
-  const knownFiles = new Set(next.map((file) => `${file.name}:${file.size}:${file.lastModified}`))
+  const knownFiles = new Set(next.map((file) => `${file.webkitRelativePath || file.name}:${file.size}:${file.lastModified}`))
   let unsupported = 0
   let oversized = 0
   let duplicated = 0
@@ -370,7 +545,7 @@ function addSelectedFiles(fileList) {
       oversized += 1
       return
     }
-    const identity = `${file.name}:${file.size}:${file.lastModified}`
+    const identity = `${file.webkitRelativePath || file.name}:${file.size}:${file.lastModified}`
     if (knownFiles.has(identity)) {
       duplicated += 1
       return
@@ -386,10 +561,15 @@ function addSelectedFiles(fileList) {
   selectedFiles.value = next
   const warnings = []
   if (unsupported) warnings.push(`${unsupported} 个文件格式不支持`)
-  if (oversized) warnings.push(`${oversized} 个文件超过 20 MB`)
+  if (oversized) warnings.push(`${oversized} 个文件超过 100 MB`)
   if (duplicated) warnings.push(`${duplicated} 个重复文件已忽略`)
   if (overflowed) warnings.push(`${overflowed} 个文件超出 ${uploadFileLimit.value} 张上限`)
   if (warnings.length) message.warning(warnings.join('；'))
+}
+
+function removeSelectedFile(index) {
+  if (uploading.value) return
+  selectedFiles.value = selectedFiles.value.filter((_, current) => current !== index)
 }
 
 function onFiles(event) {
@@ -397,7 +577,13 @@ function onFiles(event) {
   event.target.value = ''
 }
 
+function onFolderFiles(event) {
+  addScannedFolderFiles(event.target.files)
+  event.target.value = ''
+}
+
 function onUploadDragEnter(event) {
+  if (uploading.value) return
   if (Array.from(event.dataTransfer?.types || []).includes('Files')) uploadDragging.value = true
 }
 
@@ -412,30 +598,52 @@ function onUploadDragLeave(event) {
   uploadDragging.value = false
 }
 
-function onUploadDrop(event) {
+async function onUploadDrop(event) {
   uploadDragging.value = false
-  addSelectedFiles(event.dataTransfer?.files)
+  if (uploading.value) return
+  const entries = Array.from(event.dataTransfer?.items || [])
+    .map((item) => item.webkitGetAsEntry?.())
+    .filter(Boolean)
+  const files = await collectFilesFromDataTransfer(event.dataTransfer)
+  if (entries.some((entry) => entry.isDirectory)) addScannedFolderFiles(files)
+  else addSelectedFiles(files)
 }
 
 async function uploadFiles() {
   if (!selectedFiles.value.length) return message.warning('请选择图片文件')
   if (!uploadCategory.value) return message.warning('请选择素材分类')
+  if (isDecorationUpload.value && !uploadDesignStyle.value) return message.warning('请选择设计风格')
   uploading.value = true
+  uploadProgress.percent = 0
+  uploadProgress.loaded = 0
+  uploadProgress.total = selectedFilesTotalBytes.value
+  uploadProgress.phase = 'sending'
+  const onProgress = (event) => {
+    uploadProgress.percent = event.percent
+    uploadProgress.loaded = event.loaded ?? uploadProgress.loaded
+    uploadProgress.total = event.total ?? uploadProgress.total
+    uploadProgress.phase = event.phase || uploadProgress.phase
+  }
   try {
     let response
     if (materialType.value === 'image') {
-      response = await materialLibraryApi.importImages(selectedFiles.value, uploadCategory.value)
+      response = await materialLibraryApi.importImages(
+        selectedFiles.value,
+        uploadCategory.value,
+        uploadDesignStyle.value,
+        onProgress
+      )
     } else {
-      response = await contentApi.importCoverPosterTemplates(selectedFiles.value, uploadCategory.value)
+      response = await contentApi.importCoverPosterTemplates(selectedFiles.value, uploadCategory.value, onProgress)
       pendingReviewTemplates.value = (response.items || [])
         .map((result) => result.template)
         .filter((item) => item?.requires_review)
     }
     message.success(materialType.value === 'cover_template' && pendingReviewTemplates.value.length
       ? '模板上传成功，请校对 OCR 识别结果后启用'
-      : '素材上传成功')
+      : (response?.summary?.queued ? '素材已提交入库，正在写入对象存储' : '素材上传成功'))
     uploadOpen.value = false
-    const uploadedTo = uploadCategory.value
+    const uploadedTo = response?.items?.[0]?.category || uploadCategory.value
     resetUpload()
     page.value = 1
     if (materialType.value === 'image' && activeGallery.value !== uploadedTo) {
@@ -540,16 +748,106 @@ function removeItem(item) {
     cancelText: '取消',
     async onOk() {
       await materialLibraryApi.deleteItem(item.id)
+      selectedShareItemIds.value = selectedShareItemIds.value.filter((itemId) => itemId !== item.id)
       message.success('素材已删除')
       await loadItems()
     }
   })
 }
 
+function selectedShareOrder(itemId) {
+  const index = selectedShareItemIds.value.indexOf(itemId)
+  return index === -1 ? null : index + 1
+}
+
+function toggleShareItem(itemId) {
+  const index = selectedShareItemIds.value.indexOf(itemId)
+  if (index === -1) selectedShareItemIds.value.push(itemId)
+  else selectedShareItemIds.value.splice(index, 1)
+}
+
+async function copyShareUrl(url) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(url)
+    return
+  }
+  const input = document.createElement('textarea')
+  input.value = url
+  input.setAttribute('readonly', '')
+  input.style.position = 'fixed'
+  input.style.opacity = '0'
+  document.body.append(input)
+  input.select()
+  const copied = document.execCommand('copy')
+  input.remove()
+  if (!copied) throw new Error('浏览器未授予复制权限')
+}
+
+function currentPublicShareUrl(path) {
+  if (/^https?:\/\//i.test(path)) return path
+  const basePath = import.meta.env.BASE_URL.replace(/\/$/, '')
+  const routePath = path.startsWith('/') ? path : `/${path}`
+  return new URL(`${basePath}${routePath}`, window.location.origin).href
+}
+
+async function createShare() {
+  if (!selectedShareItemIds.value.length) return message.warning('请先选择要分享的图片')
+  shareCreating.value = true
+  shareUrlForManualCopy.value = ''
+  try {
+    const response = await materialLibraryApi.createShare(selectedShareItemIds.value)
+    const shareUrl = currentPublicShareUrl(response.share.url || response.share.page_url || response.share.page_path)
+    shareUrlForManualCopy.value = shareUrl
+    await copyShareUrl(shareUrl)
+    shareOpen.value = false
+    message.success('链接已复制，请粘贴到微信或企业微信')
+  } catch (error) {
+    message.error(error.message || '链接复制失败，请手动复制下方链接')
+  } finally {
+    shareCreating.value = false
+  }
+}
+
 function formatSize(bytes) {
   if (!bytes) return '0 KB'
   return bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.ceil(bytes / 1024)} KB`
 }
+
+watch(materialType, async () => {
+  activeGallery.value = ''
+  designStyleFilter.value = ''
+  categoryFilter.value = ''
+  query.value = ''
+  queryInput.value = ''
+  page.value = 1
+  items.value = []
+  try {
+    await loadCategories()
+    await loadItems()
+  } catch (error) {
+    message.error(error.message || '素材分类加载失败')
+  }
+}, { immediate: true })
+
+watch(uploadCategory, (id) => {
+  const gallery = categoryMap.value[id]
+  if (gallery?.design_style) uploadDesignStyle.value = gallery.design_style
+})
+
+const remoteSyncPhaseLabel = computed(() => {
+  const phase = remoteSyncJob.value?.phase
+  if (phase === 'listing') return '正在读取远程图库'
+  if (phase === 'downloading') return '正在同步图片'
+  if (phase === 'saving') return '正在写入本地素材库'
+  return remoteSyncing.value ? '远程素材同步中' : ''
+})
+const remoteSyncCountLabel = computed(() => {
+  const job = remoteSyncJob.value
+  if (!job) return ''
+  const done = job.processed ?? job.summary?.assets ?? 0
+  const total = job.total || 0
+  return total ? `${done}/${total}` : ''
+})
 
 function remoteErrorCode(error) {
   return error?.response?.data?.detail?.error?.code || ''
@@ -563,6 +861,11 @@ function openRemoteConfig(state, { resumeSync = true } = {}) {
   remoteConfigOpen.value = true
 }
 
+function scheduleRemoteSyncPoll(jobId) {
+  window.clearTimeout(remoteSyncPollTimer)
+  remoteSyncPollTimer = window.setTimeout(() => pollRemoteSync(jobId), 2000)
+}
+
 async function performRemoteSync() {
   if (remoteSyncing.value) return
   remoteSyncing.value = true
@@ -574,19 +877,13 @@ async function performRemoteSync() {
   } catch (error) {
     const code = remoteErrorCode(error)
     if (userStore.isSuperAdmin && ['REMOTE_MATERIAL_CONFIG_REQUIRED', 'REMOTE_MATERIAL_AUTH_FAILED'].includes(code)) {
-      const state = await materialLibraryApi.getRemoteConfig()
-      openRemoteConfig(state)
+      openRemoteConfig(await materialLibraryApi.getRemoteConfig())
       message.warning(code === 'REMOTE_MATERIAL_AUTH_FAILED' ? '远程账号或密码已失效，请重新配置' : '请先配置远程素材库账号和密码')
       return
     }
     message.error(error.message || '远程素材同步失败，请稍后重试')
     remoteSyncing.value = false
   }
-}
-
-function scheduleRemoteSyncPoll(jobId) {
-  window.clearTimeout(remoteSyncPollTimer)
-  remoteSyncPollTimer = window.setTimeout(() => pollRemoteSync(jobId), 2000)
 }
 
 async function pollRemoteSync(jobId) {
@@ -643,11 +940,8 @@ async function syncRemoteMaterials() {
     const state = await materialLibraryApi.getRemoteConfig()
     remoteConfigState.value = state
     if (!state.configured) {
-      if (state.can_manage) {
-        openRemoteConfig(state)
-      } else {
-        message.error('远程素材库尚未配置，请联系超级管理员')
-      }
+      if (state.can_manage) openRemoteConfig(state)
+      else message.error('远程素材库尚未配置，请联系超级管理员')
       return
     }
   } catch (error) {
@@ -689,20 +983,6 @@ function closeRemoteConfig() {
   resumeRemoteSync.value = false
 }
 
-watch(materialType, async () => {
-  activeGallery.value = ''
-  categoryFilter.value = ''
-  query.value = ''
-  queryInput.value = ''
-  page.value = 1
-  items.value = []
-  try {
-    await loadCategories()
-    await loadItems()
-  } catch (error) {
-    message.error(error.message || '素材分类加载失败')
-  }
-}, { immediate: true })
 onMounted(restoreRemoteSync)
 onBeforeUnmount(() => {
   window.clearTimeout(remoteSyncPollTimer)
@@ -721,6 +1001,9 @@ onBeforeUnmount(() => {
           </a-button>
           <a-button v-if="(isGalleryRoot && (materialScope === 'private' || canCreateShared)) || (isTopLevelGallery && !currentGallery?.is_system && currentGallery?.can_manage)" class="lucide-icon-btn" @click="openCreateCategory(isTopLevelGallery ? activeGallery : '')">
             <FolderPlus :size="15" />{{ isTopLevelGallery ? '新建二级图库' : '新建图库' }}
+          </a-button>
+          <a-button v-if="isChildGallery" class="lucide-icon-btn" :disabled="!selectedShareItemIds.length" @click="shareOpen = true">
+            <Share2 :size="15" />分享{{ selectedShareItemIds.length ? ` (${selectedShareItemIds.length})` : '' }}
           </a-button>
         </template>
         <a-button v-else class="lucide-icon-btn" @click="categoryManagerOpen = true">
@@ -781,6 +1064,24 @@ onBeforeUnmount(() => {
       <a-spin :spinning="loading">
         <div v-for="group in galleryGroups" :key="group.slug" class="gallery-section">
           <h3>{{ group.name }}</h3>
+          <div v-if="isDecorationGalleryPage" class="design-style-filter" role="tablist" aria-label="设计风格筛选">
+            <button
+              type="button"
+              role="tab"
+              :aria-selected="!designStyleFilter"
+              :class="{ active: !designStyleFilter }"
+              @click="designStyleFilter = ''"
+            >全部</button>
+            <button
+              v-for="style in decorationGalleryStyles"
+              :key="style"
+              type="button"
+              role="tab"
+              :aria-selected="designStyleFilter === style"
+              :class="{ active: designStyleFilter === style }"
+              @click="designStyleFilter = style"
+            >{{ style }}</button>
+          </div>
           <div class="gallery-grid">
           <article v-for="gallery in group.galleries" :key="gallery.id" class="gallery-card">
             <button type="button" class="gallery-open" @click="enterGallery(gallery)">
@@ -799,10 +1100,19 @@ onBeforeUnmount(() => {
           </div>
         </div>
 
-        <div v-if="!isGalleryRoot && items.length" class="material-section">
-          <h3 v-if="isTopLevelGallery && filteredGalleries.length">当前图库全部图片（含二级图库）</h3>
+        <div v-if="!isGalleryRoot && (items.length || isTopLevelGallery)" class="material-section current-gallery-section">
+          <h3 v-if="isTopLevelGallery">当前图库图片</h3>
           <div :class="materialType === 'image' ? 'image-grid' : 'poster-wall'">
-          <article v-for="item in items" :key="item.id" class="material-card" :class="{ poster: materialType === 'cover_template' }">
+          <article v-for="item in items" :key="item.id" class="material-card" :class="{ poster: materialType === 'cover_template', 'is-share-selected': selectedShareOrder(item.id) }">
+            <button
+              v-if="materialType === 'image' && isChildGallery"
+              type="button"
+              class="share-select"
+              :class="{ selected: selectedShareOrder(item.id) }"
+              :aria-label="selectedShareOrder(item.id) ? `取消选择第 ${selectedShareOrder(item.id)} 张图片` : `选择图片 ${item.name}`"
+              :title="selectedShareOrder(item.id) ? `已选第 ${selectedShareOrder(item.id)} 张，点击取消` : '选择图片'"
+              @click="toggleShareItem(item.id)"
+            >{{ selectedShareOrder(item.id) || '' }}</button>
             <button type="button" class="preview-button" @click="previewItem = item">
               <img :src="item.previewUrl" :alt="item.name" />
               <span v-if="materialType === 'cover_template'" class="poster-overlay"><b>{{ item.name }}</b><small>{{ item.category_name }}</small></span>
@@ -810,7 +1120,7 @@ onBeforeUnmount(() => {
             </button>
             <div class="material-info">
               <strong v-if="materialType === 'image'" :title="item.name">{{ item.name }}</strong>
-              <small>上传者 {{ item.uploaded_by_name }} · {{ item.category_name }} · {{ item.width }}×{{ item.height }} · {{ formatSize(item.file_size) }}</small>
+              <small>上传者 {{ item.uploaded_by_name }} · {{ item.category_name }}{{ item.design_style ? ` · ${item.design_style}` : '' }} · {{ item.width }}×{{ item.height }} · {{ formatSize(item.file_size) }}{{ item.storage_status === 'pending' ? ' · 入库中' : '' }}</small>
             </div>
             <div class="card-actions">
               <button type="button" title="预览" @click="previewItem = item"><Eye :size="15" /></button>
@@ -832,47 +1142,71 @@ onBeforeUnmount(() => {
     </main>
 
     <a-modal
-      v-model:open="remoteConfigOpen"
-      title="配置远程素材库"
-      :confirm-loading="remoteConfigSaving"
-      ok-text="验证并保存"
-      cancel-text="取消"
-      @ok="saveRemoteConfig"
-      @cancel="closeRemoteConfig"
+      v-model:open="uploadOpen"
+      :title="`上传${materialType === 'image' ? '素材图片' : '封面模板'}`"
+      :confirm-loading="uploading"
+      :mask-closable="!uploading"
+      :keyboard="!uploading"
+      :closable="!uploading"
+      :cancel-button-props="{ disabled: uploading }"
+      ok-text="开始上传"
+      @ok="uploadFiles"
+      @cancel="resetUpload"
     >
-      <div class="remote-config-form">
-        <p>配置全站共享的远程素材库凭据。密码只用于服务端登录验证，不会在页面中回显。</p>
-        <label><span>远程地址</span><a-input :value="remoteConfigState?.base_url || ''" disabled /></label>
-        <label><span>账号</span><a-input v-model:value="remoteConfigForm.username" :maxlength="255" autocomplete="off" placeholder="请输入远程素材库账号" /></label>
-        <label><span>密码</span><a-input-password v-model:value="remoteConfigForm.password" :maxlength="500" autocomplete="new-password" placeholder="请输入远程素材库密码" /></label>
-      </div>
-    </a-modal>
-
-    <a-modal v-model:open="uploadOpen" :title="`上传${materialType === 'image' ? '素材图片' : '封面模板'}`" :confirm-loading="uploading" ok-text="开始上传" @ok="uploadFiles" @cancel="resetUpload">
       <div class="upload-form">
-        <input ref="fileInput" type="file" multiple accept=".png,.jpg,.jpeg,.webp" hidden @change="onFiles" />
-        <button
-          type="button"
+        <input ref="fileInput" type="file" multiple accept="image/png,image/jpeg,image/webp,image/*" hidden @change="onFiles" />
+        <input ref="folderInput" type="file" webkitdirectory multiple accept="image/png,image/jpeg,image/webp,image/*" hidden @change="onFolderFiles" />
+        <div
           class="upload-drop"
-          :class="{ dragging: uploadDragging }"
-          @click="chooseFiles"
+          :class="{ dragging: uploadDragging, disabled: uploading }"
+          role="button"
+          tabindex="0"
+          @click="uploading ? undefined : chooseFiles()"
+          @keydown.enter.prevent="uploading ? undefined : chooseFiles()"
           @dragenter.prevent="onUploadDragEnter"
           @dragover.prevent="onUploadDragOver"
           @dragleave="onUploadDragLeave"
           @drop.prevent="onUploadDrop"
         >
           <Upload :size="22" />
-          <span>{{ uploadDragging ? '松开鼠标添加图片' : (selectedFiles.length ? `已选择 ${selectedFiles.length} 个文件，可继续拖入` : '点击选择或拖拽 PNG、JPG、WebP 图片到此处') }}</span>
-          <small>单张不超过 20 MB；素材图片最多 50 张，封面模板最多 100 张</small>
-        </button>
-        <label><span>分类 <b>*</b></span><a-select v-model:value="uploadCategory" placeholder="请选择一个明确分类">
+          <span>{{ uploadDragging ? '松开鼠标添加图片' : (selectedFiles.length ? `已选择 ${selectedFiles.length} 个文件，共 ${formatSize(selectedFilesTotalBytes)}，可继续拖入或点此再选` : '点击选择文件，或将文件/文件夹拖到此处') }}</span>
+          <small>可一次多选文件，也可选择文件夹扫描其中的 PNG、JPG、WebP；将转为 WebP 后入库；单张不超过 100 MB；素材图片最多 50 张，封面模板最多 100 张</small>
+          <button type="button" class="upload-folder-action" :disabled="uploading" @click.stop="chooseFolder">
+            <Folder :size="14" />选择文件夹
+          </button>
+        </div>
+        <ul v-if="selectedFiles.length" class="upload-file-list">
+          <li v-for="(file, index) in selectedFiles" :key="`${file.webkitRelativePath || file.name}:${file.size}:${file.lastModified}`">
+            <span :title="file.webkitRelativePath || file.name">{{ file.webkitRelativePath || file.name }}</span>
+            <small>{{ formatSize(file.size) }}</small>
+            <button v-if="!uploading" type="button" title="移除" @click="removeSelectedFile(index)"><X :size="14" /></button>
+          </li>
+        </ul>
+        <div v-if="uploading" class="upload-progress">
+          <a-progress :percent="uploadProgress.percent" status="active" :show-info="true" />
+          <small>{{ uploadProgressText }}</small>
+        </div>
+        <label><span>分类 <b>*</b></span><a-select v-model:value="uploadCategory" placeholder="请选择一个明确分类" :disabled="uploading">
           <a-select-option v-for="item in uploadCategories" :key="item.code" :value="item.code"><strong>{{ categoryOptionLabel(item) }}</strong> — {{ item.description }}</a-select-option>
         </a-select></label>
+        <label v-if="isDecorationUpload"><span>设计风格 <b>*</b></span>
+          <a-select v-model:value="uploadDesignStyle" placeholder="请选择设计风格" :disabled="uploading">
+            <a-select-option v-for="style in decorationGalleryStyles" :key="style" :value="style">{{ style }}</a-select-option>
+          </a-select>
+        </label>
       </div>
     </a-modal>
 
     <a-modal :open="Boolean(previewItem)" :title="previewItem?.name" :footer="null" width="min(900px, 92vw)" @cancel="previewItem = null">
       <img v-if="previewItem" class="large-preview" :src="previewItem.previewUrl" :alt="previewItem.name" />
+    </a-modal>
+
+    <a-modal v-model:open="shareOpen" title="分享图库图片" :confirm-loading="shareCreating" ok-text="复制链接" @ok="createShare">
+      <div class="share-form">
+        <p>将分享 {{ selectedShareItemIds.length }} 张图片。链接长期有效，原图库图片删除后仍可查看本次分享的快照。</p>
+        <small>点击“复制链接”后，请打开普通微信或企业微信，粘贴到个人会话或群聊。平台会自行抓取 H5 页面生成预览卡片。</small>
+        <a-input v-if="shareUrlForManualCopy" :value="shareUrlForManualCopy" readonly aria-label="分享链接" />
+      </div>
     </a-modal>
 
     <a-modal v-model:open="editOpen" title="编辑素材信息" ok-text="保存" @ok="saveEdit">
@@ -897,6 +1231,11 @@ onBeforeUnmount(() => {
           <a-select-option v-for="item in industries" :key="item.slug" :value="item.slug">{{ item.name }}</a-select-option>
         </a-select></label>
         <label><span>{{ categoryParentId ? '二级图库名称' : (materialType === 'image' ? '图库名称' : '分类名称') }} <b>*</b></span><a-input v-model:value="categoryForm.name" maxlength="80" :placeholder="categoryParentId ? '例如：客厅案例' : (materialType === 'image' ? '例如：春季新品素材' : '例如：客户案例')" /></label>
+        <label v-if="isDecorationGalleryChild"><span>楼盘名称 <b>*</b></span><a-input v-model:value="categoryForm.building_name" maxlength="80" placeholder="请输入楼盘名称" /></label>
+        <label v-if="isDecorationGalleryChild"><span>面积㎡ <b>*</b></span><a-input v-model:value="categoryForm.area" maxlength="32" placeholder="请输入面积" /></label>
+        <label v-if="isDecorationGalleryChild"><span>设计风格 <b>*</b></span><a-select v-model:value="categoryForm.design_style" placeholder="请选择设计风格">
+          <a-select-option v-for="style in decorationGalleryStyles" :key="style" :value="style">{{ style }}</a-select-option>
+        </a-select></label>
         <label><span>说明</span><a-textarea v-model:value="categoryForm.description" :rows="3" maxlength="255" show-count :placeholder="materialType === 'image' ? '说明图库收纳的图片范围，方便团队快速判断' : '说明这个分类适用的封面场景'" /></label>
       </div>
     </a-modal>
@@ -926,6 +1265,23 @@ onBeforeUnmount(() => {
       </div>
     </a-modal>
 
+    <a-modal
+      v-model:open="remoteConfigOpen"
+      title="配置远程素材库"
+      :confirm-loading="remoteConfigSaving"
+      ok-text="验证并保存"
+      cancel-text="取消"
+      @ok="saveRemoteConfig"
+      @cancel="closeRemoteConfig"
+    >
+      <div class="remote-config-form">
+        <p>配置全站共享的远程素材库凭据。密码只用于服务端登录验证，不会在页面中回显。</p>
+        <label><span>远程地址</span><a-input :value="remoteConfigState?.base_url || ''" disabled /></label>
+        <label><span>账号</span><a-input v-model:value="remoteConfigForm.username" :maxlength="255" autocomplete="off" placeholder="请输入远程素材库账号" /></label>
+        <label><span>密码</span><a-input-password v-model:value="remoteConfigForm.password" :maxlength="500" autocomplete="new-password" placeholder="请输入远程素材库密码" /></label>
+      </div>
+    </a-modal>
+
     <PosterOcrReviewModal
       v-model:open="ocrReviewOpen"
       :item="ocrReviewItem"
@@ -939,9 +1295,13 @@ onBeforeUnmount(() => {
 .material-library-view { height: 100%; display: flex; flex-direction: column; background: var(--gray-0); }
 .material-content { flex: 1; overflow: auto; padding: 20px var(--page-padding) 36px; }
 .remote-sync-status { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(180px, 320px); align-items: center; gap: 18px; margin-bottom: 16px; padding: 11px 14px; border: 1px solid var(--main-100); border-radius: 10px; background: var(--main-20); }
-.remote-sync-status > div { display: flex; align-items: center; gap: 8px; color: var(--color-text); }.remote-sync-status span { color: var(--color-text-secondary); font-size: 12px; }
+.remote-sync-status > div { display: flex; align-items: center; gap: 8px; color: var(--color-text); }
+.remote-sync-status span { color: var(--color-text-secondary); font-size: 12px; }
 .remote-sync-spin { color: var(--color-primary); animation: remote-sync-rotate 1s linear infinite; }
 @keyframes remote-sync-rotate { to { transform: rotate(360deg); } }
+.remote-config-form { display: flex; flex-direction: column; gap: 16px; }
+.remote-config-form p { margin: 0; color: var(--color-text-secondary); line-height: 1.6; }
+.remote-config-form label { display: flex; flex-direction: column; gap: 7px; color: var(--color-text); font-weight: 500; }
 .context-head { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 16px; }
 .context-head h2 { margin: 0; font-size: 20px; color: var(--color-text); }
 .context-head p { margin: 5px 0 0; color: var(--color-text-secondary); }
@@ -952,6 +1312,11 @@ onBeforeUnmount(() => {
 .category-filter { width: 170px; }.sort-filter { width: 130px; }
 .gallery-section, .material-section { margin-bottom: 22px; }
 .gallery-section h3, .material-section h3 { margin: 0 0 12px; color: var(--color-text); font-size: 15px; }
+.design-style-filter { display: flex; gap: 24px; margin: -2px 0 16px; overflow-x: auto; border-bottom: 1px solid var(--gray-100); white-space: nowrap; }
+.design-style-filter button { position: relative; padding: 0 0 10px; border: 0; background: transparent; color: var(--color-text-secondary); cursor: pointer; font-size: 14px; }
+.design-style-filter button::after { position: absolute; right: 0; bottom: -1px; left: 0; height: 2px; background: transparent; content: ''; }
+.design-style-filter button:hover, .design-style-filter button.active { color: var(--color-primary); }
+.design-style-filter button.active { font-weight: 600; }.design-style-filter button.active::after { background: var(--color-primary); }
 .gallery-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 18px; }
 .gallery-card { position: relative; overflow: hidden; border: 1px solid var(--gray-150); border-radius: 14px; background: var(--gray-0); transition: transform .18s, box-shadow .18s, border-color .18s; }
 .gallery-card:hover { transform: translateY(-2px); border-color: var(--color-primary); box-shadow: 0 8px 24px rgb(20 35 70 / 10%); }
@@ -968,11 +1333,14 @@ onBeforeUnmount(() => {
 .image-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 16px; }
 .poster-wall { columns: 260px; column-gap: 18px; }
 .material-card { position: relative; overflow: hidden; border: 1px solid var(--gray-150); border-radius: 9px; background: var(--gray-0); }
+.material-card.is-share-selected { border-color: var(--main-color); }
 .material-card.poster { break-inside: avoid; margin: 0 0 18px; }
 .material-card:hover { border-color: var(--gray-300); box-shadow: 0 6px 20px rgb(20 35 70 / 9%); }
 .preview-button { position: relative; display: block; width: 100%; height: 190px; overflow: hidden; padding: 0; border: 0; background: var(--gray-25); cursor: zoom-in; }
 .preview-button img { width: 100%; height: 100%; object-fit: cover; transition: transform .2s; }
 .material-card:hover .preview-button img { transform: scale(1.025); }
+.share-select { position: absolute; z-index: 3; top: 10px; right: 10px; display: grid; place-items: center; width: 28px; height: 28px; padding: 0; border: 1px solid var(--gray-300); border-radius: 999px; background: rgb(255 255 255 / 92%); color: var(--color-text-secondary); cursor: pointer; }
+.share-select:hover { border-color: var(--main-color); color: var(--main-color); }.share-select.selected { border-color: var(--main-color); background: var(--main-color); color: var(--gray-0); font-weight: 600; }
 .poster .preview-button { height: auto; min-height: 320px; aspect-ratio: 3 / 4; }
 .poster .preview-button img { object-fit: cover; }
 .poster-overlay { position: absolute; inset: auto 0 0; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; padding: 54px 16px 16px; text-align: left; background: linear-gradient(transparent, rgb(0 0 0 / 82%)); color: white; }
@@ -987,13 +1355,24 @@ onBeforeUnmount(() => {
 .card-actions button:hover { background: var(--gray-50); color: var(--color-primary); }.card-actions button.danger:hover { color: var(--color-error-700); }
 .upload-form { display: flex; flex-direction: column; gap: 16px; }
 .upload-form label { display: flex; flex-direction: column; gap: 6px; color: var(--color-text); }.upload-form label b { color: var(--color-error-700); }
-.remote-config-form { display: flex; flex-direction: column; gap: 16px; }
-.remote-config-form p { margin: 0; color: var(--color-text-secondary); line-height: 1.6; }
-.remote-config-form label { display: flex; flex-direction: column; gap: 7px; color: var(--color-text); font-weight: 500; }
 .upload-drop { display: flex; flex-direction: column; align-items: center; gap: 7px; padding: 28px; border: 1px dashed var(--gray-300); border-radius: 8px; background: var(--gray-25); color: var(--color-text-secondary); cursor: pointer; }
 .upload-drop:hover, .upload-drop.dragging { border-color: var(--main-500); background: var(--main-20); color: var(--main-700); }
 .upload-drop.dragging { box-shadow: 0 0 0 3px var(--main-100); }
-.upload-drop small { color: var(--color-text-tertiary); }
+.upload-drop.disabled { cursor: default; opacity: .72; pointer-events: none; }
+.upload-drop small { color: var(--color-text-tertiary); text-align: center; }
+.upload-folder-action { display: inline-flex; align-items: center; gap: 6px; margin-top: 6px; padding: 6px 12px; border: 1px solid var(--gray-300); border-radius: 8px; background: var(--gray-0); color: var(--color-text); cursor: pointer; }
+.upload-folder-action:hover { border-color: var(--main-color); color: var(--main-color); }
+.upload-drop.disabled .upload-folder-action { cursor: default; }
+.upload-file-list { display: flex; flex-direction: column; max-height: 180px; margin: 0; padding: 0; overflow: auto; border: 1px solid var(--gray-150); border-radius: 8px; list-style: none; }
+.upload-file-list li { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--gray-100); }
+.upload-file-list li:last-child { border-bottom: 0; }
+.upload-file-list span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--color-text); }
+.upload-file-list small { color: var(--color-text-tertiary); }
+.upload-file-list button { display: grid; place-items: center; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--color-text-secondary); cursor: pointer; }
+.upload-file-list button:hover { background: var(--gray-50); color: var(--color-error-700); }
+.upload-progress { display: flex; flex-direction: column; gap: 6px; }
+.upload-progress small { color: var(--color-text-secondary); }
+.share-form { display: flex; flex-direction: column; gap: 14px; }.share-form p, .share-form small { margin: 0; color: var(--color-text-secondary); }.share-form small { font-size: 12px; }
 .large-preview { display: block; max-width: 100%; max-height: 72vh; margin: 0 auto; object-fit: contain; }
 .category-manager-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 16px; }.category-manager-head p { margin: 0; color: var(--color-text-secondary); }
 .category-list { display: flex; flex-direction: column; max-height: 520px; overflow: auto; border: 1px solid var(--gray-150); border-radius: 10px; }

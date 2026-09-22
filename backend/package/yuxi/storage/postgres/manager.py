@@ -397,7 +397,34 @@ class PostgresManager(metaclass=SingletonMeta):
                 "ADD COLUMN IF NOT EXISTS category_owner_uid VARCHAR(255)"
             ),
             "CREATE INDEX IF NOT EXISTS idx_material_category_visibility ON content_material_categories(visibility)",
+            (
+                "CREATE TABLE IF NOT EXISTS content_material_shares ("
+                "id VARCHAR(64) PRIMARY KEY, token VARCHAR(64) NOT NULL UNIQUE, "
+                "owner_uid VARCHAR(255) NOT NULL, category_id VARCHAR(64) NOT NULL, "
+                "title VARCHAR(80) NOT NULL, building_name VARCHAR(80), area VARCHAR(32), "
+                "design_style VARCHAR(32), created_at TIMESTAMP)"
+            ),
+            (
+                "CREATE TABLE IF NOT EXISTS content_material_share_items ("
+                "share_id VARCHAR(64) NOT NULL REFERENCES content_material_shares(id) ON DELETE CASCADE, "
+                "display_order INTEGER NOT NULL, original_file_name VARCHAR(255) NOT NULL, "
+                "content_type VARCHAR(128) NOT NULL, file_size INTEGER NOT NULL, "
+                "image_width INTEGER NOT NULL, image_height INTEGER NOT NULL, bucket_name VARCHAR(128) NOT NULL, "
+                "object_name TEXT NOT NULL, PRIMARY KEY (share_id, display_order))"
+            ),
+            (
+                "CREATE INDEX IF NOT EXISTS idx_content_material_shares_owner_created "
+                "ON content_material_shares(owner_uid, created_at)"
+            ),
+            (
+                "CREATE INDEX IF NOT EXISTS idx_content_material_share_items_share_order "
+                "ON content_material_share_items(share_id, display_order)"
+            ),
             "ALTER TABLE IF EXISTS content_material_categories ADD COLUMN IF NOT EXISTS parent_id VARCHAR(64)",
+            "ALTER TABLE IF EXISTS content_material_categories ADD COLUMN IF NOT EXISTS design_style VARCHAR(32)",
+            "ALTER TABLE IF EXISTS content_material_categories ADD COLUMN IF NOT EXISTS building_name VARCHAR(80)",
+            "ALTER TABLE IF EXISTS content_material_categories ADD COLUMN IF NOT EXISTS area VARCHAR(32)",
+            "ALTER TABLE IF EXISTS content_material_categories ADD COLUMN IF NOT EXISTS image_design_role VARCHAR(20)",
             (
                 "ALTER TABLE IF EXISTS content_material_categories ADD COLUMN IF NOT EXISTS "
                 "industry_slug VARCHAR(80) NOT NULL DEFAULT 'uncategorized'"
@@ -962,6 +989,9 @@ class PostgresManager(metaclass=SingletonMeta):
             "ALTER TABLE IF EXISTS content_employees ADD COLUMN IF NOT EXISTS avatar VARCHAR(1024)",
             "ALTER TABLE IF EXISTS content_employees ADD COLUMN IF NOT EXISTS bio TEXT",
             "ALTER TABLE IF EXISTS content_employees ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMP",
+            "ALTER TABLE IF EXISTS content_employees ADD COLUMN IF NOT EXISTS age INTEGER",
+            "ALTER TABLE IF EXISTS content_employees ADD COLUMN IF NOT EXISTS current_branch VARCHAR(80) NOT NULL DEFAULT ''",
+            "ALTER TABLE IF EXISTS content_employees ADD COLUMN IF NOT EXISTS current_department VARCHAR(128) NOT NULL DEFAULT ''",
             (
                 "ALTER TABLE IF EXISTS content_variables "
                 'ADD COLUMN IF NOT EXISTS ports JSONB NOT NULL DEFAULT \'["pc","app"]\'::jsonb'
@@ -969,6 +999,82 @@ class PostgresManager(metaclass=SingletonMeta):
             (
                 "ALTER TABLE IF EXISTS content_variables "
                 'ADD COLUMN IF NOT EXISTS editions JSONB NOT NULL DEFAULT \'["quick","pro"]\'::jsonb'
+            ),
+            "ALTER TABLE IF EXISTS content_variables DROP CONSTRAINT IF EXISTS content_variables_name_key",
+            "ALTER TABLE IF EXISTS content_variables DROP CONSTRAINT IF EXISTS uq_content_variables_name",
+            "ALTER TABLE IF EXISTS content_variables DROP CONSTRAINT IF EXISTS uq_content_variables_service_entry_name",
+            "DROP INDEX IF EXISTS content_variables_name_key",
+            "DROP INDEX IF EXISTS uq_content_variables_name",
+            "DROP INDEX IF EXISTS uq_content_variables_service_entry_name",
+            """
+            DELETE FROM content_variables AS duplicate
+            USING content_variables AS kept
+            WHERE duplicate.name = kept.name
+              AND duplicate.service_entry = kept.service_entry
+              AND duplicate.id <> kept.id
+              AND (
+                (COALESCE(duplicate.enabled, false) = false AND kept.enabled = true)
+                OR (
+                  COALESCE(duplicate.enabled, false) = COALESCE(kept.enabled, false)
+                  AND duplicate.variable_code > kept.variable_code
+                )
+              )
+            """,
+            (
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_content_variables_service_entry_name "
+                "ON content_variables (service_entry, name)"
+            ),
+            "CREATE INDEX IF NOT EXISTS ix_content_variables_name ON content_variables (name)",
+            "CREATE INDEX IF NOT EXISTS ix_content_variables_service_entry ON content_variables (service_entry)",
+            (
+                "ALTER TABLE IF EXISTS content_business_variables "
+                "ADD COLUMN IF NOT EXISTS service_entry VARCHAR(64)"
+            ),
+            (
+                "UPDATE content_business_variables AS binding "
+                "SET service_entry = COALESCE(variable.service_entry, '装修家居') "
+                "FROM content_variables AS variable "
+                "WHERE binding.variable_id = variable.id "
+                "AND (binding.service_entry IS NULL OR binding.service_entry = '')"
+            ),
+            (
+                "UPDATE content_business_variables "
+                "SET service_entry = '装修家居' "
+                "WHERE service_entry IS NULL OR service_entry = ''"
+            ),
+            (
+                "ALTER TABLE IF EXISTS content_business_variables "
+                "ALTER COLUMN service_entry SET DEFAULT '装修家居'"
+            ),
+            (
+                "ALTER TABLE IF EXISTS content_business_variables "
+                "ALTER COLUMN service_entry SET NOT NULL"
+            ),
+            (
+                "ALTER TABLE IF EXISTS content_business_variables "
+                "ALTER COLUMN content_type_id SET DEFAULT ''"
+            ),
+            (
+                "UPDATE content_business_variables "
+                "SET content_type_id = '' "
+                "WHERE content_type_id IS NULL"
+            ),
+            (
+                "ALTER TABLE IF EXISTS content_business_variables "
+                "DROP CONSTRAINT IF EXISTS uq_content_business_variables_type_variable"
+            ),
+            "DROP INDEX IF EXISTS uq_content_business_variables_type_variable",
+            (
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_content_business_variables_entry_type_variable "
+                "ON content_business_variables (service_entry, content_type_id, variable_id)"
+            ),
+            (
+                "CREATE INDEX IF NOT EXISTS ix_content_business_variables_service_entry "
+                "ON content_business_variables (service_entry)"
+            ),
+            (
+                "ALTER TABLE IF EXISTS content_business_variables "
+                "ADD COLUMN IF NOT EXISTS ports JSONB NOT NULL DEFAULT '[\"pc\",\"app\"]'::jsonb"
             ),
         ]
         async with self.async_engine.begin() as conn:

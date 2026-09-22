@@ -18,9 +18,13 @@ import {
   UserRoundPen,
   ShieldCheck,
   Layers,
+  UsersRound,
+  House,
   PanelsTopLeft,
   ImagePlus,
   Braces,
+  ListTree,
+  Hammer,
   ChevronRight,
   ChevronDown
 } from 'lucide-vue-next'
@@ -228,10 +232,34 @@ const mainList = computed(() => {
         activeIcon: Layers
       },
       {
-        name: '变量配置',
+        name: '目标人群配置',
+        path: '/config-manage/target-audiences',
+        icon: UsersRound,
+        activeIcon: UsersRound
+      },
+      {
+        name: '居住人口配置',
+        path: '/config-manage/resident-populations',
+        icon: House,
+        activeIcon: House
+      },
+      {
+        name: '业务参数配置',
         path: '/config-manage/variables',
         icon: Braces,
         activeIcon: Braces
+      },
+      {
+        name: '业务变量配置',
+        path: '/config-manage/business-variables',
+        icon: ListTree,
+        activeIcon: ListTree
+      },
+      {
+        name: '工艺类型列表',
+        path: '/config-manage/process-standards',
+        icon: Hammer,
+        activeIcon: Hammer
       }
     ]
   })
@@ -631,12 +659,16 @@ div.header,
 
   .nav {
     display: flex;
-    flex: 0 0 auto;
+    flex: 0 1 auto;
     flex-direction: column;
     justify-content: flex-start;
     align-items: stretch;
     position: relative;
     gap: 4px;
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
   }
 
   .nav-group {

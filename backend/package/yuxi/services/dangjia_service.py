@@ -22,6 +22,11 @@ from yuxi.content.schemas import (
     ContentTaskCreate,
     ContentVisualMaterialSelection,
 )
+from yuxi.content.service_entry_form import (
+    CONTENT_TYPE_NAME_TO_DIRECTION,
+    LEGACY_QUOTE_TYPE_NAME,
+    is_quote_content_type_name,
+)
 from yuxi.content_cover.photo_composition import PhotoComposition, PhotoSlot
 from yuxi.repositories.content_repository import ContentRepository
 from yuxi.services.content_service import (
@@ -39,8 +44,8 @@ from yuxi.storage.postgres.models_content import ContentTask
 INDUSTRY_SLUG = "decoration"
 CONTENT_GOAL = "acquire"
 TYPE_NAME_TO_CT_CODE = {
+    **CONTENT_TYPE_NAME_TO_DIRECTION,
     "自我介绍": "CT01",
-    "工艺展示": "CT06",
     "日常工作": "CT07",
 }
 PRICE_FORMAT_TO_CT_CODE = {
@@ -195,7 +200,7 @@ def _composition_layout_id(image_count: int) -> str | None:
 
 def _resolve_ct_code(requirement: DangjiaRequirementType) -> str:
     type_name = requirement.typeName.strip()
-    if type_name != "施工报价":
+    if type_name != LEGACY_QUOTE_TYPE_NAME:
         ct_code = TYPE_NAME_TO_CT_CODE.get(type_name)
         if ct_code is None:
             raise _dj_error(
@@ -253,10 +258,10 @@ def build_trusted_quote_snapshot(
     """构造仅保存在服务端运行快照中的报价事实，不接受公共简报接口注入。"""
 
     requirement = payload.requirementType
-    if requirement.typeName.strip() != "施工报价":
+    if not is_quote_content_type_name(requirement.typeName):
         return None
     if len(requirement.prices) != 1 or requirement.titlePrice is None:
-        raise _dj_error(422, "DANGJIA_QUOTE_METADATA_INVALID", "施工报价元数据不完整")
+        raise _dj_error(422, "DANGJIA_QUOTE_METADATA_INVALID", "报价类型元数据不完整")
     price = requirement.prices[0]
     original_content = price.content
     content_hash = hashlib.sha256(original_content.encode("utf-8")).hexdigest()
@@ -290,7 +295,7 @@ def build_dangjia_form_values(payload: DangjiaContentCreate) -> dict[str, Any]:
     house_area = requirement.quotationInfo.houseArea.strip()
     skills = [item.strip() for item in persona.skills if item.strip()]
     advantages = [item.strip() for item in persona.serviceAdvantages if item.strip()]
-    is_quote = requirement.typeName.strip() == "施工报价"
+    is_quote = is_quote_content_type_name(requirement.typeName)
     craft_parts: list[str] = []
     if skills:
         craft_parts.append(f"工种能力：{'、'.join(skills)}")

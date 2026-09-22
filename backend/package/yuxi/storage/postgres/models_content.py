@@ -1198,6 +1198,40 @@ class ContentMaterialUsage(Base):
     created_at = Column(DateTime, default=utc_now_naive)
 
 
+class ContentMaterialShare(Base):
+    """可公开访问的素材图库图片分享快照。"""
+
+    __tablename__ = "content_material_shares"
+
+    id = Column(String(64), primary_key=True)
+    token = Column(String(64), nullable=False, unique=True, index=True)
+    owner_uid = Column(String(255), nullable=False, index=True)
+    category_id = Column(String(64), nullable=False, index=True)
+    title = Column(String(80), nullable=False)
+    building_name = Column(String(80), nullable=True)
+    area = Column(String(32), nullable=True)
+    design_style = Column(String(32), nullable=True)
+    created_at = Column(DateTime, default=utc_now_naive, index=True)
+
+
+class ContentMaterialShareItem(Base):
+    """分享中的单张图片快照，按创建时的选择顺序排列。"""
+
+    __tablename__ = "content_material_share_items"
+
+    share_id = Column(String(64), ForeignKey("content_material_shares.id", ondelete="CASCADE"), primary_key=True)
+    display_order = Column(Integer, primary_key=True)
+    original_file_name = Column(String(255), nullable=False)
+    content_type = Column(String(128), nullable=False)
+    file_size = Column(Integer, nullable=False)
+    image_width = Column(Integer, nullable=False)
+    image_height = Column(Integer, nullable=False)
+    bucket_name = Column(String(128), nullable=False)
+    object_name = Column(Text, nullable=False)
+
+    __table_args__ = (Index("idx_content_material_share_items_share_order", "share_id", "display_order"),)
+
+
 class ContentMaterialCategory(Base):
     """用户维护的素材图片图库或封面模板分类。"""
 
@@ -1210,6 +1244,10 @@ class ContentMaterialCategory(Base):
     visibility = Column(String(20), nullable=False, default="private", server_default="private")
     parent_id = Column(String(64), nullable=True, index=True)
     industry_slug = Column(String(80), nullable=False, default="uncategorized", index=True)
+    image_design_role = Column(String(20), nullable=True)
+    design_style = Column(String(32), nullable=True)
+    building_name = Column(String(80), nullable=True)
+    area = Column(String(32), nullable=True)
     name = Column(String(80), nullable=False)
     description = Column(String(255), nullable=False, default="")
     sort_order = Column(Integer, nullable=False, default=0)
@@ -1256,6 +1294,10 @@ class ContentMaterialCategory(Base):
             "parent_id": self.parent_id,
             "level": 2 if self.parent_id else 1,
             "industry_slug": self.industry_slug,
+            "image_design_role": self.image_design_role,
+            "design_style": self.design_style,
+            "building_name": self.building_name,
+            "area": self.area,
             "name": self.name,
             "description": self.description or "",
             "sort_order": self.sort_order,
@@ -1888,7 +1930,10 @@ class ContentEmployee(Base):
     employee_code = Column(String(64), nullable=False, unique=True, index=True)
     name = Column(String(80), nullable=False)
     login_account = Column(String(64), nullable=False, unique=True, index=True)
+    current_branch = Column(String(80), nullable=False, default="")
+    current_department = Column(String(128), nullable=False, default="")
     gender = Column(String(16), nullable=False)
+    age = Column(Integer, nullable=True)
     login_port = Column(JSON, nullable=False, default=list)
     role = Column(String(64), nullable=False)
     enabled = Column(Boolean, nullable=False, default=True, index=True)
@@ -1905,7 +1950,10 @@ class ContentEmployee(Base):
             "employee_code": self.employee_code,
             "name": self.name,
             "login_account": self.login_account,
+            "current_branch": self.current_branch or "",
+            "current_department": self.current_department or "",
             "gender": self.gender,
+            "age": self.age,
             "login_port": list(self.login_port or []),
             "role": self.role,
             "enabled": bool(self.enabled),
@@ -1976,10 +2024,13 @@ class ContentVariable(Base):
     """变量配置，服务入口与内容类型名称联动。"""
 
     __tablename__ = "content_variables"
+    __table_args__ = (
+        UniqueConstraint("service_entry", "name", name="uq_content_variables_service_entry_name"),
+    )
 
     id = Column(String(64), primary_key=True)
     variable_code = Column(String(32), nullable=False, unique=True, index=True)
-    name = Column(String(64), nullable=False, unique=True, index=True)
+    name = Column(String(64), nullable=False, index=True)
     service_entry = Column(String(64), nullable=False, index=True)
     ports = Column(JSON, nullable=False, default=list)
     editions = Column(JSON, nullable=False, default=list)
@@ -1996,6 +2047,122 @@ class ContentVariable(Base):
             "service_entry": self.service_entry,
             "ports": list(self.ports or []),
             "editions": list(self.editions or []),
+            "enabled": bool(self.enabled),
+            "created_by": self.created_by,
+            "created_at": format_utc_datetime(self.created_at),
+            "updated_at": format_utc_datetime(self.updated_at),
+        }
+
+
+class ContentBusinessVariable(Base):
+    """内容类型与业务参数的绑定配置。"""
+
+    __tablename__ = "content_business_variables"
+    __table_args__ = (
+        UniqueConstraint(
+            "service_entry",
+            "content_type_id",
+            "variable_id",
+            name="uq_content_business_variables_entry_type_variable",
+        ),
+    )
+
+    id = Column(String(64), primary_key=True)
+    service_entry = Column(String(64), nullable=False, index=True, default="装修家居")
+    # 空字符串表示无需内容类型（如好评笔记）
+    content_type_id = Column(String(64), nullable=False, default="", index=True)
+    variable_id = Column(String(64), nullable=False, index=True)
+    ports = Column(JSON, nullable=False, default=list)
+    required = Column(Boolean, nullable=False, default=True)
+    enabled = Column(Boolean, nullable=False, default=True, index=True)
+    created_by = Column(String(64), nullable=False, index=True)
+    created_at = Column(DateTime, default=utc_now_naive)
+    updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "service_entry": self.service_entry,
+            "content_type_id": self.content_type_id or None,
+            "variable_id": self.variable_id,
+            "ports": list(self.ports or []),
+            "required": bool(self.required),
+            "enabled": bool(self.enabled),
+            "created_by": self.created_by,
+            "created_at": format_utc_datetime(self.created_at),
+            "updated_at": format_utc_datetime(self.updated_at),
+        }
+
+
+class ContentProcessStandard(Base):
+    """工艺标准配置。"""
+
+    __tablename__ = "content_process_standards"
+    __table_args__ = (
+        UniqueConstraint("name", "detail", name="uq_content_process_standards_name_detail"),
+    )
+
+    id = Column(String(64), primary_key=True)
+    name = Column(String(64), nullable=False, index=True)
+    detail = Column(String(255), nullable=False, index=True)
+    enabled = Column(Boolean, nullable=False, default=True, index=True)
+    created_by = Column(String(64), nullable=False, index=True)
+    created_at = Column(DateTime, default=utc_now_naive)
+    updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "name": self.name,
+            "detail": self.detail,
+            "enabled": bool(self.enabled),
+            "created_by": self.created_by,
+            "created_at": format_utc_datetime(self.created_at),
+            "updated_at": format_utc_datetime(self.updated_at),
+        }
+
+
+class ContentTargetAudience(Base):
+    """目标人群配置。"""
+
+    __tablename__ = "content_target_audiences"
+    __table_args__ = (UniqueConstraint("name", name="uq_content_target_audiences_name"),)
+
+    id = Column(String(64), primary_key=True)
+    name = Column(String(64), nullable=False, index=True)
+    enabled = Column(Boolean, nullable=False, default=True, index=True)
+    created_by = Column(String(64), nullable=False, index=True)
+    created_at = Column(DateTime, default=utc_now_naive)
+    updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "name": self.name,
+            "enabled": bool(self.enabled),
+            "created_by": self.created_by,
+            "created_at": format_utc_datetime(self.created_at),
+            "updated_at": format_utc_datetime(self.updated_at),
+        }
+
+
+class ContentResidentPopulation(Base):
+    """居住人口配置。"""
+
+    __tablename__ = "content_resident_populations"
+    __table_args__ = (UniqueConstraint("name", name="uq_content_resident_populations_name"),)
+
+    id = Column(String(64), primary_key=True)
+    name = Column(String(64), nullable=False, index=True)
+    enabled = Column(Boolean, nullable=False, default=True, index=True)
+    created_by = Column(String(64), nullable=False, index=True)
+    created_at = Column(DateTime, default=utc_now_naive)
+    updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "name": self.name,
             "enabled": bool(self.enabled),
             "created_by": self.created_by,
             "created_at": format_utc_datetime(self.created_at),

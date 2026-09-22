@@ -36,17 +36,28 @@ export const useUserStore = defineStore('user', () => {
       })
 
       if (!response.ok) {
-        const error = await response.json()
+        let error = {}
+        try {
+          error = await response.json()
+        } catch {
+          throw new Error(response.status >= 500 ? '服务暂时不可用，请稍后重试' : '登录失败')
+        }
+
+        const detail = error.detail
+        const message =
+          typeof detail === 'string'
+            ? detail
+            : detail?.error?.message || detail?.message || '登录失败'
 
         // 如果是423锁定状态码，抛出包含状态码的错误
         if (response.status === 423) {
-          const lockError = new Error(error.detail || '账户被锁定')
+          const lockError = new Error(message || '账户被锁定')
           lockError.status = 423
           lockError.headers = response.headers
           throw lockError
         }
 
-        throw new Error(error.detail || '登录失败')
+        throw new Error(message)
       }
 
       const data = await response.json()

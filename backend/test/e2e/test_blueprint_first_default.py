@@ -108,16 +108,19 @@ async def test_deployed_templates_create_blueprint_first_tasks():
                     await page.goto("http://localhost:5173/content/new")
                     await expect(page.locator(".template-card")).to_have_count(1)
                     await expect(page.locator(".template-card.selected")).to_contain_text("装修与家居")
-                    await expect(page.get_by_text("内容目标", exact=True)).to_have_count(0)
+                    await expect(page.get_by_text("内容目标", exact=True)).to_be_visible()
                     await expect(page.get_by_text("默认目标", exact=False)).to_have_count(0)
                     await expect(page.locator(".auto-strategy-hint")).to_be_visible()
                     await expect(page.get_by_text("一级内容方向", exact=True)).to_have_count(0)
-                    choices = page.get_by_role("radio")
-                    await expect(choices).to_have_count(7)
-                    for name in ("自我介绍", "项目单价", "单价+面积", "工种总价", "人工+辅材", "工艺展示", "日常工作"):
-                        await expect(page.locator(".creation-type-field").get_by_text(name, exact=True)).to_be_visible()
-                    await page.locator(".creation-type-field").get_by_text("工种总价", exact=True).click()
-                    await expect(page.get_by_role("radio", name="工种总价", exact=True)).to_be_checked()
+                    await expect(page.get_by_text("创作类型", exact=True)).to_have_count(0)
+                    await expect(page.get_by_role("radio")).to_have_count(0)
+                    field = page.locator(".content-goal-field")
+                    await field.locator(".ant-select").click()
+                    dropdown = page.locator(".ant-select-dropdown:not(.ant-select-dropdown-hidden)")
+                    for name in ("流量曝光", "干货教育", "获客转化", "品牌人设"):
+                        await expect(dropdown.get_by_text(name)).to_be_visible()
+                    await dropdown.get_by_text("获客转化").click()
+                    await expect(field.locator(".ant-select-selection-item")).to_contain_text("获客转化")
                     async with page.expect_response(
                         lambda response: (
                             response.url.endswith("/api/content/tasks") and response.request.method == "POST"
@@ -131,13 +134,11 @@ async def test_deployed_templates_create_blueprint_first_tasks():
                         submitted = response.request.post_data_json
                         decoration = next(item for item in templates if item["slug"] == "decoration")
                         assert submitted["industry_template_id"] == decoration["id"]
-                        assert submitted["content_goal"] == decoration["default_goal"]
-                        assert submitted["content_type_code"] == "CT04"
-                        assert task["content_type_code"] == "CT04"
+                        assert submitted["content_goal"] == "acquire"
+                        assert not submitted.get("content_type_code")
                         candidates_response = await client.get(f"/api/content/tasks/{task['id']}/strategy/candidates")
                         candidates_response.raise_for_status()
                         candidates = candidates_response.json()["strategy_candidates"]
-                        assert candidates["direction_code"] == "CT04"
                         assert "direction_options" not in candidates
                         await expect(page).to_have_url(f"http://localhost:5173/content/tasks/{task['id']}")
                         await page.get_by_role("button", name="形成事实简报并进入 V3 生产").click()

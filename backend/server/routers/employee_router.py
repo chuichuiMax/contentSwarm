@@ -7,12 +7,21 @@ from yuxi.services.employee_service import (
     EmployeeUpdate,
     create_employee,
     delete_employee,
+    get_current_employee,
     list_employees,
     update_employee,
 )
 from yuxi.storage.postgres.models_business import User
 
 employees = APIRouter(prefix="/employees", tags=["employees"])
+
+
+@employees.get("/me")
+async def get_my_content_employee(
+    current_user: User = Depends(get_required_user),
+    db: AsyncSession = Depends(get_db),
+):
+    return await get_current_employee(db, current_user)
 
 
 @employees.get("")

@@ -1,5 +1,5 @@
 <script setup>
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { message, Modal } from 'ant-design-vue'
 import { Plus, Search } from 'lucide-vue-next'
@@ -17,16 +17,39 @@ const saving = ref(false)
 const togglingId = ref('')
 const keywordInput = ref('')
 const keyword = ref('')
+const page = ref(1)
+const pageSize = ref(20)
 const roles = ref([])
 const modalOpen = ref(false)
+const editingId = ref('')
+const editingIsSystem = ref(false)
+const editingRoleCode = ref('')
 const membersOpen = ref(false)
 const membersLoading = ref(false)
 const members = ref([])
+const memberPage = ref(1)
+const memberPageSize = ref(20)
 const viewingRole = ref(null)
 const memberKeywordInput = ref('')
 const memberKeyword = ref('')
 const form = reactive(emptyForm())
 const router = useRouter()
+
+const tablePagination = computed(() => ({
+  current: page.value,
+  pageSize: pageSize.value,
+  showSizeChanger: true,
+  showTotal: (total) => `共 ${total} 条`,
+  pageSizeOptions: ['10', '20', '50']
+}))
+const modalTitle = computed(() => (editingId.value ? '编辑角色' : '新增角色'))
+const membersPagination = computed(() => ({
+  current: memberPage.value,
+  pageSize: memberPageSize.value,
+  showSizeChanger: true,
+  showTotal: (total) => `共 ${total} 条`,
+  pageSizeOptions: ['10', '20', '50']
+}))
 
 const formatCreatedAt = (value) => {
   if (!value) return '-'
@@ -50,16 +73,44 @@ const loadRoles = async () => {
 
 const handleSearch = () => {
   keyword.value = keywordInput.value.trim()
+  page.value = 1
   void loadRoles()
 }
 
+const handleTableChange = (pagination) => {
+  page.value = pagination.current
+  pageSize.value = pagination.pageSize
+}
+
+const handleMembersTableChange = (pagination) => {
+  memberPage.value = pagination.current
+  memberPageSize.value = pagination.pageSize
+}
+
 const openCreate = () => {
+  editingId.value = ''
+  editingIsSystem.value = false
+  editingRoleCode.value = ''
   Object.assign(form, emptyForm())
+  modalOpen.value = true
+}
+
+const openEdit = (role) => {
+  editingId.value = role.id
+  editingIsSystem.value = Boolean(role.is_system)
+  editingRoleCode.value = role.role_code || ''
+  Object.assign(form, {
+    name: role.name,
+    enabled: role.enabled
+  })
   modalOpen.value = true
 }
 
 const closeCreate = () => {
   modalOpen.value = false
+  editingId.value = ''
+  editingIsSystem.value = false
+  editingRoleCode.value = ''
   Object.assign(form, emptyForm())
 }
 
@@ -71,8 +122,15 @@ const saveRole = async () => {
   }
   saving.value = true
   try {
-    await roleApi.createRole({ name, enabled: form.enabled })
-    message.success('角色已创建')
+    if (editingId.value) {
+      const payload = { enabled: form.enabled }
+      if (!editingIsSystem.value) payload.name = name
+      await roleApi.updateRole(editingId.value, payload)
+      message.success('角色已更新')
+    } else {
+      await roleApi.createRole({ name, enabled: form.enabled })
+      message.success('角色已创建')
+    }
     closeCreate()
     await loadRoles()
   } catch (error) {
@@ -122,12 +180,14 @@ const openMembers = async (role) => {
   viewingRole.value = role
   memberKeywordInput.value = ''
   memberKeyword.value = ''
+  memberPage.value = 1
   membersOpen.value = true
   await loadMembers()
 }
 
 const searchMembers = () => {
   memberKeyword.value = memberKeywordInput.value.trim()
+  memberPage.value = 1
   void loadMembers()
 }
 
@@ -160,6 +220,16 @@ const removeRole = (role) => {
 }
 
 onMounted(loadRoles)
+
+watch(roles, (list) => {
+  const maxPage = Math.max(1, Math.ceil(list.length / pageSize.value))
+  if (page.value > maxPage) page.value = maxPage
+})
+
+watch(members, (list) => {
+  const maxPage = Math.max(1, Math.ceil(list.length / memberPageSize.value))
+  if (memberPage.value > maxPage) memberPage.value = maxPage
+})
 </script>
 
 <template>
@@ -188,11 +258,12 @@ onMounted(loadRoles)
         class="permission-table"
         :data-source="roles"
         :loading="loading"
-        :pagination="false"
+        :pagination="tablePagination"
         row-key="id"
+        @change="handleTableChange"
       >
         <a-table-column title="序号" key="index" :width="72">
-          <template #default="{ index }">{{ index + 1 }}</template>
+          <template #default="{ index }">{{ (page - 1) * pageSize + index + 1 }}</template>
         </a-table-column>
         <a-table-column title="角色编码" data-index="role_code" key="role_code" />
         <a-table-column title="角色名称" data-index="name" key="name" />
@@ -223,9 +294,10 @@ onMounted(loadRoles)
         <a-table-column title="创建时间" key="created_at" :width="180">
           <template #default="{ record }">{{ formatCreatedAt(record.created_at) }}</template>
         </a-table-column>
-        <a-table-column title="操作" key="actions" :width="140">
+        <a-table-column title="操作" key="actions" :width="200">
           <template #default="{ record }">
             <div class="row-actions">
+              <a-button type="link" @click="openEdit(record)">编辑</a-button>
               <a-button type="link" @click="openAuthorize(record)">授权</a-button>
               <a-button v-if="!record.is_system" type="link" @click="removeRole(record)">删除</a-button>
             </div>
@@ -236,7 +308,7 @@ onMounted(loadRoles)
 
     <a-modal
       v-model:open="modalOpen"
-      title="新增角色"
+      :title="modalTitle"
       :mask-closable="false"
       :footer="null"
       width="480px"
@@ -250,10 +322,18 @@ onMounted(loadRoles)
         :wrapper-col="{ style: { flex: 1 } }"
       >
         <a-form-item label="角色名称" required>
-          <a-input v-model:value="form.name" placeholder="请输入角色名称" allow-clear />
+          <a-input
+            v-model:value="form.name"
+            placeholder="请输入角色名称"
+            allow-clear
+            :disabled="editingIsSystem"
+          />
         </a-form-item>
         <a-form-item label="状态" required>
-          <a-radio-group v-model:value="form.enabled">
+          <a-radio-group
+            v-model:value="form.enabled"
+            :disabled="editingRoleCode === 'superadmin'"
+          >
             <a-radio :value="true">启用</a-radio>
             <a-radio :value="false">禁用</a-radio>
           </a-radio-group>
@@ -293,11 +373,12 @@ onMounted(loadRoles)
         class="members-table"
         :data-source="members"
         :loading="membersLoading"
-        :pagination="false"
+        :pagination="membersPagination"
         row-key="id"
+        @change="handleMembersTableChange"
       >
         <a-table-column title="序号" key="index" :width="72" align="center">
-          <template #default="{ index }">{{ index + 1 }}</template>
+          <template #default="{ index }">{{ (memberPage - 1) * memberPageSize + index + 1 }}</template>
         </a-table-column>
         <a-table-column title="姓名" data-index="name" key="name" align="center" />
         <a-table-column title="员工编码" data-index="employee_code" key="employee_code" align="center" />
@@ -354,6 +435,10 @@ onMounted(loadRoles)
     background: var(--gray-10);
     color: var(--gray-700);
     font-weight: 600;
+  }
+
+  :deep(.ant-table-pagination) {
+    margin: 16px 0 0;
   }
 }
 
@@ -458,6 +543,10 @@ onMounted(loadRoles)
     color: var(--gray-700);
     font-weight: 600;
     text-align: center;
+  }
+
+  :deep(.ant-table-pagination) {
+    margin: 16px 0 0;
   }
 }
 

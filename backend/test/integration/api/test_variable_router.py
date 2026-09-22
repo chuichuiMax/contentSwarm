@@ -27,6 +27,7 @@ async def test_variable_crud_search_and_toggle(test_client, admin_headers):
     assert created.status_code == 200, created.text
     item = created.json()["variable"]
     variable_pk = item["id"]
+    other_pk = None
     assert item["variable_code"].startswith("FWTD")
     assert item["service_entry"] == service_entry
     assert item["ports"] == ["pc", "app"]
@@ -65,6 +66,16 @@ async def test_variable_crud_search_and_toggle(test_client, admin_headers):
         assert duplicate.status_code == 409, duplicate.text
         assert duplicate.json()["detail"]["error"]["code"] == "VARIABLE_NAME_EXISTS"
 
+        other_entry = await test_client.post(
+            "/api/content-variables",
+            headers=admin_headers,
+            json={"name": variable_name, "service_entry": "好评笔记", "enabled": True},
+        )
+        assert other_entry.status_code == 200, other_entry.text
+        other_pk = other_entry.json()["variable"]["id"]
+        assert other_entry.json()["variable"]["service_entry"] == "好评笔记"
+        assert other_entry.json()["variable"]["name"] == variable_name
+
         toggled = await test_client.patch(
             f"/api/content-variables/{variable_pk}",
             headers=admin_headers,
@@ -77,3 +88,6 @@ async def test_variable_crud_search_and_toggle(test_client, admin_headers):
     finally:
         deleted = await test_client.delete(f"/api/content-variables/{variable_pk}", headers=admin_headers)
         assert deleted.status_code == 200, deleted.text
+        if other_pk:
+            other_deleted = await test_client.delete(f"/api/content-variables/{other_pk}", headers=admin_headers)
+            assert other_deleted.status_code == 200, other_deleted.text

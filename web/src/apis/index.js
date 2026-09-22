@@ -20,7 +20,11 @@ export * from './account_api' // 内容发布账号 API
 export * from './employee_api' // 内容发布员工 API
 export * from './role_api' // 内容发布角色 API
 export * from './content_type_api' // 内容类型配置 API
-export * from './variable_api' // 变量配置 API
+export * from './target_audience_api' // 目标人群配置 API
+export * from './resident_population_api' // 居住人口配置 API
+export * from './variable_api' // 业务参数配置 API
+export * from './business_variable_api' // 业务变量配置 API
+export * from './process_standard_api' // 工艺类型列表 API
 export * from './material_library_api' // 素材库 API
 export * from './image_design_api' // 图片设计 API
 

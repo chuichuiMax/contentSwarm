@@ -179,7 +179,7 @@
       <!-- 文件上传区域 -->
       <div class="reference-purpose">
         <a-checkbox v-model:checked="useAsViralReference" :disabled="chunkLoading || !store.database?.additional_params?.viral_content_type">用于爆款仿写参考</a-checkbox>
-        <p v-if="!store.database?.additional_params?.viral_content_type">请先在知识库编辑中绑定爆款创作类型，再准备参考文章。</p>
+        <p v-if="!store.database?.additional_params?.viral_content_type">请先在知识库编辑中绑定内容类型，再准备参考文章。</p>
         <p v-if="useAsViralReference">解析完成后自动识别完整文章，准备参考卡和结构蓝图；可在创作规则库查看进度。</p>
       </div>
 

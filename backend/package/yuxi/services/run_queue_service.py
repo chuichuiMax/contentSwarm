@@ -17,6 +17,7 @@ RUN_EVENTS_STREAM_MAXLEN = int(os.getenv("RUN_EVENTS_STREAM_MAXLEN", "0"))
 RUN_CANCEL_CHANNEL = os.getenv("RUN_CANCEL_CHANNEL", "run:cancel:ch")
 
 _redis_client = None
+_binary_redis_client = None
 _arq_pool = None
 
 
@@ -103,6 +104,31 @@ async def get_redis_client():
 
     _redis_client = redis
     return _redis_client
+
+
+async def get_binary_redis_client():
+    """图片等二进制暂存不能走 decode_responses=True 的文本客户端。"""
+    global _binary_redis_client
+    if _binary_redis_client is not None:
+        return _binary_redis_client
+
+    try:
+        from redis.asyncio import Redis
+    except Exception as e:
+        raise RuntimeError("redis dependency is required for run queue") from e
+
+    redis = Redis.from_url(REDIS_URL, decode_responses=False)
+    try:
+        await redis.ping()
+    except Exception as e:
+        try:
+            await redis.aclose()
+        except Exception:
+            pass
+        raise RuntimeError(f"Redis connection failed ({_redacted_redis_url(REDIS_URL)}): {e}") from e
+
+    _binary_redis_client = redis
+    return _binary_redis_client
 
 
 async def get_arq_pool():
@@ -297,7 +323,7 @@ async def get_last_run_stream_seq(run_id: str) -> str:
 
 
 async def close_queue_clients() -> None:
-    global _redis_client, _arq_pool
+    global _redis_client, _binary_redis_client, _arq_pool
     if _arq_pool is not None:
         try:
             await _arq_pool.close()
@@ -310,3 +336,9 @@ async def close_queue_clients() -> None:
         except Exception:
             pass
         _redis_client = None
+    if _binary_redis_client is not None:
+        try:
+            await _binary_redis_client.aclose()
+        except Exception:
+            pass
+        _binary_redis_client = None
