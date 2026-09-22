@@ -307,7 +307,7 @@ services:
     restart: "no"
 
   graph:
-    image: neo4j:5.26
+    image: harbor.dangjia.com/base/neo4j:5.26
     volumes:
       - ${DATA_ROOT:?DATA_ROOT must be set}/neo4j/data:/data
       - ${DATA_ROOT:?DATA_ROOT must be set}/neo4j/logs:/var/lib/neo4j/logs
