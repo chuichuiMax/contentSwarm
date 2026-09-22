@@ -20,6 +20,8 @@ x-api-worker-env: &api-worker-env
   MINERU_API_URI: ${MINERU_API_URI:-http://mineru-api:30001}
   PADDLEX_URI: ${PADDLEX_URI:-http://paddlex:8080}
   MINIO_URI: ${MINIO_URI:-http://minio:9000}
+  MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY must be set}
+  MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY must be set}
   MINIO_PUBLIC_BASE_URL: ${MINIO_PUBLIC_BASE_URL:-/boyun}
   SANDBOX_PROVIDER: ${SANDBOX_PROVIDER:-provisioner}
   SANDBOX_PROVISIONER_URL: ${SANDBOX_PROVISIONER_URL:-http://sandbox-provisioner:8002}
@@ -343,7 +345,7 @@ services:
     restart: unless-stopped
 
   minio:
-    image: minio/minio:RELEASE.2023-03-20T20-16-18Z
+    image: quay.io/minio/minio:RELEASE.2023-03-20T20-16-18Z
     environment:
       MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY must be set}
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY must be set}
