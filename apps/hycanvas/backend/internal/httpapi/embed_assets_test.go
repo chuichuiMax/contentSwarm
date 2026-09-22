@@ -33,7 +33,7 @@ func TestEmbedDesignFileAssets(t *testing.T) {
 			},
 		}},
 	}
-	out := embedDesignFileAssets(fetch, file)
+	out := embedDesignFileAssets(fetch, file, 0)
 	kids := out["pages"].([]any)[0].(map[string]any)["children"].([]any)
 
 	embedded := func(m map[string]any, what string) {
@@ -54,9 +54,46 @@ func TestEmbedDesignFileAssets(t *testing.T) {
 		t.Fatalf("original file was mutated")
 	}
 	// Inline design assets still render when no uploads service is available.
-	withoutUploads := embedDesignFileAssets(nil, file)
+	withoutUploads := embedDesignFileAssets(nil, file, 0)
 	inlineNode := withoutUploads["pages"].([]any)[0].(map[string]any)["children"].([]any)[1].(map[string]any)
 	if got := inlineNode["src"]; got != "data:image/jpeg;base64,aW5saW5l" {
 		t.Fatalf("inline asset should render without uploads service: %v", got)
+	}
+}
+
+func TestEmbedDesignFileAssetsSelectsPageWithoutMutatingOtherPages(t *testing.T) {
+	pages := []any{}
+	for _, id := range []string{"first", "second", "third"} {
+		pages = append(pages, map[string]any{"children": []any{
+			map[string]any{"type": "image", "source": map[string]any{"assetId": id}},
+		}})
+	}
+	file := map[string]any{"pages": pages}
+	fetched := []string{}
+	fetch := func(id string) ([]byte, string, error) {
+		fetched = append(fetched, id)
+		return []byte(id), "image/png", nil
+	}
+
+	out := embedDesignFileAssets(fetch, file, 1)
+	if len(fetched) != 1 || fetched[0] != "second" {
+		t.Fatalf("fetched %v, want only the selected page's image", fetched)
+	}
+	for i, page := range out["pages"].([]any) {
+		node := page.(map[string]any)["children"].([]any)[0].(map[string]any)
+		_, embedded := node["src"]
+		if embedded != (i == 1) {
+			t.Fatalf("page %d embedded = %v", i, embedded)
+		}
+		original := pages[i].(map[string]any)["children"].([]any)[0].(map[string]any)
+		if _, mutated := original["src"]; mutated {
+			t.Fatalf("input page %d was mutated", i)
+		}
+	}
+	for _, index := range []int{-1, len(pages)} {
+		embedDesignFileAssets(fetch, file, index)
+	}
+	if len(fetched) != 1 {
+		t.Fatal("invalid page indices must not fetch assets")
 	}
 }

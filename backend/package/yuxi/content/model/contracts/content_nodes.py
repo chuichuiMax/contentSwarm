@@ -21,7 +21,7 @@ from yuxi.content.model.contracts.joint_strategy import (
     validate_joint_strategy,
 )
 from yuxi.content.model.contracts.strategy import SelectStrategyInputV2, StrategyDecisionV2, validate_strategy_decision
-from yuxi.content.model.materials import FrozenProductionPackV1
+from yuxi.content.model.materials import FrozenProductionPackV1, GenerationSlotV1
 from yuxi.content.model.viral_document import ViralDocumentResultV1, validate_document_result
 from yuxi.content.model.viral_assets import (
     ViralArticleSource,
@@ -154,6 +154,7 @@ class GenerationProductionPackViewV1(StrictContract):
     reference_snapshot: dict[str, Any]
     expression_guidance: dict[str, Any] | None = None
     expression_policy: dict[str, Any] | None = None
+    generation_slots: tuple[GenerationSlotV1, ...] = ()
     writing_request: str | None = None
     channel_profile: dict[str, Any]
     persona_profile: dict[str, Any]
@@ -192,6 +193,7 @@ class SemanticReviewPromptV1(StrictContract):
     runtime_config_snapshot: dict[str, Any] = Field(default_factory=dict)
     expression_guidance: dict[str, Any] | None = None
     expression_policy: dict[str, Any] | None = None
+    generation_slots: tuple[GenerationSlotV1, ...] = ()
     locked_content_context: dict[str, Any] | None = None
 
 
@@ -552,6 +554,7 @@ class SemanticReviewInputV1(StrictContract):
     runtime_config_snapshot: dict[str, Any] = Field(default_factory=dict)
     expression_guidance: dict[str, Any] | None = None
     expression_policy: dict[str, Any] | None = None
+    generation_slots: tuple[GenerationSlotV1, ...] = ()
     locked_content_context: dict[str, Any] | None = None
 
 
@@ -764,8 +767,18 @@ class StrategyPriceEvidenceResultV1(PriceEvidenceCollectionResultV1):
 
 class ExtractedCreationFactV1(StrictContract):
     variable_code: str = Field(min_length=1, pattern=r"^[a-z][a-z0-9_]*$")
-    value: str = Field(min_length=1, max_length=4000)
-    source_quote: str = Field(min_length=1, max_length=4000)
+    value: str = Field(min_length=1, max_length=4000, description="用户原文中的逐字变量值")
+    source_quote: str = Field(
+        min_length=1,
+        max_length=4000,
+        description="与 value 完全相同的连续原文片段，不包含 JSON 字段名或外围引号",
+    )
+
+    @model_validator(mode="after")
+    def require_verbatim_value(self) -> ExtractedCreationFactV1:
+        if self.value != self.source_quote:
+            raise ValueError("value 必须与 source_quote 完全相同")
+        return self
 
 
 class ExtractedCreationFactsResultV1(StrictContract):
@@ -1298,7 +1311,11 @@ def _require_member(value: str, allowed: frozenset[str], field_path: str) -> Non
 
 def _require_equal(value: str | None, locked: str | None, field_path: str) -> None:
     if not locked or value != locked:
-        raise ContractDomainValidationError("locked_value_changed", field_path, f"{field_path} 必须等于锁定值")
+        raise ContractDomainValidationError(
+            "locked_value_changed",
+            field_path,
+            f"{field_path} 必须逐字等于锁定值：{locked}",
+        )
 
 
 def _validate_evidence_ids(ids: list[str], usage: str, context: ContractDomainContext, field_path: str) -> None:

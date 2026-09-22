@@ -1,11 +1,17 @@
 import asyncio
 from types import SimpleNamespace
 
+import httpx
 import pytest
 from langchain.agents.middleware import ModelResponse, ModelRetryMiddleware
 from langchain_core.messages import AIMessage
 
-from yuxi.agents.middlewares.model_call_timeout import ModelCallTimeoutMiddleware
+from yuxi.agents.middlewares.model_call_timeout import ModelCallTimeoutMiddleware, retryable_content_model_error
+
+
+@pytest.mark.parametrize("error", [httpx.RemoteProtocolError("incomplete chunked read"), httpx.ReadError("reset")])
+def test_stream_transport_errors_are_retryable(error):
+    assert retryable_content_model_error(error) is True
 
 
 @pytest.mark.asyncio

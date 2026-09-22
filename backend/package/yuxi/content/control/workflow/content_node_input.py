@@ -74,6 +74,7 @@ class ContentNodeInputAssembler:
                 channel_profile=state.get("channel_profile") or {},
                 persona_profile=state.get("persona_profile") or {},
                 expression_policy=production_pack.get("expression_policy"),
+                generation_slots=production_pack.get("generation_slots") or (),
                 locked_content_context=locked_content_context,
             )
         try:

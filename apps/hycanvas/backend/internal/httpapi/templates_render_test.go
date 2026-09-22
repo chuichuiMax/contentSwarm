@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"image"
+	"image/color"
 	"image/png"
 	"net/http"
 	"net/http/httptest"
@@ -88,6 +90,46 @@ func TestRenderTemplatePreviewCreatesScaledPNG(t *testing.T) {
 	}
 	if image.Bounds().Dx() != 25 || image.Bounds().Dy() != 50 {
 		t.Fatalf("preview dimensions = %dx%d, want 25x50", image.Bounds().Dx(), image.Bounds().Dy())
+	}
+}
+
+func TestRenderTemplatePreviewEmbedsOnlyExportedPage(t *testing.T) {
+	var source bytes.Buffer
+	pixel := image.NewRGBA(image.Rect(0, 0, 1, 1))
+	pixel.SetRGBA(0, 0, color.RGBA{R: 255, A: 255})
+	if err := png.Encode(&source, pixel); err != nil {
+		t.Fatal(err)
+	}
+	pages := make([]any, 230)
+	for i := range pages {
+		pages[i] = map[string]any{
+			"width": 100.0, "height": 100.0,
+			"children": []any{map[string]any{
+				"type": "image", "source": map[string]any{"assetId": "shared-background"},
+				"size": map[string]any{"width": 100.0, "height": 100.0},
+			}},
+		}
+	}
+	fetches := 0
+	fetch := func(string) ([]byte, string, error) {
+		fetches++
+		return source.Bytes(), "image/png", nil
+	}
+
+	data, err := renderTemplatePreview(map[string]any{"pages": pages}, fetch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fetches != 1 {
+		t.Fatalf("single-page preview fetched assets %d times, want 1", fetches)
+	}
+	preview, err := png.Decode(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, g, b, _ := preview.At(12, 12).RGBA()
+	if r != 65535 || g != 0 || b != 0 {
+		t.Fatalf("exported page lost its background: RGB = %d, %d, %d", r, g, b)
 	}
 }
 

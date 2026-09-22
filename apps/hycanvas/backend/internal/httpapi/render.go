@@ -101,7 +101,7 @@ func renderRasterHandler(p *persistence.Service, acct *accounts.Service, up *upl
 		if up != nil {
 			fetch = func(aid string) ([]byte, string, error) { return up.ContentInWorkspace(r.Context(), ws, aid) }
 		}
-		file := embedDesignFileAssets(fetch, loaded.File)
+		file := embedDesignFileAssets(fetch, loaded.File, page)
 		var out []byte
 		var mime string
 		if format == "jpg" {
@@ -208,7 +208,7 @@ func renderSVGHandler(p *persistence.Service, acct *accounts.Service, up *upload
 		if up != nil {
 			fetch = func(aid string) ([]byte, string, error) { return up.ContentInWorkspace(r.Context(), ws, aid) }
 		}
-		svg, err := render.ToSVG(render.Design(embedDesignFileAssets(fetch, loaded.File)), page)
+		svg, err := render.ToSVG(render.Design(embedDesignFileAssets(fetch, loaded.File, page)), page)
 		if err != nil {
 			problemWithCode(w, r, http.StatusBadRequest, "Bad Request", "page index out of range", "page_index_out_of_range")
 			return

@@ -7,6 +7,7 @@ import json
 import time
 from collections.abc import Awaitable, Callable
 
+import httpx
 from langchain.agents.middleware import AgentMiddleware, ModelRequest, ModelResponse
 from langchain_core.callbacks import AsyncCallbackHandler
 from langchain_core.utils.function_calling import convert_to_openai_tool
@@ -23,7 +24,18 @@ class ModelExecutionBudgetExceeded(ContentTokenBudgetExceeded):
 
 
 def retryable_content_model_error(exc: Exception) -> bool:
-    return isinstance(exc, (TimeoutError, ConnectionError, APIConnectionError, InternalServerError, RateLimitError))
+    return isinstance(
+        exc,
+        (
+            TimeoutError,
+            ConnectionError,
+            APIConnectionError,
+            InternalServerError,
+            RateLimitError,
+            httpx.RemoteProtocolError,
+            httpx.ReadError,
+        ),
+    )
 
 
 class ContentModelProgress(AsyncCallbackHandler):
@@ -77,7 +89,11 @@ class ModelCallTimeoutMiddleware(AgentMiddleware):
         started = time.monotonic()
         context = request.runtime.context
         node_id = getattr(context, "_content_node_id", None)
-        node_label = "策略选择" if node_id in {"select_creation_strategy", "reselect_creation_strategy"} else "正文生成"
+        node_label = {
+            "extract_creation_facts": "创作事实抽取",
+            "select_creation_strategy": "策略选择",
+            "reselect_creation_strategy": "策略选择",
+        }.get(node_id, "正文生成")
         if node_id == "semantic_review":
             node_label = "内容表情与语义审核"
         controlled = bool(getattr(context, "_content_max_model_calls", None))

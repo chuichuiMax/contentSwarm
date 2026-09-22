@@ -8,6 +8,7 @@ version: 1.7.0
 
 - 只读取当前节点 `payload`，仅使用其中已审批的标题、正文、锁定策略、证据、品牌素材和渠道规范，不调用业务事实或知识库工具。
 - 严格提交 `VisualPlanResultV1`：`size`、`safe_area`、`text`、`template_fields`、`source_asset_ids`、`mode`、`risks`、`artifact_version_id`、`evidence_ids`。
+- `artifact_version_id` 必须逐字复制 `payload.artifact_version.id`，不得使用内容哈希、任务 ID 或自行生成的 ID。
 - `visual_intent` 必须逐字复制 `payload.required_visual_intent`，不得重新判断或改写；该值已经由服务端依据正文主题锁定。
 - `source_asset_ids` 必须按原顺序逐字复制 `payload.required_source_asset_ids`，不得增加、删减或替换。
 - `evidence_ids` 只能从 `payload.allowed_visual_evidence_ids` 中选择；该列表为空时必须提交空数组，不得引用仅允许用于标题、正文或风格参考的 Evidence。
