@@ -5,10 +5,24 @@ import yaml
 
 ROOT = Path(__file__).parents[4]
 COMPOSE_FILE = ROOT / "docker-compose.source.yml"
+PROD_COMPOSE_FILE = ROOT / "docker-compose.prod.yml"
 
 
 def load_compose() -> dict:
     return yaml.safe_load(COMPOSE_FILE.read_text(encoding="utf-8"))
+
+
+def test_runtime_services_receive_minio_credentials():
+    expected = {
+        "MINIO_ACCESS_KEY": "${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY must be set}",
+        "MINIO_SECRET_KEY": "${MINIO_SECRET_KEY:?MINIO_SECRET_KEY must be set}",
+    }
+
+    for compose_file in (COMPOSE_FILE, PROD_COMPOSE_FILE):
+        compose = yaml.safe_load(compose_file.read_text(encoding="utf-8"))
+        for service_name in ("api", "worker"):
+            environment = compose["services"][service_name]["environment"]
+            assert expected.items() <= environment.items(), f"{compose_file.name}:{service_name}"
 
 
 def test_business_services_use_prebuilt_images_without_compose_builds():
