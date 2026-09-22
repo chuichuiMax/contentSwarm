@@ -246,7 +246,7 @@ services:
     restart: unless-stopped
 
   hycanvas-db:
-    image: postgres:16
+    image: harbor.dangjia.com/base/pgvector:0.8.1-pg16
     environment:
       POSTGRES_USER: ${HYCANVAS_DB_USER:-hycanvas}
       POSTGRES_PASSWORD: ${HYCANVAS_DB_PASSWORD:?HYCANVAS_DB_PASSWORD must be set}
@@ -293,7 +293,7 @@ services:
     restart: unless-stopped
 
   hycanvas-init:
-    image: postgres:16
+    image: harbor.dangjia.com/base/pgvector:0.8.1-pg16
     depends_on:
       hycanvas-app: {condition: service_healthy}
     environment:
@@ -326,7 +326,7 @@ services:
     restart: unless-stopped
 
   etcd:
-    image: quay.io/coreos/etcd:v3.5.5
+    image: harbor.dangjia.com/base/etcd:v3.5.5
     environment:
       ETCD_AUTO_COMPACTION_MODE: revision
       ETCD_AUTO_COMPACTION_RETENTION: "1000"
@@ -345,7 +345,7 @@ services:
     restart: unless-stopped
 
   minio:
-    image: quay.io/minio/minio:RELEASE.2023-03-20T20-16-18Z
+    image: harbor.dangjia.com/base/minio:RELEASE.2025-04-22T22-12-26Z
     environment:
       MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY must be set}
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY must be set}
@@ -363,7 +363,7 @@ services:
     restart: unless-stopped
 
   milvus:
-    image: milvusdb/milvus:v2.5.6
+    image: harbor.dangjia.com/base/milvus:v2.5.6
     command: ["milvus", "run", "standalone"]
     security_opt:
       - seccomp:unconfined
@@ -387,7 +387,7 @@ services:
     restart: unless-stopped
 
   postgres:
-    image: postgres:16
+    image: harbor.dangjia.com/base/pgvector:0.8.1-pg16
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
@@ -404,7 +404,7 @@ services:
     restart: unless-stopped
 
   redis:
-    image: redis:7-alpine
+    image: harbor.dangjia.com/base/redis:7.4.5-alpine
     command: redis-server --appendonly yes
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
