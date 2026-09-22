@@ -73,7 +73,7 @@ services:
     extra_hosts:
       - host.docker.internal:host-gateway
     env_file:
-      - ${CONFIG_ROOT:?CONFIG_ROOT must be set}/.env.config-test
+      - ${CONFIG_ROOT:?CONFIG_ROOT must be set}/env.config-test
     environment:
       <<: *api-worker-env
     command:
@@ -114,7 +114,7 @@ services:
     extra_hosts:
       - host.docker.internal:host-gateway
     env_file:
-      - ${CONFIG_ROOT:?CONFIG_ROOT must be set}/.env.config-test
+      - ${CONFIG_ROOT:?CONFIG_ROOT must be set}/env.config-test
     environment:
       <<: *api-worker-env
     command:
@@ -147,7 +147,7 @@ services:
     extra_hosts:
       - host.docker.internal:host-gateway
     env_file:
-      - ${CONFIG_ROOT:?CONFIG_ROOT must be set}/.env.config-test
+      - ${CONFIG_ROOT:?CONFIG_ROOT must be set}/env.config-test
     environment:
       <<: *api-worker-env
     command:
@@ -420,7 +420,7 @@ services:
     image: ${MINERU_IMAGE:-mineru-vllm:0.7.0}
     profiles: [all]
     env_file:
-      - ${CONFIG_ROOT:?CONFIG_ROOT must be set}/.env.config-test
+      - ${CONFIG_ROOT:?CONFIG_ROOT must be set}/env.config-test
     ports:
       - ${MINERU_HOST_PORT:-30001}:30001
     environment:
