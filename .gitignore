@@ -16,7 +16,6 @@ node_modules
 .DS_Store
 .env
 .env.prod
-.env.config
 .env.test
 .env.local
 .env.*.local
