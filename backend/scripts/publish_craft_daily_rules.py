@@ -1,4 +1,4 @@
-"""发布 CT06 工艺展示 / CT07 日常工作 M/N 公式；保留历史版本及其他运营配置。
+"""同步 CT06 工艺展示 / CT07 日常工作公式及删除项；保留历史版本及其他运营配置。
 
 容器内运行：python scripts/publish_craft_daily_rules.py --uid <管理员UID> [--publish]
 默认只验证并显示变更，--publish 才创建并发布新规则版本。
@@ -38,7 +38,7 @@ async def main(uid: str, publish: bool) -> None:
             if updated == bundle:
                 print(f"当前版本已包含修复：{current.id}")
                 return
-            note = "CT06/CT07 接入 M/N 标题与正文组合，按证据选式后冻结，保留历史公式"
+            note = "同步 CT06/CT07 公式，工艺标题仅保留 FRT16，正文删除 FRB12 组合，保留历史规则版本"
             payload = RuleBundleUpdate(**{**updated, "changelog": note})
             validation = validate_rule_bundle_for_publish(normalize_rule_bundle(payload))
             if validation["errors"]:
@@ -49,7 +49,18 @@ async def main(uid: str, publish: bool) -> None:
                 ]
                 for section in ("methods", "title_formulas", "content_formulas", "combination_rules", "variables")
             }
-            print(json.dumps({"source": current.id, "changes": changes, "validation": validation}, ensure_ascii=False))
+            removed = {
+                section: sorted(
+                    {item["code"] for item in bundle[section]} - {item["code"] for item in updated[section]}
+                )
+                for section in ("title_formulas", "content_formulas")
+            }
+            print(
+                json.dumps(
+                    {"source": current.id, "changes": changes, "removed": removed, "validation": validation},
+                    ensure_ascii=False,
+                )
+            )
             if not publish:
                 return
             draft = await create_content_rule_draft(

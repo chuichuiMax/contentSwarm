@@ -6,11 +6,27 @@ import hashlib
 import re
 from typing import Any
 
+QUOTE_RENDER_POLICIES = ("semicolon-lines-v1", "checkmark-lines-v1")
+
 
 def render_semicolon_lines(original_content: str) -> str:
     """仅在尚无换行的中文分号后增加展示换行，不改变其他字符。"""
 
     return re.sub(r"；(?!\r?\n)", "；\n", original_content)
+
+
+def render_locked_quote(original_content: str, render_policy: str) -> str:
+    """按冻结策略排版报价；仅增加换行和行首标记，保留报价原文。"""
+
+    if render_policy not in QUOTE_RENDER_POLICIES:
+        raise ValueError("quote_block 使用了未发布的渲染策略")
+    rendered = render_semicolon_lines(original_content)
+    if render_policy == "semicolon-lines-v1":
+        return rendered
+    return "".join(
+        f"✅ {line}" if line.strip() and not line.lstrip().startswith("✅") else line
+        for line in rendered.splitlines(keepends=True)
+    )
 
 
 def extract_locked_quote_block(production_pack: dict[str, Any]) -> dict[str, Any] | None:
@@ -31,11 +47,9 @@ def extract_locked_quote_block(production_pack: dict[str, Any]) -> dict[str, Any
     content_hash = hashlib.sha256(original_content.encode("utf-8")).hexdigest()
     if content_hash != value.get("content_hash") or content_hash != (material.get("source") or {}).get("source_hash"):
         raise ValueError("quote_block 原文、内容 Hash 与来源 Hash 不一致")
-    if value.get("render_policy") != "semicolon-lines-v1":
-        raise ValueError("quote_block 使用了未发布的渲染策略")
     if value.get("insertion_policy") != "after-opening-paragraph-v1":
         raise ValueError("quote_block 使用了未发布的插入策略")
-    rendered_content = render_semicolon_lines(original_content)
+    rendered_content = render_locked_quote(original_content, value.get("render_policy"))
     return {
         "material_id": material.get("id"),
         "evidence_ids": list(material.get("evidence_ids") or []),
@@ -68,8 +82,10 @@ def compose_after_opening_paragraph(body: str, rendered_content: str) -> str:
 
 
 __all__ = [
+    "QUOTE_RENDER_POLICIES",
     "compose_after_opening_paragraph",
     "extract_locked_quote_block",
     "quote_body_limits",
+    "render_locked_quote",
     "render_semicolon_lines",
 ]

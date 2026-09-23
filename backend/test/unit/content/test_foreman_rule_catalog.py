@@ -75,7 +75,7 @@ def test_foreman_catalog_keeps_case_modes_and_adds_daily_work_mode() -> None:
         blueprint = group["source_metadata"]["composition_blueprint"]
         assert group["method_members"] == [{"method_code": expected["method"], "role": "primary", "order": 1}]
         assert group["body_formula_candidate_codes"] == (
-            [f"FRB{i:02d}" for i in range(11, 17)] if direction in {"CT06", "CT07"} else [expected["body"]]
+            ["FRB11", "FRB13", "FRB14", "FRB15", "FRB16"] if direction in {"CT06", "CT07"} else [expected["body"]]
         )
         assert group["source_metadata"]["topic_type"] == expected["topic_type"]
         assert next(item for item in blueprint["phrase_composition"] if item["layer_code"] == "content_purpose")[
@@ -238,7 +238,7 @@ def test_auto_direction_candidates_keep_each_foreman_blueprint_isolated() -> Non
 
     assert [item["code"] for item in candidates["direction_options"]] == [f"CT{index:02d}" for index in range(1, 8)]
     assert {item["code"]: item["body_formula_codes"] for item in candidates["direction_options"]} == {
-        code: ([f"FRB{i:02d}" for i in range(11, 17)] if code in {"CT06", "CT07"} else [binding["body"]])
+        code: (["FRB11", "FRB13", "FRB14", "FRB15", "FRB16"] if code in {"CT06", "CT07"} else [binding["body"]])
         for code, binding in DIRECTION_BINDINGS.items()
     }
     assert all(item["direction_blueprint"] for item in candidates["direction_options"])

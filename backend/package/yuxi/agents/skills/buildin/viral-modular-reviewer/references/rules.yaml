@@ -1,11 +1,11 @@
 {
   "module_id": "viral-modular-reviewer",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "applies_when": {
     "creation_mode": "viral_rewrite"
   },
   "rule_ids": [
-    "viral-modular-reviewer.v1.1"
+    "viral-modular-reviewer.v1.2"
   ],
   "runtime_rules": {
     "uses_shared_rule_bundle": true,

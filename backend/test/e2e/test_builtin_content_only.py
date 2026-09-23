@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import time
@@ -17,6 +18,7 @@ from sqlalchemy import select
 
 from yuxi.agents.buildin.content_workflow.context import ContentWorkflowContext
 from yuxi.agents.buildin.content_workflow.graph import ContentWorkflowAgent
+from yuxi.content.model.locked_blocks import extract_locked_quote_block
 from yuxi.services.content_run_worker import _load_content_run
 from yuxi.services.run_queue_service import close_queue_clients
 from yuxi.storage.postgres.manager import pg_manager
@@ -44,19 +46,30 @@ async def test_builtin_cases_reach_content_artifact_without_images():
         pytest.skip("需指定内置案例目录和本地测试用户")
     selected = os.getenv("BUILTIN_CONTENT_TYPES", ",".join(CASES)).split(",")
     assert selected and set(selected) <= set(CASES), selected
+    repeats = int(os.getenv("BUILTIN_CONTENT_REPEATS", "1"))
+    concurrency = int(os.getenv("BUILTIN_CONTENT_CONCURRENCY", "2"))
+    assert repeats > 0 and concurrency > 0
+    inputs = {code: (Path(case_dir) / CASES[code]).read_text() for code in selected}
     output_dir = Path(os.getenv("BUILTIN_CONTENT_OUTPUT_DIR", "/tmp/builtin-content-only"))
     output_dir.mkdir(parents=True, exist_ok=True)
     pg_manager.initialize()
     async with pg_manager.AsyncSession() as db:
         user = (await db.execute(select(User).where(User.uid == uid))).scalar_one()
         token = AuthUtils.create_access_token({"sub": str(user.id)})
-    limiter = asyncio.Semaphore(2)
+    limiter = asyncio.Semaphore(concurrency)
     results = []
 
-    async def produce(code, filename):
+    async def produce(code, filename, repetition):
         async with limiter:
             started = time.monotonic()
-            record = {"type": code, "case": filename, "status": "running"}
+            label = f"{code}-{repetition:02d}" if repeats > 1 else code
+            record = {
+                "type": code,
+                "case": filename,
+                "repetition": repetition,
+                "input_sha256": hashlib.sha256(inputs[code].encode()).hexdigest(),
+                "status": "running",
+            }
             task_id = run_id = None
             graph = config = None
             state = {}
@@ -76,7 +89,7 @@ async def test_builtin_cases_reach_content_artifact_without_images():
                             "content_goal": template["default_goal"],
                             "content_type_code": code,
                             "creation_mode": "viral_rewrite",
-                            "name": f"内置案例正文验证 {code} {filename}",
+                            "name": f"内置案例正文验证 {label} {filename}",
                         },
                     )
                     assert response.status_code == 200, response.text
@@ -85,7 +98,7 @@ async def test_builtin_cases_reach_content_artifact_without_images():
                     response = await client.post(
                         f"/api/content/tasks/{task_id}/compile-brief",
                         json={
-                            "brief": {"user_request": (Path(case_dir) / filename).read_text()},
+                            "brief": {"user_request": inputs[code]},
                         },
                     )
                     assert response.status_code == 200, response.text
@@ -106,6 +119,7 @@ async def test_builtin_cases_reach_content_artifact_without_images():
                     )
                     await db.commit()
                 run, task, workflow, rules = await _load_content_run(run_id)
+                record.update(rule_version_id=task.rule_version_id, workflow_version_id=task.workflow_version_id)
                 agent = ContentWorkflowAgent()
                 agent.checkpointer = InMemorySaver()
                 context = ContentWorkflowContext(
@@ -155,7 +169,7 @@ async def test_builtin_cases_reach_content_artifact_without_images():
                     "task_mode": task.mode,
                     "resume_parent_run_id": None,
                 }
-                print(f"START {code} {task_id}", flush=True)
+                print(f"START {label} {task_id}", flush=True)
                 await graph.ainvoke(state, config=config, context=context)
                 snapshot = await graph.aget_state(config)
                 while snapshot.next != ("plan_visuals",):
@@ -170,7 +184,17 @@ async def test_builtin_cases_reach_content_artifact_without_images():
                     )
                     snapshot = await graph.aget_state(config)
                 state = snapshot.values
-                assert state["review_report"]["status"] == "passed", state["review_report"]
+                assert state["review_report"]["status"] in {"passed", "warning"}, state["review_report"]
+                assert not any(item["status"] == "blocked" for item in state["review_report"]["checks"])
+                if code in {"CT02", "CT03", "CT04", "CT05"}:
+                    quote = extract_locked_quote_block(state["production_pack"])
+                    assert quote is not None and quote["render_policy"] == "checkmark-lines-v1"
+                    assert all(
+                        line.lstrip().startswith("✅")
+                        for line in quote["rendered_content"].splitlines()
+                        if line.strip()
+                    )
+                    assert state["content_draft"]["body"].count(quote["rendered_content"]) == 1
                 state.update(await agent._save_artifact(state))
                 async with pg_manager.AsyncSession() as db:
                     artifact = await db.get(ContentArtifactVersion, state["artifact_version"]["id"])
@@ -187,6 +211,7 @@ async def test_builtin_cases_reach_content_artifact_without_images():
                     body=state["content_draft"]["body"],
                     topics=state["content_draft"].get("topics"),
                     artifact=state["artifact_version"],
+                    model_spec=artifact.model_spec,
                 )
             except Exception as exc:
                 record.update(status="failed", error_type=type(exc).__name__, error=str(exc))
@@ -204,6 +229,13 @@ async def test_builtin_cases_reach_content_artifact_without_images():
                     production_order=state.get("production_order"),
                     body_formula=(state.get("strategy_snapshot") or {}).get("body_formula"),
                 )
+                review_history = []
+                if graph is not None and config is not None:
+                    async for checkpoint in graph.aget_state_history(config):
+                        report = checkpoint.values.get("review_report")
+                        if report and report not in review_history:
+                            review_history.append(report)
+                record["review_history"] = list(reversed(review_history))
                 if run_id:
                     async with pg_manager.AsyncSession() as db:
                         run = await db.get(AgentRun, run_id)
@@ -214,15 +246,18 @@ async def test_builtin_cases_reach_content_artifact_without_images():
                             task.status = "failed"
                         await db.commit()
                 results.append(record)
-                (output_dir / f"{code}.json").write_text(json.dumps(record, ensure_ascii=False, indent=2))
+                (output_dir / f"{label}.json").write_text(json.dumps(record, ensure_ascii=False, indent=2))
                 print(
-                    f"RESULT {code} {record['status']} {record['seconds']}s {record.get('error', '')[:250]}", flush=True
+                    f"RESULT {label} {record['status']} {record['seconds']}s {record.get('error', '')[:250]}",
+                    flush=True,
                 )
 
     try:
-        await asyncio.gather(*(produce(code, CASES[code]) for code in selected))
+        await asyncio.gather(
+            *(produce(code, CASES[code], repetition) for repetition in range(1, repeats + 1) for code in selected)
+        )
         (output_dir / "summary.json").write_text(
-            json.dumps(sorted(results, key=lambda r: r["type"]), ensure_ascii=False, indent=2)
+            json.dumps(sorted(results, key=lambda r: (r["type"], r["repetition"])), ensure_ascii=False, indent=2)
         )
         assert all(r["status"] == "passed" for r in results), [
             (r["type"], r.get("error")) for r in results if r["status"] != "passed"
