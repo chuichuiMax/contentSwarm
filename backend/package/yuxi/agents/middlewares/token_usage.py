@@ -202,16 +202,33 @@ class TokenUsageMiddleware(AgentMiddleware[TokenUsageState]):
             return
         model_usage = snapshot.get("model_usage") or {}
         output_tokens = model_usage.get("output_tokens")
+        estimated = max(
+            int(snapshot.get("state_messages_tokens", 0))
+            - int(snapshot.get("state_messages_tokens_before_call", 0)),
+            0,
+        )
         if isinstance(output_tokens, int):
-            output_details = model_usage.get("output_token_details") or {}
-            reasoning_tokens = output_details.get("reasoning", 0) if isinstance(output_details, Mapping) else 0
+            details = model_usage.get("output_token_details") or {}
+            reasoning_tokens = 0
+            if isinstance(details, Mapping):
+                for key in ("reasoning", "reasoning_tokens"):
+                    value = details.get(key)
+                    if isinstance(value, int):
+                        reasoning_tokens = max(reasoning_tokens, value)
+            for key in ("reasoning_tokens", "reasoning"):
+                value = model_usage.get(key)
+                if isinstance(value, int):
+                    reasoning_tokens = max(reasoning_tokens, value)
             current = max(output_tokens - reasoning_tokens, 0)
+            if (
+                reasoning_tokens == 0
+                and getattr(runtime_context, "reasoning_effort", None)
+                and current > estimated
+            ):
+                # 推理模型常把思考 Token 算进 output_tokens，却不给 reasoning 明细；节点预算只约束可见输出。
+                current = estimated
         else:
-            current = max(
-                int(snapshot.get("state_messages_tokens", 0))
-                - int(snapshot.get("state_messages_tokens_before_call", 0)),
-                0,
-            )
+            current = estimated
         used = int(getattr(runtime_context, "_content_node_tokens_used", 0) or 0) + current
         setattr(runtime_context, "_content_node_tokens_used", used)
         maximum = int(configured)
