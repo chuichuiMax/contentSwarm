@@ -30,6 +30,13 @@ FORMULA_EXPECTATIONS = {
     "FRT10": (["总价", "半包/硬装", "地域", "面积"], "5.8W半包落地｜长沙装修108平三房"),
     "FRT11": (["地域", "面积/业务", "人工/辅材", "总价"], "长沙147㎡全屋装修实价单公开"),
     "FRT12": (["地域", "身份", "业务"], "坐标长沙，一个实在的装修工长自荐🙏"),
+    "FRT13": (["地域", "身份", "开工/业务"], "上海设计师🔨开工大吉🏠感谢小红书业主信任"),
+    "FRT14": (["地域", "身份", "工地巡检"], "天津装修｜工长巡检细节不能偷懒"),
+    "FRT15": (["人群/工种", "工序数字", "结果"], "油工18道完整工序｜墙面不开裂"),
+    "FRT16": (["人群/工种", "工艺", "情绪"], "好瓦工的手艺，都藏在细节里"),
+    "FRT17": (["本次施工耗时", "人群/工种", "结果", "情绪"], "历时12天瓦工师傅完美退场，交出的满分答卷"),
+    "FRT18": (["地域", "项目", "工艺"], "长沙卫生间｜贴砖对缝细节"),
+    "FRT19": (["项目", "业务", "工艺"], "卫生间泥瓦施工｜贴砖对缝细节"),
 }
 
 
@@ -50,6 +57,11 @@ FORMULA_PASSING_CASES = [
     ("FRT10", "4.5w半包长沙89㎡", {"title_price": "4.5w", "scene": "半包", "quantity": "89㎡"}),
     ("FRT11", "长沙89㎡人工4.5w", {"quantity": "89㎡", "title_price_label": "人工", "title_price": "4.5w"}),
     ("FRT12", "长沙工长半包", {"persona_fact": "装修工长，从业5年", "scene": "半包"}),
+    ("FRT13", "长沙工长水电", {"persona_fact": "装修工长，从业5年", "product": "工长、水电、泥瓦"}),
+    ("FRT14", "长沙工长巡检", {"persona_fact": "装修工长，从业五年", "inspection": "工地巡检"}),
+    ("FRT15", "油工18道工序验收通过", {"craft_role": ["油工"], "craft_count": "18道工序", "result": "验收通过"}),
+    ("FRT18", "长沙卫生间贴砖对缝", {"project": "卫生间", "process": ["贴砖对缝"]}),
+    ("FRT19", "卫生间泥瓦贴砖对缝", {"project": "卫生间", "product": "泥瓦", "process": ["贴砖对缝"]}),
 ]
 
 
@@ -94,7 +106,7 @@ def test_all_foreman_title_formulas_define_reviewed_slots_and_reference_examples
         )
         for slot in slots:
             assert slot["variable_codes"] or slot["lexicon_codes"]
-            if "/" in slot["label"]:
+            if "/" in slot["label"] and slot["code"] != "craft_role":
                 assert len(slot["variable_codes"]) + len(slot["lexicon_codes"]) >= 2
 
 
@@ -358,3 +370,30 @@ def test_intro_identity_uses_author_facts_instead_of_audience(fact, expected):
     assert "自装党" not in identity
     if expected == "工长":
         assert "30岁" not in identity and "5年" not in identity
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("code", "title", "values"),
+    [
+        ("FRT16", "瓦工贴砖对缝真香", {"craft_role": ["瓦工"], "process": ["贴砖对缝"]}),
+        ("FRT17", "12天瓦工验收通过真香", {"craft_duration": "历时12天", "craft_role": ["瓦工"], "result": "验收通过"}),
+    ],
+)
+async def test_craft_emotion_slots_require_selected_expression(monkeypatch, code, title, values):
+    monkeypatch.setattr(
+        "yuxi.content.control.workflow.deterministic_node.validate_content",
+        lambda **kwargs: {"status": "passed", "checks": []},
+    )
+    current = _validation_state(
+        formula=_formula_by_code(code),
+        title=title,
+        variables=values,
+        formula_lexicon_bundle={"selection": {"title": {"title.oral_emotion": ["真香"]}}},
+    )
+    handler = V3DeterministicNodeHandler()
+    report = await handler.execute(db=object(), node={"id": "deterministic_validate"}, state=current, node_run_id="n")
+    assert report["validation_report"] == {"status": "passed", "checks": []}
+    current["selected_title"]["text"] = title.replace("真香", "")
+    blocked = await handler.execute(db=object(), node={"id": "deterministic_validate"}, state=current, node_run_id="n")
+    assert blocked["validation_report"]["status"] == "blocked"

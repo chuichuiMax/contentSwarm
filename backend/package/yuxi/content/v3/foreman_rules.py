@@ -10,9 +10,9 @@ from typing import Any
 
 CATALOG_PATH = Path(__file__).with_name("fixtures") / "foreman_rule_catalog_v1.json"
 DIRECTION_MATRIX_PATH = Path(__file__).with_name("fixtures") / "foreman_direction_matrix_v2.json"
-METHOD_CODES = {f"FRM{index:02d}" for index in range(1, 11)}
-TITLE_CODES = {f"FRT{index:02d}" for index in range(1, 13)}
-BODY_CODES = {f"FRB{index:02d}" for index in range(1, 11)}
+METHOD_CODES = {f"FRM{index:02d}" for index in range(1, 13)}
+TITLE_CODES = {f"FRT{index:02d}" for index in range(1, 20)}
+BODY_CODES = {f"FRB{index:02d}" for index in range(1, 17)}
 GROUP_CODES = {f"FRG{index:02d}" for index in range(1, 8)}
 DIRECTION_BINDINGS = {
     "CT01": {"method": "FRM05", "body": "FRB05", "topic_type": "自我介绍", "content_group": "自我介绍"},
@@ -20,8 +20,8 @@ DIRECTION_BINDINGS = {
     "CT03": {"method": "FRM07", "body": "FRB07", "topic_type": "价格营销", "content_group": "施工报价"},
     "CT04": {"method": "FRM08", "body": "FRB08", "topic_type": "价格营销", "content_group": "施工报价"},
     "CT05": {"method": "FRM09", "body": "FRB09", "topic_type": "价格营销", "content_group": "施工报价"},
-    "CT06": {"method": "FRM04", "body": "FRB04", "topic_type": "工艺展示", "content_group": "工艺展示"},
-    "CT07": {"method": "FRM10", "body": "FRB10", "topic_type": "日常工作", "content_group": "日常工作"},
+    "CT06": {"method": "FRM11", "body": "FRB11", "topic_type": "工艺展示", "content_group": "工艺展示"},
+    "CT07": {"method": "FRM12", "body": "FRB11", "topic_type": "日常工作", "content_group": "日常工作"},
 }
 
 
@@ -45,11 +45,11 @@ def load_foreman_rule_catalog(
     payload["source"] = {**payload["source"], **direction_matrix["source"]}
     payload["combination_rules"] = direction_matrix.get("groups") or []
     if {item.get("code") for item in payload.get("methods") or []} != METHOD_CODES:
-        raise ForemanRuleValidationError("装修工长正文模式必须完整覆盖 FRM01～FRM10")
+        raise ForemanRuleValidationError("装修工长正文模式必须完整覆盖 FRM01～FRM12")
     if {item.get("code") for item in payload.get("title_formulas") or []} != TITLE_CODES:
-        raise ForemanRuleValidationError("装修工长标题公式必须完整覆盖 FRT01～FRT12")
+        raise ForemanRuleValidationError("装修工长标题公式必须完整覆盖 FRT01～FRT19")
     if {item.get("code") for item in payload.get("content_formulas") or []} != BODY_CODES:
-        raise ForemanRuleValidationError("装修工长正文公式必须完整覆盖 FRB01～FRB10")
+        raise ForemanRuleValidationError("装修工长正文公式必须完整覆盖 FRB01～FRB16")
     groups = payload.get("combination_rules") or []
     if {item.get("id") for item in groups} != GROUP_CODES:
         raise ForemanRuleValidationError("装修工长组合规则必须完整覆盖 FRG01～FRG07")
@@ -86,7 +86,12 @@ def load_foreman_rule_catalog(
             raise ForemanRuleValidationError(f"组合 {group.get('id')} 的正文模式引用无效")
         if not set(group.get("title_formula_candidate_codes") or []).issubset(TITLE_CODES):
             raise ForemanRuleValidationError(f"组合 {group.get('id')} 的标题公式引用无效")
-        if set(group.get("body_formula_candidate_codes") or []) != {"FRB" + methods[0][-2:]}:
+        expected_bodies = (
+            [f"FRB{index:02d}" for index in range(11, 17)]
+            if group["content_type_codes"][0] in {"CT06", "CT07"}
+            else ["FRB" + methods[0][-2:]]
+        )
+        if group.get("body_formula_candidate_codes") != expected_bodies:
             raise ForemanRuleValidationError(f"组合 {group.get('id')} 的正文公式引用无效")
         if not group.get("content_type_codes") or group.get("industry_scope") != ["decoration"]:
             raise ForemanRuleValidationError(f"组合 {group.get('id')} 的业务方向或行业范围无效")
@@ -96,7 +101,7 @@ def load_foreman_rule_catalog(
         blueprint = metadata.get("composition_blueprint") or {}
         if (
             methods != [expected["method"]]
-            or group["body_formula_candidate_codes"] != [expected["body"]]
+            or group["body_formula_candidate_codes"] != expected_bodies
             or metadata.get("topic_type") != expected["topic_type"]
             or blueprint.get("content_type") != metadata.get("content_direction_name")
         ):
@@ -154,9 +159,10 @@ def import_foreman_rules(bundle: dict[str, Any]) -> dict[str, Any]:
     foreman_groups = deepcopy(catalog["combination_rules"])
     for group in foreman_groups:
         group["source_metadata"] = {**deepcopy(catalog["source"]), **group.get("source_metadata", {})}
-        body_code = group["body_formula_candidate_codes"][0]
         group.setdefault("hard_conditions", {})["allowed_formula_pairs"] = [
-            [title_code, body_code] for title_code in group["title_formula_candidate_codes"]
+            [title_code, body_code]
+            for title_code in group["title_formula_candidate_codes"]
+            for body_code in group["body_formula_candidate_codes"]
         ]
     result["combination_rules"] = [
         item for item in result.get("combination_rules") or [] if item.get("industry_scope") != ["decoration"]
@@ -207,6 +213,7 @@ def import_foreman_rules(bundle: dict[str, Any]) -> dict[str, Any]:
             variables[variables.index(existing_by_code[code])] = payload
         else:
             variables.append(payload)
+    _add_craft_daily_variables(result)
     return result
 
 
@@ -242,4 +249,95 @@ __all__ = [
     "import_foreman_rules",
     "load_foreman_rule_catalog",
     "upgrade_intro_daily_rules",
+    "upgrade_craft_daily_rules",
 ]
+
+
+def _add_craft_daily_variables(bundle: dict[str, Any]) -> None:
+    definitions = {
+        "craft_role": ("本次施工工种或目标人群", "list"),
+        "craft_count": ("本次工序数量（含单位）", "string"),
+        "craft_duration": ("本次施工耗时（含单位）", "string"),
+        "project": ("施工项目", "string"),
+        "inspection": ("已确认巡检任务", "string"),
+        "kickoff": ("已确认开工事项", "string"),
+        "case_background": ("本次案例背景", "string"),
+        "owner_need": ("本次业主需求", "string"),
+        "solution": ("本次解决方案", "string"),
+        "cost_explanation": ("本次费用解释", "string"),
+    }
+    variables = bundle.setdefault("variables", [])
+    existing = {item["code"] for item in variables}
+    for code, (name, value_type) in definitions.items():
+        if code in existing:
+            continue
+        variables.append(
+            {
+                "code": code,
+                "name": name,
+                "value_type": value_type,
+                "allowed_usages": ["title", "body"],
+                "unit_schema": {},
+                "validation_schema": (
+                    {"pattern": r".*(?:[1-9]\d*|[一二两三四五六七八九十百]+)(?:道|步|项)(?:工序|流程|完整工序)?.*"}
+                    if code == "craft_count"
+                    else {"pattern": r".*(?:[1-9]\d*(?:\.\d+)?|[一二两三四五六七八九十百]+)(?:小时|天|周|个月|月).*"}
+                    if code == "craft_duration"
+                    else {}
+                ),
+                "evidence_policy": {
+                    "required": True,
+                    "review_policy": "user_confirmed",
+                    "allowed_sources": ["manual_input", "business_record", "human_confirmation"],
+                },
+                "sensitivity": "high_risk" if code in {"craft_count", "craft_duration"} else "normal",
+                "enabled": True,
+                "sort_order": len(variables),
+            }
+        )
+
+
+def upgrade_craft_daily_rules(bundle: dict[str, Any]) -> dict[str, Any]:
+    """仅新增 M/N 公式并更新 CT06/CT07，保留其他运营规则和旧公式语义。"""
+    result = deepcopy(bundle)
+    catalog = load_foreman_rule_catalog()
+    for section, codes in (
+        ("methods", {"FRM11", "FRM12"}),
+        ("title_formulas", {f"FRT{i:02d}" for i in range(13, 20)}),
+        ("content_formulas", {f"FRB{i:02d}" for i in range(11, 17)}),
+    ):
+        existing = {item["code"]: item for item in result[section]}
+        for item in catalog[section]:
+            if item["code"] not in codes:
+                continue
+            updated = {**existing.get(item["code"], {}), **deepcopy(item)}
+            if item["code"] in existing:
+                result[section][result[section].index(existing[item["code"]])] = updated
+            else:
+                result[section].append(updated)
+    for group in result["combination_rules"]:
+        if group.get("content_type_codes") not in (["CT06"], ["CT07"]):
+            continue
+        canonical = next(
+            x for x in catalog["combination_rules"] if x["content_type_codes"] == group["content_type_codes"]
+        )
+        for key in (
+            "method_members",
+            "title_formula_candidate_codes",
+            "body_formula_candidate_codes",
+            "required_variable_codes",
+        ):
+            group[key] = deepcopy(canonical[key])
+        group.setdefault("source_metadata", {}).update(
+            {
+                "formula_selection_policy": "evidence_composition_v1",
+                "craft_daily_source": deepcopy(catalog["source"]),
+            }
+        )
+        group.setdefault("hard_conditions", {})["allowed_formula_pairs"] = [
+            [title, body]
+            for title in group["title_formula_candidate_codes"]
+            for body in group["body_formula_candidate_codes"]
+        ]
+    _add_craft_daily_variables(result)
+    return result

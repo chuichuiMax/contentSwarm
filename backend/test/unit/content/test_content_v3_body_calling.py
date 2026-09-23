@@ -32,7 +32,7 @@ def _context(formula_code: str) -> ContractDomainContext:
 def test_body_calling_catalog_covers_all_formulas_and_five_source_columns() -> None:
     assert set(DECORATION_BODY_CALLING) == {
         *{f"C{index:02d}" for index in range(1, 5)},
-        *{f"FRB{index:02d}" for index in range(1, 11)},
+        *{f"FRB{index:02d}" for index in range(1, 17)},
     }
     for calling in DECORATION_BODY_CALLING.values():
         assert calling["formula_name"]
@@ -86,7 +86,7 @@ def test_formula_without_variants_rejects_extra_variant() -> None:
 def test_formula_lexicon_requirements_cover_all_title_formulas_and_locked_body_formula() -> None:
     assert set(TITLE_FORMULA_LEXICON_CODES) == {
         *{f"T{index:02d}" for index in range(1, 8)},
-        *{f"FRT{index:02d}" for index in range(1, 13)},
+        *{f"FRT{index:02d}" for index in range(1, 20)},
     }
     requirements = get_formula_lexicon_requirements("T01", "C02")
     assert [item["filename"] for item in requirements["title"]] == [

@@ -500,12 +500,12 @@ class GenerateContentInputV1(StrictContract):
             and title_formula_code
             in {
                 *{f"T{index:02d}" for index in range(1, 8)},
-                *{f"FRT{index:02d}" for index in range(1, 13)},
+                *{f"FRT{index:02d}" for index in range(1, 20)},
             }
             and body_formula_code
             in {
                 *{f"C{index:02d}" for index in range(1, 5)},
-                *{f"FRB{index:02d}" for index in range(1, 11)},
+                *{f"FRB{index:02d}" for index in range(1, 17)},
             }
         ):
             if bundle.get("required") is not True:

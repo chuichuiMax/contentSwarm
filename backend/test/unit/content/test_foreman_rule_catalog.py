@@ -74,7 +74,9 @@ def test_foreman_catalog_keeps_case_modes_and_adds_daily_work_mode() -> None:
         group = groups[direction]
         blueprint = group["source_metadata"]["composition_blueprint"]
         assert group["method_members"] == [{"method_code": expected["method"], "role": "primary", "order": 1}]
-        assert group["body_formula_candidate_codes"] == [expected["body"]]
+        assert group["body_formula_candidate_codes"] == (
+            [f"FRB{i:02d}" for i in range(11, 17)] if direction in {"CT06", "CT07"} else [expected["body"]]
+        )
         assert group["source_metadata"]["topic_type"] == expected["topic_type"]
         assert next(item for item in blueprint["phrase_composition"] if item["layer_code"] == "content_purpose")[
             "allowed_groups"
@@ -236,7 +238,8 @@ def test_auto_direction_candidates_keep_each_foreman_blueprint_isolated() -> Non
 
     assert [item["code"] for item in candidates["direction_options"]] == [f"CT{index:02d}" for index in range(1, 8)]
     assert {item["code"]: item["body_formula_codes"] for item in candidates["direction_options"]} == {
-        code: [binding["body"]] for code, binding in DIRECTION_BINDINGS.items()
+        code: ([f"FRB{i:02d}" for i in range(11, 17)] if code in {"CT06", "CT07"} else [binding["body"]])
+        for code, binding in DIRECTION_BINDINGS.items()
     }
     assert all(item["direction_blueprint"] for item in candidates["direction_options"])
 
@@ -277,6 +280,12 @@ def test_daily_work_requires_process_without_case_pain_or_completed_result():
     catalog = build_strategy_candidates(
         bundle, industry_slug="decoration", direction_code="CT07", rule_version_id="rules-test"
     )
+    daily = next(x for x in catalog["source_rules"] if x["content_type_codes"] == ["CT07"])
+    daily["method_members"] = [{"method_code": "FRM10", "role": "primary", "order": 1}]
+    daily["title_formula_candidate_codes"] = ["FRT12"]
+    daily["body_formula_candidate_codes"] = ["FRB10"]
+    catalog["title_formulas"] = bundle["title_formulas"]
+    catalog["content_formulas"] = bundle["content_formulas"]
     fact_index = build_fact_index(
         {
             "form_values": {
@@ -327,6 +336,7 @@ def test_intro_daily_upgrade_preserves_cases_quotes_and_custom_rules():
     title["source_content"]["slot_schema"][1]["lexicon_codes"] = ["title.audience"]
     title["compatible_methods"].remove("FRM10")
     daily = next(item for item in before["combination_rules"] if item["content_type_codes"] == ["CT07"])
+    daily["title_formula_candidate_codes"] = ["FRT12"]
     daily["method_members"][0]["method_code"] = "FRM02"
     daily["body_formula_candidate_codes"] = ["FRB02"]
     daily["hard_conditions"]["allowed_formula_pairs"] = [["FRT12", "FRB02"]]

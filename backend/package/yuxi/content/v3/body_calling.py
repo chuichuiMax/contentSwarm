@@ -333,6 +333,16 @@ DECORATION_BODY_CALLING.update(
 )
 
 
+# 新正文组合的事实模块由已冻结规则提供；沿用人设表达与轻咨询词库。
+for _index in range(11, 17):
+    DECORATION_BODY_CALLING[f"FRB{_index:02d}"] = _foreman_calling(
+        "工艺/日常事实组合",
+        ["按已冻结正文组合的事实模块展开"],
+        ["persona.core_advantage", "ending.case_cta"],
+        variation_rule="按冻结的正文模块顺序表达；CTA 融入末段。只写本次事实，不强制痛点、价格、标准或完工结果。",
+    )
+
+
 def get_decoration_body_calling(formula_code: str) -> dict[str, Any]:
     """返回可冻结进 StrategySnapshot 的正文调用规则。"""
 
@@ -340,4 +350,7 @@ def get_decoration_body_calling(formula_code: str) -> dict[str, Any]:
 
 
 def get_decoration_body_calling_source(formula_code: str) -> dict[str, Any]:
-    return deepcopy(FOREMAN_SOURCE_METADATA if formula_code.startswith("FRB") else SOURCE_METADATA)
+    source = deepcopy(FOREMAN_SOURCE_METADATA if formula_code.startswith("FRB") else SOURCE_METADATA)
+    if formula_code in {f"FRB{index:02d}" for index in range(11, 17)}:
+        source.update(captured_at="2026-09-23", section="正文模式 J/K/L/M、内容组合公式")
+    return source

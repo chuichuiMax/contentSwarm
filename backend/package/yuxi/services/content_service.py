@@ -317,6 +317,10 @@ def validate_rule_bundle_for_publish(bundle: dict[str, Any]) -> dict[str, list[d
             and item.get("enabled", True)
             and (not item.get("industry_scope") or "decoration" in item["industry_scope"])
             and len(item["body_formula_candidate_codes"]) != 1
+            and not (
+                item.get("content_type_codes") in (["CT06"], ["CT07"])
+                and (item.get("source_metadata") or {}).get("formula_selection_policy") == "evidence_composition_v1"
+            )
         ):
             add_error(
                 "DETERMINISTIC_BODY_FORMULA_REQUIRED",
@@ -521,8 +525,8 @@ def _parse_content_studio_quote_case(
 
 
 def _parse_content_studio_persona_case(user_request: str, *, content_type_code: str | None) -> dict[str, Any]:
-    """保留自我介绍、日常记录结构化原文中的作者事实，不推断用户痛点或工作成果。"""
-    if content_type_code not in {"CT01", "CT07"}:
+    """保留自我介绍、工艺展示、日常记录结构化原文中的作者事实，不推断用户痛点或工作成果。"""
+    if content_type_code not in {"CT01", "CT06", "CT07"}:
         return {}
     try:
         payload = json.loads(user_request)
@@ -531,7 +535,13 @@ def _parse_content_studio_persona_case(user_request: str, *, content_type_code: 
     if not isinstance(payload, dict) or not isinstance(payload.get("persona"), dict):
         return {}
     requirement = payload.get("requirementType")
-    if not isinstance(requirement, dict) or requirement.get("typeName") not in {"自我介绍", "日常", "日常工作"}:
+    if not isinstance(requirement, dict) or requirement.get("typeName") not in {
+        "自我介绍",
+        "日常",
+        "日常工作",
+        "工艺展示",
+        "施工工艺",
+    }:
         return {}
 
     from yuxi.services.dangjia_service import DangjiaPersona, build_persona_description
@@ -551,8 +561,24 @@ def _parse_content_studio_persona_case(user_request: str, *, content_type_code: 
         "project_site": requirement.get("mySite"),
         "content_tags": tags,
     }
-    if content_type_code == "CT07":
-        values["process"] = [tag.strip() for tag in tags if tag.strip()]
+    if content_type_code in {"CT06", "CT07"}:
+        process_tags = [
+            tag.strip()
+            for tag in tags
+            if tag.strip() and tag.strip() not in {"工艺展示", "施工工艺", "日常", "日常工作"}
+        ]
+        values["process"] = process_tags
+        values["case_background"] = requirement.get("mySite")
+        values["project"] = "、".join(process_tags)
+        values["craft_role"] = [
+            skill.strip() for skill in persona.skills if skill.strip() not in {"工长", "设计师", "项目经理"}
+        ]
+        inspections = [tag for tag in process_tags if "巡检" in tag or "巡查" in tag]
+        if inspections:
+            values["inspection"] = "、".join(inspections)
+        kickoffs = [tag for tag in process_tags if "开工" in tag]
+        if kickoffs:
+            values["kickoff"] = "、".join(kickoffs)
     return {key: value for key, value in values.items() if value not in (None, "", [], {})}
 
 

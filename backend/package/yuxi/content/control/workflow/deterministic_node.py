@@ -238,6 +238,10 @@ def _required_title_fact_options(
                 if district_match:
                     options.append(district_match.group(1))
         elif code == "product":
+            if formula.get("code") in {"FRT13", "FRT19"}:
+                options.extend(
+                    part.strip() for value in values for part in re.split(r"[、，,；;]", value) if part.strip()
+                )
             for value in values:
                 options.append(value)
                 normalized = value
@@ -253,6 +257,18 @@ def _required_title_fact_options(
                             shortened = shortened[: -len(suffix)]
                     if shortened:
                         options.append(shortened)
+        elif code in {"inspection", "kickoff"}:
+            options.extend(values)
+            pattern = r"巡检|巡查" if code == "inspection" else r"开工"
+            options.extend(term for value in values for term in re.findall(pattern, value))
+        elif code in {"craft_count", "craft_duration"}:
+            options.extend(values)
+            unit = r"(?:道|步|项|个)" if code == "craft_count" else r"(?:小时|天|周|个月|月)"
+            options.extend(
+                term
+                for value in values
+                for term in re.findall(r"(?:\d+(?:\.\d+)?|[一二两三四五六七八九十百]+)" + unit, value)
+            )
         elif code == "title_price":
             options.extend(values)
         elif code in {"quantity", "price"}:
@@ -267,7 +283,7 @@ def _required_title_fact_options(
             )
             if any("工长" in value for value in values):
                 options.append("工长")
-            if not options or formula.get("code") != "FRT12":
+            if not options or formula.get("code") not in {"FRT12", "FRT13", "FRT14"}:
                 options.extend(
                     fact
                     for value in values

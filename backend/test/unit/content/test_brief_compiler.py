@@ -324,6 +324,7 @@ def test_empty_single_input_only_requests_visible_content_requirement(payload):
     [
         ("CT01", "自我介绍", ["自我推荐"]),
         ("CT07", "日常", ["拆除", "工地巡检"]),
+        ("CT06", "自我介绍", ["工艺展示", "拆除"]),
     ],
 )
 def test_structured_persona_case_preserves_identity_without_inventing_pain(content_type, type_name, tags):
@@ -353,7 +354,11 @@ def test_structured_persona_case_preserves_identity_without_inventing_pain(conte
     assert values["location"] == "长沙市"
     assert values["advantages"] == ["自有工人无转包"]
     assert "pain" not in values and "result" not in values
-    if content_type == "CT07":
-        assert values["process"] == ["拆除", "工地巡检"]
+    if content_type in {"CT06", "CT07"}:
+        assert values["process"] == [tag for tag in tags if tag != "工艺展示"]
+        assert values["craft_role"] == ["水电", "泥瓦"]
+        assert values["case_background"] == "长沙金茂府"
+        assert "craft_count" not in values and "craft_duration" not in values
+        assert ("inspection" in values) is (content_type == "CT07")
     else:
         assert "process" not in values

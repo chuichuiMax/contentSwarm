@@ -207,6 +207,11 @@ def craft_catalog():
     from yuxi.content.v3.foreman_rules import load_foreman_rule_catalog
 
     rules = load_foreman_rule_catalog()
+    craft = next(g for g in rules["combination_rules"] if g["content_type_codes"] == ["CT06"])
+    craft["method_members"] = [{"method_code": "FRM04", "role": "primary", "order": 1}]
+    craft["title_formula_candidate_codes"] = ["FRT05"]
+    craft["body_formula_candidate_codes"] = ["FRB04"]
+    craft["source_metadata"].pop("formula_selection_policy", None)
     return {
         **catalog(),
         "industry_slug": "decoration",

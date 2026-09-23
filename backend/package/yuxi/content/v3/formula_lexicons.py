@@ -28,6 +28,13 @@ TITLE_FORMULA_LEXICON_CODES = {
     "FRT10": ("title.house_type", "title.positioning"),
     "FRT11": ("title.positioning", "title.instruction_value"),
     "FRT12": ("title.positioning",),
+    "FRT13": ("title.positioning",),
+    "FRT14": ("title.positioning",),
+    "FRT15": ("title.positive_result",),
+    "FRT16": ("title.oral_emotion",),
+    "FRT17": ("title.oral_emotion",),
+    "FRT18": ("title.positioning",),
+    "FRT19": ("title.positioning",),
 }
 
 

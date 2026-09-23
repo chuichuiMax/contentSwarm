@@ -240,6 +240,7 @@ class AgentNodeHandler:
 
         if node["id"] == "extract_creation_facts" and not (
             (state.get("creation_plan_gap_analysis") or {}).get("missing_variable_codes")
+            or (state.get("creation_plan_gap_analysis") or {}).get("candidate_variable_codes")
         ):
             return {"extracted_creation_facts": {"facts": [], "unresolved_variable_codes": []}}
 

@@ -201,6 +201,8 @@ async def test_builtin_cases_reach_content_artifact_without_images():
                     validation=state.get("validation_report"),
                     review=state.get("review_report"),
                     run_id=run_id,
+                    production_order=state.get("production_order"),
+                    body_formula=(state.get("strategy_snapshot") or {}).get("body_formula"),
                 )
                 if run_id:
                     async with pg_manager.AsyncSession() as db:

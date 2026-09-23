@@ -32,8 +32,8 @@ EXPECTED_FORMULAS = {
     "CT03": ("FRT01", "FRB07"),
     "CT04": ("FRT01", "FRB08"),
     "CT05": ("FRT01", "FRB09"),
-    "CT06": ("FRT05", "FRB04"),
-    "CT07": ("FRT12", "FRB10"),
+    "CT06": ("FRT16", None),
+    "CT07": ("FRT14", None),
 }
 
 QUOTE_CASES = {
@@ -122,6 +122,7 @@ CASE_VALUES = {
         "scene": "长沙同城装修小户型墙面施工现场",
     },
     "CT06": {
+        "craft_role": ["防水师傅"],
         "product": "卫生间防水施工",
         "price": "3200元",
         "quote_type": "项目报价",
@@ -129,6 +130,7 @@ CASE_VALUES = {
         "result": "闭水试验和防水节点验收已经完成",
     },
     "CT07": {
+        "inspection": "巡检",
         "product": "巡检",
         "price": "6800元",
         "quote_type": "项目报价",
@@ -316,6 +318,9 @@ async def test_standardized_factory_content_canary(content_type_code: str, canar
             assert response.status_code == 200, response.text
             preview = response.json()
             expected_title, expected_body = EXPECTED_FORMULAS[content_type_code]
+            if expected_body is None:
+                expected_body = preview["plan"]["body_formula"]["code"]
+                assert expected_body in {"FRB14", "FRB16"}
             assert preview["can_generate"] is True, preview
             assert preview["gaps"]["missing_variable_codes"] == []
             assert preview["plan"]["content_type_code"] == content_type_code
