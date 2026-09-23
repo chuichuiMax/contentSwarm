@@ -183,7 +183,7 @@ func templatesRenderHandler(tm *templates.Service, up *uploads.Service) http.Han
 }
 
 func renderTemplatePreview(file map[string]any, fetch assetContent) ([]byte, error) {
-	return render.ToPNG(render.Design(embedDesignFileAssets(fetch, file)), 0, 0.25)
+	return render.ToPNG(render.Design(embedDesignFileAssets(fetch, file, 0)), 0, 0.25)
 }
 
 func templatesDeleteHandler(tm *templates.Service) http.HandlerFunc {

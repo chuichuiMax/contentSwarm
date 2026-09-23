@@ -113,6 +113,10 @@ def load_foreman_rule_catalog(
             raise ForemanRuleValidationError(f"组合 {group.get('id')} 的内容词组不符合表格")
         if direction == "CT02" and "evidence" in layer_codes:
             raise ForemanRuleValidationError("项目单价层级组合不得加入证据层")
+        if direction == "CT01" and group["title_formula_candidate_codes"] != ["FRT12"]:
+            raise ForemanRuleValidationError("自我介绍只能使用 FRT12 地域+身份+业务标题公式")
+        if direction not in {"CT03", "CT04", "CT05"} and "FRT06" in group["title_formula_candidate_codes"]:
+            raise ForemanRuleValidationError("FRT06 含价格槽位，只能用于报价类型")
         if direction != "CT02" and layer_codes != [
             "persona",
             "business",

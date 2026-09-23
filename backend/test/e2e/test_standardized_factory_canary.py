@@ -27,7 +27,7 @@ from yuxi.utils.auth_utils import AuthUtils
 
 
 EXPECTED_FORMULAS = {
-    "CT01": ("FRT06", "FRB05"),
+    "CT01": ("FRT12", "FRB05"),
     "CT02": ("FRT07", "FRB06"),
     "CT03": ("FRT01", "FRB07"),
     "CT04": ("FRT01", "FRB08"),

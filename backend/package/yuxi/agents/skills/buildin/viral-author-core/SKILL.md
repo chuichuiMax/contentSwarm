@@ -14,6 +14,7 @@ description: 编排装修行业小红书爆款仿写，在一次调用中合并�
 - 策略、公式、参考、词库、表达资料读取包内对应字段。
 - 事实和报价只读取 `materials` 中已审核物料；不得从旧 `content_brief` 或 `evidence_bundle` 补资料。
 - 渠道、人设和规则读取 `production_pack.channel_profile`、`production_pack.persona_profile`、`production_pack.content_rule_bundle`。
+- `production_pack.generation_slots` 是服务端按公式、物料和审核代码编译的执行清单；按槽位的目标、来源、指令和验收完成写作，不能遗漏“优势对应顾虑”或 Emoji 语义位置。
 - `material_quality_report.status` 不是 `passed`、必需绑定缺失或 Hash 不一致时不得创作。
 - `formula_lexicon_bundle.selection` 是冻结的唯一词库选择；逐字使用词条，不得改选。系统回填 `lexicon_usage`，模型只写文字。
 - `repair_constraints` 存在时优先级最高。`persona_edges_only` 必须原样复制 `immutable_title`、`immutable_outline`、`immutable_topics`，正文只重写首段和末段；中间按 `immutable_middle_paragraphs` 逐项逐字复制并保持顺序，每项之间只用一个空行连接。`emoji_only` 只能调整 `original_body` 中的 Emoji 及相邻空格，其他字符与顺序不得变化。
@@ -34,4 +35,5 @@ description: 编排装修行业小红书爆款仿写，在一次调用中合并�
 - 数字、合计、城市、业务、报价口径与 Evidence 一致。
 - 没有输入外事实、无据承诺或参考原文事实。
 - 标题与正文为同一主题；首尾人设、Emoji、CTA、格式和话题符合已激活模块。
+- 对照 `generation_slots` 复核所有必需槽位，缺少来源事实时省略或阻断，不得自行补写。
 - 严格调用结果工具，字段及 Evidence ID 使用输入原值，不输出解释。

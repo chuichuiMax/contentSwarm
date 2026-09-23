@@ -122,12 +122,15 @@ func embedNodeAssets(fetch assetContent, node map[string]any) map[string]any {
 	return n2
 }
 
-// embedDesignFileAssets returns a deep copy of an opaque design file with image
-// node + image/pattern fill bytes inlined across every page, so the raster
-// exporter renders images the file references only by asset id. Asset data URLs
-// stored directly in the design take precedence over workspace upload lookup.
-// Never mutates the input; returns it unchanged when neither source is available.
-func embedDesignFileAssets(fetch assetContent, file map[string]any) map[string]any {
+// embedDesignFileAssets copies the requested page with image bytes inlined.
+// Other pages remain shared and untouched: embedding a whole template library
+// for a single-page export duplicates its backgrounds in memory hundreds of times.
+// Inline design assets take precedence over workspace uploads.
+func embedDesignFileAssets(fetch assetContent, file map[string]any, pageIndex int) map[string]any {
+	pages, ok := file["pages"].([]any)
+	if !ok || pageIndex < 0 || pageIndex >= len(pages) {
+		return file
+	}
 	type inlineAsset struct {
 		data []byte
 		mime string
@@ -169,12 +172,12 @@ func embedDesignFileAssets(fetch assetContent, file map[string]any) map[string]a
 	for k, v := range file {
 		f2[k] = v
 	}
-	pages, ok := file["pages"].([]any)
-	if !ok {
-		return f2
-	}
 	np := make([]any, len(pages))
 	for i, pv := range pages {
+		if i != pageIndex {
+			np[i] = pv
+			continue
+		}
 		pg, ok := pv.(map[string]any)
 		if !ok {
 			np[i] = pv

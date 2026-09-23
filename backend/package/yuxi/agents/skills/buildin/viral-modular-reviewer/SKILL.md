@@ -9,6 +9,8 @@ description: 按照创作时冻结的同一模块规则快照审核爆款仿写�
 
 提交结果前，读取 `runtime_config_snapshot.required_review_codes`。`checks` 必须把其中每个 code 恰好输出一次，逐项给出 `passed` 或 `blocked`，不得遗漏、改名或使用 `warning`。
 
+存在 `generation_slots` 时，按槽位的目标位置、来源变量和验收条件复核正文；阻断项应引用对应槽位的 `review_codes`，不能只因物料存在就判定正文通过。
+
 存在 `locked_content_context` 时，先服从其中的程序组装结论：`composition_status=composed` 且 `validation_status=passed` 表示 `paragraph_id=locked_quote_block` 已由服务端从已确认物料逐字插入，并已通过 Hash、重复、长度和合规校验。该段不是模型创作内容，其正常出现不得判为模型重复报价、改写报价、擅自计算或结构冲突；只审核锁定块之外的创作文字是否再次复述金额、扩大范围或把标准单价写成无条件成交价。`title_price`、`title_price_label` 和 `quote_type` 是同一生产包的已确认字段，不得重新计算或推翻它们。
 
 逐项检查：

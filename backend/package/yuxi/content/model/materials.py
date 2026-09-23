@@ -312,6 +312,19 @@ class MaterialQualityReportV1(MaterialContract):
     report_hash: str = Field(min_length=64, max_length=64)
 
 
+class GenerationSlotV1(MaterialContract):
+    """把冻结物料编译成生成阶段可逐项执行的写作槽位。"""
+
+    slot_id: str = Field(min_length=1, max_length=120)
+    target: Literal["title", "opening", "body", "closing", "topics", "global"]
+    required: bool = True
+    source_variable_codes: tuple[str, ...] = ()
+    evidence_ids: tuple[str, ...] = ()
+    review_codes: tuple[str, ...] = ()
+    instruction: str = Field(min_length=1, max_length=1000)
+    acceptance: tuple[str, ...] = ()
+
+
 class FrozenProductionPackV1(MaterialContract):
     schema_version: Literal[1] = 1
     id: str = Field(min_length=1, max_length=64)
@@ -329,6 +342,7 @@ class FrozenProductionPackV1(MaterialContract):
     reference_snapshot: dict[str, Any] = Field(min_length=1)
     expression_guidance: dict[str, Any] | None = None
     expression_policy: dict[str, Any] | None = None
+    generation_slots: tuple[GenerationSlotV1, ...] = ()
     writing_request: str | None = Field(default=None, max_length=20_000)
     channel_profile: dict[str, Any]
     persona_profile: dict[str, Any]
@@ -361,6 +375,9 @@ class FrozenProductionPackV1(MaterialContract):
         # 校验原有 hash；新冻结的生产包始终写入非空策略并纳入 hash。
         if payload.get("expression_policy") is None:
             payload.pop("expression_policy", None)
+        # 槽位契约从当前版本开始写入；历史生产包没有该字段时继续按旧 Hash 验证。
+        if not self.generation_slots:
+            payload.pop("generation_slots", None)
         if _canonical_hash(payload) != self.production_pack_hash:
             raise ValueError("冻结生产包 Hash 不一致")
         return self
@@ -1606,6 +1623,292 @@ def build_expression_policy(
     return {**payload, "policy_hash": _canonical_hash(payload)}
 
 
+def compile_generation_slots(
+    *,
+    material_manifest: MaterialRequirementManifestV1,
+    materials: list[MaterialEnvelopeV2] | tuple[MaterialEnvelopeV2, ...],
+    strategy_snapshot: dict[str, Any],
+    expression_policy: dict[str, Any],
+    channel_profile: dict[str, Any],
+    content_rule_bundle: dict[str, Any],
+) -> tuple[GenerationSlotV1, ...]:
+    """将物料、公式和审核契约编译为生成前的明确槽位。"""
+
+    evidence_by_code: dict[str, list[str]] = {}
+    for material in materials:
+        for code in material.variable_codes:
+            evidence_by_code.setdefault(code, []).extend(material.evidence_ids)
+
+    def source_data(codes: set[str]) -> tuple[tuple[str, ...], tuple[str, ...]]:
+        variables = tuple(sorted(code for code in codes if code in evidence_by_code))
+        evidence_ids = tuple(dict.fromkeys(item for code in variables for item in evidence_by_code.get(code, [])))
+        return variables, evidence_ids
+
+    def add(
+        slots: list[GenerationSlotV1],
+        *,
+        slot_id: str,
+        target: Literal["title", "opening", "body", "closing", "topics", "global"],
+        source_codes: set[str] | None = None,
+        review_codes: tuple[str, ...] = (),
+        instruction: str,
+        acceptance: tuple[str, ...],
+        required: bool = True,
+    ) -> None:
+        variables, evidence_ids = source_data(source_codes or set())
+        slots.append(
+            GenerationSlotV1(
+                slot_id=slot_id,
+                target=target,
+                required=required,
+                source_variable_codes=variables,
+                evidence_ids=evidence_ids,
+                review_codes=review_codes,
+                instruction=instruction,
+                acceptance=acceptance,
+            )
+        )
+
+    slots: list[GenerationSlotV1] = []
+    title_formula = strategy_snapshot.get("title_formula") or {}
+    body_formula = strategy_snapshot.get("body_formula") or {}
+    title_codes = set(title_formula.get("variable_schema") or [])
+    title_codes.update(
+        code
+        for slot in (title_formula.get("source_content") or {}).get("slot_schema") or []
+        for code in slot.get("variable_codes") or []
+    )
+    body_codes = set(body_formula.get("required_variables") or [])
+    body_codes.update(body_formula.get("variable_schema") or [])
+    body_codes.update(
+        code
+        for method in strategy_snapshot.get("creation_method_definitions") or []
+        for code in method.get("variable_schema") or []
+    )
+    required_manifest_codes = {
+        item.variable_code for item in material_manifest.requirements if item.required
+    }
+    persona_codes = required_manifest_codes & {"persona_fact", "advantage", "advantages", "process"}
+    material_variable_codes = {code for material in materials for code in material.variable_codes}
+    price_codes = (required_manifest_codes | material_variable_codes) & {
+        "price",
+        "unit_price",
+        "budget",
+        "cost",
+        "labor_cost",
+        "material_cost",
+        "discount",
+        "fee",
+        "quote_type",
+        "quantity",
+        "title_price",
+        "quote_block",
+    }
+    emoji_codes = (
+        ("EMOJI_COVERAGE", "EMOJI_APPROPRIATENESS", "EMOJI_RESTRICTIONS")
+        if expression_policy.get("emoji_allowed", True)
+        else ()
+    )
+    from yuxi.content.v3.modular_rules import required_review_codes
+
+    dynamic_review_codes = required_review_codes(
+        {
+            "production_pack": {
+                "material_manifest": material_manifest.model_dump(mode="json"),
+                "expression_policy": expression_policy,
+            },
+            "strategy_snapshot": strategy_snapshot,
+            "evidence_bundle": {
+                "items": [{"variable_codes": list(material.variable_codes)} for material in materials]
+            },
+            "content_brief": {},
+        }
+    )
+    deterministic_review_codes = (
+        "TITLE_TOO_LONG",
+        "TITLE_TOO_SHORT",
+        "CHANNEL_TITLE_LONG",
+        "CHANNEL_TITLE_SHORT",
+        "TITLE_PRODUCT_EVIDENCE_NOT_USED",
+        "PERSONA_TONE_MISMATCH",
+        "PERSONA_STYLE_MISMATCH",
+        "MECHANICAL_META_EXPRESSION",
+        "NATURAL_EXPRESSION",
+        "FACT_NUMBER_WITHOUT_SOURCE",
+        "NUMERIC_CLAIM_UNSUPPORTED",
+        "EVIDENCE_REFERENCE_FORBIDDEN",
+        "FACT_CHECK_FAILED",
+        "FACT_INCONSISTENT",
+        "CONTENT_REQUIRED_TERM_MISSING",
+        "CONTENT_FORBIDDEN_TERM",
+        "CONTENT_HIGH_RISK_CLAIM",
+        "COMPLIANCE_RULE_MATCH",
+        "CONTENT_STRATEGY_SNAPSHOT_MISSING",
+        "BODY_PRODUCT_EVIDENCE_NOT_USED",
+        "KNOWLEDGE_EVIDENCE_UNUSED",
+        "KNOWLEDGE_PRICE_DETAIL_UNUSED",
+        "DERIVED_CALCULATION_UNUSED",
+        "TRADE_BREAKDOWN_UNUSED",
+        "LABOR_AUX_BREAKDOWN_UNUSED",
+        "BODY_LENGTH_OUT_OF_RANGE",
+        "CHANNEL_BODY_LONG",
+        "CHANNEL_BODY_SHORT",
+        "BODY_FORMULA_MISMATCH",
+        "CONTENT_STRUCTURE_MISMATCH",
+        "LAYOUT_MARKDOWN_FORBIDDEN",
+        "LAYOUT_PARAGRAPH_TOO_LONG",
+        "CTA_TOO_DIRECT",
+        "UNSAFE_AUTO_REPLACEMENT",
+    )
+    all_review_codes = tuple(dict.fromkeys((*dynamic_review_codes, *deterministic_review_codes)))
+
+    add(
+        slots,
+        slot_id="review_contract",
+        target="global",
+        review_codes=all_review_codes,
+        instruction="生成完成后逐项满足本生产包中的全部槽位和审核代码，不得只满足事实存在而遗漏表达关系。",
+        acceptance=("所有必需槽位都有对应正文位置", "未新增生产包之外的事实或承诺"),
+    )
+    if title_codes:
+        add(
+            slots,
+            slot_id="title_formula",
+            target="title",
+            source_codes=title_codes,
+            review_codes=(
+                "TITLE_ALIGNMENT",
+                "TITLE_FORMULA_MISMATCH",
+                "TITLE_REQUIRED_FACT_MISSING",
+                "TITLE_FACT_UNSUPPORTED",
+            ),
+            instruction="按锁定标题公式的槽位逐项成题；同一槽位内的变量或词库只需选择一个有证据的来源。",
+            acceptance=("标题使用已绑定事实", "标题与正文保持同一主题", "不新增数字或绝对化承诺"),
+        )
+    if body_codes or body_formula.get("structure_schema"):
+        add(
+            slots,
+            slot_id="body_formula",
+            target="body",
+            source_codes=body_codes,
+            review_codes=(
+                "CREATION_TYPE_ALIGNMENT",
+                "COMPOSITION_ALIGNMENT",
+                "BODY_VALUE",
+                "LAYOUT_READABILITY",
+            ),
+            instruction="按锁定正文公式和组成蓝图展开正文，每个层级都用对应事实或动作兑现，不照抄参考原文。",
+            acceptance=("创作类型和层级组合一致", "正文提供明确阅读价值", "段落便于扫读"),
+        )
+    if "persona_fact" in persona_codes:
+        add(
+            slots,
+            slot_id="persona_identity",
+            target="opening",
+            source_codes={"persona_fact"},
+            review_codes=("PERSONA_OPENING", "PERSONA_GROUNDING"),
+            instruction="前两个自然段自然说明我是谁、做什么，以及已有经验或可信依据。",
+            acceptance=("身份、业务和可信依据均来自对应 Evidence", "不写未经支持的多年经验或承诺"),
+        )
+    if persona_codes & {"advantage", "advantages", "process"}:
+        add(
+            slots,
+            slot_id="persona_value",
+            target="opening",
+            source_codes=persona_codes & {"advantage", "advantages", "process"},
+            review_codes=("PERSONA_OPENING", "PERSONA_GROUNDING", "PERSONA_CLOSING"),
+            instruction="只选择与当前痛点最相关的 2～3 项优势，并在优势后说明各自解决的具体顾虑。",
+            acceptance=("优势数量为 2～3 项", "每项优势都有对应用户顾虑或作用", "结尾不新增优势"),
+        )
+
+    for category in expression_policy.get("required_categories") or []:
+        code = str(category.get("code") or "").strip()
+        if not code:
+            continue
+        source_codes = {
+            "identity_trust": "persona_fact",
+            "process_action": "process",
+            "result_benefit": "advantage",
+            "verified_data": "price",
+            "scene_context": "scene",
+            "risk_warning": "pain",
+            "audience_action": "",
+        }
+        source_code = source_codes.get(code, "")
+        add(
+            slots,
+            slot_id=f"emoji:{code}",
+            target="body",
+            source_codes={source_code} if source_code else set(),
+            review_codes=emoji_codes,
+            instruction=f"在与“{category.get('semantic_role') or code}”对应的真实句子旁放置一个语义贴切的 Emoji。",
+            acceptance=(str(category.get("target") or "紧邻对应语义"), "不使用 Emoji 替代数字、单位、事实或标点"),
+        )
+
+    price_context = bool(price_codes)
+    if price_context:
+        add(
+            slots,
+            slot_id="price_scope",
+            target="body",
+            source_codes=price_codes,
+            review_codes=(
+                "PRICE_SCOPE_ALIGNMENT",
+                "PRICE_EVIDENCE_SCOPE_MISMATCH",
+                "PRICE_CITY_MISMATCH",
+                "PRICE_CITY_UNVERIFIED",
+            ),
+            instruction="严格按已确认价格类型、城市、单位和适用范围表达，不把参考单价写成无条件成交价。",
+            acceptance=("价格口径、范围、城市和单位一致", "不自行计算未经确认的总价"),
+        )
+
+    topic_rules = (content_rule_bundle.get("runtime_rules") or {}).get("viral-topic-author") or {}
+    if topic_rules:
+        add(
+            slots,
+            slot_id="topics",
+            target="topics",
+            review_codes=(
+                "TOPIC_ALIGNMENT",
+                "TOPIC_COUNT_MISMATCH",
+                "CHANNEL_TOPIC_COUNT",
+                "TOPIC_DUPLICATED",
+                "TOPIC_OUTSIDE_CANDIDATE_POOL",
+            ),
+            instruction="只从冻结话题候选池选择规定数量的话题，保持互不重复并与正文主题相关。",
+            acceptance=(f"话题数量为 {int(topic_rules.get('topic_count') or 10)}", "话题来自冻结候选池"),
+        )
+
+    add(
+        slots,
+        slot_id="natural_expression",
+        target="body",
+        review_codes=(
+            "NATURAL_EXPRESSION",
+            "MECHANICAL_META_EXPRESSION",
+            "PERSONA_TONE_MISMATCH",
+            "PERSONA_STYLE_MISMATCH",
+        ),
+        instruction="使用自然口语完成事实表达，删除报幕式、报告腔和机械连接词。",
+        acceptance=("不暴露写作步骤", "语气符合渠道和已冻结人设"),
+    )
+    add(
+        slots,
+        slot_id="platform_compliance",
+        target="global",
+        review_codes=(
+            "PLATFORM_CTA",
+            "CTA_TOO_DIRECT",
+            "CONTENT_FORBIDDEN_TERM",
+            "CONTENT_HIGH_RISK_CLAIM",
+            "UNSAFE_AUTO_REPLACEMENT",
+        ),
+        instruction="遵守平台词汇、合规和 CTA 规则，不增加强引导或绝对化承诺。",
+        acceptance=("不包含禁用词", "行动邀请克制且符合渠道"),
+    )
+    return tuple(slots)
+
+
 def freeze_production_pack(
     *,
     task_id: str,
@@ -1700,6 +2003,14 @@ def freeze_production_pack(
         strategy_snapshot=strategy_snapshot,
         channel_profile=channel_profile,
     )
+    generation_slots = compile_generation_slots(
+        material_manifest=material_manifest,
+        materials=normalized_materials,
+        strategy_snapshot=strategy_snapshot,
+        expression_policy=expression_policy,
+        channel_profile=channel_profile,
+        content_rule_bundle=content_rule_bundle,
+    )
     payload = {
         "schema_version": 1,
         "task_id": task_id,
@@ -1716,6 +2027,7 @@ def freeze_production_pack(
         "reference_snapshot": reference_snapshot,
         "expression_guidance": expression_guidance,
         "expression_policy": expression_policy,
+        "generation_slots": [item.model_dump(mode="json") for item in generation_slots],
         "writing_request": writing_request,
         "channel_profile": channel_profile,
         "persona_profile": persona_profile,
@@ -1735,6 +2047,7 @@ def freeze_production_pack(
 
 __all__ = [
     "FrozenProductionPackV1",
+    "GenerationSlotV1",
     "MaterialEnvelopeV2",
     "MaterialGateIssueV1",
     "MaterialQualityReportV1",
@@ -1743,6 +2056,7 @@ __all__ = [
     "ProductionOrderV1",
     "build_formula_lexicon_constraints",
     "build_expression_policy",
+    "compile_generation_slots",
     "build_material_manifest",
     "create_production_order",
     "freeze_production_pack",

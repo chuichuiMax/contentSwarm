@@ -64,6 +64,12 @@ def test_foreman_catalog_keeps_nine_modes_and_twelve_title_structures() -> None:
 
     groups = {item["content_type_codes"][0]: item for item in catalog["combination_rules"]}
     assert set(groups) == set(DIRECTION_BINDINGS)
+    assert groups["CT01"]["title_formula_candidate_codes"] == ["FRT12"]
+    assert all(
+        "FRT06" not in group["title_formula_candidate_codes"]
+        for direction, group in groups.items()
+        if direction not in {"CT03", "CT04", "CT05"}
+    )
     for direction, expected in DIRECTION_BINDINGS.items():
         group = groups[direction]
         blueprint = group["source_metadata"]["composition_blueprint"]

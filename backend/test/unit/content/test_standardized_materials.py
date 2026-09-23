@@ -9,12 +9,14 @@ from yuxi.content.control.workflow.generation_input import project_generation_in
 from yuxi.content.control.workflow.deterministic_node import _derive_formula_calculation_evidence
 from yuxi.content.model.materials import (
     FrozenProductionPackV1,
+    MaterialRequirementV1,
     MaterialEnvelopeV2,
     MaterialRequirementManifestV1,
     ProductionOrderV1,
     build_expression_policy,
     build_formula_lexicon_constraints,
     build_material_manifest,
+    compile_generation_slots,
     freeze_production_pack,
     select_formula_lexicon_terms,
     standardize_evidence_materials,
@@ -297,6 +299,61 @@ def test_expression_policy_freezes_three_applicable_semantic_categories():
         "identity_trust",
         "process_action",
     ]
+
+
+def test_generation_slots_compile_review_items_and_grounded_persona_sources():
+    manifest = MaterialRequirementManifestV1(
+        order_hash="o" * 64,
+        content_type_code="CT06",
+        title_formula_code="FRT05",
+        body_formula_code="FRB04",
+        requirements=tuple(
+            MaterialRequirementV1(
+                requirement_id=f"variable:{code}",
+                variable_code=code,
+                material_types=("business_fact",),
+                value_type="string",
+                required=True,
+                allowed_sources=("manual_input",),
+                allowed_usage=("body",),
+                review_policy="user_confirmed",
+                risk_level="normal",
+            )
+            for code in ("persona_fact", "advantages", "process")
+        ),
+        manifest_hash="m" * 64,
+    )
+    materials = [
+        _business_material("persona_fact", "长沙装修工长，从业5年"),
+        _business_material("advantages", ["决策快", "自有工人"]),
+        _business_material("process", "现场逐项核对施工节点"),
+    ]
+    slots = compile_generation_slots(
+        material_manifest=manifest,
+        materials=materials,
+        strategy_snapshot={
+            "title_formula": {"variable_schema": ["persona_fact"]},
+            "body_formula": {"required_variables": ["advantages", "process"]},
+        },
+        expression_policy={
+            "emoji_allowed": True,
+            "required_categories": [
+                {"code": "identity_trust", "semantic_role": "身份与可信依据", "target": "身份旁"},
+                {"code": "process_action", "semantic_role": "施工动作", "target": "动作旁"},
+                {"code": "result_benefit", "semantic_role": "服务价值", "target": "价值旁"},
+            ],
+        },
+        channel_profile={"code": "xiaohongshu"},
+        content_rule_bundle={"runtime_rules": {"viral-topic-author": {"topic_count": 10}}},
+    )
+
+    by_id = {item.slot_id: item for item in slots}
+    assert {"persona_identity", "persona_value", "emoji:identity_trust", "emoji:process_action", "topics"} <= set(by_id)
+    assert by_id["persona_identity"].source_variable_codes == ("persona_fact",)
+    assert "PERSONA_GROUNDING" in by_id["persona_value"].review_codes
+    assert "EMOJI_COVERAGE" in by_id["emoji:identity_trust"].review_codes
+    assert "CHANNEL_TOPIC_COUNT" in by_id["topics"].review_codes
+    assert by_id["topics"].target == "topics"
 
 
 def test_price_material_requires_numeric_amount_currency_unit_and_scope():
@@ -1102,6 +1159,9 @@ def test_frozen_production_pack_hash_is_stable_and_covers_materials():
         "fact_bound_body_codes": [],
         "unresolved_fact_bound_codes": [],
     }
+    assert model_view["production_pack"]["generation_slots"]
+    assert "review_contract" in {item["slot_id"] for item in model_view["production_pack"]["generation_slots"]}
+    assert "original_content" not in json.dumps(model_view["production_pack"]["generation_slots"], ensure_ascii=False)
     assert first.formula_lexicon_bundle["selection"]["policy"] == "shortest_then_lexicographic_v1"
     assert "content_brief" not in model_view
     assert "evidence_bundle" not in model_view

@@ -174,6 +174,33 @@ def _resolve_rule_and_formulas(
     missing = required - available
     if title is not None:
         missing.update(_missing_title_formula_variables(title, available))
+    if title is not None and body is not None:
+        # 缺口分析也必须覆盖物料门追加的人设等要求；临时订单只用于编译，不写入任务。
+        order = create_production_order(
+            task_id="creation-plan-gap-analysis",
+            catalog=catalog,
+            group_id=str(rule.get("id") or rule.get("code")),
+            creation_method_codes=[item["code"] for item in methods],
+            title_formula_code=title["code"],
+            body_formula_code=body["code"],
+        )
+        try:
+            manifest = build_material_manifest(catalog=catalog, order=order)
+        except ValueError as exc:
+            raise ContentApplicationError("CONTENT_PLAN_CONFIGURATION_INVALID", str(exc), "conflict") from exc
+        # derived 物料由后续程序计算，不能要求事实抽取 Agent 提交。
+        missing.update(
+            item.variable_code
+            for item in manifest.requirements
+            if item.required and not item.requirement_id.startswith("derived:") and item.variable_code not in available
+        )
+        groups: dict[str, list[str]] = {}
+        for item in manifest.requirements:
+            for group in item.validation_schema.get("alternative_groups") or []:
+                groups.setdefault(group, []).append(item.variable_code)
+        for candidates in groups.values():
+            if not (available | missing).intersection(candidates):
+                missing.add(candidates[0])
     return rule, title, body, methods, sorted(missing)
 
 
@@ -324,6 +351,7 @@ def analyze_plan_gaps(
         runtime_config_snapshot=runtime_config_snapshot,
     )
     price_missing = sorted(set(missing) & _PRICE_VARIABLES)
+    variables_by_code = {str(item.get("code") or ""): item for item in catalog.get("variables") or []}
     return {
         "has_missing": bool(
             missing
@@ -334,6 +362,14 @@ def analyze_plan_gaps(
             or not ranked
         ),
         "missing_variable_codes": missing,
+        "missing_variable_definitions": [
+            {
+                "code": code,
+                "name": str(variables_by_code.get(code, {}).get("name") or code),
+                "value_type": str(variables_by_code.get(code, {}).get("value_type") or "string"),
+            }
+            for code in missing
+        ],
         "missing_evidence_types": missing_evidence,
         "conflicting_variable_codes": fact_index["conflicting_variable_codes"],
         "title_formula_available": title is not None,

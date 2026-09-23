@@ -28,6 +28,22 @@ def test_strategy_has_time_for_two_calls_and_preserves_explicit_reasoning(node_i
     assert context.reasoning_effort == "medium"
 
 
+def test_fact_extraction_can_retry_one_transient_model_timeout_within_node_budget():
+    from yuxi.services.agent_delegation_service import AgentDelegationService, CONTENT_NODE_EXECUTION_LIMITS
+
+    node_id = "extract_creation_facts"
+    request = SimpleNamespace(node_run=SimpleNamespace(node_id=node_id), knowledge_policy="frozen_evidence_only")
+    context = SimpleNamespace(reasoning_effort=None)
+
+    AgentDelegationService._apply_node_constraints(context, request)
+
+    assert context.reasoning_effort == "low"
+    assert context.model_call_timeout_seconds == 45
+    assert context.model_retry_times == 1
+    assert context._content_max_model_calls == 2
+    assert CONTENT_NODE_EXECUTION_LIMITS[node_id][0] >= 2 * context.model_call_timeout_seconds + 3 + 15
+
+
 def test_visual_node_has_enough_steps_to_finish_after_a_valid_fourth_submission():
     from yuxi.services.agent_delegation_service import CONTENT_NODE_EXECUTION_STEP_OVERRIDES
 
