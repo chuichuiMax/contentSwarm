@@ -116,6 +116,43 @@ async def test_lists_three_by_four_fillable_templates_and_keeps_metadata():
 
 
 @pytest.mark.asyncio
+async def test_lists_automatic_layout_templates_before_other_builtin_templates():
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json=[
+                {
+                    "id": "regular-cover",
+                    "title": "普通内置封面",
+                    "tags": ["小红书", "系统素材"],
+                    "format": {"width": 1080, "height": 1440, "unit": "px"},
+                },
+                {
+                    "id": "system-cover-personalized-template-1-top-left",
+                    "title": "模板1 · 左上",
+                    "tags": ["小红书", "系统素材", "自动排版模板"],
+                    "format": {"width": 1080, "height": 1440, "unit": "px"},
+                },
+            ],
+        )
+
+    client = HyCanvasClient(
+        base_url="http://hycanvas",
+        public_url="http://canvas.example",
+        api_key="hyk_test",
+        workspace_id="ws-1",
+        transport=httpx.MockTransport(handler),
+    )
+
+    result = await client.list_xiaohongshu_templates()
+
+    assert [item["id"] for item in result["templates"]] == [
+        "system-cover-personalized-template-1-top-left",
+        "regular-cover",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_renders_custom_template_preview_through_hycanvas():
     template_id = "8bc32ed9-f80a-47e2-8e2b-913e35c125c8"
 

@@ -48,12 +48,25 @@ func TestSeedLoads(t *testing.T) {
 
 func TestSystemCoverTemplatesAreSelectableAndFillable(t *testing.T) {
 	count := 0
+	personalizedCount := 0
+	personalizedSeenAfterRegular := false
 	for _, entry := range seedEntries {
 		template := entry.toTemplate()
 		if !strings.HasPrefix(template.ID, "system-cover-") {
 			continue
 		}
 		count++
+		if contains(template.Tags, "自动排版模板") {
+			personalizedCount++
+			if personalizedSeenAfterRegular {
+				t.Fatalf("personalized cover must precede regular system covers: %s", template.ID)
+			}
+			if !strings.HasPrefix(template.ID, "system-cover-personalized-") {
+				t.Fatalf("personalized cover has unexpected id: %s", template.ID)
+			}
+		} else if personalizedCount > 0 {
+			personalizedSeenAfterRegular = true
+		}
 		if !contains(template.Tags, "小红书") || asNum(template.Format["width"]) != 1080 || asNum(template.Format["height"]) != 1440 {
 			t.Fatalf("system cover missing zone or format: %s", template.ID)
 		}
@@ -87,8 +100,11 @@ func TestSystemCoverTemplatesAreSelectableAndFillable(t *testing.T) {
 			t.Fatalf("system cover cannot fill title and subtitle in %s: %v", template.ID, err)
 		}
 	}
-	if count != 52 {
-		t.Fatalf("want 52 system covers, got %d", count)
+	if count != 70 {
+		t.Fatalf("want 70 system covers, got %d", count)
+	}
+	if personalizedCount != 18 {
+		t.Fatalf("want 18 personalized system covers, got %d", personalizedCount)
 	}
 }
 

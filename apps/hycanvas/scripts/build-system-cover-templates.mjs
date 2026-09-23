@@ -15,6 +15,7 @@ registerHooks({
 });
 const { DesignFileSchema } = createRequire(join(root, 'frontend/package.json'))('@hc/schema');
 const { buildBeforeAfterCover, buildCoverLayout, coverLayouts, coverStyleTemplates } = await import(pathToFileURL(coverPath).href);
+const { buildPersonalizedCoverLayout, personalizedCoverLayouts } = await import(pathToFileURL(join(root, 'frontend/src/lib/personalizedCoverLayouts.ts')).href);
 const { buildXhsEditorialCover, xhsEditorialDefault } = await import(pathToFileURL(join(root, 'frontend/src/lib/xhsEditorialCover.ts')).href);
 
 const previousCrypto = Object.getOwnPropertyDescriptor(globalThis, 'crypto');
@@ -23,15 +24,24 @@ Object.defineProperty(globalThis, 'crypto', { configurable: true, value: { rando
 const measure = (text, size) => [...text].reduce((sum, char) => sum + size * (/^[\x00-\x7F]$/.test(char) ? 0.55 : 1), 0);
 const editorial = buildXhsEditorialCover(xhsEditorialDefault, measure);
 if (!editorial.success) throw new Error(`Editorial cover failed: ${editorial.errors[0].message}`);
-const source = [
+// Build the existing catalog first so adding priority templates does not
+// renumber node ids inside already published system templates.
+const regularSource = [
   ...coverStyleTemplates.map((style) => ({ id: style.id, title: style.name, file: buildCoverLayout('quote', undefined, 0.95, undefined, 'photo-center', style.id) })),
   ...coverLayouts.map((layout) => ({ id: layout.id, title: layout.name, file: buildCoverLayout(layout.id) })),
   { id: 'before-after', title: '装修前后对比', file: buildBeforeAfterCover() },
   { id: 'editorial', title: '左对齐大标题', file: editorial.file },
 ];
+const personalizedSource = personalizedCoverLayouts.map((layout) => ({
+  id: `personalized-${layout.id}`,
+  title: layout.name,
+  tags: ['自动排版模板'],
+  file: buildPersonalizedCoverLayout(layout),
+}));
+const source = [...personalizedSource, ...regularSource];
 if (previousCrypto) Object.defineProperty(globalThis, 'crypto', previousCrypto);
 
-const entries = source.map(({ id, title, file }) => {
+const entries = source.map(({ id, title, tags = [], file }) => {
   file.title = file.pages[0].name = title;
   file.meta.templateZone = 'xiaohongshu';
   DesignFileSchema.parse(file);
@@ -54,14 +64,14 @@ const entries = source.map(({ id, title, file }) => {
   const templateId = `system-cover-${id}`;
   return { template: {
     id: templateId, title, visibility: 'public', ownerId: 'hycanvas', workspaceId: null,
-    categories: ['social', '小红书'], tags: ['小红书', '系统素材'],
+    categories: ['social', '小红书'], tags: ['小红书', '系统素材', ...tags],
     style: { palette: [], typography: [], styleTags: [] },
     format: { width: 1080, height: 1440, unit: 'px' }, pageCount: 1,
     previewUrls: [], designFileKey: `seed:${templateId}`, fillableFields,
     attributions: [], version: 1, createdAt: '2026-09-17T00:00:00.000Z', updatedAt: '2026-09-17T00:00:00.000Z',
   }, file };
 });
-if (entries.length !== coverStyleTemplates.length + coverLayouts.length + 2) throw new Error('System cover catalog count mismatch');
+if (entries.length !== personalizedCoverLayouts.length + coverStyleTemplates.length + coverLayouts.length + 2) throw new Error('System cover catalog count mismatch');
 const serialized = JSON.stringify(entries) + '\n';
 if (process.argv.includes('--check')) {
   if (readFileSync(output, 'utf8') !== serialized) throw new Error('System cover template catalog is stale');

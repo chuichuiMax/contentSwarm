@@ -42,6 +42,7 @@ def _composition_payload(composition, images):
 
 # 封面模板目录 tag→专区:小红书=内置封面,精选封面=用户批量上传的参考图。
 _COVER_TEMPLATE_ZONES = {"小红书": "builtin", "精选封面": "featured"}
+_PRIORITY_COVER_TEMPLATE_TAG = "自动排版模板"
 
 
 def _cover_template_zone(tags: list[str]) -> str | None:
@@ -93,6 +94,7 @@ class HyCanvasClient:
 
     async def list_xiaohongshu_templates(self) -> dict:
         data = await self._request("GET", "/api/v1/templates")
+        data.sort(key=lambda item: _PRIORITY_COVER_TEMPLATE_TAG not in (item.get("tags") or []))
         templates = []
         for item in data:
             zone = _cover_template_zone(item.get("tags") or [])
