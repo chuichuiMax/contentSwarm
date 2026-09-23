@@ -227,3 +227,19 @@ def test_modular_visual_plan_must_match_the_locked_content_intent():
 
     with pytest.raises(ContractDomainValidationError, match="visual_intent"):
         validate_content_node_result("VisualPlanResultV1", payload, context)
+
+
+@pytest.mark.parametrize("code", ["PERSONA_OPENING", "PERSONA_CLOSING", "NATURAL_EXPRESSION"])
+@pytest.mark.parametrize("emoji_allowed", [True, False])
+def test_standardized_repair_loads_expression_dependencies(code, emoji_allowed):
+    payload = _payload()
+    payload["review_report"] = {"status": "blocked", "checks": [{"code": code, "status": "blocked"}]}
+    payload["production_pack"] = {
+        "expression_policy": {
+            "emoji_allowed": emoji_allowed,
+            "required_categories": [{"code": "identity_trust"}] if emoji_allowed else [],
+        }
+    }
+    skills = select_modular_generation_skills(GENERATION_SKILLS, payload)
+    assert "viral-natural-expression" in skills
+    assert ("viral-layout-expression" in skills) == (code.startswith("PERSONA_") or emoji_allowed)

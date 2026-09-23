@@ -400,9 +400,25 @@ class ContentWorkflowAgent(BaseAgent):
                 retry_counts=state.get("retry_counts") or {},
             )
             if decision.status == "limit_reached":
+                route = next(item for item in definition["revision_routes"] if reason_code in item["reason_codes"])
+                report = {
+                    "semantic_review": review_report,
+                    "deterministic_validate": validation_report,
+                    "validate_title_candidates": title_validation_report,
+                }.get(previous_node, {})
+                details = []
+                for check in [*(report.get("checks") or []), *(report.get("items") or [])]:
+                    if check.get("status") == "blocked" or check.get("level") == "error":
+                        detail = "；".join(
+                            str(check[key]) for key in ("message", "location", "suggestion") if check.get(key)
+                        )
+                        if detail and detail not in details:
+                            details.append(detail)
+                message = "\n".join(details) or revision_reason_label(reason_code)
+                attempts = decision.retry_counts.get(route["to"], 0)
                 raise ContentApplicationError(
                     code="content_revision_limit_reached",
-                    message=f"{revision_reason_label(reason_code)}，已达到定点回修次数上限",
+                    message=f"{message}\n已使用 {attempts}/{route['max_attempts']} 次定点回修，已达到次数上限",
                     kind="conflict",
                 )
             if decision.status == "continue" or decision.target_node_id is None:

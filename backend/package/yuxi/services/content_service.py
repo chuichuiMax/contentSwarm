@@ -520,6 +520,42 @@ def _parse_content_studio_quote_case(
     }
 
 
+def _parse_content_studio_persona_case(user_request: str, *, content_type_code: str | None) -> dict[str, Any]:
+    """保留自我介绍、日常记录结构化原文中的作者事实，不推断用户痛点或工作成果。"""
+    if content_type_code not in {"CT01", "CT07"}:
+        return {}
+    try:
+        payload = json.loads(user_request)
+    except (TypeError, ValueError):
+        return {}
+    if not isinstance(payload, dict) or not isinstance(payload.get("persona"), dict):
+        return {}
+    requirement = payload.get("requirementType")
+    if not isinstance(requirement, dict) or requirement.get("typeName") not in {"自我介绍", "日常", "日常工作"}:
+        return {}
+
+    from yuxi.services.dangjia_service import DangjiaPersona, build_persona_description
+
+    try:
+        persona = DangjiaPersona.model_validate(payload["persona"])
+    except ValidationError as exc:
+        raise _content_error(422, "CONTENT_PERSONA_CASE_INVALID", "结构化案例的人设字段不符合数据结构") from exc
+    tags = payload.get("tags") or []
+    if not isinstance(tags, list) or any(not isinstance(tag, str) for tag in tags):
+        raise _content_error(422, "CONTENT_PERSONA_CASE_INVALID", "结构化案例 tags 必须为字符串数组")
+    values = {
+        "location": (persona.serviceCity or "").strip(),
+        "persona_fact": build_persona_description(persona),
+        "product": "、".join(item.strip() for item in persona.skills if item.strip()),
+        "advantages": [item.strip() for item in persona.serviceAdvantages if item.strip()],
+        "project_site": requirement.get("mySite"),
+        "content_tags": tags,
+    }
+    if content_type_code == "CT07":
+        values["process"] = [tag.strip() for tag in tags if tag.strip()]
+    return {key: value for key, value in values.items() if value not in (None, "", [], {})}
+
+
 def compile_content_brief(
     *, task: ContentTask, template: Any, brief: ContentBriefPayload
 ) -> tuple[dict[str, Any], list[dict[str, str]]]:
@@ -550,7 +586,11 @@ def compile_content_brief(
         normalized_user_request = (
             quote_case["sanitized_user_request"] if quote_case is not None else user_request
         )
-        normalized_variables = quote_case["business_variables"] if quote_case is not None else {}
+        normalized_variables = (
+            quote_case["business_variables"]
+            if quote_case is not None
+            else _parse_content_studio_persona_case(user_request, content_type_code=content_type_code)
+        )
         compiled = {
             "task_id": task.id,
             "industry": template.slug,

@@ -1,8 +1,8 @@
 """正文与审核模型视图：完整审计快照留在服务端。"""
 
 from copy import deepcopy
-import re
 
+from yuxi.content.control.workflow.revision import build_generation_repair_constraints
 from yuxi.content.model.contracts.content_nodes import (
     GenerateContentPromptV1,
     PlanVisualsInputV1,
@@ -11,7 +11,11 @@ from yuxi.content.model.contracts.content_nodes import (
     VisualReviewInputV1,
 )
 from yuxi.content.model.locked_blocks import extract_locked_quote_block, quote_body_limits, render_semicolon_lines
-from yuxi.content.model.materials import FrozenProductionPackV1, build_formula_lexicon_constraints
+from yuxi.content.model.materials import (
+    FrozenProductionPackV1,
+    build_formula_lexicon_constraints,
+    persona_opening_instruction,
+)
 from yuxi.content.v3.modular_rules import (
     BASE_GENERATION_SKILLS,
     COVER_SKILL,
@@ -258,6 +262,13 @@ def _project_standardized_production_pack(production_pack: dict) -> dict:
     ):
         projected.pop(key, None)
     projected["locked_blocks"] = locked_blocks
+    persona_policy = (production_pack.get("content_rule_bundle", {}).get("runtime_rules") or {}).get(
+        "viral-persona-author"
+    ) or {}
+    if persona_policy.get("opening_required"):
+        projected["creative_opening_instruction"] = persona_opening_instruction(
+            production_pack["content_rule_bundle"], has_locked_quote=locked_quote is not None
+        )
     return projected
 
 
@@ -272,47 +283,8 @@ def project_generation_input(payload: dict, *, active_skills: tuple[str, ...] | 
             formula_lexicon_bundle=production_pack.get("formula_lexicon_bundle") or {},
             material_quality_report=production_pack.get("material_quality_report") or None,
         )
-        repair_constraints = None
-        validation_report = payload.get("validation_report") or {}
-        projected_review_report = _redact_locked_quote_from_review(
-            payload.get("review_report"),
-            production_pack,
-        )
-        review_report = projected_review_report or {}
-        blocked_review_codes = {
-            str(item.get("code") or "") for item in review_report.get("checks") or [] if item.get("status") == "blocked"
-        }
-        repairable_codes = {
-            "PERSONA_OPENING",
-            "PERSONA_CLOSING",
-            "EMOJI_COVERAGE",
-            "EMOJI_APPROPRIATENESS",
-            "EMOJI_RESTRICTIONS",
-        }
-        if (
-            payload.get("content_draft")
-            and payload.get("selected_title")
-            and payload.get("content_outline")
-            and validation_report.get("status") in {"passed", "warning"}
-            and blocked_review_codes
-            and blocked_review_codes <= repairable_codes
-        ):
-            body = str(payload["content_draft"].get("body") or "")
-            paragraphs = [part.strip() for part in re.split(r"\n\s*\n", body) if part.strip()]
-            persona_repair = bool(blocked_review_codes & {"PERSONA_OPENING", "PERSONA_CLOSING"})
-            repair_constraints = {
-                "mode": "persona_edges_only" if persona_repair else "emoji_only",
-                "original_body": body,
-                "immutable_title": payload["selected_title"],
-                "immutable_outline": payload["content_outline"],
-                "immutable_topics": payload["content_draft"].get("topics") or [],
-                "immutable_middle_paragraphs": paragraphs[1:-1] if persona_repair else [],
-                "instruction": (
-                    "只重写首段和末段；中间段落必须按数组逐项原样复制、顺序和分段不变，标题、大纲、话题保持原样。"
-                    if persona_repair
-                    else "只调整 Emoji 及其相邻空格；标题、大纲、正文文字、数字、标点、顺序和话题保持原样。"
-                ),
-            }
+        projected_review_report = _redact_locked_quote_from_review(payload.get("review_report"), production_pack)
+        repair_constraints = build_generation_repair_constraints(payload)
         return StandardizedGenerateContentPromptV1.model_validate(
             {
                 "production_pack": _project_standardized_production_pack(production_pack),

@@ -260,7 +260,6 @@ def _required_title_fact_options(
                 number for value in values for number in re.findall(r"\d+(?:\.\d+)?", value.replace(",", ""))
             )
         elif code == "persona_fact":
-            options.extend(fact for value in values for fact in re.findall(r"\d+(?:\.\d+)?(?:年|岁|个|位|次)", value))
             options.extend(
                 identity
                 for value in values
@@ -268,6 +267,14 @@ def _required_title_fact_options(
             )
             if any("工长" in value for value in values):
                 options.append("工长")
+            if not options or formula.get("code") != "FRT12":
+                options.extend(
+                    fact
+                    for value in values
+                    for fact in re.findall(
+                        r"(?:\d+(?:\.\d+)?|[零〇一二两三四五六七八九十百]+)(?:年|岁|个|位|次)", value
+                    )
+                )
         else:
             options.extend(values)
         if options:

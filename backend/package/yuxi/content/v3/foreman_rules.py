@@ -10,9 +10,9 @@ from typing import Any
 
 CATALOG_PATH = Path(__file__).with_name("fixtures") / "foreman_rule_catalog_v1.json"
 DIRECTION_MATRIX_PATH = Path(__file__).with_name("fixtures") / "foreman_direction_matrix_v2.json"
-METHOD_CODES = {f"FRM{index:02d}" for index in range(1, 10)}
+METHOD_CODES = {f"FRM{index:02d}" for index in range(1, 11)}
 TITLE_CODES = {f"FRT{index:02d}" for index in range(1, 13)}
-BODY_CODES = {f"FRB{index:02d}" for index in range(1, 10)}
+BODY_CODES = {f"FRB{index:02d}" for index in range(1, 11)}
 GROUP_CODES = {f"FRG{index:02d}" for index in range(1, 8)}
 DIRECTION_BINDINGS = {
     "CT01": {"method": "FRM05", "body": "FRB05", "topic_type": "自我介绍", "content_group": "自我介绍"},
@@ -21,7 +21,7 @@ DIRECTION_BINDINGS = {
     "CT04": {"method": "FRM08", "body": "FRB08", "topic_type": "价格营销", "content_group": "施工报价"},
     "CT05": {"method": "FRM09", "body": "FRB09", "topic_type": "价格营销", "content_group": "施工报价"},
     "CT06": {"method": "FRM04", "body": "FRB04", "topic_type": "工艺展示", "content_group": "工艺展示"},
-    "CT07": {"method": "FRM02", "body": "FRB02", "topic_type": "日常工作", "content_group": "日常工作"},
+    "CT07": {"method": "FRM10", "body": "FRB10", "topic_type": "日常工作", "content_group": "日常工作"},
 }
 
 
@@ -45,11 +45,11 @@ def load_foreman_rule_catalog(
     payload["source"] = {**payload["source"], **direction_matrix["source"]}
     payload["combination_rules"] = direction_matrix.get("groups") or []
     if {item.get("code") for item in payload.get("methods") or []} != METHOD_CODES:
-        raise ForemanRuleValidationError("装修工长正文模式必须完整覆盖 FRM01～FRM09")
+        raise ForemanRuleValidationError("装修工长正文模式必须完整覆盖 FRM01～FRM10")
     if {item.get("code") for item in payload.get("title_formulas") or []} != TITLE_CODES:
         raise ForemanRuleValidationError("装修工长标题公式必须完整覆盖 FRT01～FRT12")
     if {item.get("code") for item in payload.get("content_formulas") or []} != BODY_CODES:
-        raise ForemanRuleValidationError("装修工长正文公式必须完整覆盖 FRB01～FRB09")
+        raise ForemanRuleValidationError("装修工长正文公式必须完整覆盖 FRB01～FRB10")
     groups = payload.get("combination_rules") or []
     if {item.get("id") for item in groups} != GROUP_CODES:
         raise ForemanRuleValidationError("装修工长组合规则必须完整覆盖 FRG01～FRG07")
@@ -210,6 +210,30 @@ def import_foreman_rules(bundle: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def upgrade_intro_daily_rules(bundle: dict[str, Any]) -> dict[str, Any]:
+    """仅修正作者身份槽位与日常记录绑定，保留报价、案例及运营自定义配置。"""
+    result = deepcopy(bundle)
+    catalog = load_foreman_rule_catalog()
+    title = next(item for item in result["title_formulas"] if item["code"] == "FRT12")
+    canonical_title = next(item for item in catalog["title_formulas"] if item["code"] == "FRT12")
+    slots = title.setdefault("source_content", {}).setdefault(
+        "slot_schema", deepcopy(canonical_title["source_content"]["slot_schema"])
+    )
+    identity = next(slot for slot in slots if slot["code"] == "identity")
+    identity["lexicon_codes"] = [code for code in identity.get("lexicon_codes", []) if code != "title.audience"]
+    title["compatible_methods"] = list(dict.fromkeys([*title.get("compatible_methods", []), "FRM10"]))
+    for section, code in (("methods", "FRM10"), ("content_formulas", "FRB10")):
+        if not any(item["code"] == code for item in result[section]):
+            result[section].append(deepcopy(next(item for item in catalog[section] if item["code"] == code)))
+    daily = next(item for item in result["combination_rules"] if item.get("content_type_codes") == ["CT07"])
+    daily["method_members"] = [{"method_code": "FRM10", "role": "primary", "order": 1}]
+    daily["body_formula_candidate_codes"] = ["FRB10"]
+    daily.setdefault("hard_conditions", {})["allowed_formula_pairs"] = [
+        [title_code, "FRB10"] for title_code in daily["title_formula_candidate_codes"]
+    ]
+    return result
+
+
 __all__ = [
     "CATALOG_PATH",
     "DIRECTION_BINDINGS",
@@ -217,4 +241,5 @@ __all__ = [
     "ForemanRuleValidationError",
     "import_foreman_rules",
     "load_foreman_rule_catalog",
+    "upgrade_intro_daily_rules",
 ]

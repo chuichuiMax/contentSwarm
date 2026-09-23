@@ -334,3 +334,27 @@ async def test_frt01_accepts_bound_house_type_and_business_aliases_as_one_of_slo
         item for item in blocked["validation_report"]["checks"] if item["code"] == "TITLE_REQUIRED_FACT_MISSING"
     )
     assert title_check["message"].count("面积/房型") == 1
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("fact", "expected"),
+    [
+        ("我从事装修行业五年了", "五年"),
+        ("30岁，5年装修工龄，技能：工长、水电、泥瓦", "工长"),
+    ],
+)
+def test_intro_identity_uses_author_facts_instead_of_audience(fact, expected):
+    from yuxi.content.control.workflow.deterministic_node import _required_title_fact_options
+
+    formula = _formula_by_code("FRT12")
+    options = _required_title_fact_options(
+        {"form_values": {"location": "长沙市", "persona_fact": fact, "product": "装修"}},
+        {"title_formula": formula},
+        {"formula_lexicon_bundle": {"selection": {"title": {"title.audience": ["自装党"]}}}},
+    )
+    identity = next(values for key, values in options.items() if key.startswith("identity"))
+    assert expected in identity
+    assert "自装党" not in identity
+    if expected == "工长":
+        assert "30岁" not in identity and "5年" not in identity

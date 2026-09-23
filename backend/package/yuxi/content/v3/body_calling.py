@@ -242,6 +242,18 @@ def _foreman_calling(
 
 DECORATION_BODY_CALLING.update(
     {
+        "FRB10": _foreman_calling(
+            "日常工作记录型",
+            [
+                "真实工长身份与工作场景",
+                "已确认的现场任务",
+                "工作过程或做事方式",
+                "有据的进展或后续安排",
+                "具体行动引导",
+            ],
+            ["persona.core_advantage", "ending.case_cta"],
+            variation_rule="围绕已确认任务记录日常工作；不要求痛点、报价或完工结果，无进展事实时只写做事方式或明确为计划的安排。",
+        ),
         "FRB01": _foreman_calling(
             "价格营销型",
             ["价格钩子", "案例信息", "真实报价", "费用解释", "相关人设优势", "结果或做事原则", "具体行动引导"],

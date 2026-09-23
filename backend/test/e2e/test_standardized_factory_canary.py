@@ -33,7 +33,7 @@ EXPECTED_FORMULAS = {
     "CT04": ("FRT01", "FRB08"),
     "CT05": ("FRT01", "FRB09"),
     "CT06": ("FRT05", "FRB04"),
-    "CT07": ("FRT06", "FRB02"),
+    "CT07": ("FRT12", "FRB10"),
 }
 
 QUOTE_CASES = {

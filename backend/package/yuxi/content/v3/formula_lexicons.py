@@ -27,7 +27,7 @@ TITLE_FORMULA_LEXICON_CODES = {
     "FRT09": ("title.positioning", "title.house_type"),
     "FRT10": ("title.house_type", "title.positioning"),
     "FRT11": ("title.positioning", "title.instruction_value"),
-    "FRT12": ("title.positioning", "title.audience"),
+    "FRT12": ("title.positioning",),
 }
 
 

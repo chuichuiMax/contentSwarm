@@ -43,7 +43,7 @@ def _source_bundle() -> dict:
     }
 
 
-def test_foreman_catalog_keeps_nine_modes_and_twelve_title_structures() -> None:
+def test_foreman_catalog_keeps_case_modes_and_adds_daily_work_mode() -> None:
     catalog = load_foreman_rule_catalog()
 
     assert {item["code"] for item in catalog["methods"]} == METHOD_CODES
@@ -268,3 +268,80 @@ def test_non_decoration_candidates_keep_legacy_catalog() -> None:
     assert {item["code"] for item in candidates["methods"]} == {"M01", "M02", "M03", "M04", "S01"}
     assert {item["code"] for item in candidates["title_formulas"]} == {"T01"}
     assert {item["code"] for item in candidates["content_formulas"]} == {"C01"}
+
+
+def test_daily_work_requires_process_without_case_pain_or_completed_result():
+    from yuxi.content.control.workflow.creation_plan import _resolve_rule_and_formulas, build_fact_index
+
+    bundle = import_foreman_rules(_source_bundle())
+    catalog = build_strategy_candidates(
+        bundle, industry_slug="decoration", direction_code="CT07", rule_version_id="rules-test"
+    )
+    fact_index = build_fact_index(
+        {
+            "form_values": {
+                "location": "长沙市",
+                "product": "水电",
+                "persona_fact": "工长，五年经验",
+                "process": ["工地巡检"],
+                "advantages": ["自有工人"],
+            }
+        },
+        {"items": []},
+    )
+    rule, title, body, methods, missing = _resolve_rule_and_formulas(catalog, fact_index)
+    assert missing == []
+    assert title["code"] == "FRT12"
+    assert body["code"] == "FRB10"
+    assert [item["code"] for item in methods] == ["FRM10"]
+    order = create_production_order(
+        task_id="daily",
+        catalog=catalog,
+        group_id=rule["id"],
+        creation_method_codes=["FRM10"],
+        title_formula_code="FRT12",
+        body_formula_code="FRB10",
+    )
+    required = {
+        item.variable_code
+        for item in build_material_manifest(catalog=catalog, order=order).requirements
+        if item.required
+    }
+    assert "process" in required
+    assert not required & {"pain", "result"}
+    fact_index["available_variable_codes"].remove("process")
+    assert "process" in _resolve_rule_and_formulas(catalog, fact_index)[-1]
+    cases = next(item for item in bundle["methods"] if item["code"] == "FRM02")
+    case_body = next(item for item in bundle["content_formulas"] if item["code"] == "FRB02")
+    assert {"pain", "result"} <= set(cases["variable_schema"])
+    assert "pain" in case_body["required_variables"]
+
+
+def test_intro_daily_upgrade_preserves_cases_quotes_and_custom_rules():
+    from yuxi.content.v3.foreman_rules import upgrade_intro_daily_rules
+
+    before = import_foreman_rules(_source_bundle())
+    before["methods"] = [item for item in before["methods"] if item["code"] != "FRM10"]
+    before["content_formulas"] = [item for item in before["content_formulas"] if item["code"] != "FRB10"]
+    title = next(item for item in before["title_formulas"] if item["code"] == "FRT12")
+    title["source_content"]["slot_schema"][1]["lexicon_codes"] = ["title.audience"]
+    title["compatible_methods"].remove("FRM10")
+    daily = next(item for item in before["combination_rules"] if item["content_type_codes"] == ["CT07"])
+    daily["method_members"][0]["method_code"] = "FRM02"
+    daily["body_formula_candidate_codes"] = ["FRB02"]
+    daily["hard_conditions"]["allowed_formula_pairs"] = [["FRT12", "FRB02"]]
+    before["methods"][0]["principle"] = "保留运营自定义原则"
+    original = deepcopy(before)
+
+    after = upgrade_intro_daily_rules(before)
+
+    assert before == original
+    assert upgrade_intro_daily_rules(after) == after
+    for section, changed in (("methods", "FRM10"), ("title_formulas", "FRT12"), ("content_formulas", "FRB10")):
+        assert [item for item in after[section] if item["code"] != changed] == [
+            item for item in before[section] if item["code"] != changed
+        ]
+    assert [item for item in after["combination_rules"] if item["content_type_codes"] != ["CT07"]] == [
+        item for item in before["combination_rules"] if item["content_type_codes"] != ["CT07"]
+    ]
+    assert validate_rule_bundle_for_publish(after)["errors"] == []

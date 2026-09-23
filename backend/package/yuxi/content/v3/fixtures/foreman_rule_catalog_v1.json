@@ -9,6 +9,18 @@
   },
   "methods": [
     {
+      "code": "FRM10",
+      "name": "日常工作记录型",
+      "method_type": "core",
+      "industry_scope": ["decoration"],
+      "principle": "从已确认的现场任务与工作过程出发，记录工长的日常工作；有进展写进展，无结果时说明做事方式。",
+      "suitable_scenes": ["日常工作", "工地巡检", "施工记录"],
+      "sentence_patterns": ["在{location}做{product}，这次记录{process}"],
+      "tag_schema": {"business_mode": "J", "evidence": ["现场任务", "工作过程"]},
+      "variable_schema": ["location", "product", "process", "persona_fact"],
+      "risk_rules": ["不要求用户痛点、完工结果或客户反馈", "不得虚构当日完成事项、现场问题、进度、对话或反馈", "计划和做事原则不得写成已完成事实"]
+    },
+    {
       "code": "FRM01",
       "name": "价格营销型",
       "method_type": "core",
@@ -333,16 +345,30 @@
       "source_content": {
         "slot_schema": [
           {"code": "location", "label": "地域", "variable_codes": ["location"], "lexicon_codes": []},
-          {"code": "identity", "label": "身份", "variable_codes": ["persona_fact"], "lexicon_codes": ["title.audience"]},
+          {"code": "identity", "label": "身份", "variable_codes": ["persona_fact"], "lexicon_codes": []},
           {"code": "business", "label": "业务", "variable_codes": ["scene", "product"], "lexicon_codes": ["title.positioning"]}
         ]
       },
       "variable_schema": ["location", "persona_fact", "product"],
-      "compatible_methods": ["FRM02", "FRM04", "FRM05"],
+      "compatible_methods": ["FRM02", "FRM04", "FRM05", "FRM10"],
       "risk_rules": ["身份和业务必须来自真实资料", "标题主卖点必须在正文开头兑现"]
     }
   ],
   "content_formulas": [
+    {
+      "code": "FRB10",
+      "name": "日常工作记录型",
+      "industry_scope": ["decoration"],
+      "industry_aliases": {},
+      "compatible_methods": ["FRM10"],
+      "suitable_scenes": ["日常工作", "工地巡检", "施工记录"],
+      "business_pains": [],
+      "structure_schema": ["真实工长身份与工作场景", "已确认的现场任务", "工作过程或做事方式", "有据的进展或后续安排", "具体行动引导"],
+      "reference_examples": [],
+      "required_variables": ["location", "product", "process", "persona_fact"],
+      "output_schema": {"sections": 5, "cta_required": true, "max_persona_advantages": 3},
+      "risk_rules": ["痛点、报价、完工结果和客户反馈均非必需", "没有进展事实时只写做事方式或明确为计划的后续安排", "不得从图片地址或文件名推断现场事实"]
+    },
     {
       "code": "FRB01",
       "name": "价格营销型",

@@ -32,7 +32,7 @@ def _context(formula_code: str) -> ContractDomainContext:
 def test_body_calling_catalog_covers_all_formulas_and_five_source_columns() -> None:
     assert set(DECORATION_BODY_CALLING) == {
         *{f"C{index:02d}" for index in range(1, 5)},
-        *{f"FRB{index:02d}" for index in range(1, 10)},
+        *{f"FRB{index:02d}" for index in range(1, 11)},
     }
     for calling in DECORATION_BODY_CALLING.values():
         assert calling["formula_name"]
