@@ -6,6 +6,7 @@ import yaml
 ROOT = Path(__file__).parents[4]
 COMPOSE_FILE = ROOT / "docker-compose.source.yml"
 PROD_COMPOSE_FILE = ROOT / "docker-compose.prod.yml"
+NGINX_DEFAULT_CONF = ROOT / "docker/nginx/default.conf"
 
 
 def load_compose() -> dict:
@@ -130,3 +131,9 @@ def test_source_deployment_docs_cover_operational_workflows():
         "docker compose",
     ):
         assert required in content
+
+
+def test_nginx_accepts_30_mb_request_bodies():
+    content = NGINX_DEFAULT_CONF.read_text(encoding="utf-8")
+
+    assert "client_max_body_size 30M;" in content
