@@ -265,7 +265,34 @@ def test_compile_quotation_list_pack_keeps_price_facts_without_locked_quote():
     assert compiled["business_variables"]["quote_type"] == "budget"
     assert compiled["business_variables"]["quantity"] == "137㎡"
     assert compiled["business_variables"]["process"] == ["定制化家装交付"]
+    assert "quote_block" not in compiled["business_variables"]
     assert _parse_content_studio_quote_case(user_request, content_type_code="CT02") is None
+
+
+def test_compile_quotation_list_pack_defaults_budget_quote_type_from_type_name():
+    task = SimpleNamespace(id="ct_quote_list_default", content_goal="acquire", mode="pro", content_type_code=None)
+    template = SimpleNamespace(slug="decoration", quick_form_schema=[], pro_form_schema=[])
+    request = {
+        "contentType": {"typeName": "装修报价清单", "contentTypeCode": "CT02"},
+        "facts": {
+            "product": "洋湖天旭定制化家装项目",
+            "persona_fact": "朱穆，管理员。",
+        },
+    }
+
+    compiled, missing = compile_content_brief(
+        task=task,
+        template=template,
+        brief=ContentBriefPayload(
+            user_request=json.dumps(request, ensure_ascii=False),
+            form_values={"基础": "12万", "木制品": "6万"},
+        ),
+    )
+
+    assert missing == []
+    assert compiled["business_variables"]["quote_type"] == "budget"
+    assert compiled["business_variables"]["price"] == ["基础 12万", "木制品 6万"]
+    assert "quote_block" not in compiled["business_variables"]
 
 
 def test_compile_case_share_pack_keeps_price_facts_without_locked_quote():

@@ -11,7 +11,12 @@ from sqlalchemy import select
 
 from yuxi.content.control.errors import ContentApplicationError
 from yuxi.content.model.contracts.joint_strategy import StrategySnapshotV2
-from yuxi.content.model.materials import build_material_manifest, create_production_order
+from yuxi.content.model.materials import (
+    MaterialRequirementManifestV1,
+    _canonical_hash,
+    build_material_manifest,
+    create_production_order,
+)
 from yuxi.content.v3.body_calling import get_decoration_body_calling, get_decoration_body_calling_source
 from yuxi.content.v3.formula_lexicons import get_formula_lexicon_requirements
 from yuxi.services.content_viral_assets import check_asset_source, preparation_skill_hash, require_asset
@@ -33,7 +38,56 @@ _REFERENCE_VARIABLE_ALIASES = {
     "trade_breakdown": ("quote_block",),
     "labor_aux_breakdown": ("quote_block",),
 }
+_LOCKED_QUOTE_PLAN_VARIABLES = {"quote_block", "title_price", "title_price_label"}
 _PLANNER_VERSION = "deterministic_creation_plan_v1"
+
+
+def _fact_values(fact_index: dict[str, Any], code: str) -> list[Any]:
+    return [item.get("value") for item in (fact_index.get("facts") or {}).get(code, {}).get("values") or []]
+
+
+def _is_budget_quote(fact_index: dict[str, Any]) -> bool:
+    """生产资料包装出的预算价不走当家锁定报价块。"""
+
+    available = set(fact_index.get("available_variable_codes") or [])
+    quote_types = [str(value).strip().lower() for value in _fact_values(fact_index, "quote_type") if value not in (None, "")]
+    if any(value == "budget" or "预算" in value for value in quote_types):
+        return True
+    return "price" in available and not available.intersection({"quote_block", "title_price"})
+
+
+def _plan_available_codes(fact_index: dict[str, Any]) -> set[str]:
+    available = set(fact_index.get("available_variable_codes") or [])
+    if _is_budget_quote(fact_index) and "price" in available:
+        available.update({"title_price", "quote_type"})
+    return available
+
+
+def _drop_budget_locked_quote_requirements(missing: set[str], fact_index: dict[str, Any]) -> set[str]:
+    if not _is_budget_quote(fact_index):
+        return missing
+    missing -= {"quote_block", "title_price_label"}
+    if "price" in set(fact_index.get("available_variable_codes") or []):
+        missing.discard("title_price")
+        missing.discard("quote_type")
+    return missing
+
+
+def _relax_budget_quote_manifest(
+    manifest: MaterialRequirementManifestV1, fact_index: dict[str, Any]
+) -> MaterialRequirementManifestV1:
+    if not _is_budget_quote(fact_index):
+        return manifest
+    optional = {"quote_block", "title_price_label"}
+    if "price" in set(fact_index.get("available_variable_codes") or []):
+        optional.update({"title_price", "quote_type"})
+    payload = manifest.model_dump(mode="json")
+    payload.pop("manifest_hash", None)
+    payload["requirements"] = [
+        {**item, "required": False} if item.get("variable_code") in optional else item
+        for item in payload.get("requirements") or []
+    ]
+    return MaterialRequirementManifestV1.model_validate({**payload, "manifest_hash": _canonical_hash(payload)})
 
 
 def _missing_title_formula_variables(title: dict[str, Any], available: set[str]) -> set[str]:
@@ -148,7 +202,7 @@ def _resolve_rule_and_formulas(
             "CONTENT_PLAN_CONFIGURATION_INVALID", "组合规则引用了不存在或已停用的创作手法", "conflict"
         )
     methods = [deepcopy(methods_by_code[code]) for code in method_codes]
-    available = set(fact_index["available_variable_codes"])
+    available = _plan_available_codes(fact_index)
 
     def choose_locked(section: str, codes: list[str]) -> dict[str, Any] | None:
         by_code = {item["code"]: item for item in catalog.get(section) or []}
@@ -201,6 +255,7 @@ def _resolve_rule_and_formulas(
         for candidates in groups.values():
             if not (available | missing).intersection(candidates):
                 missing.add(candidates[0])
+    missing = _drop_budget_locked_quote_requirements(missing, fact_index)
     return rule, title, body, methods, sorted(missing)
 
 
@@ -223,7 +278,9 @@ def compile_production_order_and_manifest(
         body_formula_code=body["code"],
     )
     try:
-        manifest = build_material_manifest(catalog=catalog, order=order)
+        manifest = _relax_budget_quote_manifest(
+            build_material_manifest(catalog=catalog, order=order), fact_index
+        )
     except ValueError as exc:
         raise ContentApplicationError("CONTENT_PLAN_CONFIGURATION_INVALID", str(exc), "conflict") from exc
     return order.model_dump(mode="json"), manifest.model_dump(mode="json")

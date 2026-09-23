@@ -226,6 +226,85 @@ def craft_catalog():
     }
 
 
+def quote_list_catalog():
+    from yuxi.content.v3.foreman_rules import load_foreman_rule_catalog
+
+    rules = load_foreman_rule_catalog()
+    return {
+        **catalog(),
+        "industry_slug": "decoration",
+        "direction_code": "CT02",
+        "methods": rules["methods"],
+        "title_formulas": rules["title_formulas"],
+        "content_formulas": rules["content_formulas"],
+        "source_rules": [
+            item for item in rules["combination_rules"] if "CT02" in (item.get("content_type_codes") or [])
+        ],
+        "variables": [
+            {"code": code, "name": code, "value_type": "string"}
+            for code in (
+                "persona_fact",
+                "product",
+                "location",
+                "process",
+                "advantages",
+                "advantage",
+                "scene",
+                "price",
+                "quantity",
+                "quote_type",
+                "title_price",
+                "title_price_label",
+                "quote_block",
+            )
+        ],
+    }
+
+
+def test_budget_quote_plan_does_not_require_locked_quote_fields():
+    catalog_data = quote_list_catalog()
+    brief = {
+        "business_variables": {
+            "product": "洋湖天旭定制化家装项目",
+            "price": ["基础 12万", "木制品 6万"],
+            "quote_type": "budget",
+            "quantity": "137㎡",
+            "location": "长沙",
+            "process": ["定制化家装交付"],
+            "advantages": ["项目施工鸿扬家装"],
+            "persona_fact": "朱穆，管理员。",
+        }
+    }
+    gaps = analyze_plan_gaps(
+        catalog=catalog_data,
+        references=[],
+        content_brief=brief,
+        evidence_bundle={"items": []},
+        runtime_config_snapshot={},
+    )
+    assert not {"quote_block", "title_price", "title_price_label", "quote_type"} & set(
+        gaps["missing_variable_codes"]
+    )
+    _, manifest = compile_production_order_and_manifest(
+        task_id="task-budget-quote",
+        catalog=catalog_data,
+        fact_index=build_fact_index(brief, {"items": []}),
+    )
+    required = {item["variable_code"] for item in manifest["requirements"] if item["required"]}
+    assert not {"quote_block", "title_price", "title_price_label"} & required
+
+
+def test_locked_quote_plan_still_requires_trusted_quote_fields():
+    gaps = analyze_plan_gaps(
+        catalog=quote_list_catalog(),
+        references=[],
+        content_brief={"business_variables": {"product": "三室二厅", "location": "长沙"}},
+        evidence_bundle={"items": []},
+        runtime_config_snapshot={},
+    )
+    assert {"quote_block", "title_price", "title_price_label", "quote_type"} <= set(gaps["missing_variable_codes"])
+
+
 @pytest.mark.parametrize("persona_source", ["missing", "brief", "evidence", "rejected"])
 def test_craft_plan_extracts_manifest_persona_requirement(persona_source):
     brief = {

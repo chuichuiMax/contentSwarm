@@ -2010,14 +2010,31 @@ const createTask = async () => {
   if (!creation.industry_template_id) {
     message.warning('请选择行业模板')
     return
+  }
+  if (!creation.content_goal) {
+    message.warning('请选择内容目标')
+    return
+  }
+  if (needsContentDirection.value && !creation.content_type_code) {
+    message.warning('请选择本次内容方向')
+    return
+  }
+  try {
+    await ensureCreationTask()
+    initializeFormValues()
+    initializeVisualSelection()
+    await loadVisualMaterials()
+    message.success('内容任务已创建')
+  } catch (error) {
+    message.error(error.message || '创建任务失败')
+  }
+}
+
 const ensureCreationTask = async () => {
   if (store.task) return store.task
   if (!creation.industry_template_id || !creation.content_goal) {
     throw new Error('装修与家居模板尚未就绪，请刷新后重试')
   }
-  if (!creation.content_goal) {
-    message.warning('请选择内容目标')
-    return
   if (needsContentDirection.value && !creation.content_type_code) {
     throw new Error('请选择创作类型')
   }
@@ -2156,6 +2173,20 @@ const compileBrief = async () => {
     message.warning(`请填写${missing.label}`)
     return
   }
+  try {
+    window.clearTimeout(draftSaveTimer)
+    await store.compileBrief(buildBrief())
+    message.success('业务简报已形成')
+  } catch (error) {
+    const missingFields = error.response?.data?.detail?.error?.fields
+    message.error(
+      missingFields?.length
+        ? `请补充：${missingFields.map((field) => field.label || field.field).join('、')}`
+        : error.message || '形成简报失败'
+    )
+  }
+}
+
 const submitCreation = async () => {
   if (creationSubmitting.value || quoteTestCaseTypeSyncing.value) return
   if (!currentContentType.value && needsContentDirection.value) {
@@ -2578,19 +2609,7 @@ const openVersions = async () => {
               <a-select
                 v-model:value="creation.content_type_code"
                 placeholder="请选择本次内容方向"
-        <section v-if="isCreationView" class="creation-form">
-          <fieldset
-            class="creation-fields"
-            :disabled="creationSubmitting || briefLocked"
-            :inert="creationSubmitting || briefLocked"
-          >
-            <div v-if="needsContentDirection" class="field-block creation-type-field">
-              <span id="creation-type-label">创作类型</span>
-              <a-radio-group
-                :value="currentContentType"
-                :disabled="quoteTestCaseTypeSyncing || briefLocked || creationSubmitting"
                 aria-labelledby="creation-type-label"
-                @change="changeContentType"
               >
                 <a-select-option
                   v-for="item in directionOptions"
@@ -2941,7 +2960,7 @@ const openVersions = async () => {
                 </div>
               </a-spin>
             </section>
-          </fieldset>
+            </div>
           <a-spin v-if="usesDeterministicPlan && briefLocked" :spinning="creationPlanLoading">
             <section v-if="creationPlan" class="creation-plan-preview">
               <header>
@@ -3080,6 +3099,7 @@ const openVersions = async () => {
               ><Play :size="17" />开始生成</a-button
             >
           </footer>
+          </template>
         </section>
 
         <section
@@ -4477,24 +4497,9 @@ const openVersions = async () => {
 .content-goal-field,
 .creation-type-field {
   margin-top: 24px;
+  margin-bottom: 24px;
   :deep(.ant-select) {
     width: 100%;
-  margin-bottom: 24px;
-  :deep(.ant-radio-group) {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-  }
-  :deep(.ant-radio-button-wrapper) {
-    border: 1px solid var(--gray-200);
-    border-radius: 6px;
-  }
-  :deep(.ant-radio-button-wrapper::before) {
-    display: none;
-  }
-  :deep(.ant-radio-button-wrapper-checked) {
-    border-color: var(--main-color);
-    background: var(--main-10);
   }
 }
 

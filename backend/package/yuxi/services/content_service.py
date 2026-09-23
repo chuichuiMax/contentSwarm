@@ -16,6 +16,7 @@ from yuxi.content.rules import CONTENT_GOALS
 from yuxi.content.service_entry_form import (
     BRAND_NAME,
     CONTENT_TYPE_NAME_TO_DIRECTION,
+    DECORATION_QUOTE_KEYS,
     LEGACY_QUOTE_TYPE_NAME,
     catalog_select_options,
     configured_business_variable_fields,
@@ -635,7 +636,7 @@ def compile_content_brief(
         normalized_user_request = (
             quote_case["sanitized_user_request"] if quote_case is not None else user_request
         )
-        normalized_variables = structured["business_variables"] if structured is not None else {}
+        normalized_variables = dict((structured or {}).get("business_variables") or {})
         form_values = dict(raw.get("form_values") or {})
         form_values["user_request"] = normalized_user_request
         reserved = {
@@ -657,9 +658,17 @@ def compile_content_brief(
             or content_direction_from_form_values(form_values)
             or content_type_code
         )
-        inject_quote_type = bool(quote_type) and quote_case is None and (
-            production_pack is None or is_quote_content_type_name(production_pack.get("type_name"))
-        )
+        inject_quote_type = bool(quote_type) and quote_case is None and production_pack is None
+        if production_pack is not None and is_quote_content_type_name(production_pack.get("type_name")):
+            normalized_variables.setdefault("quote_type", "budget")
+            if not normalized_variables.get("price"):
+                price_items = [
+                    f"{key} {form_values[key]}".strip()
+                    for key in DECORATION_QUOTE_KEYS
+                    if form_values.get(key) not in (None, "", [])
+                ]
+                if price_items:
+                    normalized_variables["price"] = price_items
         compiled = {
             "task_id": task.id,
             "industry": template.slug,
