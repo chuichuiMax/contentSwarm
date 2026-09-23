@@ -15,6 +15,7 @@ export const contentApi = {
   listViralAssets: (params) => apiGet(`/api/content/viral-assets${encodeQuery(params)}`),
   importViralAssets: (payload) => apiPost('/api/content/viral-assets/import', payload),
   getViralAsset: (assetId) => apiGet(`/api/content/viral-assets/${assetId}`),
+  deleteViralAsset: (assetId) => apiDelete(`/api/content/viral-assets/${assetId}`),
   retryViralAsset: (assetId) => apiPost(`/api/content/viral-assets/${assetId}/retry`),
   reviewViralAsset: (assetId, payload) =>
     apiPost(`/api/content/viral-assets/${assetId}/review`, payload),

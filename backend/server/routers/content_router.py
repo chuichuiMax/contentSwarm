@@ -43,8 +43,10 @@ from yuxi.content.infrastructure.postgres.strategy_preview_repository import Pos
 from yuxi.content.model.viral_assets import ViralAssetCorrectionInput, ViralAssetImport, ViralAssetReviewInput
 from yuxi.repositories.viral_asset_repository import asset_dict
 from yuxi.services.content_viral_assets import (
+    asset_has_approved_review,
     check_asset_source,
     correct_viral_asset,
+    delete_viral_asset,
     import_viral_assets,
     list_viral_assets,
     preparation_skill_hash,
@@ -557,7 +559,19 @@ async def get_viral_asset(
     ) - await published_variable_codes(db):
         asset.status, asset.error_message = "invalidated", "参考槽位引用的变量已停用，请重新准备"
         await db.commit()
+    elif asset.status == "ready" and not asset_has_approved_review(asset):
+        asset.status, asset.error_message = "needs_review", "等待运营审核"
+        await db.commit()
     return {"asset": asset_dict(asset, include_source=True)}
+
+
+@content.delete("/viral-assets/{asset_id}")
+async def delete_viral_asset_record(
+    asset_id: str,
+    current_user: User = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    return await delete_viral_asset(db, current_user, asset_id)
 
 
 @content.post("/viral-assets/{asset_id}/retry")

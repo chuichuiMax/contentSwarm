@@ -3,6 +3,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from fastapi import HTTPException
 
 from test.unit.content.test_viral_asset_preparation import prepared, source
 from yuxi.content.model.viral_assets import (
@@ -87,6 +88,7 @@ async def test_review_ignores_runtime_metadata_but_validates_v2_contract(monkeyp
     )
 
     assert result["asset"]["status"] == "ready"
+    assert asset.error_message is None
     assert asset.prepared_json["runtime_config_snapshot"] == {"model": "preparer"}
     assert asset.prepared_json["review"]["action"] == "approve"
 
@@ -138,3 +140,114 @@ async def test_operator_can_correct_type_and_slot_metadata_before_approval(monke
     assert asset.prepared_json["reference_card"]["content_type_code"] == "CT07"
     assert asset.prepared_json["reference_card"]["required_slots"][0]["slot_key"] == "work_scene"
     assert asset.prepared_json["review_history"][-1]["action"] == "correct"
+
+
+@pytest.mark.parametrize("action", ["approve", "enable"])
+def test_only_approved_or_enabled_prepared_assets_are_ready(action):
+    from yuxi.services.content_viral_assets import asset_has_approved_review
+
+    asset = SimpleNamespace(prepared_json={"status": "prepared", "review": {"action": action}})
+
+    assert asset_has_approved_review(asset) is True
+
+
+@pytest.mark.parametrize("action", [None, "reject", "correct", "disable"])
+def test_unapproved_prepared_assets_are_not_ready(action):
+    from yuxi.services.content_viral_assets import asset_has_approved_review
+
+    review = {} if action is None else {"action": action}
+    asset = SimpleNamespace(prepared_json={"status": "prepared", "review": review})
+
+    assert asset_has_approved_review(asset) is False
+
+
+@pytest.mark.parametrize(
+    ("prepared_json", "expected_status", "expected_error", "expected_attempt"),
+    [
+        ({"status": "prepared"}, "needs_review", "等待运营审核", 1),
+        (
+            {"status": "prepared", "review": {"action": "approve"}},
+            "ready",
+            None,
+            1,
+        ),
+        (
+            {"status": "prepared", "review": {"action": "reject"}},
+            "needs_review",
+            "运营驳回",
+            1,
+        ),
+        ({}, "pending", None, 2),
+    ],
+)
+def test_reidentified_asset_restores_only_reviewed_state(
+    prepared_json, expected_status, expected_error, expected_attempt
+):
+    from yuxi.services.viral_document_worker import restore_reidentified_asset
+
+    asset = SimpleNamespace(
+        status="invalidated",
+        error_message="运营驳回" if (prepared_json.get("review") or {}).get("action") == "reject" else "旧提示",
+        prepared_json=prepared_json,
+        attempt=1,
+    )
+
+    restore_reidentified_asset(asset)
+
+    assert asset.status == expected_status
+    assert asset.error_message == expected_error
+    assert asset.attempt == expected_attempt
+
+
+def test_reidentified_disabled_asset_remains_invalidated():
+    from yuxi.services.viral_document_worker import restore_reidentified_asset
+
+    asset = SimpleNamespace(
+        status="invalidated",
+        error_message="运营停用",
+        prepared_json={"status": "prepared", "review": {"action": "disable"}},
+        attempt=1,
+    )
+
+    restore_reidentified_asset(asset)
+
+    assert asset.status == "invalidated"
+    assert asset.error_message == "运营停用"
+
+
+@pytest.mark.asyncio
+async def test_delete_viral_asset_removes_file_job_references(monkeypatch):
+    from yuxi.services import content_viral_assets
+
+    asset = SimpleNamespace(id="asset-delete", file_id="file-1", status="needs_review")
+    jobs = [
+        SimpleNamespace(result_json={"asset_ids": ["asset-delete", "asset-keep"]}),
+        SimpleNamespace(result_json={"asset_ids": ["asset-delete"]}),
+    ]
+    monkeypatch.setattr(content_viral_assets, "require_asset", AsyncMock(return_value=asset))
+    db = SimpleNamespace(
+        execute=AsyncMock(return_value=SimpleNamespace(scalars=lambda: jobs)),
+        delete=AsyncMock(),
+        commit=AsyncMock(),
+    )
+
+    result = await content_viral_assets.delete_viral_asset(db, SimpleNamespace(uid="admin-1"), asset.id)
+
+    assert result == {"success": True, "id": asset.id}
+    assert jobs[0].result_json["asset_ids"] == ["asset-keep"]
+    assert jobs[1].result_json["asset_ids"] == []
+    db.delete.assert_awaited_once_with(asset)
+    db.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_delete_viral_asset_rejects_ready_asset(monkeypatch):
+    from yuxi.services import content_viral_assets
+
+    asset = SimpleNamespace(id="asset-ready", file_id="file-1", status="ready")
+    monkeypatch.setattr(content_viral_assets, "require_asset", AsyncMock(return_value=asset))
+
+    with pytest.raises(HTTPException, match="已发布资产不能删除") as exc_info:
+        await content_viral_assets.delete_viral_asset(SimpleNamespace(), SimpleNamespace(uid="admin-1"), asset.id)
+
+    assert exc_info.value.status_code == 409
