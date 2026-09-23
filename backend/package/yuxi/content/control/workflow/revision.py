@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -16,6 +18,54 @@ _REVISION_REASON_LABELS = {
 
 def revision_reason_label(reason_code: str | None) -> str:
     return _REVISION_REASON_LABELS.get(str(reason_code or "").upper(), "内容校验发现阻断问题")
+
+
+def build_generation_repair_constraints(payload: dict[str, Any]) -> dict[str, Any] | None:
+    """为标准生产的模型输入和结果校验编译同一份回修边界。"""
+    blocked = {
+        item.get("code")
+        for item in (payload.get("review_report") or {}).get("checks") or []
+        if item.get("status") == "blocked"
+    }
+    if (
+        not payload.get("production_pack")
+        or not payload.get("content_draft")
+        or not payload.get("selected_title")
+        or not payload.get("content_outline")
+        or (payload.get("validation_report") or {}).get("status") not in {"passed", "warning"}
+        or not blocked
+        or not blocked
+        <= {
+            "PERSONA_OPENING",
+            "PERSONA_CLOSING",
+            "EMOJI_COVERAGE",
+            "EMOJI_APPROPRIATENESS",
+            "EMOJI_RESTRICTIONS",
+        }
+    ):
+        return None
+    body = payload["content_draft"]["body"]
+    paragraphs = [part.strip() for part in re.split(r"\n\s*\n", body) if part.strip()]
+    editable = set()
+    if "PERSONA_OPENING" in blocked:
+        editable.update(range(1, min(2, len(paragraphs)) + 1))
+    if "PERSONA_CLOSING" in blocked:
+        editable.add(len(paragraphs))
+    return {
+        "mode": "persona_paragraphs_only" if editable else "emoji_only",
+        "original_body": body,
+        "editable_paragraph_numbers": sorted(editable),
+        "immutable_title": deepcopy(payload["selected_title"]),
+        "immutable_outline": deepcopy(payload["content_outline"]),
+        "immutable_topics": list(payload["content_draft"].get("topics") or []),
+        "instruction": (
+            "段落从 1 开始计数，仅可改 editable_paragraph_numbers 中的段落；保持段落数量与顺序，"
+            "其余段落文字逐字保留，仅允许调整 Emoji 和空格。可在可编辑段落间迁移身份并删除重复句；"
+            "标题、大纲、话题保持原样，事实和段落证据映射必须一致。"
+            if editable
+            else "只调整 Emoji 及其相邻空格；标题、大纲、正文文字、数字、标点、顺序和话题保持原样。"
+        ),
+    }
 
 
 @dataclass(frozen=True, slots=True)

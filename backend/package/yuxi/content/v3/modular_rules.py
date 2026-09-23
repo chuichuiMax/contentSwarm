@@ -285,6 +285,13 @@ def select_modular_generation_skills(
     for slug, prefixes in routing.items():
         if any(code.startswith(prefix) for code in blocked for prefix in prefixes):
             active.append(slug)
+    production_pack = payload.get("production_pack")
+    if production_pack:
+        expression_policy = production_pack.get("expression_policy") or {}
+        if blocked & {"PERSONA_OPENING", "PERSONA_CLOSING", "PERSONA_GROUNDING"}:
+            active.extend(("viral-natural-expression", "viral-layout-expression"))
+        elif "NATURAL_EXPRESSION" in blocked and expression_policy.get("emoji_allowed", True):
+            active.append("viral-layout-expression")
     if len(active) == 1:
         active.extend(BASE_GENERATION_SKILLS[1:])
         if has_price_context(payload):

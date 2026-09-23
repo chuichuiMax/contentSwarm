@@ -120,12 +120,13 @@ class GenerateContentPromptV1(StrictContract):
 class GenerationRepairConstraintsV1(StrictContract):
     """回修时显式告诉模型哪些已通过内容不可改动。"""
 
-    mode: Literal["persona_edges_only", "emoji_only"]
+    mode: Literal["persona_edges_only", "persona_paragraphs_only", "emoji_only"]
     original_body: str
     immutable_title: dict[str, Any]
     immutable_outline: dict[str, Any]
     immutable_topics: tuple[str, ...]
     immutable_middle_paragraphs: tuple[str, ...] = ()
+    editable_paragraph_numbers: tuple[int, ...] = ()
     instruction: str
 
 
@@ -160,6 +161,7 @@ class GenerationProductionPackViewV1(StrictContract):
     persona_profile: dict[str, Any]
     content_rule_bundle: dict[str, Any]
     locked_blocks: tuple[LockedBlockPromptV1, ...] = ()
+    creative_opening_instruction: str | None = None
 
 
 class StandardizedGenerateContentPromptV1(StrictContract):
@@ -498,12 +500,12 @@ class GenerateContentInputV1(StrictContract):
             and title_formula_code
             in {
                 *{f"T{index:02d}" for index in range(1, 8)},
-                *{f"FRT{index:02d}" for index in range(1, 13)},
+                *{f"FRT{index:02d}" for index in range(1, 20)},
             }
             and body_formula_code
             in {
                 *{f"C{index:02d}" for index in range(1, 5)},
-                *{f"FRB{index:02d}" for index in range(1, 10)},
+                *{f"FRB{index:02d}" for index in range(1, 17)},
             }
         ):
             if bundle.get("required") is not True:
@@ -1072,6 +1074,7 @@ class ContractDomainContext:
     require_composition_review: bool = False
     emoji_repair_body: str | None = None
     persona_repair_middle: tuple[str, ...] = ()
+    generation_repair_constraints: dict[str, Any] | None = None
     joint_strategy_input: dict[str, Any] = field(default_factory=dict)
     viral_source: dict[str, Any] = field(default_factory=dict)
     viral_document: dict[str, Any] = field(default_factory=dict)
@@ -1195,6 +1198,7 @@ class ContractDomainContext:
             require_composition_review=bool(locks.get("require_composition_review")),
             emoji_repair_body=locks.get("emoji_repair_body"),
             persona_repair_middle=tuple(locks.get("persona_repair_middle") or ()),
+            generation_repair_constraints=locks.get("generation_repair_constraints"),
             locked_group_id=match.get("selected_group_id") or formula.get("combination_group_id"),
             title_formula_pool=frozenset(
                 match.get("eligible_title_formula_codes") or formula.get("eligible_title_formula_codes") or []
@@ -1921,6 +1925,43 @@ def validate_content_node_result(
             _validate_evidence_ids(item.evidence_ids, "body", context, f"paragraph_evidence.{index}.evidence_ids")
         _validate_numbers("\n".join([result.body, *result.topics]), context, "body", "body")
     elif isinstance(result, GeneratedContentResultV1):
+        if context.generation_repair_constraints:
+            repair = GenerationRepairConstraintsV1.model_validate(context.generation_repair_constraints)
+            original_title = GeneratedTitleV1.model_validate(
+                {
+                    key: repair.immutable_title[key]
+                    for key in GeneratedTitleV1.model_fields
+                    if key in repair.immutable_title
+                }
+            )
+            if result.title != original_title:
+                raise ContractDomainValidationError("repair_changed_title", "title", "定点回修必须保留冻结标题")
+            if result.outline != OutlineResultV1.model_validate(repair.immutable_outline):
+                raise ContractDomainValidationError("repair_changed_outline", "outline", "定点回修必须保留冻结大纲")
+            if tuple(result.draft.topics) != repair.immutable_topics:
+                raise ContractDomainValidationError("repair_changed_topics", "draft.topics", "定点回修必须保留冻结话题")
+            if repair.mode == "persona_paragraphs_only":
+                original = [part.strip() for part in re.split(r"\n\s*\n", repair.original_body) if part.strip()]
+                paragraphs = [part.strip() for part in re.split(r"\n\s*\n", result.draft.body) if part.strip()]
+                if len(paragraphs) != len(original) or any(
+                    number not in repair.editable_paragraph_numbers
+                    and text_without_emoji_spacing(before) != text_without_emoji_spacing(after)
+                    for number, (before, after) in enumerate(zip(original, paragraphs), 1)
+                ):
+                    raise ContractDomainValidationError(
+                        "persona_repair_changed_paragraph",
+                        "draft.body",
+                        f"仅可编辑第 {list(repair.editable_paragraph_numbers)} 段；保持段落数量、顺序及其他段落文字，"
+                        "其他段落仅允许调整 Emoji 和空格",
+                    )
+            elif repair.mode == "emoji_only" and (
+                text_without_emoji_spacing(result.draft.body) != text_without_emoji_spacing(repair.original_body)
+            ):
+                raise ContractDomainValidationError(
+                    "emoji_repair_changed_text",
+                    "draft.body",
+                    "仅表情回修不得改动原文字、数字、单位、标点和顺序，只调整 Emoji 和空格",
+                )
         if context.persona_repair_middle:
             _require_equal(result.title.text, context.locked_title, "title.text")
             paragraphs = [part.strip() for part in re.split(r"\n\s*\n", result.draft.body) if part.strip()]

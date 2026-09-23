@@ -292,3 +292,24 @@ async def test_locked_quote_is_composed_once_and_then_validated():
     )
     assert recomposed["content_draft"]["body"].count(rendered) == 1
     assert recomposed["final_draft_hash"] == composed["final_draft_hash"]
+
+
+@pytest.mark.parametrize("has_quote", [True, False])
+def test_generation_opening_accounts_for_inserted_quote_without_changing_frozen_pack(has_quote):
+    pack = _pack()
+    if not has_quote:
+        pack["materials"] = []
+    pack["content_rule_bundle"] = {
+        "runtime_rules": {
+            "viral-persona-author": {
+                "opening_required": True,
+                "opening_window_paragraphs": 2,
+            }
+        }
+    }
+    before = deepcopy(pack)
+    projected = _project_standardized_production_pack(pack)
+    assert pack == before
+    instruction = projected["creative_opening_instruction"]
+    assert ("创作稿第一段" if has_quote else "前 2 个自然段") in instruction
+    assert "original_content" not in json.dumps(projected, ensure_ascii=False)

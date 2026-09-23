@@ -4,10 +4,46 @@
   "source": {
     "document": "装修工长 AI 小红书内容生成逻辑",
     "url": "https://fycrbjmor5.feishu.cn/wiki/Cb5Kw0RI2i1N7lkn7oVcp00Injh",
-    "captured_at": "2026-09-11",
+    "captured_at": "2026-09-23",
     "section": "标题公式库、正文模式库、内容组合公式、场景判断与风险控制"
   },
   "methods": [
+    {
+      "code": "FRM11",
+      "name": "工艺展示组合型",
+      "method_type": "core",
+      "industry_scope": ["decoration"],
+      "principle": "根据本次真实资料选择并冻结标题与正文组合；仅要求选中组合需要的事实。",
+      "suitable_scenes": ["施工现场", "工艺展示"],
+      "sentence_patterns": [],
+      "tag_schema": {"business_modes": ["J", "K"]},
+      "variable_schema": ["persona_fact", "process"],
+      "risk_rules": ["只使用本次已确认资料，不借用示例中的数字、工期、结果或业主故事", "计划、做事原则和已完成事实必须区分", "标准或验收结论仅在有明确依据时使用，不把标签、图片地址当作证明"]
+    },
+    {
+      "code": "FRM12",
+      "name": "工长日常组合型",
+      "method_type": "core",
+      "industry_scope": ["decoration"],
+      "principle": "根据本次真实资料选择并冻结标题与正文组合；仅要求选中组合需要的事实。",
+      "suitable_scenes": ["开工日常", "工地巡检", "日常工作"],
+      "sentence_patterns": [],
+      "tag_schema": {"business_modes": ["L", "M"]},
+      "variable_schema": ["persona_fact", "product"],
+      "risk_rules": ["只使用本次已确认资料，不借用示例中的数字、工期、结果或业主故事", "计划、做事原则和已完成事实必须区分", "标准或验收结论仅在有明确依据时使用，不把标签、图片地址当作证明"]
+    },
+    {
+      "code": "FRM10",
+      "name": "日常工作记录型",
+      "method_type": "core",
+      "industry_scope": ["decoration"],
+      "principle": "从已确认的现场任务与工作过程出发，记录工长的日常工作；有进展写进展，无结果时说明做事方式。",
+      "suitable_scenes": ["日常工作", "工地巡检", "施工记录"],
+      "sentence_patterns": ["在{location}做{product}，这次记录{process}"],
+      "tag_schema": {"business_mode": "J", "evidence": ["现场任务", "工作过程"]},
+      "variable_schema": ["location", "product", "process", "persona_fact"],
+      "risk_rules": ["不要求用户痛点、完工结果或客户反馈", "不得虚构当日完成事项、现场问题、进度、对话或反馈", "计划和做事原则不得写成已完成事实"]
+    },
     {
       "code": "FRM01",
       "name": "价格营销型",
@@ -118,6 +154,90 @@
     }
   ],
   "title_formulas": [
+    {
+      "code": "FRT13",
+      "name": "M｜地域+身份+开工/业务",
+      "industry_scope": ["decoration"],
+      "suitable_scenes": ["日常工作"],
+      "core_goal": "按本次事实兑现标题槽位，词库只提供表达。",
+      "reference_examples": ["上海设计师🔨开工大吉🏠感谢小红书业主信任"],
+      "source_content": {"slot_schema": [{"code": "location", "label": "地域", "variable_codes": ["location"], "lexicon_codes": []}, {"code": "identity", "label": "身份", "variable_codes": ["persona_fact"], "lexicon_codes": []}, {"code": "business", "label": "开工/业务", "variable_codes": ["kickoff", "product"], "lexicon_codes": []}], "business_family": "M"},
+      "variable_schema": ["location", "persona_fact", "kickoff", "product"],
+      "compatible_methods": ["FRM12"],
+      "risk_rules": ["只使用本次已确认资料，不借用示例中的数字、工期、结果或业主故事", "计划、做事原则和已完成事实必须区分", "标准或验收结论仅在有明确依据时使用，不把标签、图片地址当作证明", "工序数字和施工耗时只来自对应业务事实，禁止挪用年龄、资历、序列号和图片文件名"]
+    },
+    {
+      "code": "FRT14",
+      "name": "M｜地域+身份+工地巡检",
+      "industry_scope": ["decoration"],
+      "suitable_scenes": ["日常工作"],
+      "core_goal": "按本次事实兑现标题槽位，词库只提供表达。",
+      "reference_examples": ["天津装修｜工长巡检细节不能偷懒"],
+      "source_content": {"slot_schema": [{"code": "location", "label": "地域", "variable_codes": ["location"], "lexicon_codes": []}, {"code": "identity", "label": "身份", "variable_codes": ["persona_fact"], "lexicon_codes": []}, {"code": "inspection", "label": "工地巡检", "variable_codes": ["inspection"], "lexicon_codes": []}], "business_family": "M"},
+      "variable_schema": ["location", "persona_fact", "inspection"],
+      "compatible_methods": ["FRM12"],
+      "risk_rules": ["只使用本次已确认资料，不借用示例中的数字、工期、结果或业主故事", "计划、做事原则和已完成事实必须区分", "标准或验收结论仅在有明确依据时使用，不把标签、图片地址当作证明", "工序数字和施工耗时只来自对应业务事实，禁止挪用年龄、资历、序列号和图片文件名"]
+    },
+    {
+      "code": "FRT15",
+      "name": "N｜人群/工种+数字+结果",
+      "industry_scope": ["decoration"],
+      "suitable_scenes": ["工艺展示"],
+      "core_goal": "按本次事实兑现标题槽位，词库只提供表达。",
+      "reference_examples": ["油工18道完整工序｜墙面不开裂"],
+      "source_content": {"slot_schema": [{"code": "craft_role", "label": "人群/工种", "variable_codes": ["craft_role"], "lexicon_codes": []}, {"code": "craft_count", "label": "工序数字", "variable_codes": ["craft_count"], "lexicon_codes": []}, {"code": "result", "label": "结果", "variable_codes": ["result"], "lexicon_codes": []}], "business_family": "N"},
+      "variable_schema": ["craft_role", "craft_count", "result"],
+      "compatible_methods": ["FRM11"],
+      "risk_rules": ["只使用本次已确认资料，不借用示例中的数字、工期、结果或业主故事", "计划、做事原则和已完成事实必须区分", "标准或验收结论仅在有明确依据时使用，不把标签、图片地址当作证明", "工序数字和施工耗时只来自对应业务事实，禁止挪用年龄、资历、序列号和图片文件名"]
+    },
+    {
+      "code": "FRT16",
+      "name": "N｜人群/工种+工艺+情绪",
+      "industry_scope": ["decoration"],
+      "suitable_scenes": ["工艺展示"],
+      "core_goal": "按本次事实兑现标题槽位，词库只提供表达。",
+      "reference_examples": ["好瓦工的手艺，都藏在细节里"],
+      "source_content": {"slot_schema": [{"code": "craft_role", "label": "人群/工种", "variable_codes": ["craft_role"], "lexicon_codes": []}, {"code": "process", "label": "工艺", "variable_codes": ["process"], "lexicon_codes": []}, {"code": "emotion", "label": "情绪", "variable_codes": [], "lexicon_codes": ["title.oral_emotion"]}], "business_family": "N"},
+      "variable_schema": ["craft_role", "process"],
+      "compatible_methods": ["FRM11"],
+      "risk_rules": ["只使用本次已确认资料，不借用示例中的数字、工期、结果或业主故事", "计划、做事原则和已完成事实必须区分", "标准或验收结论仅在有明确依据时使用，不把标签、图片地址当作证明", "工序数字和施工耗时只来自对应业务事实，禁止挪用年龄、资历、序列号和图片文件名"]
+    },
+    {
+      "code": "FRT17",
+      "name": "N｜时间成本+工种+结果+情绪",
+      "industry_scope": ["decoration"],
+      "suitable_scenes": ["工艺展示"],
+      "core_goal": "按本次事实兑现标题槽位，词库只提供表达。",
+      "reference_examples": ["历时12天瓦工师傅完美退场，交出的满分答卷"],
+      "source_content": {"slot_schema": [{"code": "craft_duration", "label": "本次施工耗时", "variable_codes": ["craft_duration"], "lexicon_codes": []}, {"code": "craft_role", "label": "人群/工种", "variable_codes": ["craft_role"], "lexicon_codes": []}, {"code": "result", "label": "结果", "variable_codes": ["result"], "lexicon_codes": []}, {"code": "emotion", "label": "情绪", "variable_codes": [], "lexicon_codes": ["title.oral_emotion"]}], "business_family": "N"},
+      "variable_schema": ["craft_duration", "craft_role", "result"],
+      "compatible_methods": ["FRM11"],
+      "risk_rules": ["只使用本次已确认资料，不借用示例中的数字、工期、结果或业主故事", "计划、做事原则和已完成事实必须区分", "标准或验收结论仅在有明确依据时使用，不把标签、图片地址当作证明", "工序数字和施工耗时只来自对应业务事实，禁止挪用年龄、资历、序列号和图片文件名"]
+    },
+    {
+      "code": "FRT18",
+      "name": "地域+项目+工艺",
+      "industry_scope": ["decoration"],
+      "suitable_scenes": ["工艺展示"],
+      "core_goal": "按本次事实兑现标题槽位，词库只提供表达。",
+      "reference_examples": ["长沙卫生间｜贴砖对缝细节"],
+      "source_content": {"slot_schema": [{"code": "location", "label": "地域", "variable_codes": ["location"], "lexicon_codes": []}, {"code": "project", "label": "项目", "variable_codes": ["project"], "lexicon_codes": []}, {"code": "process", "label": "工艺", "variable_codes": ["process"], "lexicon_codes": []}], "business_family": "内容组合公式"},
+      "variable_schema": ["location", "project", "process"],
+      "compatible_methods": ["FRM11"],
+      "risk_rules": ["只使用本次已确认资料，不借用示例中的数字、工期、结果或业主故事", "计划、做事原则和已完成事实必须区分", "标准或验收结论仅在有明确依据时使用，不把标签、图片地址当作证明", "工序数字和施工耗时只来自对应业务事实，禁止挪用年龄、资历、序列号和图片文件名"]
+    },
+    {
+      "code": "FRT19",
+      "name": "项目+业务+工艺",
+      "industry_scope": ["decoration"],
+      "suitable_scenes": ["工艺展示"],
+      "core_goal": "按本次事实兑现标题槽位，词库只提供表达。",
+      "reference_examples": ["卫生间泥瓦施工｜贴砖对缝细节"],
+      "source_content": {"slot_schema": [{"code": "project", "label": "项目", "variable_codes": ["project"], "lexicon_codes": []}, {"code": "business", "label": "业务", "variable_codes": ["product"], "lexicon_codes": []}, {"code": "process", "label": "工艺", "variable_codes": ["process"], "lexicon_codes": []}], "business_family": "内容组合公式"},
+      "variable_schema": ["project", "product", "process"],
+      "compatible_methods": ["FRM11"],
+      "risk_rules": ["只使用本次已确认资料，不借用示例中的数字、工期、结果或业主故事", "计划、做事原则和已完成事实必须区分", "标准或验收结论仅在有明确依据时使用，不把标签、图片地址当作证明", "工序数字和施工耗时只来自对应业务事实，禁止挪用年龄、资历、序列号和图片文件名"]
+    },
     {
       "code": "FRT01",
       "name": "地域+面积/房型+业务+价格",
@@ -333,16 +453,120 @@
       "source_content": {
         "slot_schema": [
           {"code": "location", "label": "地域", "variable_codes": ["location"], "lexicon_codes": []},
-          {"code": "identity", "label": "身份", "variable_codes": ["persona_fact"], "lexicon_codes": ["title.audience"]},
+          {"code": "identity", "label": "身份", "variable_codes": ["persona_fact"], "lexicon_codes": []},
           {"code": "business", "label": "业务", "variable_codes": ["scene", "product"], "lexicon_codes": ["title.positioning"]}
         ]
       },
       "variable_schema": ["location", "persona_fact", "product"],
-      "compatible_methods": ["FRM02", "FRM04", "FRM05"],
+      "compatible_methods": ["FRM02", "FRM04", "FRM05", "FRM10"],
       "risk_rules": ["身份和业务必须来自真实资料", "标题主卖点必须在正文开头兑现"]
     }
   ],
   "content_formulas": [
+    {
+      "code": "FRB11",
+      "name": "案例背景+工长身份+施工/工艺+结果/反馈",
+      "industry_scope": ["decoration"],
+      "industry_aliases": {},
+      "compatible_methods": ["FRM11", "FRM12"],
+      "suitable_scenes": ["工艺展示", "日常工作"],
+      "business_pains": [],
+      "structure_schema": ["案例背景：只写已确认的项目背景，不扩写业主故事", "工长身份：以第一人称自然带出真实作者身份", "施工/工艺：按本次材料描述具体做法，不宣称未提供的标准或验收结论", "结果/反馈：只陈述已确认的本次结果或阶段进展，不把目标当成果"],
+      "reference_examples": [],
+      "source_content": {"selected_components": ["case", "identity", "process", "result"]},
+      "required_variables": ["case_background", "persona_fact", "process", "result"],
+      "output_schema": {"sections": 4, "cta_required": true, "max_persona_advantages": 3},
+      "risk_rules": ["只使用本次已确认资料，不借用示例中的数字、工期、结果或业主故事", "计划、做事原则和已完成事实必须区分", "标准或验收结论仅在有明确依据时使用，不把标签、图片地址当作证明"]
+    },
+    {
+      "code": "FRB12",
+      "name": "案例背景+解决方案+工长身份+施工/工艺+结果/反馈",
+      "industry_scope": ["decoration"],
+      "industry_aliases": {},
+      "compatible_methods": ["FRM11", "FRM12"],
+      "suitable_scenes": ["工艺展示", "日常工作"],
+      "business_pains": [],
+      "structure_schema": ["案例背景：只写已确认的项目背景，不扩写业主故事", "解决方案：区分计划与已实施的方案", "工长身份：以第一人称自然带出真实作者身份", "施工/工艺：按本次材料描述具体做法，不宣称未提供的标准或验收结论", "结果/反馈：只陈述已确认的本次结果或阶段进展，不把目标当成果"],
+      "reference_examples": [],
+      "source_content": {"selected_components": ["case", "solution", "identity", "process", "result"]},
+      "required_variables": ["case_background", "solution", "persona_fact", "process", "result"],
+      "output_schema": {"sections": 5, "cta_required": true, "max_persona_advantages": 3},
+      "risk_rules": ["只使用本次已确认资料，不借用示例中的数字、工期、结果或业主故事", "计划、做事原则和已完成事实必须区分", "标准或验收结论仅在有明确依据时使用，不把标签、图片地址当作证明"]
+    },
+    {
+      "code": "FRB13",
+      "name": "工长身份+案例背景+施工/工艺+结果/反馈",
+      "industry_scope": ["decoration"],
+      "industry_aliases": {},
+      "compatible_methods": ["FRM11", "FRM12"],
+      "suitable_scenes": ["工艺展示", "日常工作"],
+      "business_pains": [],
+      "structure_schema": ["工长身份：以第一人称自然带出真实作者身份", "案例背景：只写已确认的项目背景，不扩写业主故事", "施工/工艺：按本次材料描述具体做法，不宣称未提供的标准或验收结论", "结果/反馈：只陈述已确认的本次结果或阶段进展，不把目标当成果"],
+      "reference_examples": [],
+      "source_content": {"selected_components": ["identity", "case", "process", "result"]},
+      "required_variables": ["persona_fact", "case_background", "process", "result"],
+      "output_schema": {"sections": 4, "cta_required": true, "max_persona_advantages": 3},
+      "risk_rules": ["只使用本次已确认资料，不借用示例中的数字、工期、结果或业主故事", "计划、做事原则和已完成事实必须区分", "标准或验收结论仅在有明确依据时使用，不把标签、图片地址当作证明"]
+    },
+    {
+      "code": "FRB14",
+      "name": "结果/反馈+施工/工艺",
+      "industry_scope": ["decoration"],
+      "industry_aliases": {},
+      "compatible_methods": ["FRM11", "FRM12"],
+      "suitable_scenes": ["工艺展示", "日常工作"],
+      "business_pains": [],
+      "structure_schema": ["结果/反馈：只陈述已确认的本次结果或阶段进展，不把目标当成果", "施工/工艺：按本次材料描述具体做法，不宣称未提供的标准或验收结论"],
+      "reference_examples": [],
+      "source_content": {"selected_components": ["result", "process"]},
+      "required_variables": ["result", "process"],
+      "output_schema": {"sections": 2, "cta_required": true, "max_persona_advantages": 3},
+      "risk_rules": ["只使用本次已确认资料，不借用示例中的数字、工期、结果或业主故事", "计划、做事原则和已完成事实必须区分", "标准或验收结论仅在有明确依据时使用，不把标签、图片地址当作证明"]
+    },
+    {
+      "code": "FRB15",
+      "name": "工长身份+案例背景+人设优势+结果/反馈",
+      "industry_scope": ["decoration"],
+      "industry_aliases": {},
+      "compatible_methods": ["FRM11", "FRM12"],
+      "suitable_scenes": ["工艺展示", "日常工作"],
+      "business_pains": [],
+      "structure_schema": ["工长身份：以第一人称自然带出真实作者身份", "案例背景：只写已确认的项目背景，不扩写业主故事", "人设优势：用本人的做事方式说明优势，不堆口号", "结果/反馈：只陈述已确认的本次结果或阶段进展，不把目标当成果"],
+      "reference_examples": [],
+      "source_content": {"selected_components": ["identity", "case", "advantages", "result"]},
+      "required_variables": ["persona_fact", "case_background", "advantages", "result"],
+      "output_schema": {"sections": 4, "cta_required": true, "max_persona_advantages": 3},
+      "risk_rules": ["只使用本次已确认资料，不借用示例中的数字、工期、结果或业主故事", "计划、做事原则和已完成事实必须区分", "标准或验收结论仅在有明确依据时使用，不把标签、图片地址当作证明"]
+    },
+    {
+      "code": "FRB16",
+      "name": "四模块事实组合",
+      "industry_scope": ["decoration"],
+      "industry_aliases": {},
+      "compatible_methods": ["FRM11", "FRM12"],
+      "suitable_scenes": ["工艺展示", "日常工作"],
+      "business_pains": [],
+      "structure_schema": ["从有证据的组件中选择四种并冻结"],
+      "reference_examples": [],
+      "source_content": {"component_pool": [{"code": "hook", "instruction": "开头钩子：围绕已确认的业务或任务引入，不创造问题、结果或统计数据", "required_variables": ["product"]}, {"code": "case", "instruction": "案例背景：只写已确认的项目背景，不扩写业主故事", "required_variables": ["case_background"]}, {"code": "needs", "instruction": "业主需求：只写本次明确提供的需求", "required_variables": ["owner_need"]}, {"code": "solution", "instruction": "解决方案：区分计划与已实施的方案", "required_variables": ["solution"]}, {"code": "cost", "instruction": "费用解释：仅解释已提供的费用依据，不自动补报价", "required_variables": ["cost_explanation"]}, {"code": "process", "instruction": "施工/工艺：按本次材料描述具体做法，不宣称未提供的标准或验收结论", "required_variables": ["process"]}, {"code": "identity", "instruction": "工长身份：以第一人称自然带出真实作者身份", "required_variables": ["persona_fact"]}, {"code": "advantages", "instruction": "人设优势：用本人的做事方式说明优势，不堆口号", "required_variables": ["advantages"]}, {"code": "result", "instruction": "结果/反馈：只陈述已确认的本次结果或阶段进展，不把目标当成果", "required_variables": ["result"]}], "component_count": 4},
+      "required_variables": [],
+      "output_schema": {"sections": 4, "cta_required": true, "max_persona_advantages": 3},
+      "risk_rules": ["只使用本次已确认资料，不借用示例中的数字、工期、结果或业主故事", "计划、做事原则和已完成事实必须区分", "标准或验收结论仅在有明确依据时使用，不把标签、图片地址当作证明"]
+    },
+    {
+      "code": "FRB10",
+      "name": "日常工作记录型",
+      "industry_scope": ["decoration"],
+      "industry_aliases": {},
+      "compatible_methods": ["FRM10"],
+      "suitable_scenes": ["日常工作", "工地巡检", "施工记录"],
+      "business_pains": [],
+      "structure_schema": ["真实工长身份与工作场景", "已确认的现场任务", "工作过程或做事方式", "有据的进展或后续安排", "具体行动引导"],
+      "reference_examples": [],
+      "required_variables": ["location", "product", "process", "persona_fact"],
+      "output_schema": {"sections": 5, "cta_required": true, "max_persona_advantages": 3},
+      "risk_rules": ["痛点、报价、完工结果和客户反馈均非必需", "没有进展事实时只写做事方式或明确为计划的后续安排", "不得从图片地址或文件名推断现场事实"]
+    },
     {
       "code": "FRB01",
       "name": "价格营销型",
