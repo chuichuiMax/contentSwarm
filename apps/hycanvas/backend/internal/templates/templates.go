@@ -56,24 +56,25 @@ type StyleDescriptor struct {
 
 // Template is the catalog view (mirrors @hc/templates Template).
 type Template struct {
-	ID             string          `json:"id"`
-	Title          string          `json:"title"`
-	Visibility     string          `json:"visibility"` // personal|team|public
-	OwnerID        string          `json:"ownerId"`
-	SourceDesignID *string         `json:"sourceDesignId,omitempty"`
-	WorkspaceID    *string         `json:"workspaceId"`
-	Categories     []string        `json:"categories"`
-	Tags           []string        `json:"tags"`
-	Style          StyleDescriptor `json:"style"`
-	Format         map[string]any  `json:"format"`
-	PageCount      int             `json:"pageCount"`
-	PreviewURLs    []string        `json:"previewUrls"`
-	DesignFileKey  string          `json:"designFileKey"`
-	FillableFields []any           `json:"fillableFields"`
-	Attributions   []any           `json:"attributions"`
-	Version        int             `json:"version"`
-	CreatedAt      string          `json:"createdAt"`
-	UpdatedAt      string          `json:"updatedAt"`
+	ID                         string          `json:"id"`
+	Title                      string          `json:"title"`
+	Visibility                 string          `json:"visibility"` // personal|team|public
+	OwnerID                    string          `json:"ownerId"`
+	SourceDesignID             *string         `json:"sourceDesignId,omitempty"`
+	WorkspaceID                *string         `json:"workspaceId"`
+	Categories                 []string        `json:"categories"`
+	Tags                       []string        `json:"tags"`
+	Style                      StyleDescriptor `json:"style"`
+	Format                     map[string]any  `json:"format"`
+	PageCount                  int             `json:"pageCount"`
+	PreviewURLs                []string        `json:"previewUrls"`
+	DesignFileKey              string          `json:"designFileKey"`
+	FillableFields             []any           `json:"fillableFields"`
+	Attributions               []any           `json:"attributions"`
+	IsHandwrittenQuoteTemplate int             `json:"isHandwrittenQuoteTemplate"`
+	Version                    int             `json:"version"`
+	CreatedAt                  string          `json:"createdAt"`
+	UpdatedAt                  string          `json:"updatedAt"`
 }
 
 // TemplateQuery is the search query.
@@ -163,6 +164,10 @@ func toOcVisibility(v string) string {
 }
 
 func rowToTemplate(r TemplateRow) Template {
+	isHandwrittenQuoteTemplate := 0
+	if r.IsHandwrittenQuoteTemplate {
+		isHandwrittenQuoteTemplate = 1
+	}
 	var style StyleDescriptor
 	if len(r.Style) > 0 {
 		_ = json.Unmarshal(r.Style, &style)
@@ -206,7 +211,8 @@ func rowToTemplate(r TemplateRow) Template {
 		Format:    map[string]any{"width": w, "height": h, "unit": "px"},
 		PageCount: len(pages), PreviewURLs: previews, DesignFileKey: "db:" + r.ID,
 		FillableFields: fillable, Attributions: attrs, Version: 1,
-		CreatedAt: r.CreatedAt.UTC().Format(isoFmt), UpdatedAt: r.UpdatedAt.UTC().Format(isoFmt),
+		IsHandwrittenQuoteTemplate: isHandwrittenQuoteTemplate,
+		CreatedAt:                  r.CreatedAt.UTC().Format(isoFmt), UpdatedAt: r.UpdatedAt.UTC().Format(isoFmt),
 	}
 }
 
@@ -384,16 +390,17 @@ func (s *Service) Apply(ctx context.Context, userID, templateID, workspaceID str
 
 // SaveInput is the save-as-template payload.
 type SaveInput struct {
-	WorkspaceID    string
-	DesignID       string
-	File           map[string]any
-	Title          string
-	Category       string
-	Tags           []string
-	Thumbnail      string
-	Visibility     string // private|workspace|public
-	CollectionID   string
-	FillableFields []any
+	WorkspaceID                string
+	DesignID                   string
+	File                       map[string]any
+	Title                      string
+	Category                   string
+	Tags                       []string
+	Thumbnail                  string
+	Visibility                 string // private|workspace|public
+	CollectionID               string
+	FillableFields             []any
+	IsHandwrittenQuoteTemplate bool
 }
 
 const canonicalSystemFont = "Noto Sans SC"
@@ -577,6 +584,7 @@ func (s *Service) SaveAsTemplate(ctx context.Context, userID string, in SaveInpu
 		ownerID: userID, sourceDesignID: nilIfEmpty(in.DesignID), workspaceID: wsPtr, title: in.Title, category: nilIfEmpty(category),
 		tags: tags, file: fileRaw, thumbnail: nilIfEmpty(in.Thumbnail), visibility: visibility,
 		collectionID: nilIfEmpty(in.CollectionID), style: style,
+		isHandwrittenQuoteTemplate: in.IsHandwrittenQuoteTemplate,
 	})
 	if err != nil {
 		return Template{}, err
@@ -676,16 +684,17 @@ type PublicCategory struct {
 }
 
 type PublicTemplate struct {
-	ID             string         `json:"id"`
-	Title          string         `json:"title"`
-	Categories     []string       `json:"categories"`
-	Tags           []string       `json:"tags"`
-	Format         map[string]any `json:"format"`
-	PageCount      int            `json:"pageCount"`
-	PreviewURLs    []string       `json:"previewUrls"`
-	FillableFields []any          `json:"fillableFields"`
-	CreatedAt      string         `json:"createdAt"`
-	UpdatedAt      string         `json:"updatedAt"`
+	ID                         string         `json:"id"`
+	Title                      string         `json:"title"`
+	Categories                 []string       `json:"categories"`
+	Tags                       []string       `json:"tags"`
+	Format                     map[string]any `json:"format"`
+	PageCount                  int            `json:"pageCount"`
+	PreviewURLs                []string       `json:"previewUrls"`
+	FillableFields             []any          `json:"fillableFields"`
+	IsHandwrittenQuoteTemplate int            `json:"isHandwrittenQuoteTemplate"`
+	CreatedAt                  string         `json:"createdAt"`
+	UpdatedAt                  string         `json:"updatedAt"`
 }
 
 func (s *Service) CreateCollection(ctx context.Context, userID, workspaceID, name string) (Collection, error) {
@@ -731,7 +740,8 @@ func (s *Service) PublicCategorizedCatalog(ctx context.Context) ([]Category, err
 			templates = append(templates, PublicTemplate{
 				ID: template.ID, Title: template.Title, Categories: template.Categories, Tags: template.Tags,
 				Format: template.Format, PageCount: template.PageCount, PreviewURLs: template.PreviewURLs,
-				FillableFields: template.FillableFields, CreatedAt: template.CreatedAt, UpdatedAt: template.UpdatedAt,
+				FillableFields: template.FillableFields, IsHandwrittenQuoteTemplate: template.IsHandwrittenQuoteTemplate,
+				CreatedAt: template.CreatedAt, UpdatedAt: template.UpdatedAt,
 			})
 		}
 		categories = append(categories, Category{ID: collection.ID, Name: collection.Name, Templates: templates})
@@ -785,7 +795,8 @@ func (s *Service) publicTemplatesForCategory(ctx context.Context, categoryID str
 		templates = append(templates, PublicTemplate{
 			ID: template.ID, Title: template.Title, Categories: template.Categories, Tags: template.Tags,
 			Format: template.Format, PageCount: template.PageCount, PreviewURLs: template.PreviewURLs,
-			FillableFields: template.FillableFields, CreatedAt: template.CreatedAt, UpdatedAt: template.UpdatedAt,
+			FillableFields: template.FillableFields, IsHandwrittenQuoteTemplate: template.IsHandwrittenQuoteTemplate,
+			CreatedAt: template.CreatedAt, UpdatedAt: template.UpdatedAt,
 		})
 	}
 	return templates, nil

@@ -750,16 +750,22 @@ func TestTemplates_DB(t *testing.T) {
 	if err != nil || !contains(zoneSaved.Tags, "小红书") || len(zoneSaved.Categories) != 1 || zoneSaved.Categories[0] != "小红书" {
 		t.Fatalf("zone tag not inherited: %+v err=%v", zoneSaved, err)
 	}
+	if zoneSaved.IsHandwrittenQuoteTemplate != 0 {
+		t.Fatalf("unchecked template flag = %d, want 0", zoneSaved.IsHandwrittenQuoteTemplate)
+	}
 	zoneDesign["title"] = "Updated source snapshot"
 	zoneResaved, err := svc.SaveAsTemplate(ctx, owner.ID, SaveInput{
 		WorkspaceID: ws.ID, DesignID: zoneRec.ID, File: zoneDesign,
-		Title: "Updated Zone Template", Visibility: "workspace",
+		Title: "Updated Zone Template", Visibility: "workspace", IsHandwrittenQuoteTemplate: true,
 	})
 	if err != nil {
 		t.Fatalf("re-save zone template: %v", err)
 	}
 	if zoneResaved.ID != zoneSaved.ID || zoneResaved.Title != "Updated Zone Template" {
 		t.Fatalf("re-saving one design should update its template: first=%+v second=%+v", zoneSaved, zoneResaved)
+	}
+	if zoneResaved.IsHandwrittenQuoteTemplate != 1 {
+		t.Fatalf("checked template flag = %d, want 1", zoneResaved.IsHandwrittenQuoteTemplate)
 	}
 	var linkedTemplateCount int
 	if err := tx.QueryRow(ctx, `SELECT count(*) FROM "templates" WHERE "source_design_id" = $1`, zoneRec.ID).Scan(&linkedTemplateCount); err != nil {

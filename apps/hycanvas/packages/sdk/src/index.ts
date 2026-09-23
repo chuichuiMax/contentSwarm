@@ -316,6 +316,7 @@ export interface TemplateSummary {
   tags: string[];
   previewUrls: string[];
   format: { width: number; height: number; unit: string };
+  isHandwrittenQuoteTemplate: 0 | 1;
 }
 
 export type TemplateVisibility = "private" | "workspace" | "public";
@@ -340,6 +341,7 @@ export interface SaveAsTemplateInput {
   visibility?: TemplateVisibility;
   collectionId?: string;
   fillableFields?: FillableFieldSummary[];
+  isHandwrittenQuoteTemplate?: boolean;
 }
 
 // --- bulk create + data autofill ----------------
