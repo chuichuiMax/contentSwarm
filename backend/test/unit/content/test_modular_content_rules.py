@@ -5,6 +5,7 @@ import pytest
 
 from yuxi.content.control.workflow.deterministic_node import V3DeterministicNodeHandler
 from yuxi.content.control.workflow.generation_input import project_generation_input
+from yuxi.content.control.workflow.revision import resolve_revision_reason
 from yuxi.content.model.contracts import ContractDomainContext, validate_content_node_result
 from yuxi.content.model.contracts.content_nodes import ContractDomainValidationError
 from yuxi.content.v3.modular_rules import (
@@ -116,7 +117,7 @@ def test_standardized_review_follows_frozen_emoji_policy():
     assert not {"EMOJI_COVERAGE", "EMOJI_APPROPRIATENESS", "EMOJI_RESTRICTIONS"} & set(required_review_codes(payload))
 
 
-def test_hard_checks_cover_topic_cta_layout_mechanical_and_price_scope():
+def test_hard_checks_cover_topic_cta_layout_and_price_scope():
     bundle = build_modular_rule_bundle({"form_values": {"city": "长沙"}})
     topics = bundle["topic_candidates"][:9] + [bundle["topic_candidates"][0]]
     checks = validate_modular_content(
@@ -141,11 +142,124 @@ def test_hard_checks_cover_topic_cta_layout_mechanical_and_price_scope():
         "TOPIC_DUPLICATED",
         "CTA_TOO_DIRECT",
         "CONTENT_HIGH_RISK_CLAIM",
-        "MECHANICAL_META_EXPRESSION",
         "LAYOUT_MARKDOWN_FORBIDDEN",
         "PRICE_EVIDENCE_SCOPE_MISMATCH",
         "PRICE_CITY_MISMATCH",
     } <= codes
+
+
+@pytest.mark.parametrize(
+    "connector", ["首先", "其次", "综上", "值得注意的是", "通过以上内容", "下面来说", "接下来看看"]
+)
+def test_normal_connectors_do_not_trigger_mechanical_expression_check(connector):
+    bundle = build_modular_rule_bundle({})
+    checks = validate_modular_content(
+        title="工长的施工记录",
+        body=f"{connector}，水电定位要结合家具摆放确认。",
+        topics=bundle["topic_candidates"][:10],
+        draft={},
+        brief={},
+        evidence_bundle={"items": []},
+        rule_bundle=bundle,
+    )
+
+    assert not any(item["code"] == "MECHANICAL_META_EXPRESSION" for item in checks)
+
+
+@pytest.mark.parametrize("historical", [False, True])
+def test_mechanical_phrase_match_is_advisory_under_new_rules(historical):
+    bundle = build_modular_rule_bundle({})
+    if historical:
+        bundle["runtime_rules"]["viral-natural-expression"].pop("mechanical_marker_level", None)
+    checks = validate_modular_content(
+        title="工长的施工记录",
+        body="先说背景，这次是旧房的水电改造。",
+        topics=bundle["topic_candidates"][:10],
+        draft={},
+        brief={},
+        evidence_bundle={"items": []},
+        rule_bundle=bundle,
+    )
+
+    check = next(item for item in checks if item["code"] == "MECHANICAL_META_EXPRESSION")
+    assert check["level"] == ("error" if historical else "warning")
+    assert check["matched_terms"] == ["先说背景"]
+    reason = resolve_revision_reason(
+        title_validation_report=None, validation_report={"checks": checks}, review_report=None
+    )
+    assert reason == ("PERSONA_STYLE_FAILED" if historical else None)
+
+
+@pytest.mark.parametrize("contract", ["ContentReviewResultV1", "StandardizedContentReviewResultV1"])
+@pytest.mark.parametrize("serious", [False, True])
+def test_natural_expression_advice_passes_contract_without_repair_but_serious_issues_block(contract, serious):
+    status = "blocked" if serious else "warning"
+    payload = {
+        "status": status,
+        "checks": [
+            {
+                "code": "NATURAL_EXPRESSION",
+                "status": status,
+                "location": "正文首句：目前资料里记录的技能是工长、水电、泥瓦",
+                "message": "整篇以资料审核员身份分析作者" if serious else "个别措辞略显书面化，但身份一致、语义清楚",
+                "suggestion": "用工长本人身份叙述" if serious else "可改为：我做过工长、水电、泥瓦",
+                "evidence_ids": [],
+            }
+        ],
+        "evidence_conflicts": [],
+    }
+    context = ContractDomainContext(required_modular_review_codes=frozenset({"NATURAL_EXPRESSION"}))
+
+    validate_content_node_result(contract, payload, context)
+    reason = resolve_revision_reason(title_validation_report=None, validation_report=None, review_report=payload)
+
+    assert reason == ("PERSONA_STYLE_FAILED" if serious else None)
+
+
+@pytest.mark.parametrize(
+    "code", ["TITLE_ALIGNMENT", "BODY_VALUE", "LAYOUT_READABILITY", "PLATFORM_CTA", "TOPIC_ALIGNMENT"]
+)
+def test_other_required_dimensions_still_reject_warning(code):
+    payload = {
+        "status": "warning",
+        "checks": [{"code": code, "status": "warning", "message": "未满足要求", "evidence_ids": []}],
+        "evidence_conflicts": [],
+    }
+    context = ContractDomainContext(required_modular_review_codes=frozenset({code}))
+
+    with pytest.raises(ContractDomainValidationError, match="不以 warning 放行"):
+        validate_content_node_result("ContentReviewResultV1", payload, context)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("hard_error", [False, True])
+async def test_deterministic_style_advice_preserves_warning_and_does_not_mask_errors(monkeypatch, hard_error):
+    monkeypatch.setattr(
+        "yuxi.content.control.workflow.deterministic_node.validate_content",
+        lambda **kwargs: {"status": "passed", "checks": []},
+    )
+    bundle = build_modular_rule_bundle({})
+    result = await V3DeterministicNodeHandler._deterministic_validate(
+        db=object(),
+        node_run_id="node-style-advice",
+        state={
+            "selected_title": {"text": "工长的施工记录"},
+            "content_brief": {},
+            "evidence_bundle": {"items": []},
+            "content_draft": {
+                "body": "先说背景，这次是旧房改造。\n\n" + "水电定位结合家具摆放确认，施工按现场情况推进。\n\n" * 8,
+                "topics": bundle["topic_candidates"][:10],
+            },
+            "runtime_config_snapshot": {"content_rule_bundle": bundle},
+            "channel_result": {"checks": [{"code": "CHANNEL_TITLE_LONG", "level": "error"}] if hard_error else []},
+        },
+    )
+
+    report = result["validation_report"]
+    assert report["status"] == ("blocked" if hard_error else "warning")
+    assert any(item["code"] == "MECHANICAL_META_EXPRESSION" and item["level"] == "warning" for item in report["checks"])
+    reason = resolve_revision_reason(title_validation_report=None, validation_report=report, review_report=None)
+    assert reason == ("TITLE_VALIDATION_FAILED" if hard_error else None)
 
 
 @pytest.mark.asyncio
@@ -227,3 +341,19 @@ def test_modular_visual_plan_must_match_the_locked_content_intent():
 
     with pytest.raises(ContractDomainValidationError, match="visual_intent"):
         validate_content_node_result("VisualPlanResultV1", payload, context)
+
+
+@pytest.mark.parametrize("code", ["PERSONA_OPENING", "PERSONA_CLOSING", "NATURAL_EXPRESSION"])
+@pytest.mark.parametrize("emoji_allowed", [True, False])
+def test_standardized_repair_loads_expression_dependencies(code, emoji_allowed):
+    payload = _payload()
+    payload["review_report"] = {"status": "blocked", "checks": [{"code": code, "status": "blocked"}]}
+    payload["production_pack"] = {
+        "expression_policy": {
+            "emoji_allowed": emoji_allowed,
+            "required_categories": [{"code": "identity_trust"}] if emoji_allowed else [],
+        }
+    }
+    skills = select_modular_generation_skills(GENERATION_SKILLS, payload)
+    assert "viral-natural-expression" in skills
+    assert ("viral-layout-expression" in skills) == (code.startswith("PERSONA_") or emoji_allowed)

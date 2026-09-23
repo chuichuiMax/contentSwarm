@@ -337,6 +337,10 @@ def validate_rule_bundle_for_publish(bundle: dict[str, Any]) -> dict[str, list[d
             and item.get("enabled", True)
             and (not item.get("industry_scope") or "decoration" in item["industry_scope"])
             and len(item["body_formula_candidate_codes"]) != 1
+            and not (
+                item.get("content_type_codes") in (["CT06"], ["CT07"])
+                and (item.get("source_metadata") or {}).get("formula_selection_policy") == "evidence_composition_v1"
+            )
         ):
             add_error(
                 "DETERMINISTIC_BODY_FORMULA_REQUIRED",
@@ -624,6 +628,64 @@ def _parse_content_studio_production_pack(user_request: str) -> dict[str, Any] |
     }
 
 
+def _parse_content_studio_persona_case(user_request: str, *, content_type_code: str | None) -> dict[str, Any]:
+    """保留自我介绍、工艺展示、日常记录结构化原文中的作者事实，不推断用户痛点或工作成果。"""
+    if content_type_code not in {"CT01", "CT06", "CT07"}:
+        return {}
+    try:
+        payload = json.loads(user_request)
+    except (TypeError, ValueError):
+        return {}
+    if not isinstance(payload, dict) or not isinstance(payload.get("persona"), dict):
+        return {}
+    requirement = payload.get("requirementType")
+    if not isinstance(requirement, dict) or requirement.get("typeName") not in {
+        "自我介绍",
+        "日常",
+        "日常工作",
+        "工艺展示",
+        "施工工艺",
+    }:
+        return {}
+
+    from yuxi.services.dangjia_service import DangjiaPersona, build_persona_description
+
+    try:
+        persona = DangjiaPersona.model_validate(payload["persona"])
+    except ValidationError as exc:
+        raise _content_error(422, "CONTENT_PERSONA_CASE_INVALID", "结构化案例的人设字段不符合数据结构") from exc
+    tags = payload.get("tags") or []
+    if not isinstance(tags, list) or any(not isinstance(tag, str) for tag in tags):
+        raise _content_error(422, "CONTENT_PERSONA_CASE_INVALID", "结构化案例 tags 必须为字符串数组")
+    values = {
+        "location": (persona.serviceCity or "").strip(),
+        "persona_fact": build_persona_description(persona),
+        "product": "、".join(item.strip() for item in persona.skills if item.strip()),
+        "advantages": [item.strip() for item in persona.serviceAdvantages if item.strip()],
+        "project_site": requirement.get("mySite"),
+        "content_tags": tags,
+    }
+    if content_type_code in {"CT06", "CT07"}:
+        process_tags = [
+            tag.strip()
+            for tag in tags
+            if tag.strip() and tag.strip() not in {"工艺展示", "施工工艺", "日常", "日常工作"}
+        ]
+        values["process"] = process_tags
+        values["case_background"] = requirement.get("mySite")
+        values["project"] = "、".join(process_tags)
+        values["craft_role"] = [
+            skill.strip() for skill in persona.skills if skill.strip() not in {"工长", "设计师", "项目经理"}
+        ]
+        inspections = [tag for tag in process_tags if "巡检" in tag or "巡查" in tag]
+        if inspections:
+            values["inspection"] = "、".join(inspections)
+        kickoffs = [tag for tag in process_tags if "开工" in tag]
+        if kickoffs:
+            values["kickoff"] = "、".join(kickoffs)
+    return {key: value for key, value in values.items() if value not in (None, "", [], {})}
+
+
 def compile_content_brief(
     *, task: ContentTask, template: Any, brief: ContentBriefPayload
 ) -> tuple[dict[str, Any], list[dict[str, str]]]:
@@ -686,6 +748,11 @@ def compile_content_brief(
                 ]
                 if price_items:
                     normalized_variables["price"] = price_items
+        if quote_case is None and production_pack is None:
+            for key, value in _parse_content_studio_persona_case(
+                user_request, content_type_code=content_type_code
+            ).items():
+                normalized_variables.setdefault(key, value)
         location = _resolve_studio_location(normalized_variables, form_values)
         if location:
             normalized_variables["location"] = location

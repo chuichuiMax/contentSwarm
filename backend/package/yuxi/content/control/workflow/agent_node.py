@@ -240,6 +240,7 @@ class AgentNodeHandler:
 
         if node["id"] == "extract_creation_facts" and not (
             (state.get("creation_plan_gap_analysis") or {}).get("missing_variable_codes")
+            or (state.get("creation_plan_gap_analysis") or {}).get("candidate_variable_codes")
         ):
             return {"extracted_creation_facts": {"facts": [], "unresolved_variable_codes": []}}
 
@@ -383,7 +384,8 @@ class AgentNodeHandler:
             }
         ):
             paragraphs = [part.strip() for part in re.split(r"\n\s*\n", generation_draft["body"]) if part.strip()]
-            locked_values["persona_repair_middle"] = paragraphs[1:-1]
+            if not state.get("production_pack"):
+                locked_values["persona_repair_middle"] = paragraphs[1:-1]
         assembly_state = state
         if node["id"] == "generate_content" and generation_draft:
             assembly_state = {**state, "content_draft": generation_draft}
@@ -426,6 +428,10 @@ class AgentNodeHandler:
         if node["id"] == "submit_cover_job":
             locked_values["visual_plan"] = state.get("visual_plan") or {}
         assembly = ContentNodeInputAssembler.build(node=node, state=assembly_state)
+        if node["id"] == "generate_content" and state.get("production_pack"):
+            from yuxi.content.control.workflow.revision import build_generation_repair_constraints
+
+            locked_values["generation_repair_constraints"] = build_generation_repair_constraints(assembly.payload)
         domain_context = ContractDomainContext.from_governance(
             match_decision_snapshot=state.get("match_decision_snapshot") or {},
             formula_selection_snapshot=state.get("formula_selection_snapshot") or {},

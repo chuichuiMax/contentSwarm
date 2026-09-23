@@ -330,6 +330,7 @@ def test_generation_slots_compile_review_items_and_grounded_persona_sources():
     ]
     slots = compile_generation_slots(
         material_manifest=manifest,
+        material_quality_report=validate_material_gate(manifest=manifest, materials=materials),
         materials=materials,
         strategy_snapshot={
             "title_formula": {"variable_schema": ["persona_fact"]},
@@ -1184,8 +1185,8 @@ def test_frozen_production_pack_hash_is_stable_and_covers_materials():
         }
     )
     constraints = repair_view["repair_constraints"]
-    assert constraints["mode"] == "persona_edges_only"
-    assert constraints["immutable_middle_paragraphs"] == ["冻结中段一", "冻结中段二"]
+    assert constraints["mode"] == "persona_paragraphs_only"
+    assert constraints["editable_paragraph_numbers"] == [1, 2]
     assert constraints["immutable_title"] == {"text": "冻结标题"}
     assert constraints["immutable_topics"] == ["装修"]
 
@@ -1209,6 +1210,27 @@ def test_frozen_production_pack_hash_is_stable_and_covers_materials():
         ).encode("utf-8")
     ).hexdigest()
     assert FrozenProductionPackV1.model_validate(historical).expression_policy is None
+
+    # 更早的生产包没有槽位；读取和生成视图投影不能回写或重编译历史包。
+    historical.pop("generation_slots")
+    historical_payload.pop("generation_slots")
+    historical["production_pack_hash"] = hashlib.sha256(
+        json.dumps(historical_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str).encode()
+    ).hexdigest()
+    before_projection = deepcopy(historical)
+    parsed = FrozenProductionPackV1.model_validate(historical)
+    assert parsed.generation_slots == ()
+    project_generation_input(
+        {
+            "production_pack": historical,
+            "runtime_config_snapshot": {"creation_mode": "viral_rewrite"},
+        }
+    )
+    assert historical == before_projection
+    assert (
+        FrozenProductionPackV1.model_validate(parsed.model_dump(mode="json")).production_pack_hash
+        == historical["production_pack_hash"]
+    )
 
 
 def test_formula_lexicon_constraints_only_keep_fact_grounded_title_terms():
@@ -1474,3 +1496,56 @@ def test_frozen_production_pack_rejects_blocked_quality_report():
             content_rule_bundle={"bundle_hash": "c" * 64},
             compliance_policy_version_ids=[],
         )
+
+
+@pytest.mark.parametrize("content_type", ["CT01", "CT02", "CT03", "CT04", "CT05", "CT06", "CT07"])
+def test_persona_alternative_bindings_compile_value_slot_without_unselected_evidence(content_type):
+    manifest = MaterialRequirementManifestV1(
+        order_hash="o" * 64,
+        content_type_code=content_type,
+        title_formula_code="FRT07",
+        body_formula_code="FRB06",
+        manifest_hash="m" * 64,
+        requirements=tuple(
+            MaterialRequirementV1(
+                requirement_id=f"variable:{code}",
+                variable_code=code,
+                material_types=("business_fact",),
+                value_type="list",
+                required=False,
+                allowed_sources=("manual_input",),
+                allowed_usage=("body",),
+                review_policy="retrieved",
+                risk_level="normal",
+                validation_schema={"alternative_groups": ["persona:value"]},
+            )
+            for code in ("advantages", "process")
+        ),
+    )
+    selected = _business_material("advantages", ["决策快", "自有工人"]).model_copy(
+        update={"evidence_ids": ("ev-selected",)}
+    )
+    candidate = selected.model_copy(
+        update={
+            "id": "mat-candidate",
+            "evidence_ids": ("ev-unselected",),
+            "payload": selected.payload.model_copy(update={"value": ["候选优势"]}),
+            "governance": selected.governance.model_copy(update={"verified_status": "retrieved"}),
+        }
+    )
+    materials = [selected, candidate]
+    report = validate_material_gate(manifest=manifest, materials=materials)
+    assert report.status == "passed"
+    slots = compile_generation_slots(
+        material_manifest=manifest,
+        materials=materials,
+        material_quality_report=report,
+        strategy_snapshot={},
+        expression_policy={},
+        channel_profile={},
+        content_rule_bundle={},
+    )
+    value_slot = next(slot for slot in slots if slot.slot_id == "persona_value")
+    assert value_slot.source_variable_codes == ("advantages",)
+    assert value_slot.evidence_ids == ("ev-selected",)
+    assert validate_material_gate(manifest=manifest, materials=[]).status == "blocked"

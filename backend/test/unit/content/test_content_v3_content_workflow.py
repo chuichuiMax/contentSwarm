@@ -916,14 +916,18 @@ async def test_passed_title_validation_continues_to_title_agent_selection():
 
 
 @pytest.mark.asyncio
-async def test_standardized_factory_composes_final_draft_before_semantic_review():
+@pytest.mark.parametrize("status", ["passed", "warning"])
+async def test_standardized_factory_composes_final_draft_before_semantic_review(status):
     agent = ContentWorkflowAgent()
     after_validation = await agent._execute_node(
         {"id": "revise_if_needed", "type": "revision_router"},
         {
             "current_node": "deterministic_validate",
             "retry_counts": {},
-            "validation_report": {"status": "passed", "checks": []},
+            "validation_report": {
+                "status": status,
+                "checks": [{"code": "MECHANICAL_META_EXPRESSION", "level": "warning"}] if status == "warning" else [],
+            },
         },
         WORKFLOW_STANDARDIZED_FACTORY,
     )
@@ -931,14 +935,15 @@ async def test_standardized_factory_composes_final_draft_before_semantic_review(
         {"id": "revise_if_needed", "type": "revision_router"},
         {
             "current_node": "semantic_review",
-            "retry_counts": {},
-            "review_report": {"status": "passed", "checks": []},
+            "retry_counts": {"generate_content": 2},
+            "review_report": {"status": status, "checks": [{"code": "NATURAL_EXPRESSION", "status": status}]},
         },
         WORKFLOW_STANDARDIZED_FACTORY,
     )
 
     assert after_validation["revision_target"] == "compose_locked_quote_block"
     assert after_review["revision_target"] == "human_content_approval"
+    assert after_review["retry_counts"] == {"generate_content": 2}
 
 
 @pytest.mark.unit
@@ -1300,7 +1305,8 @@ async def test_final_approval_is_a_backend_hard_gate_for_both_reports():
 
 
 @pytest.mark.asyncio
-async def test_final_approval_is_automatic_after_reports_pass():
+@pytest.mark.parametrize("status", ["passed", "warning"])
+async def test_final_approval_is_automatic_after_reports_pass(status):
     agent = ContentWorkflowAgent()
     state = {
         "task_id": "task-1",
@@ -1311,7 +1317,7 @@ async def test_final_approval_is_automatic_after_reports_pass():
         "content_draft": {"body": "正文"},
         "evidence_bundle": {"bundle_hash": "bundle-1"},
         "validation_report": {"status": "passed", "checks": []},
-        "review_report": {"status": "passed", "checks": []},
+        "review_report": {"status": status, "checks": [{"code": "NATURAL_EXPRESSION", "status": status}]},
     }
 
     result = await agent._v3_human_review(

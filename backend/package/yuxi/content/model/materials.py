@@ -1623,9 +1623,22 @@ def build_expression_policy(
     return {**payload, "policy_hash": _canonical_hash(payload)}
 
 
+def persona_opening_instruction(content_rule_bundle: dict[str, Any], *, has_locked_quote: bool) -> str:
+    """生成槽位与模型视图共用最终稿窗口，避免报价组装挤出人设。"""
+    policy = (content_rule_bundle.get("runtime_rules") or {}).get("viral-persona-author") or {}
+    window = int(policy.get("opening_window_paragraphs", 2))
+    if has_locked_quote and window == 2:
+        return (
+            "创作稿第一段必须自然完成身份、价值、证据三层；程序将在第一段后插入锁定报价块，"
+            "最终正文前两个自然段包含该报价块，不能把人设留到创作稿第二段。"
+        )
+    return f"前 {window} 个自然段自然完成身份、价值、证据三层，说明我是谁、做什么、如何回应顾虑及可信依据。"
+
+
 def compile_generation_slots(
     *,
     material_manifest: MaterialRequirementManifestV1,
+    material_quality_report: MaterialQualityReportV1,
     materials: list[MaterialEnvelopeV2] | tuple[MaterialEnvelopeV2, ...],
     strategy_snapshot: dict[str, Any],
     expression_policy: dict[str, Any],
@@ -1634,10 +1647,17 @@ def compile_generation_slots(
 ) -> tuple[GenerationSlotV1, ...]:
     """将物料、公式和审核契约编译为生成前的明确槽位。"""
 
+    bound_ids_by_code = {
+        requirement.variable_code: set(binding.material_ids)
+        for requirement in material_manifest.requirements
+        for binding in material_quality_report.bindings
+        if requirement.requirement_id == binding.requirement_id
+    }
     evidence_by_code: dict[str, list[str]] = {}
     for material in materials:
         for code in material.variable_codes:
-            evidence_by_code.setdefault(code, []).extend(material.evidence_ids)
+            if material.id in bound_ids_by_code.get(code, set()):
+                evidence_by_code.setdefault(code, []).extend(material.evidence_ids)
 
     def source_data(codes: set[str]) -> tuple[tuple[str, ...], tuple[str, ...]]:
         variables = tuple(sorted(code for code in codes if code in evidence_by_code))
@@ -1685,10 +1705,13 @@ def compile_generation_slots(
         for method in strategy_snapshot.get("creation_method_definitions") or []
         for code in method.get("variable_schema") or []
     )
-    required_manifest_codes = {
-        item.variable_code for item in material_manifest.requirements if item.required
-    }
-    persona_codes = required_manifest_codes & {"persona_fact", "advantage", "advantages", "process"}
+    required_manifest_codes = {item.variable_code for item in material_manifest.requirements if item.required}
+    persona_codes = {
+        item.variable_code
+        for item in material_manifest.requirements
+        if item.variable_code in evidence_by_code
+        and (item.required or "persona:value" in (item.validation_schema.get("alternative_groups") or []))
+    } & {"persona_fact", "advantage", "advantages", "process"}
     material_variable_codes = {code for material in materials for code in material.variable_codes}
     price_codes = (required_manifest_codes | material_variable_codes) & {
         "price",
@@ -1718,9 +1741,7 @@ def compile_generation_slots(
                 "expression_policy": expression_policy,
             },
             "strategy_snapshot": strategy_snapshot,
-            "evidence_bundle": {
-                "items": [{"variable_codes": list(material.variable_codes)} for material in materials]
-            },
+            "evidence_bundle": {"items": [{"variable_codes": list(material.variable_codes)} for material in materials]},
             "content_brief": {},
         }
     )
@@ -1807,7 +1828,14 @@ def compile_generation_slots(
             target="opening",
             source_codes={"persona_fact"},
             review_codes=("PERSONA_OPENING", "PERSONA_GROUNDING"),
-            instruction="前两个自然段自然说明我是谁、做什么，以及已有经验或可信依据。",
+            instruction=persona_opening_instruction(
+                content_rule_bundle,
+                has_locked_quote=any(
+                    "quote_block" in material.variable_codes
+                    and material.payload.value.get("insertion_policy") == "after-opening-paragraph-v1"
+                    for material in materials
+                ),
+            ),
             acceptance=("身份、业务和可信依据均来自对应 Evidence", "不写未经支持的多年经验或承诺"),
         )
     if persona_codes & {"advantage", "advantages", "process"}:
@@ -1889,8 +1917,8 @@ def compile_generation_slots(
             "PERSONA_TONE_MISMATCH",
             "PERSONA_STYLE_MISMATCH",
         ),
-        instruction="使用自然口语完成事实表达，删除报幕式、报告腔和机械连接词。",
-        acceptance=("不暴露写作步骤", "语气符合渠道和已冻结人设"),
+        instruction="使用自然口语完成事实表达，优先直接讲场景和动作，允许首先、其次等正常衔接词。",
+        acceptance=("句子通顺、意思清楚、说话人一致", "轻微书面化或不够口语化仅给建议，不触发回修"),
     )
     add(
         slots,
@@ -2005,6 +2033,7 @@ def freeze_production_pack(
     )
     generation_slots = compile_generation_slots(
         material_manifest=material_manifest,
+        material_quality_report=material_quality_report,
         materials=normalized_materials,
         strategy_snapshot=strategy_snapshot,
         expression_policy=expression_policy,

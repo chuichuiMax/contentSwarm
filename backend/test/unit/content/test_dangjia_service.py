@@ -185,6 +185,7 @@ def test_trusted_quote_snapshot_preserves_original_content_bytes():
     assert snapshot["title_price"] == {"label": "整套人工合计", "display_text": "1.16w"}
     assert snapshot["quote_type"] == "standard_unit_price"
     assert snapshot["quote_block"]["original_content"] == "  拆除：1000元；\n水电：2400元  "
+    assert snapshot["quote_block"]["render_policy"] == "checkmark-lines-v1"
 
 
 def test_brief_builds_visual_material_with_cover_first():

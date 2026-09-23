@@ -19,6 +19,7 @@ from yuxi.content.model.materials import (
 )
 from yuxi.content.v3.body_calling import get_decoration_body_calling, get_decoration_body_calling_source
 from yuxi.content.v3.formula_lexicons import get_formula_lexicon_requirements
+from yuxi.content.v3.foreman_composition import lock_evidence_composition
 from yuxi.services.content_viral_assets import check_asset_source, preparation_skill_hash, require_asset
 from yuxi.services.run_queue_service import append_run_stream_event
 from yuxi.storage.postgres.models_business import User
@@ -464,24 +465,46 @@ async def prepare_creation_plan_inputs(*, db, state: dict[str, Any], node_run_id
         )
         result["strategy_catalog"] = loaded["strategy_candidates"]
         result["strategy_candidates"] = deepcopy(loaded["strategy_candidates"])
+    catalog = result["strategy_catalog"]
+    fact_index = build_fact_index(state["content_brief"], state["evidence_bundle"])
+    selected_catalog = lock_evidence_composition(catalog, fact_index, seed=state["task_id"])
     gap = analyze_plan_gaps(
-        catalog=result["strategy_catalog"],
+        catalog=selected_catalog,
         references=result["reference_candidates"],
         content_brief=state["content_brief"],
         evidence_bundle=state["evidence_bundle"],
         runtime_config_snapshot=state["runtime_config_snapshot"],
     )
+    selection_pending = any(
+        (rule.get("source_metadata") or {}).get("formula_selection_policy") == "evidence_composition_v1"
+        and not (rule.get("source_metadata") or {}).get("locked_composition")
+        for rule in catalog.get("source_rules") or []
+    )
+    if selection_pending:
+        # 新组合先摘录候选事实，再按实际摘录结果选式。候选缺失不等于必需物料缺失。
+        candidate_codes = set()
+        for title in catalog["title_formulas"]:
+            candidate_codes.update(title.get("variable_schema") or [])
+        for body in catalog["content_formulas"]:
+            candidate_codes.update(body.get("required_variables") or [])
+            for component in (body.get("source_content") or {}).get("component_pool") or []:
+                candidate_codes.update(component["required_variables"])
+        candidate_codes -= set(fact_index["available_variable_codes"])
+        candidate_codes -= set(gap["missing_variable_codes"])
+        gap["candidate_variable_codes"] = sorted(candidate_codes)
+        gap["candidate_variable_definitions"] = [
+            {"code": item["code"], "name": item["name"], "value_type": item["value_type"]}
+            for item in catalog["variables"]
+            if item["code"] in candidate_codes
+        ]
+        gap["selection_pending"] = True
+        return {**result, "production_order": {}, "material_manifest": {}, "creation_plan_gap_analysis": gap}
     order, manifest = compile_production_order_and_manifest(
         task_id=state["task_id"],
-        catalog=result["strategy_catalog"],
-        fact_index=build_fact_index(state["content_brief"], state["evidence_bundle"]),
+        catalog=catalog,
+        fact_index=fact_index,
     )
-    return {
-        **result,
-        "production_order": order,
-        "material_manifest": manifest,
-        "creation_plan_gap_analysis": gap,
-    }
+    return {**result, "production_order": order, "material_manifest": manifest, "creation_plan_gap_analysis": gap}
 
 
 async def preview_creation_plan(*, db, user, task_id: str) -> dict[str, Any]:
@@ -530,6 +553,7 @@ async def preview_creation_plan(*, db, user, task_id: str) -> dict[str, Any]:
 
         runtime["content_rule_bundle"] = build_modular_rule_bundle(task.brief_json)
     fact_index = build_fact_index(task.brief_json, evidence_bundle)
+    catalog = lock_evidence_composition(catalog, fact_index, seed=task_id)
     rule, title, body, methods, _missing = _resolve_rule_and_formulas(catalog, fact_index)
     gaps = analyze_plan_gaps(
         catalog=catalog,
@@ -604,7 +628,10 @@ async def merge_extracted_creation_facts(*, db, state: dict[str, Any], node_run_
 
     from yuxi.content.control.workflow.deterministic_node import V3DeterministicNodeHandler
 
-    requested = set((state.get("creation_plan_gap_analysis") or {}).get("missing_variable_codes") or [])
+    input_gap = state.get("creation_plan_gap_analysis") or {}
+    requested = set(input_gap.get("missing_variable_codes") or []) | set(
+        input_gap.get("candidate_variable_codes") or []
+    )
     extracted = state.get("extracted_creation_facts") or {"facts": []}
     list_variable_codes = {
         str(item.get("code") or "")
@@ -673,14 +700,30 @@ async def merge_extracted_creation_facts(*, db, state: dict[str, Any], node_run_
         },
         node_run_id=node_run_id,
     )
+    catalog = state["strategy_catalog"]
+    selection_updates = {}
+    if input_gap.get("selection_pending"):
+        fact_index = build_fact_index(state["content_brief"], frozen["evidence_bundle"])
+        catalog = lock_evidence_composition(catalog, fact_index, seed=state["task_id"])
+        order, manifest = compile_production_order_and_manifest(
+            task_id=state["task_id"],
+            catalog=catalog,
+            fact_index=fact_index,
+        )
+        selection_updates = {
+            "strategy_catalog": catalog,
+            "strategy_candidates": deepcopy(catalog),
+            "production_order": order,
+            "material_manifest": manifest,
+        }
     gap = analyze_plan_gaps(
-        catalog=state["strategy_catalog"],
+        catalog=catalog,
         references=state.get("reference_candidates") or [],
         content_brief=state["content_brief"],
         evidence_bundle=frozen["evidence_bundle"],
         runtime_config_snapshot=state["runtime_config_snapshot"],
     )
-    return {**frozen, "creation_plan_gap_analysis": gap}
+    return {**frozen, **selection_updates, "creation_plan_gap_analysis": gap}
 
 
 async def build_creation_plan(*, db, state: dict[str, Any], node_run_id: str) -> dict[str, Any]:
@@ -823,7 +866,7 @@ async def _build_creation_plan(*, db, state: dict[str, Any]) -> dict[str, Any]:
         "slot_mapping": selected["slot_mapping"],
         "selection_trace": [
             f"按创作类型 {direction} 命中唯一组合规则 {rule.get('id') or rule.get('code')}",
-            f"按组合规则默认顺序锁定标题公式 {title['code']}，缺资料时不更换公式",
+            f"按规则选式策略锁定标题公式 {title['code']}，备料后不更换公式",
             f"锁定正文公式 {body['code']} 与手法 {','.join(method_codes)}",
             f"按槽位覆盖、检索相关度和资产 ID 稳定排序选择 {asset.id}",
         ],

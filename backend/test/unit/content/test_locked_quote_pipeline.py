@@ -15,10 +15,10 @@ from yuxi.content.control.workflow.generation_input import (
     _project_standardized_production_pack,
     _redact_locked_quote_from_review,
 )
-from yuxi.content.model.locked_blocks import render_semicolon_lines
+from yuxi.content.model.locked_blocks import extract_locked_quote_block, render_semicolon_lines
 
 
-def _quote_material(original: str = "拆除：1000元；水电：2400元") -> dict:
+def _quote_material(original: str = "拆除：1000元；水电：2400元", *, render_policy: str = "checkmark-lines-v1") -> dict:
     content_hash = hashlib.sha256(original.encode("utf-8")).hexdigest()
     return {
         "id": "mat-quote",
@@ -29,7 +29,7 @@ def _quote_material(original: str = "拆除：1000元；水电：2400元") -> di
             "value": {
                 "original_content": original,
                 "content_hash": content_hash,
-                "render_policy": "semicolon-lines-v1",
+                "render_policy": render_policy,
                 "insertion_policy": "after-opening-paragraph-v1",
             }
         },
@@ -48,7 +48,7 @@ def _quote_material(original: str = "拆除：1000元；水电：2400元") -> di
     }
 
 
-def _pack() -> dict:
+def _pack(*, render_policy: str = "checkmark-lines-v1") -> dict:
     return {
         "schema_version": 1,
         "id": "pack-1",
@@ -57,7 +57,7 @@ def _pack() -> dict:
         "material_manifest": {},
         "material_quality_report": {},
         "materials": [
-            _quote_material(),
+            _quote_material(render_policy=render_policy),
             {
                 "id": "mat-label",
                 "material_type": "business_fact",
@@ -115,7 +115,8 @@ def _pack() -> dict:
     }
 
 
-def test_trusted_quote_snapshot_becomes_four_confirmed_high_risk_facts():
+@pytest.mark.parametrize("render_policy", ["semicolon-lines-v1", "checkmark-lines-v1"])
+def test_trusted_quote_snapshot_becomes_four_confirmed_high_risk_facts(render_policy):
     original = "  拆除：1000元；水电：2400元  "
     snapshot = {
         "schema_version": 1,
@@ -128,7 +129,7 @@ def test_trusted_quote_snapshot_becomes_four_confirmed_high_risk_facts():
         "quote_block": {
             "original_content": original,
             "content_hash": hashlib.sha256(original.encode("utf-8")).hexdigest(),
-            "render_policy": "semicolon-lines-v1",
+            "render_policy": render_policy,
             "insertion_policy": "after-opening-paragraph-v1",
         },
     }
@@ -144,6 +145,18 @@ def test_trusted_quote_snapshot_becomes_four_confirmed_high_risk_facts():
     assert all(item.verified_status == "user_confirmed" and item.risk_level == "high_risk" for item in items)
     quote = next(item for item in items if item.variable_codes == ("quote_block",))
     assert quote.value["original_content"] == original
+    assert quote.value["render_policy"] == render_policy
+    legacy_id = "ev_" + hashlib.sha256(f"dangjia:001:quote-block:{quote.source_hash}".encode()).hexdigest()[:24]
+    if render_policy == "semicolon-lines-v1":
+        assert quote.id == legacy_id
+    else:
+        assert quote.id != legacy_id
+        repeated_quote = next(
+            item
+            for item in _trusted_quote_evidence_items(snapshot, content_type_code="CT03")
+            if item.variable_codes == ("quote_block",)
+        )
+        assert repeated_quote.id == quote.id
 
 
 def test_generation_pack_projection_never_contains_quote_original_or_source_hash():
@@ -251,11 +264,43 @@ def test_semicolon_rendering_only_adds_missing_visual_newlines():
     )
 
 
+def test_checkmark_quote_preserves_prices_units_whitespace_and_source_hash():
+    original = "24 墙拆除：40 元 /㎡；门洞加宽（30cm 内）：50元 / 个；\r\n\r\n拆卫生间（4㎡内）：1000/项；\n"
+    material = _quote_material(original)
+    before = deepcopy(material)
+
+    quote = extract_locked_quote_block({"materials": [material]})
+
+    assert quote["rendered_content"] == (
+        "✅ 24 墙拆除：40 元 /㎡；\n✅ 门洞加宽（30cm 内）：50元 / 个；\r\n\r\n✅ 拆卫生间（4㎡内）：1000/项；\n"
+    )
+    assert quote["original_content"] == original
+    assert quote["content_hash"] == hashlib.sha256(original.encode()).hexdigest()
+    assert material == before
+
+
+def test_checkmark_quote_does_not_duplicate_existing_checkmarks():
+    quote = extract_locked_quote_block({"materials": [_quote_material("✅ 拆除：1000元；\n✅水电：2400元")]})
+    assert quote["rendered_content"] == "✅ 拆除：1000元；\n✅水电：2400元"
+
+
+@pytest.mark.parametrize("tamper", ["content", "render_policy"])
+def test_checkmark_quote_rejects_tampered_prices_and_unpublished_policy(tamper):
+    material = _quote_material()
+    if tamper == "content":
+        material["payload"]["value"]["original_content"] = "拆除：1元；水电：2400元"
+    else:
+        material["payload"]["value"]["render_policy"] = "unknown-v1"
+    with pytest.raises(ValueError, match="Hash|未发布"):
+        extract_locked_quote_block({"materials": [material]})
+
+
+@pytest.mark.parametrize("render_policy", ["semicolon-lines-v1", "checkmark-lines-v1"])
 @pytest.mark.asyncio
-async def test_locked_quote_is_composed_once_and_then_validated():
+async def test_locked_quote_is_composed_once_and_then_validated(render_policy):
     creative_body = "开场说明。" * 25 + "\n\n" + "报价阅读提示和避坑建议。" * 12
     state = {
-        "production_pack": _pack(),
+        "production_pack": _pack(render_policy=render_policy),
         "content_draft": {
             "body": creative_body,
             "topics": ["长沙装修"],
@@ -272,7 +317,9 @@ async def test_locked_quote_is_composed_once_and_then_validated():
         state=state,
         node_run_id="node-1",
     )
-    rendered = render_semicolon_lines(_quote_material()["payload"]["value"]["original_content"])
+    rendered = "拆除：1000元；\n水电：2400元"
+    if render_policy == "checkmark-lines-v1":
+        rendered = "✅ 拆除：1000元；\n✅ 水电：2400元"
     assert composed["content_draft"]["body"].count(rendered) == 1
     assert composed["content_draft"]["body"].index(rendered) < composed["content_draft"]["body"].index("报价阅读提示")
     assert composed["creative_content_draft"]["body"] == creative_body
@@ -292,3 +339,24 @@ async def test_locked_quote_is_composed_once_and_then_validated():
     )
     assert recomposed["content_draft"]["body"].count(rendered) == 1
     assert recomposed["final_draft_hash"] == composed["final_draft_hash"]
+
+
+@pytest.mark.parametrize("has_quote", [True, False])
+def test_generation_opening_accounts_for_inserted_quote_without_changing_frozen_pack(has_quote):
+    pack = _pack()
+    if not has_quote:
+        pack["materials"] = []
+    pack["content_rule_bundle"] = {
+        "runtime_rules": {
+            "viral-persona-author": {
+                "opening_required": True,
+                "opening_window_paragraphs": 2,
+            }
+        }
+    }
+    before = deepcopy(pack)
+    projected = _project_standardized_production_pack(pack)
+    assert pack == before
+    instruction = projected["creative_opening_instruction"]
+    assert ("创作稿第一段" if has_quote else "前 2 个自然段") in instruction
+    assert "original_content" not in json.dumps(projected, ensure_ascii=False)
