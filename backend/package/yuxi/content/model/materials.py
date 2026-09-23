@@ -1917,8 +1917,8 @@ def compile_generation_slots(
             "PERSONA_TONE_MISMATCH",
             "PERSONA_STYLE_MISMATCH",
         ),
-        instruction="使用自然口语完成事实表达，删除报幕式、报告腔和机械连接词。",
-        acceptance=("不暴露写作步骤", "语气符合渠道和已冻结人设"),
+        instruction="使用自然口语完成事实表达，优先直接讲场景和动作，允许首先、其次等正常衔接词。",
+        acceptance=("句子通顺、意思清楚、说话人一致", "轻微书面化或不够口语化仅给建议，不触发回修"),
     )
     add(
         slots,

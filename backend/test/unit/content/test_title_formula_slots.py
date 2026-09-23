@@ -32,11 +32,7 @@ FORMULA_EXPECTATIONS = {
     "FRT12": (["地域", "身份", "业务"], "坐标长沙，一个实在的装修工长自荐🙏"),
     "FRT13": (["地域", "身份", "开工/业务"], "上海设计师🔨开工大吉🏠感谢小红书业主信任"),
     "FRT14": (["地域", "身份", "工地巡检"], "天津装修｜工长巡检细节不能偷懒"),
-    "FRT15": (["人群/工种", "工序数字", "结果"], "油工18道完整工序｜墙面不开裂"),
     "FRT16": (["人群/工种", "工艺", "情绪"], "好瓦工的手艺，都藏在细节里"),
-    "FRT17": (["本次施工耗时", "人群/工种", "结果", "情绪"], "历时12天瓦工师傅完美退场，交出的满分答卷"),
-    "FRT18": (["地域", "项目", "工艺"], "长沙卫生间｜贴砖对缝细节"),
-    "FRT19": (["项目", "业务", "工艺"], "卫生间泥瓦施工｜贴砖对缝细节"),
 }
 
 
@@ -59,9 +55,6 @@ FORMULA_PASSING_CASES = [
     ("FRT12", "长沙工长半包", {"persona_fact": "装修工长，从业5年", "scene": "半包"}),
     ("FRT13", "长沙工长水电", {"persona_fact": "装修工长，从业5年", "product": "工长、水电、泥瓦"}),
     ("FRT14", "长沙工长巡检", {"persona_fact": "装修工长，从业五年", "inspection": "工地巡检"}),
-    ("FRT15", "油工18道工序验收通过", {"craft_role": ["油工"], "craft_count": "18道工序", "result": "验收通过"}),
-    ("FRT18", "长沙卫生间贴砖对缝", {"project": "卫生间", "process": ["贴砖对缝"]}),
-    ("FRT19", "卫生间泥瓦贴砖对缝", {"project": "卫生间", "product": "泥瓦", "process": ["贴砖对缝"]}),
 ]
 
 
@@ -377,7 +370,6 @@ def test_intro_identity_uses_author_facts_instead_of_audience(fact, expected):
     ("code", "title", "values"),
     [
         ("FRT16", "瓦工贴砖对缝真香", {"craft_role": ["瓦工"], "process": ["贴砖对缝"]}),
-        ("FRT17", "12天瓦工验收通过真香", {"craft_duration": "历时12天", "craft_role": ["瓦工"], "result": "验收通过"}),
     ],
 )
 async def test_craft_emotion_slots_require_selected_expression(monkeypatch, code, title, values):

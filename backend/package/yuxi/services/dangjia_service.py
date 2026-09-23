@@ -275,7 +275,7 @@ def build_trusted_quote_snapshot(
         "quote_block": {
             "original_content": original_content,
             "content_hash": content_hash,
-            "render_policy": "semicolon-lines-v1",
+            "render_policy": "checkmark-lines-v1",
             "insertion_policy": "after-opening-paragraph-v1",
         },
     }

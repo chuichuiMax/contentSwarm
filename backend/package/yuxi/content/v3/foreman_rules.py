@@ -11,8 +11,8 @@ from typing import Any
 CATALOG_PATH = Path(__file__).with_name("fixtures") / "foreman_rule_catalog_v1.json"
 DIRECTION_MATRIX_PATH = Path(__file__).with_name("fixtures") / "foreman_direction_matrix_v2.json"
 METHOD_CODES = {f"FRM{index:02d}" for index in range(1, 13)}
-TITLE_CODES = {f"FRT{index:02d}" for index in range(1, 20)}
-BODY_CODES = {f"FRB{index:02d}" for index in range(1, 17)}
+TITLE_CODES = {f"FRT{index:02d}" for index in range(1, 20)} - {"FRT15", "FRT17", "FRT18", "FRT19"}
+BODY_CODES = {f"FRB{index:02d}" for index in range(1, 17)} - {"FRB12"}
 GROUP_CODES = {f"FRG{index:02d}" for index in range(1, 8)}
 DIRECTION_BINDINGS = {
     "CT01": {"method": "FRM05", "body": "FRB05", "topic_type": "自我介绍", "content_group": "自我介绍"},
@@ -47,9 +47,9 @@ def load_foreman_rule_catalog(
     if {item.get("code") for item in payload.get("methods") or []} != METHOD_CODES:
         raise ForemanRuleValidationError("装修工长正文模式必须完整覆盖 FRM01～FRM12")
     if {item.get("code") for item in payload.get("title_formulas") or []} != TITLE_CODES:
-        raise ForemanRuleValidationError("装修工长标题公式必须完整覆盖 FRT01～FRT19")
+        raise ForemanRuleValidationError("装修工长标题公式必须完整覆盖 FRT01～FRT14 及 FRT16")
     if {item.get("code") for item in payload.get("content_formulas") or []} != BODY_CODES:
-        raise ForemanRuleValidationError("装修工长正文公式必须完整覆盖 FRB01～FRB16")
+        raise ForemanRuleValidationError("装修工长正文公式必须完整覆盖 FRB01～FRB16（不含已删除的 FRB12）")
     groups = payload.get("combination_rules") or []
     if {item.get("id") for item in groups} != GROUP_CODES:
         raise ForemanRuleValidationError("装修工长组合规则必须完整覆盖 FRG01～FRG07")
@@ -87,7 +87,7 @@ def load_foreman_rule_catalog(
         if not set(group.get("title_formula_candidate_codes") or []).issubset(TITLE_CODES):
             raise ForemanRuleValidationError(f"组合 {group.get('id')} 的标题公式引用无效")
         expected_bodies = (
-            [f"FRB{index:02d}" for index in range(11, 17)]
+            ["FRB11", "FRB13", "FRB14", "FRB15", "FRB16"]
             if group["content_type_codes"][0] in {"CT06", "CT07"}
             else ["FRB" + methods[0][-2:]]
         )
@@ -298,9 +298,13 @@ def _add_craft_daily_variables(bundle: dict[str, Any]) -> None:
 
 
 def upgrade_craft_daily_rules(bundle: dict[str, Any]) -> dict[str, Any]:
-    """仅新增 M/N 公式并更新 CT06/CT07，保留其他运营规则和旧公式语义。"""
+    """同步 CT06/CT07 最新公式及删除项，保留其他运营规则，不修改输入历史版本。"""
     result = deepcopy(bundle)
     catalog = load_foreman_rule_catalog()
+    result["title_formulas"] = [
+        item for item in result["title_formulas"] if item["code"] not in {"FRT15", "FRT17", "FRT18", "FRT19"}
+    ]
+    result["content_formulas"] = [item for item in result["content_formulas"] if item["code"] != "FRB12"]
     for section, codes in (
         ("methods", {"FRM11", "FRM12"}),
         ("title_formulas", {f"FRT{i:02d}" for i in range(13, 20)}),

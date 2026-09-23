@@ -7,7 +7,7 @@ description: 按照创作时冻结的同一模块规则快照审核爆款仿写�
 
 只审核，不改稿。以 runtime_config_snapshot.content_rule_bundle 的版本、哈希和规则为准，不自行增加写作偏好。确定性校验已阻断的问题保持 blocked，并补充具体位置和定点建议。
 
-提交结果前，读取 `runtime_config_snapshot.required_review_codes`。`checks` 必须把其中每个 code 恰好输出一次，逐项给出 `passed` 或 `blocked`，不得遗漏、改名或使用 `warning`。
+提交结果前，读取 `runtime_config_snapshot.required_review_codes`。`checks` 必须把其中每个 code 恰好输出一次，不得遗漏或改名。`NATURAL_EXPRESSION` 允许 `passed`、`warning` 或 `blocked`，其余必检项仍只允许 `passed` 或 `blocked`。顶层 `status` 与最严重检查项一致：存在阻断为 `blocked`，否则存在建议为 `warning`，其余为 `passed`；建议不要求回修。
 
 存在 `generation_slots` 时，按槽位的目标位置、来源变量和验收条件复核正文；阻断项应引用对应槽位的 `review_codes`，不能只因物料存在就判定正文通过。
 
@@ -18,7 +18,7 @@ description: 按照创作时冻结的同一模块规则快照审核爆款仿写�
 - `TITLE_ALIGNMENT`：先逐项读取 `strategy_snapshot.title_formula.source_content.slot_schema`；每个对象是必填槽位，同一对象内的变量与词库按 one-of 审核，不能因标题自然或主题一致就放行缺槽标题。旧公式无槽位时才读取 `variable_schema`。只有公式包含 `persona_fact` 来源时才审核有据身份或年限；没有时不得将正文人设追加为标题门禁。产品表达允许删除已由地域或定位词重复表达的前缀，只要核心服务仍可识别。`title.lexicon_usage` 只登记实际使用项，其中每个 `selected_terms` 都必须逐字出现在标题，不能把“只登记未使用词条”判为通过；同槽未采用的词库不算遗漏。`title.beneficial_result`、`title.instruction_value` 等表达词本身不等于业务结果或数字承诺，不得要求额外 Evidence。再检查单一卖点、标题正文同题，以及事实与数字有 Evidence。
 - `CREATION_TYPE_ALIGNMENT`、`COMPOSITION_ALIGNMENT`：唯一爆款蓝图的创作类型和组成层次得到执行，但没有复制参考事实或原句。
 - `BODY_VALUE`：正文至少有一种明确阅读价值，且核心卖点得到兑现。
-- `NATURAL_EXPRESSION`：表达自然，不出现报告腔、报幕句、机械重复和硬塞热词。
+- `NATURAL_EXPRESSION`：以句子通顺、意思清楚、说话人一致为标准。个别句子轻微书面化、不够口语化、略显模板腔或热词略生硬，只给 `warning` 并注明原句与优化建议；例如“目前资料里记录的技能是工长、水电、泥瓦”可建议改为“我做过工长、水电、泥瓦”，不能仅凭这一句阻断。仅当表达严重妨碍理解，或整篇持续以系统/资料审核者口吻分析作者、明显违背创作者身份时才 `blocked`，必须指出具体原文及影响。“首先、其次、综上、值得注意的是、通过以上内容、下面来说、接下来看看”等正常衔接词不因出现而扣判；模板词命中本身也不是语义阻断证据。轻微表达建议统一归入本项，不得换用人设、结构或排版代码将同一轻微问题升级阻断；真实身份矛盾、无据事实及公式缺项仍按对应规则审核。
 - `LAYOUT_READABILITY`：短段、清单、留白和 Emoji 位置便于扫读，无 Markdown 结构。
 - `PERSONA_OPENING`：正文前两个自然段已自然完成身份、价值、证据三层。身份回答“我是谁、做什么”；价值用做事特点回应当前痛点；证据用已有师傅资源、经验、报价方式、施工动作、服务方式或案例说明“为什么相信我”。三层可与爆款钩子合并，但不能写成标签清单。
 - `PERSONA_GROUNDING`：全文只使用与当前场景和核心痛点匹配的 2～3 项有据优势，每项都能说明解决什么顾虑；少于 2 项、超过 3 项、机械罗列、不相关或无 Evidence 时阻断，不要求为凑数虚构。

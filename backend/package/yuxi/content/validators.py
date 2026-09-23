@@ -346,9 +346,10 @@ def validate_modular_content(
         checks.append(
             {
                 "code": "MECHANICAL_META_EXPRESSION",
-                "level": "error",
+                "level": natural_rules.get("mechanical_marker_level", "error"),
                 "location": "body",
-                "message": "正文包含报告腔或暴露写作步骤的模板表达",
+                "message": "正文包含可优化的报幕式措辞；是否严重影响理解或身份表达需结合上下文审核",
+                "suggestion": "可直接描述场景、事实或动作，保留原有信息",
                 "evidence_ids": [],
                 "matched_terms": matched_mechanical,
             }

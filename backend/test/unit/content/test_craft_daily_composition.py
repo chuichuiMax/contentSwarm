@@ -37,12 +37,55 @@ BASE = {
 }
 
 
+def test_latest_rules_remove_deleted_formulas_and_upgrade_keeps_old_bundle_intact():
+    from yuxi.content.v3.foreman_rules import upgrade_craft_daily_rules
+    from yuxi.services.content_service import validate_rule_bundle_for_publish
+
+    bundle = import_foreman_rules(_source_bundle())
+    for section, retired, replacement in (
+        ("title_formulas", {"FRT15", "FRT17", "FRT18", "FRT19"}, "FRT16"),
+        ("content_formulas", {"FRB12"}, "FRB11"),
+    ):
+        assert not retired & {item["code"] for item in bundle[section]}
+        template = next(item for item in bundle[section] if item["code"] == replacement)
+        bundle[section].extend({**deepcopy(template), "code": code} for code in sorted(retired))
+    for group in bundle["combination_rules"]:
+        if group["content_type_codes"] == ["CT06"]:
+            group["title_formula_candidate_codes"] = ["FRT15", "FRT17", "FRT16", "FRT18", "FRT19"]
+        if group["content_type_codes"] in (["CT06"], ["CT07"]):
+            group["body_formula_candidate_codes"] = [f"FRB{i:02d}" for i in range(11, 17)]
+            group["hard_conditions"]["allowed_formula_pairs"] = [
+                [title, body]
+                for title in group["title_formula_candidate_codes"]
+                for body in group["body_formula_candidate_codes"]
+            ]
+    original = deepcopy(bundle)
+
+    upgraded = upgrade_craft_daily_rules(bundle)
+
+    assert bundle == original
+    assert not {"FRT15", "FRT17", "FRT18", "FRT19"} & {item["code"] for item in upgraded["title_formulas"]}
+    assert "FRB12" not in {item["code"] for item in upgraded["content_formulas"]}
+    for group in upgraded["combination_rules"]:
+        if group["content_type_codes"] == ["CT06"]:
+            assert group["title_formula_candidate_codes"] == ["FRT16"]
+        if group["content_type_codes"] in (["CT06"], ["CT07"]):
+            assert group["body_formula_candidate_codes"] == ["FRB11", "FRB13", "FRB14", "FRB15", "FRB16"]
+            assert not any(
+                title in {"FRT15", "FRT17", "FRT18", "FRT19"} or body == "FRB12"
+                for title, body in group["hard_conditions"]["allowed_formula_pairs"]
+            )
+    assert validate_rule_bundle_for_publish(upgraded)["errors"] == []
+    assert upgrade_craft_daily_rules(upgraded) == upgraded
+
+
 @pytest.mark.parametrize(
     ("extra", "expected"),
     [
         ({}, "FRT16"),
-        ({"craft_count": "18道工序", "result": "墙面验收通过"}, "FRT15"),
-        ({"craft_duration": "12天", "result": "瓷砖铺贴完工"}, "FRT17"),
+        ({"craft_count": "18道工序", "result": "墙面验收通过"}, "FRT16"),
+        ({"craft_duration": "12天", "result": "瓷砖铺贴完工"}, "FRT16"),
+        ({"project": "卫生间", "location": "长沙"}, "FRT16"),
     ],
 )
 def test_craft_title_uses_only_supported_specific_facts(extra, expected):
@@ -85,7 +128,8 @@ def test_selection_is_frozen_when_extraction_adds_new_facts():
     assert updated == before
 
 
-def test_fixed_combinations_and_four_component_composition_are_reachable():
+@pytest.mark.parametrize("direction", ["CT06", "CT07"])
+def test_fixed_combinations_and_four_component_composition_are_reachable(direction):
     values = {
         **BASE,
         "case_background": "梅溪湖工地",
@@ -96,9 +140,9 @@ def test_fixed_combinations_and_four_component_composition_are_reachable():
     }
     selected = set()
     for i in range(80):
-        catalog = lock(values, seed=f"task-{i}")
+        catalog = lock(values, direction, seed=f"task-{i}")
         selected.add(catalog["source_rules"][0]["body_formula_candidate_codes"][0])
-    assert selected == {f"FRB{i:02}" for i in range(11, 17)}
+    assert selected == {"FRB11", "FRB13", "FRB14", "FRB15", "FRB16"}
 
 
 def test_legacy_policy_is_unchanged():
@@ -228,14 +272,15 @@ async def test_plain_text_candidates_are_extracted_before_formula_is_frozen(monk
     )
     prepared = await creation_plan.prepare_creation_plan_inputs(db=object(), state=current, node_run_id="prepare")
     gap = prepared["creation_plan_gap_analysis"]
-    assert "craft_count" in set(gap["candidate_variable_codes"]) | set(gap["missing_variable_codes"])
+    assert "process" in set(gap["candidate_variable_codes"]) | set(gap["missing_variable_codes"])
+    assert not {"craft_count", "craft_duration"} & (
+        set(gap["candidate_variable_codes"]) | set(gap["missing_variable_codes"])
+    )
     assert prepared["production_order"] == {}
     current.update(prepared)
     facts = {
-        "location": "长沙",
         "persona_fact": "工长",
         "craft_role": "油工",
-        "craft_count": "18道完整工序",
         "process": "18道完整工序",
         "result": "墙面验收通过",
         "product": "油工",
@@ -258,6 +303,6 @@ async def test_plain_text_candidates_are_extracted_before_formula_is_frozen(monk
         ),
     )
     merged = await creation_plan.merge_extracted_creation_facts(db=object(), state=current, node_run_id="merge")
-    assert merged["production_order"]["title_formula_code"] == "FRT15"
+    assert merged["production_order"]["title_formula_code"] == "FRT16"
     assert merged["creation_plan_gap_analysis"]["missing_variable_codes"] == []
     assert "case_background" not in facts and "craft_duration" not in facts

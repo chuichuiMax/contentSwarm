@@ -135,7 +135,7 @@ class LockedBlockPromptV1(StrictContract):
     block_type: Literal["verbatim_quote"]
     label: str
     insertion_policy: Literal["after-opening-paragraph-v1"]
-    render_policy: Literal["semicolon-lines-v1"]
+    render_policy: Literal["semicolon-lines-v1", "checkmark-lines-v1"]
     char_count: int = Field(ge=1)
     creative_body_min_chars: int = Field(ge=1)
     creative_body_max_chars: int = Field(ge=1)
@@ -2063,11 +2063,11 @@ def validate_content_node_result(
                     "必须逐项审核表情、人设和冻结规则并记录结果: " + ", ".join(sorted(missing)),
                 )
             for index, item in enumerate(result.checks):
-                if item.code in required and item.status == "warning":
+                if item.code in required and item.status == "warning" and item.code != "NATURAL_EXPRESSION":
                     raise ContractDomainValidationError(
                         "emoji_review_status",
                         f"checks.{index}.status",
-                        "必选审核项必须明确 passed 或 blocked，不以 warning 放行",
+                        "除 NATURAL_EXPRESSION 外，必选审核项必须明确 passed 或 blocked，不以 warning 放行",
                     )
                 if item.code in required and item.status == "blocked" and (not item.suggestion or not item.location):
                     raise ContractDomainValidationError(

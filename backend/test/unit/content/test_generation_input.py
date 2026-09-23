@@ -2,6 +2,8 @@ import hashlib
 import json
 from copy import deepcopy
 
+import pytest
+
 from yuxi.content.control.workflow.generation_input import (
     project_generation_input,
     project_locked_quote_safe_input,
@@ -9,7 +11,6 @@ from yuxi.content.control.workflow.generation_input import (
     project_visual_input,
     project_visual_review_input,
 )
-from yuxi.content.model.locked_blocks import render_semicolon_lines
 
 
 def test_generation_projection_keeps_writing_facts_and_removes_audit_duplicates():
@@ -342,15 +343,18 @@ def test_visual_projection_exposes_exact_locked_values_and_visual_evidence_allow
     assert view["evidence_bundle"] == payload["evidence_bundle"]
 
 
-def test_visual_projections_hide_composed_locked_quote_from_models():
+@pytest.mark.parametrize("render_policy", ["semicolon-lines-v1", "checkmark-lines-v1"])
+def test_visual_projections_hide_composed_locked_quote_from_models(render_policy):
     original = "拆除：1000元；水电：2400元"
-    rendered = render_semicolon_lines(original)
+    rendered = "拆除：1000元；\n水电：2400元"
+    if render_policy == "checkmark-lines-v1":
+        rendered = "✅ 拆除：1000元；\n✅ 水电：2400元"
     evidence_bundle = {
         "items": [
             {
                 "id": "ev-quote",
                 "variable_codes": ["quote_block"],
-                "value": {"original_content": original},
+                "value": {"original_content": original, "render_policy": render_policy},
                 "allowed_usage": ["body"],
             }
         ]

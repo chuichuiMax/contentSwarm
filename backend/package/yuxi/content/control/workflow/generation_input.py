@@ -10,7 +10,7 @@ from yuxi.content.model.contracts.content_nodes import (
     StandardizedGenerateContentPromptV1,
     VisualReviewInputV1,
 )
-from yuxi.content.model.locked_blocks import extract_locked_quote_block, quote_body_limits, render_semicolon_lines
+from yuxi.content.model.locked_blocks import extract_locked_quote_block, quote_body_limits, render_locked_quote
 from yuxi.content.model.materials import (
     FrozenProductionPackV1,
     build_formula_lexicon_constraints,
@@ -173,7 +173,7 @@ def _redact_composed_locked_quote(projected: dict) -> None:
     original = value.get("original_content")
     if not isinstance(original, str) or not original:
         raise ValueError("锁定报价块缺少可脱敏的原文")
-    rendered = render_semicolon_lines(original)
+    rendered = render_locked_quote(original, value.get("render_policy"))
     draft = projected.get("content_draft") or {}
     body = str(draft.get("body") or "")
     marker = "[锁定报价块已由程序插入；原文不提供给模型]"

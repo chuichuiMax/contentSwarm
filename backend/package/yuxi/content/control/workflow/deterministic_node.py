@@ -39,6 +39,7 @@ from yuxi.content.model.materials import (
     validate_material_gate,
 )
 from yuxi.content.model.locked_blocks import (
+    QUOTE_RENDER_POLICIES,
     compose_after_opening_paragraph,
     extract_locked_quote_block,
     quote_body_limits,
@@ -97,7 +98,7 @@ def _trusted_quote_evidence_items(snapshot: dict[str, Any], *, content_type_code
         or not display_text
         or not isinstance(original_content, str)
         or not original_content
-        or quote_block.get("render_policy") != "semicolon-lines-v1"
+        or quote_block.get("render_policy") not in QUOTE_RENDER_POLICIES
         or quote_block.get("insertion_policy") != "after-opening-paragraph-v1"
     ):
         raise ContentApplicationError(
@@ -122,7 +123,11 @@ def _trusted_quote_evidence_items(snapshot: dict[str, Any], *, content_type_code
         metadata: dict[str, Any],
     ) -> EvidenceItemV1:
         source_id = f"dangjia:{serial_no}:{variable_code.replace('_', '-')}"
-        evidence_hash = hashlib.sha256(f"{source_id}:{source_hash}".encode()).hexdigest()
+        evidence_key = f"{source_id}:{source_hash}"
+        # 新排版对应独立 Evidence，避免同一报价原文与历史冻结值发生 ID 冲突。
+        if variable_code == "quote_block" and value["render_policy"] != "semicolon-lines-v1":
+            evidence_key += f":{value['render_policy']}"
+        evidence_hash = hashlib.sha256(evidence_key.encode()).hexdigest()
         return EvidenceItemV1(
             id=f"ev_{evidence_hash[:24]}",
             variable_codes=(variable_code,),
@@ -169,7 +174,7 @@ def _trusted_quote_evidence_items(snapshot: dict[str, Any], *, content_type_code
             {
                 "original_content": original_content,
                 "content_hash": content_hash,
-                "render_policy": "semicolon-lines-v1",
+                "render_policy": quote_block["render_policy"],
                 "insertion_policy": "after-opening-paragraph-v1",
             },
             allowed_usage=("body",),
@@ -2406,6 +2411,8 @@ class V3DeterministicNodeHandler:
             report["checks"].extend(modular_checks)
             if any(item["level"] == "error" for item in modular_checks):
                 report["status"] = "blocked"
+            elif report["status"] == "passed" and any(item["level"] == "warning" for item in modular_checks):
+                report["status"] = "warning"
         else:
             mechanical_markers = (
                 "旧况很典型",
