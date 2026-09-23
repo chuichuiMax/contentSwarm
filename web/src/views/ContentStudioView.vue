@@ -2201,6 +2201,8 @@ const openVersions = async () => {
   await store.loadVersions()
   versionDrawerOpen.value = true
 }
+
+const returnToContentCreation = () => router.push({ name: 'ContentNew' })
 </script>
 
 <template>
@@ -2215,6 +2217,14 @@ const openVersions = async () => {
   >
     <header class="studio-header">
       <div>
+        <a-button
+          v-if="!isCreationView"
+          type="text"
+          class="studio-back-button"
+          @click="returnToContentCreation"
+        >
+          <ArrowLeft :size="16" />返回内容创作
+        </a-button>
         <div v-if="!isCreationView" class="header-kicker">Yuxi Content Strategy Studio</div>
         <h1>{{ isCreationView ? '内容创作' : store.task?.name || '新建内容任务' }}</h1>
         <div v-if="isCreationView" class="creation-context">
@@ -3775,6 +3785,13 @@ const openVersions = async () => {
   color: var(--main-700);
   font-size: 12px;
   font-weight: 600;
+}
+.studio-back-button {
+  margin: -6px 0 6px -12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-text-secondary);
 }
 .panel-heading :deep(.ant-btn),
 .stage-actions :deep(.ant-btn),
