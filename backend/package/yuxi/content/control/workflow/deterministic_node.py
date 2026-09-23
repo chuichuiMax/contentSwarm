@@ -8,7 +8,7 @@ from copy import deepcopy
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.content.control.evidence import EvidenceApplicationService
@@ -49,7 +49,7 @@ from yuxi.content.validation import ComplianceEngine, validate_numeric_evidence_
 from yuxi.content.validators import validate_content, validate_modular_content
 from yuxi.content.v3.body_calling import get_decoration_body_calling, get_decoration_body_calling_source
 from yuxi.content.industry_matrix import resolve_industry_formula
-from yuxi.content.v3.formula_lexicons import get_formula_lexicon_requirements
+from yuxi.content.v3.formula_lexicons import get_formula_lexicon_requirements, lexicon_kb_names
 from yuxi.content.v3.title_formula_slots import (
     enrich_decoration_title_formula,
     required_title_lexicon_codes,
@@ -562,14 +562,49 @@ async def load_expression_knowledge(state: dict[str, Any]) -> dict[str, Any]:
         target = retrievers.get(kb_id)
         if target is None:
             raise ValueError(f"表达资料库“{name}”尚未加载检索器")
-        query = " ".join(
-            dict.fromkeys(
-                [
-                    *(str(item).strip() for item in source.get("query_terms") or [] if str(item).strip()),
-                    *search_context,
-                ]
-            )
-        )[:800]
+        info = await knowledge_base.get_database_info(kb_id)
+        files = (info or {}).get("files") or {}
+        library_files = [
+            item
+            for item in (files.values() if isinstance(files, dict) else files)
+            if isinstance(item, dict) and not item.get("is_folder")
+        ]
+        indexed_files = [
+            item
+            for item in library_files
+            if str(item.get("status") or "") in {"indexed", "done"}
+            and int(item.get("chunk_count") or 0) > 0
+        ]
+        usage = str(source.get("usage") or "style_reference")
+        if not indexed_files:
+            if policy.get("required") is True:
+                if library_files:
+                    status_text = {
+                        "uploaded": "已上传",
+                        "parsing": "解析中",
+                        "parsed": "已解析",
+                        "error_parsing": "解析失败",
+                        "indexing": "入库中",
+                        "error_indexing": "入库失败",
+                    }
+                    pending = "、".join(
+                        f"「{item.get('filename') or item.get('file_id')}」当前为"
+                        f"{status_text.get(str(item.get('status') or ''), item.get('status') or '未知')}"
+                        for item in library_files[:3]
+                    )
+                    raise ValueError(f"表达资料库“{name}”没有已入库内容，无法召回。文件{pending}，请先完成入库")
+                raise ValueError(f"表达资料库“{name}”没有已入库内容，无法召回")
+            return {
+                "kb_id": kb_id,
+                "name": name,
+                "role": str(source.get("role") or ""),
+                "usage": usage,
+                "query": "",
+                "chunks": [],
+            }
+        query_terms = [str(item).strip() for item in source.get("query_terms") or [] if str(item).strip()]
+        query_parts = [*query_terms, *search_context] if usage == "body_evidence" else query_terms
+        query = " ".join(dict.fromkeys(query_parts or [name]))[:800]
         output = await target["retriever"](query)
         if not isinstance(output, dict) or not isinstance(output.get("results"), list):
             raise ValueError(f"表达资料库“{name}”返回了无效检索结果")
@@ -595,7 +630,7 @@ async def load_expression_knowledge(state: dict[str, Any]) -> dict[str, Any]:
             "kb_id": kb_id,
             "name": name,
             "role": str(source.get("role") or ""),
-            "usage": str(source.get("usage") or "style_reference"),
+            "usage": usage,
             "query": query,
             "chunks": chunks,
         }
@@ -1372,6 +1407,7 @@ class V3DeterministicNodeHandler:
         loaded: dict[str, list[dict[str, Any]]] = {"title": [], "body": []}
         for scope in ("title", "body"):
             for requirement in requirements[scope]:
+                filename = requirement["filename"]
                 rows = list(
                     (
                         await db.execute(
@@ -1379,9 +1415,14 @@ class V3DeterministicNodeHandler:
                             .join(KnowledgeFile, KnowledgeFile.kb_id == KnowledgeBase.kb_id)
                             .join(KnowledgeChunk, KnowledgeChunk.file_id == KnowledgeFile.file_id)
                             .where(
-                                KnowledgeBase.name == requirement["knowledge_base_name"],
-                                KnowledgeFile.filename == requirement["filename"],
+                                KnowledgeBase.name.in_(lexicon_kb_names(scope)),
                                 KnowledgeFile.status == "indexed",
+                                or_(
+                                    KnowledgeFile.filename == filename,
+                                    KnowledgeFile.original_filename == filename,
+                                    KnowledgeFile.filename.endswith(filename),
+                                    KnowledgeFile.original_filename.endswith(filename),
+                                ),
                             )
                             .order_by(KnowledgeChunk.chunk_index)
                         )

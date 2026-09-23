@@ -34,8 +34,8 @@ DECORATION_WRITING_INSTRUCTION = (
     "若有可用于正文的业务知识证据，至少再挂一条；"
     "必须写出鸿扬家装品牌优势（定位为定制化家装，禁止写整装或标准化整装），"
     "并带明确引流点（同城咨询、留言、评论区聊聊等；成品禁用「私信」「报价」等平台封禁词，以 evidence 中 forbidden_replacement_map 为准）；"
-    + DECORATION_CTA_LAYOUT +
-    "费用称谓一律写「预算价」，禁止写「合同价」（证据或词库原文是合同价时只改称谓，数字保持原样）；"
+    + DECORATION_CTA_LAYOUT
+    + "费用称谓一律写「预算价」，禁止写「合同价」（证据或词库原文是合同价时只改称谓，数字保持原样）；"
     "成品标题/正文/话题不要出现「口径」，对外写钱花在哪、费用怎么拆、预算清不清楚；"
     "项目阶段为泥木阶段时，成品写「泥瓦」不写「泥木」；工艺类型或证据未出现木工时不得补写木工；"
     "封面/副标/话题也不得出现整装、标准化整装；事实只来自简报与冻结证据，不得编造户型缺陷、改造前后效果或他人案例细节。"
@@ -47,8 +47,8 @@ QUOTATION_LIST_WRITING_INSTRUCTION = (
     "旧房改造对外可写旧房翻新；主题落在钱花在哪、费用怎么拆、避隐形增项，不要吹嘘最低价；"
     "正文把基础/木制品/主材等费用仅作参考信息卡点展示，明确费用数字不是鸿扬核心卖点，禁止主推「更便宜、低价、性价比碾压」；"
     "正文重点写鸿扬家装品牌优势：定制化家装、透明施工、自有/规范工艺、售后与靠谱服务，用品牌与交付能力收尾引流；"
-    + DECORATION_CTA_LAYOUT +
-    "成品标题/正文/话题必须规避平台封禁词库问题词（见 evidence forbidden_replacement_map），"
+    + DECORATION_CTA_LAYOUT
+    + "成品标题/正文/话题必须规避平台封禁词库问题词（见 evidence forbidden_replacement_map），"
     "引流只用同城咨询、留言、评论区等安全表达，不得出现「私信」「报价」等表内问题词；词库原文含问题词时须改写后再写入；"
     "费用称谓一律写「预算价」，禁止写「合同价」（证据原文是合同价时只改称谓、数字保持原样）；"
     "成品不要出现「口径」；禁止把鸿扬写成整装或标准化整装；仍须写清小区、面积（锁定的具体㎡，禁止区间）、风格、项目施工鸿扬家装等信息卡点，并正确挂载 Evidence ID；"
@@ -83,6 +83,8 @@ def is_managed_content_type_name(name: str | None) -> bool:
 
 def is_quote_content_type_name(name: str | None) -> bool:
     return str(name or "").strip() in QUOTE_CONTENT_TYPE_NAMES
+
+
 # 工艺展示禁用报价转化（C01）与实景案例流量（C02），优先干货工艺讲解。
 CRAFT_SHOWCASE_BLOCKED_BODY_FORMULAS = frozenset({"C01", "C02"})
 CRAFT_SHOWCASE_PREFERRED_BODY_FORMULAS = ("C03", "C04")
@@ -109,8 +111,8 @@ CRAFT_SHOWCASE_WRITING_INSTRUCTION = (
     "从空开选型、回路划分到接线、标识，每个环节都严格按照工艺规范落实，不赶工、不省步骤，扎实做好用电安全的每一处细节。"
     "禁止写成装修案例分享：不得展开某套房旧况→改造过程→完工效果叙事，不得虚构客户经历或前后对比故事；"
     "品牌优势可写定制化家装（禁止整装/标准化整装）；"
-    + DECORATION_CTA_LAYOUT +
-    "费用称谓一律写「预算价」，禁止写「合同价」；成品不要出现「口径」；成品规避平台封禁词库问题词（见 evidence forbidden_replacement_map）；卡点与数字须挂载正确 Evidence ID。"
+    + DECORATION_CTA_LAYOUT
+    + "费用称谓一律写「预算价」，禁止写「合同价」；成品不要出现「口径」；成品规避平台封禁词库问题词（见 evidence forbidden_replacement_map）；卡点与数字须挂载正确 Evidence ID。"
 )
 
 
@@ -124,12 +126,23 @@ def content_direction_from_form_values(values: dict[str, Any] | None) -> str | N
 def content_direction_from_brief(brief: dict[str, Any] | None) -> str | None:
     if not isinstance(brief, dict):
         return None
+    code = str(brief.get("content_type_code") or "").strip()
+    if code in CONTENT_TYPE_NAME_TO_DIRECTION.values():
+        return code
     for key in ("form_values", "business_variables"):
         section = brief.get(key)
         direction = content_direction_from_form_values(section if isinstance(section, dict) else None)
         if direction:
             return direction
     return None
+
+
+def resolve_task_content_type_code(task: Any) -> str | None:
+    """任务页所选内容类型优先于自动方向，用来锁定对应爆款库。"""
+    code = str(getattr(task, "content_type_code", None) or "").strip()
+    if code in CONTENT_TYPE_NAME_TO_DIRECTION.values():
+        return code
+    return content_direction_from_brief(getattr(task, "brief_json", None) or {})
 
 
 def _filter_formulas_for_craft_showcase(
@@ -468,6 +481,8 @@ def map_service_entry_form_values(service_entry: str, form_values: dict[str, Any
             values["writing_instruction"] = DECORATION_WRITING_INSTRUCTION
         audience = [region] if region else ["装修业主"]
         result = " ".join(part for part in (community, frame_area, layout, style, f"施工{CONSTRUCTION_BRAND}") if part)
+        if region or community:
+            values["location"] = region or community
         values["community_name"] = community
         values["house_area"] = frame_area
         values["house_layout"] = layout

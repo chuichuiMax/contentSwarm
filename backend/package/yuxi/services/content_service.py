@@ -484,9 +484,7 @@ def _parse_content_studio_quote_case(
     quote_format = str(form_values.get("quote_format") or "").strip()
     tags = [str(item).strip() for item in form_values.get("content_tags") or [] if str(item).strip()]
     positioning = (
-        "旧房改造"
-        if any(token in tag for tag in tags for token in ("旧房", "老房", "二手房"))
-        else "同城装修"
+        "旧房改造" if any(token in tag for tag in tags for token in ("旧房", "老房", "二手房")) else "同城装修"
     )
     canonical_house_type = next(
         (
@@ -521,9 +519,7 @@ def _parse_content_studio_quote_case(
         "quote_format": quote_format,
         "type_name": form_values["type_name"],
     }
-    business_variables = {
-        key: value for key, value in business_variables.items() if value not in (None, "", [], {})
-    }
+    business_variables = {key: value for key, value in business_variables.items() if value not in (None, "", [], {})}
     trusted_snapshot = build_trusted_quote_snapshot(
         payload,
         content_type_code=resolved_content_type_code,
@@ -559,6 +555,29 @@ def _studio_content_type_name(raw_payload: dict[str, Any]) -> str:
     return ""
 
 
+def _studio_location_text(value: Any) -> str:
+    if isinstance(value, dict):
+        return " ".join(
+            str(value.get(key) or "").strip()
+            for key in ("province", "city", "district")
+            if str(value.get(key) or "").strip()
+        )
+    if isinstance(value, list):
+        return " ".join(part for item in value if (part := _studio_location_text(item)))
+    return str(value or "").strip()
+
+
+def _resolve_studio_location(*sources: dict[str, Any] | None) -> str:
+    for source in sources:
+        if not isinstance(source, dict):
+            continue
+        for key in ("location", "所在区域", "楼盘信息", "project_site", "community_name"):
+            text = _studio_location_text(source.get(key))
+            if text:
+                return text
+    return ""
+
+
 def _parse_content_studio_production_pack(user_request: str) -> dict[str, Any] | None:
     """把任务页生产前资料包中的 facts 提升为工厂变量。"""
     try:
@@ -574,9 +593,7 @@ def _parse_content_studio_production_pack(user_request: str) -> dict[str, Any] |
     if not isinstance(facts, dict):
         return None
     variables = {
-        str(key).strip(): value
-        for key, value in facts.items()
-        if str(key).strip() and value not in (None, "", [], {})
+        str(key).strip(): value for key, value in facts.items() if str(key).strip() and value not in (None, "", [], {})
     }
     if not variables:
         return None
@@ -584,9 +601,12 @@ def _parse_content_studio_production_pack(user_request: str) -> dict[str, Any] |
         variables["advantages"] = variables["advantage"]
     if variables.get("pain") and not variables.get("pain_points"):
         variables["pain_points"] = variables["pain"]
+    location = _resolve_studio_location(variables, raw_payload.get("businessVariables"))
+    if location:
+        variables["location"] = location
     content_type = raw_payload.get("contentType") if isinstance(raw_payload.get("contentType"), dict) else {}
-    content_type_code = (
-        str(content_type.get("contentTypeCode") or "").strip() or CONTENT_TYPE_NAME_TO_DIRECTION.get(type_name)
+    content_type_code = str(content_type.get("contentTypeCode") or "").strip() or CONTENT_TYPE_NAME_TO_DIRECTION.get(
+        type_name
     )
     audience = variables.get("audience")
     if isinstance(audience, str) and audience.strip():
@@ -633,9 +653,7 @@ def compile_content_brief(
             "CT04": "project_quote",
             "CT05": "project_quote",
         }.get(content_type_code)
-        normalized_user_request = (
-            quote_case["sanitized_user_request"] if quote_case is not None else user_request
-        )
+        normalized_user_request = quote_case["sanitized_user_request"] if quote_case is not None else user_request
         normalized_variables = dict((structured or {}).get("business_variables") or {})
         form_values = dict(raw.get("form_values") or {})
         form_values["user_request"] = normalized_user_request
@@ -649,13 +667,12 @@ def compile_content_brief(
             "user_request",
         }
         form_variables = {
-            key: value
-            for key, value in form_values.items()
-            if key not in reserved and value not in (None, "", [])
+            key: value for key, value in form_values.items() if key not in reserved and value not in (None, "", [])
         }
         resolved_type_code = (
             (structured or {}).get("content_type_code")
             or content_direction_from_form_values(form_values)
+            or raw.get("content_type_code")
             or content_type_code
         )
         inject_quote_type = bool(quote_type) and quote_case is None and production_pack is None
@@ -669,6 +686,9 @@ def compile_content_brief(
                 ]
                 if price_items:
                     normalized_variables["price"] = price_items
+        location = _resolve_studio_location(normalized_variables, form_values)
+        if location:
+            normalized_variables["location"] = location
         compiled = {
             "task_id": task.id,
             "industry": template.slug,
@@ -739,7 +759,11 @@ def compile_content_brief(
         "task_id": task.id,
         "industry": template.slug,
         "content_goal": task.content_goal,
-        "content_type_code": getattr(task, "content_type_code", None),
+        "content_type_code": (
+            content_direction_from_form_values(form_values)
+            or raw.get("content_type_code")
+            or getattr(task, "content_type_code", None)
+        ),
         "industry_pack_version_id": getattr(task, "industry_pack_version_id", None),
         "channel_profile_version_id": getattr(task, "channel_profile_version_id", None),
         "persona_profile_version_id": getattr(task, "persona_profile_version_id", None),
@@ -1054,7 +1078,7 @@ async def create_content_task(db: AsyncSession, user: User, payload: ContentTask
         "deterministic_creation_plan_v1",
         "standardized_factory_v1",
     }
-    if automatic:
+    if automatic and not content_type_code:
         content_type_code = None
     if content_types and (not automatic or content_type_code) and (not joint or mode == "direction_scoped"):
         type_map = {item["code"]: item for item in content_types}
@@ -1196,7 +1220,13 @@ async def update_content_task(db: AsyncSession, user: User, task_id: str, payloa
         definition = await repo.get_content_type(task.rule_version_id, changes["content_type_code"])
         if definition is None:
             raise _content_error(422, "CONTENT_TYPE_INVALID", "内容类型不存在或未发布")
-        if next_goal not in (definition.supported_goals or []):
+        template = await repo.get_template(task.industry_template_version_id)
+        bundle = await repo.get_rule_bundle(task.rule_version_id)
+        scoped_direction_codes = _scoped_content_type_codes(bundle or {}, template.slug if template else "", next_goal)
+        if (
+            next_goal not in (definition.supported_goals or [])
+            and changes["content_type_code"] not in scoped_direction_codes
+        ):
             raise _content_error(422, "CONTENT_TYPE_GOAL_MISMATCH", "内容类型不支持当前内容目标")
     elif "content_goal" in changes and next_type and direction_scoped:
         definition = await repo.get_content_type(task.rule_version_id, next_type)
@@ -1350,7 +1380,11 @@ async def save_content_brief(
             value = (compiled.get("form_values") or {}).get(field["key"])
             if value in (None, "", []):
                 missing.append({"field": field["key"], "label": field.get("label") or field["key"]})
-    direction = content_direction_from_form_values(form_values)
+    direction = (
+        content_direction_from_form_values(form_values)
+        or compiled.get("content_type_code")
+        or raw_brief.get("content_type_code")
+    )
     if direction:
         compiled["content_type_code"] = direction
         task.content_type_code = direction

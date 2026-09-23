@@ -70,14 +70,18 @@ class PostgresStrategyPreviewRepository:
         from yuxi.content.model.strategy import build_strategy_candidates
 
         task, industry_slug, bundle = await self._load_strategy_source(task_id, actor)
+        from yuxi.content.service_entry_form import resolve_task_content_type_code
         from yuxi.content.v3.joint_workflow import BLUEPRINT_FIRST_WORKFLOW_IDS
 
-        auto_direction = auto_direction or task.workflow_version_id in BLUEPRINT_FIRST_WORKFLOW_IDS
+        direction_code = resolve_task_content_type_code(task)
+        auto_direction = (
+            auto_direction or task.workflow_version_id in BLUEPRINT_FIRST_WORKFLOW_IDS
+        ) and not direction_code
         try:
             candidates = build_strategy_candidates(
                 bundle,
                 industry_slug=industry_slug,
-                direction_code=task.content_type_code,
+                direction_code=direction_code,
                 auto_direction=auto_direction,
                 rule_version_id=task.rule_version_id,
                 policy=(task.runtime_config_snapshot_json or {}).get("selection_policy_snapshot"),

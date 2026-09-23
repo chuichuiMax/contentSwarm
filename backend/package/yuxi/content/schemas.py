@@ -61,6 +61,7 @@ class ContentVisualMaterialSelection(BaseModel):
 
 class ContentBriefPayload(BaseModel):
     user_request: str = ""
+    content_type_code: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_-]{1,80}$")
     brand: dict[str, Any] = Field(default_factory=dict)
     audience: list[str] = Field(default_factory=list)
     business_variables: dict[str, Any] = Field(default_factory=dict)

@@ -394,7 +394,8 @@ services:
       - POSTGRES_DB=${POSTGRES_DB:-yuxi}
       - TZ=${TZ:-Asia/Shanghai}
     volumes:
-      - ./docker/volumes/postgresql:/var/lib/postgresql/data
+      # Windows bind-mount fsync 会让 Postgres 进程异常退出；开发库改用 Docker 卷。
+      - postgres_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-yuxi} || exit 1"]
       interval: 5s
@@ -574,6 +575,8 @@ services:
     restart: unless-stopped
 
 volumes:
+  postgres_data:
+    name: contentswarm_postgres_data
   nltk_data:
   hycanvas-node-modules:
   hycanvas-frontend-node-modules:

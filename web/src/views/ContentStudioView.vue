@@ -48,6 +48,7 @@ import { employeeApi } from '@/apis/employee_api'
 import { CONTENT_TEST_CASES } from '@/data/contentTestCases'
 import { useContentStudioStore } from '@/stores/contentStudio'
 import { formatContentRequestJson } from '@/utils/contentRequestPayload'
+import { CONTENT_TYPE_NAME_TO_CODE } from '@/utils/content_creation_types'
 import { useUserStore } from '@/stores/user'
 import {
   formatEvidenceReference,
@@ -602,6 +603,9 @@ const studioContentTypes = computed(() => {
 const selectedStudioContentType = computed(() =>
   studioContentTypes.value.find((item) => item.id === selectedContentTypeId.value)
 )
+const studioContentTypeCode = computed(
+  () => CONTENT_TYPE_NAME_TO_CODE[selectedStudioContentType.value?.name] || ''
+)
 const PROCESS_NAME_GUARD_HINT = '请先选择工艺类型，或没有工艺类型，请联系管理员配置'
 const FIELD_SELECT_OPTIONS = {
   外框面积: ['50-70㎡', '90-110㎡', '110-130㎡', '130-150㎡', '150-200㎡', '200-300㎡', '300㎡以上'],
@@ -1071,6 +1075,12 @@ const initializeFormValues = () => {
   Object.keys(formValues).forEach((key) => delete formValues[key])
   formValues.mp_service_entry = saved.mp_service_entry || '装修家居'
   selectedContentTypeId.value = saved.mp_content_type_id || selectedContentTypeId.value || ''
+  if (!selectedContentTypeId.value && store.task?.content_type_code) {
+    const matched = studioContentTypes.value.find(
+      (item) => CONTENT_TYPE_NAME_TO_CODE[item.name] === store.task.content_type_code
+    )
+    if (matched) selectedContentTypeId.value = matched.id
+  }
   const contentType = studioContentTypes.value.find((item) => item.id === selectedContentTypeId.value)
   formValues.mp_content_type_id = selectedContentTypeId.value
   formValues.mp_content_type_name = contentType?.name || saved.mp_content_type_name || ''
@@ -1097,6 +1107,12 @@ const onContentTypeChange = (value) => {
     else formValues[field.key] = field.type === 'tags' ? [] : ''
   })
   syncGeneratedContentRequest()
+  if (studioContentTypeCode.value) creation.content_type_code = studioContentTypeCode.value
+  if (store.task && studioContentTypeCode.value) {
+    store.updateTask({ content_type_code: studioContentTypeCode.value }).catch((error) => {
+      message.error(error.message || '更新内容类型失败')
+    })
+  }
 }
 
 const applyFrameAreaTemporaryQuotes = (frameArea) => {
@@ -1945,7 +1961,7 @@ onMounted(async () => {
     posterTemplateSyncIntervalMs
   )
   try {
-    await store.loadBootstrap()
+    await store.loadBootstrap(true)
     await loadCurrentEmployee()
     if (taskId.value) {
       await store.loadTask(taskId.value)
@@ -2038,7 +2054,11 @@ const ensureCreationTask = async () => {
   if (needsContentDirection.value && !creation.content_type_code) {
     throw new Error('请选择创作类型')
   }
-  const task = await store.createTask({ ...creation, creation_mode: 'viral_rewrite' })
+  const task = await store.createTask({
+    ...creation,
+    content_type_code: studioContentTypeCode.value || creation.content_type_code,
+    creation_mode: 'viral_rewrite'
+  })
   await router.replace(`/content/tasks/${task.id}`)
   return task
 }
@@ -2066,6 +2086,7 @@ const openCreationOcr = async () => {
 
 const buildBrief = () => ({
   user_request: String(formValues.user_request || '').trim(),
+  content_type_code: studioContentTypeCode.value || creation.content_type_code || undefined,
   brand: {},
   audience: [],
   business_variables: Object.fromEntries(
@@ -2189,6 +2210,10 @@ const compileBrief = async () => {
 
 const submitCreation = async () => {
   if (creationSubmitting.value || quoteTestCaseTypeSyncing.value) return
+  if (!selectedContentTypeId.value) {
+    message.warning('请选择内容类型')
+    return
+  }
   if (!currentContentType.value && needsContentDirection.value) {
     message.warning('请选择创作类型')
     return
@@ -2703,6 +2728,11 @@ const openVersions = async () => {
                           mode="tags"
                           :token-separators="[',', '，']"
                           :placeholder="`输入${field.label}后回车`"
+                        />
+                        <a-input
+                          v-else
+                          v-model:value="formValues[field.key]"
+                          :placeholder="field.placeholder || `请输入${field.label}`"
                         />
                       </label>
                     </div>

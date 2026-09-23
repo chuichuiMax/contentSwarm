@@ -198,7 +198,8 @@ describe('buildContentRequestPayload', () => {
         目标人群: '毛坯',
         工艺类型: '个性定制系统',
         设计风格: '复合写意',
-        工艺名称: 'HYB-吊顶与背景墙造型实现工艺'
+        工艺名称: 'HYB-吊顶与背景墙造型实现工艺',
+        所在区域: '长沙'
       }
     })
 
@@ -211,6 +212,7 @@ describe('buildContentRequestPayload', () => {
     assert.ok(!payload.facts.process.includes('复合写意'))
     assert.equal(payload.facts.scene, '复合写意')
     assert.equal(payload.facts.product, 'HYB-吊顶与背景墙造型实现工艺')
+    assert.equal(payload.facts.location, '长沙')
     assert.deepEqual(payload.facts.audience, ['毛坯'])
     assert.match(payload.facts.pain, /HYB-吊顶与背景墙造型实现工艺/)
     assert.match(payload.facts.result, /判断标准/)

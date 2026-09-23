@@ -1,15 +1,44 @@
 from random import Random
+from types import SimpleNamespace
 
 from yuxi.content.service_entry_form import (
     catalog_select_options,
     configured_business_variable_fields,
     configured_form_fields,
+    content_direction_from_brief,
     is_managed_content_type_name,
     is_quote_content_type_name,
     lock_house_area_sqm,
     map_service_entry_form_values,
     prioritize_form_fields,
+    resolve_task_content_type_code,
 )
+
+
+def test_resolve_task_content_type_code_locks_studio_type():
+    assert (
+        resolve_task_content_type_code(
+            SimpleNamespace(content_type_code="CT06", brief_json={"content_type_code": "CT02"})
+        )
+        == "CT06"
+    )
+    assert (
+        resolve_task_content_type_code(
+            SimpleNamespace(content_type_code=None, brief_json={"content_type_code": "CT02"})
+        )
+        == "CT02"
+    )
+    assert (
+        resolve_task_content_type_code(
+            SimpleNamespace(
+                content_type_code=None,
+                brief_json={"form_values": {"mp_content_type_name": "装修知识科普"}},
+            )
+        )
+        == "CT06"
+    )
+    assert resolve_task_content_type_code(SimpleNamespace(content_type_code="", brief_json={})) is None
+    assert content_direction_from_brief({"form_values": {"mp_content_type_name": "人设自荐"}}) == "CT07"
 
 
 def test_content_type_names_match_configured_catalog():
@@ -155,9 +184,7 @@ def test_configured_business_variable_fields_filters_by_content_type_and_require
         service_entry="装修家居",
         content_type_id="ct-process",
         port="pc",
-        select_options=catalog_select_options(
-            resident_populations=["三口之家", "四口之家", "五口之家"]
-        ),
+        select_options=catalog_select_options(resident_populations=["三口之家", "四口之家", "五口之家"]),
     )
     assert with_resident[0]["type"] == "select"
     assert with_resident[0]["options"] == ["三口之家", "四口之家", "五口之家"]
@@ -269,6 +296,7 @@ def test_map_service_entry_form_values_quotation_list_brand_over_price():
     assert "定制化家装" in mapped["advantage"]
     assert "整装" not in mapped["advantage"]
     assert mapped["brand_positioning"] == "定制化家装"
+    assert mapped["location"] == "星河湾"
     assert "定制化家装" in mapped["writing_instruction"]
     assert "禁止把鸿扬写成整装" in mapped["writing_instruction"]
 
@@ -285,6 +313,7 @@ def test_map_service_entry_form_values_craft_showcase_uses_project_stage_when_cr
         },
     )
     assert mapped["craft_and_materials"] == "水电施工与隐蔽验收"
+    assert mapped["location"] == "洋湖1号"
     assert "水电施工与隐蔽验收" in mapped["pain"]
     assert "走过场" in mapped["pain"]
 
@@ -380,7 +409,11 @@ def test_map_service_entry_form_values_keeps_configured_names():
     assert "引流点" in mapped["writing_instruction"]
     assert "📍" in mapped["writing_instruction"]
     assert "一句墙字" in mapped["writing_instruction"]
-    assert "evidence_cite_index" in mapped["writing_instruction"] or "Evidence ID" in mapped["writing_instruction"] or "paragraph_evidence" in mapped["writing_instruction"]
+    assert (
+        "evidence_cite_index" in mapped["writing_instruction"]
+        or "Evidence ID" in mapped["writing_instruction"]
+        or "paragraph_evidence" in mapped["writing_instruction"]
+    )
     assert "锁定的具体㎡" in mapped["writing_instruction"]
     assert "禁止写130-150㎡这类区间" in mapped["writing_instruction"]
     assert "预算价" in mapped["writing_instruction"]

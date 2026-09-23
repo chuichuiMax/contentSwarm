@@ -140,6 +140,9 @@ async def test_ensure_default_business_variables_adds_missing_bindings(monkeypat
     assert ("ct-pit", "v-base") in keys
     assert ("ct-case", "v-household") in keys
     assert ("ct-edu", "v-process-name") in keys
+    assert ("ct-edu", "v-community") in keys
+    assert ("ct-edu", "v-region") in keys
+    assert ("ct-craft", "v-region") in keys
     assert ("ct-persona", "v-role") in keys
     persona_required = {
         item["variable_id"]: item["required"]

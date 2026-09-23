@@ -37,7 +37,22 @@ async def test_expression_knowledge_separates_advantage_evidence_from_style_refe
 
         return retrieve
 
+    async def get_database_info(kb_id):
+        return {
+            "kb_id": kb_id,
+            "files": {
+                f"file_{kb_id}": {
+                    "file_id": f"file_{kb_id}",
+                    "filename": f"{kb_id}.xlsx",
+                    "status": "indexed",
+                    "chunk_count": 1,
+                    "is_folder": False,
+                }
+            },
+        }
+
     monkeypatch.setattr(knowledge_base, "get_databases_by_uid", get_databases_by_uid)
+    monkeypatch.setattr(knowledge_base, "get_database_info", get_database_info)
     monkeypatch.setattr(
         knowledge_base,
         "get_retrievers",
@@ -98,7 +113,10 @@ async def test_expression_knowledge_separates_advantage_evidence_from_style_refe
     ]
     assert result["expression_guidance"]["snapshot_hash"]
     assert len(queries) == 3
-    assert all("长沙旧房装修报价" in query for query in queries)
+    assert "长沙旧房装修报价" in queries[0]
+    assert all("长沙旧房装修报价" not in query for query in queries[1:])
+    assert "表达语气库" in queries[1]
+    assert "具象表达" in queries[2]
 
 
 @pytest.mark.unit
@@ -127,4 +145,62 @@ async def test_expression_knowledge_fails_when_required_source_is_missing(monkey
     }
 
     with pytest.raises(ValueError, match="我的优势"):
+        await deterministic_node.load_expression_knowledge(state)
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_expression_knowledge_fails_when_required_source_is_not_indexed(monkeypatch):
+    from yuxi import knowledge_base
+
+    async def get_databases_by_uid(_uid):
+        return {"databases": [{"kb_id": "kb_style", "name": "具象表达"}]}
+
+    async def get_database_info(_kb_id):
+        return {
+            "kb_id": "kb_style",
+            "files": {
+                "file_style": {
+                    "file_id": "file_style",
+                    "filename": "具象化表达.xlsx",
+                    "status": "parsed",
+                    "chunk_count": 0,
+                    "is_folder": False,
+                }
+            },
+        }
+
+    async def unused_retriever(_query):
+        raise AssertionError("未入库资料库不应进入向量召回")
+
+    monkeypatch.setattr(knowledge_base, "get_databases_by_uid", get_databases_by_uid)
+    monkeypatch.setattr(knowledge_base, "get_database_info", get_database_info)
+    monkeypatch.setattr(
+        knowledge_base,
+        "get_retrievers",
+        lambda: {"kb_style": {"name": "具象表达", "retriever": unused_retriever}},
+    )
+    state = {
+        "uid": "user-1",
+        "content_brief": {"form_values": {"user_request": "装修内容"}},
+        "strategy_snapshot": {
+            "body_formula": {"code": "FRB01", "structure_schema": ["相关人设优势"]},
+            "title_formula": {},
+        },
+        "runtime_config_snapshot": {
+            "expression_knowledge_policy": {
+                "required": True,
+                "sources": [
+                    {
+                        "name": "具象表达",
+                        "role": "concrete_expression",
+                        "usage": "style_reference",
+                        "query_terms": ["具象动作"],
+                    }
+                ],
+            }
+        },
+    }
+
+    with pytest.raises(ValueError, match="没有已入库内容.*具象化表达.xlsx.*已解析"):
         await deterministic_node.load_expression_knowledge(state)

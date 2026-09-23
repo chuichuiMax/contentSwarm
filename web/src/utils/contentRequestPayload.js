@@ -29,6 +29,13 @@ const STAGE_CRAFT_TOPICS = {
 
 const text = (value) => String(value ?? '').trim()
 
+const regionText = (value) => {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return [value.province, value.city, value.district].map(text).filter(Boolean).join(' ')
+  }
+  return text(value)
+}
+
 const compactList = (...values) => {
   const items = values.flatMap((value) => (Array.isArray(value) ? value : [value])).map(text).filter(Boolean)
   return items.length ? [...new Set(items)] : undefined
@@ -108,7 +115,7 @@ const buildFacts = (typeName, persona, businessVariables) => {
   const isCase = typeName === '装修案例分享' || typeName === '案例分享'
   const isKnowledge = typeName === '装修知识科普' || typeName === '知识科普'
   const isPersona = typeName === '人设自荐' || typeName === '装修人设自荐'
-  const region = text(businessVariables['所在区域'])
+  const region = regionText(businessVariables['所在区域'])
   const job = text(businessVariables['岗位'])
   const years = formatServiceYears(businessVariables['从业年限'])
   const craftParts = compactList(processType, processName, processType ? '' : stageTopic)

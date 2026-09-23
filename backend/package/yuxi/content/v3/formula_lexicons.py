@@ -8,6 +8,8 @@ from yuxi.content.v3.body_calling import get_decoration_body_calling
 from yuxi.content.v3.fixtures import load_decoration_semantic_lexicons
 
 
+TITLE_LEXICON_KB_NAMES = ("标题资料库", "标题词库")
+BODY_LEXICON_KB_NAMES = ("正文资料库", "正文词库")
 TITLE_FORMULA_LEXICON_CODES = {
     "T01": ("title.audience", "title.positive_result"),
     "T02": ("title.oral_emotion", "title.contrast_result"),
@@ -35,8 +37,12 @@ def _semantic_lexicon_catalog() -> dict[str, dict[str, Any]]:
     return {item["code"]: item for item in load_decoration_semantic_lexicons()["categories"]}
 
 
+def lexicon_kb_names(scope: str) -> tuple[str, ...]:
+    return TITLE_LEXICON_KB_NAMES if scope == "title" else BODY_LEXICON_KB_NAMES
+
+
 def get_formula_lexicon_requirements(title_formula_code: str, body_formula_code: str) -> dict[str, Any]:
-    """返回必须从标题词库和正文词库加载的精确文件清单。"""
+    """返回必须从标题资料库和正文资料库加载的精确文件清单。"""
 
     catalog = _semantic_lexicon_catalog()
     title_codes = TITLE_FORMULA_LEXICON_CODES[title_formula_code]
@@ -50,7 +56,7 @@ def get_formula_lexicon_requirements(title_formula_code: str, body_formula_code:
                 {
                     "code": code,
                     "name": item["name"],
-                    "knowledge_base_name": "标题词库" if scope == "title" else "正文词库",
+                    "knowledge_base_name": lexicon_kb_names(scope)[0],
                     "filename": item["source_heading"].split("、", 1)[-1],
                 }
             )

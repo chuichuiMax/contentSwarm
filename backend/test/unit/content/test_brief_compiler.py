@@ -137,6 +137,20 @@ def test_compile_user_request_keeps_content_type_and_business_variables():
     assert compiled["audience"] == []
 
 
+def test_compile_brief_locks_studio_content_type_without_user_request():
+    task = SimpleNamespace(id="ct_studio_type", content_goal="educate", mode="pro", content_type_code=None)
+    template = SimpleNamespace(slug="decoration", quick_form_schema=[], pro_form_schema=[])
+    brief = ContentBriefPayload(
+        content_type_code="CT06",
+        form_values={"mp_service_entry": "装修家居", "mp_content_type_name": "装修知识科普"},
+    )
+
+    compiled, missing = compile_content_brief(task=task, template=template, brief=brief)
+
+    assert missing == []
+    assert compiled["content_type_code"] == "CT06"
+
+
 @pytest.mark.parametrize(
     ("price_format", "content_type_code", "quote_type"),
     [
@@ -351,6 +365,7 @@ def test_compile_knowledge_pack_promotes_pain_and_process_without_quote():
             "contentTypeId": "95b91a82-ab50-4c78-b1dc-cdb469e50828",
             "contentTypeCode": "CT06",
         },
+        "businessVariables": {"所在区域": "长沙", "工艺名称": "HYB-吊顶与背景墙造型实现工艺"},
         "facts": {
             "persona_fact": "朱穆，27岁，管理员，工号H06380。",
             "process": ["个性定制系统", "HYB-吊顶与背景墙造型实现工艺"],
@@ -367,7 +382,10 @@ def test_compile_knowledge_pack_promotes_pain_and_process_without_quote():
     compiled, missing = compile_content_brief(
         task=task,
         template=template,
-        brief=ContentBriefPayload(user_request=user_request),
+        brief=ContentBriefPayload(
+            user_request=user_request,
+            form_values={"所在区域": "长沙"},
+        ),
     )
 
     assert missing == []
@@ -377,6 +395,7 @@ def test_compile_knowledge_pack_promotes_pain_and_process_without_quote():
     assert compiled["business_variables"]["pain"] == "毛坯不清楚HYB-吊顶与背景墙造型实现工艺该怎么判断、容易被话术带偏"
     assert compiled["business_variables"]["pain_points"] == compiled["business_variables"]["pain"]
     assert compiled["business_variables"]["scene"] == "复合写意"
+    assert compiled["business_variables"]["location"] == "长沙"
     assert "quote_type" not in compiled["business_variables"]
     assert "quote_block" not in compiled["business_variables"]
     assert _parse_content_studio_quote_case(user_request, content_type_code="CT06") is None
@@ -604,15 +623,24 @@ def test_pro_brief_requires_real_task_channel_even_if_form_claims_one():
     assert missing == [{"field": "channel_profile_version_id", "label": "发布渠道"}]
 
 
-@pytest.mark.parametrize("payload", [
-    {"user_request": ""}, {"user_request": "   "},
-    {"form_values": {"user_request": ""}}, {"form_values": {"user_request": "  "}},
-])
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"user_request": ""},
+        {"user_request": "   "},
+        {"form_values": {"user_request": ""}},
+        {"form_values": {"user_request": "  "}},
+    ],
+)
 def test_empty_single_input_only_requests_visible_content_requirement(payload):
     task = SimpleNamespace(id="ct_empty", content_goal="acquire", mode="pro")
-    template = SimpleNamespace(slug="decoration", quick_form_schema=[], pro_form_schema=[
-        {"key": "brand_name", "label": "品牌", "required": True},
-        {"key": "project_type", "label": "户型", "required": True},
-    ])
+    template = SimpleNamespace(
+        slug="decoration",
+        quick_form_schema=[],
+        pro_form_schema=[
+            {"key": "brand_name", "label": "品牌", "required": True},
+            {"key": "project_type", "label": "户型", "required": True},
+        ],
+    )
     _, missing = compile_content_brief(task=task, template=template, brief=ContentBriefPayload(**payload))
     assert missing == [{"field": "user_request", "label": "内容需求"}]
