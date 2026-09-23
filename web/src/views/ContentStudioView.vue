@@ -1268,6 +1268,18 @@ const loadVisualMaterials = async () => {
   }
 }
 
+const initializeCreationView = async () => {
+  store.resetCurrentTask()
+  stage.value = 1
+  creation.industry_template_id = creationTemplates.value[0]?.id || ''
+  creation.content_goal = selectedTemplate.value?.default_goal || 'acquire'
+  creation.content_type_code = undefined
+  creation.name = ''
+  initializeVisualSelection()
+  initializeFormValues()
+  await loadVisualMaterials()
+}
+
 const syncEditor = () => {
   editor.title = store.artifact?.title || ''
   editor.body = store.artifact?.body || ''
@@ -1764,11 +1776,7 @@ onMounted(async () => {
         }
       }
     } else {
-      store.resetCurrentTask()
-      creation.industry_template_id = creationTemplates.value[0]?.id || ''
-      creation.content_goal = selectedTemplate.value?.default_goal || 'acquire'
-      initializeFormValues()
-      await loadVisualMaterials()
+      await initializeCreationView()
     }
   } catch (error) {
     message.error(error.message || '内容工作台加载失败')
@@ -2202,7 +2210,10 @@ const openVersions = async () => {
   versionDrawerOpen.value = true
 }
 
-const returnToContentCreation = () => router.push({ name: 'ContentNew' })
+const returnToContentCreation = async () => {
+  await router.push({ name: 'ContentNew' })
+  await initializeCreationView()
+}
 </script>
 
 <template>
