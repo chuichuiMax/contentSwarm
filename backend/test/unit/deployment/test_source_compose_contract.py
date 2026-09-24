@@ -90,6 +90,19 @@ def test_builder_and_runtime_artifact_mounts_are_separated():
     assert all("/source" not in volume for volume in web["volumes"] + hycanvas["volumes"])
 
 
+def test_web_routes_versioned_api_to_hycanvas():
+    nginx_config = NGINX_DEFAULT_CONF.read_text(encoding="utf-8")
+
+    assert "location ^~ /api/v1/" in nginx_config
+    assert "proxy_pass http://hycanvas-app:8005;" in nginx_config
+
+    source_web = load_compose()["services"]["web"]
+    assert source_web["depends_on"]["hycanvas-app"]["condition"] == "service_healthy"
+
+    prod_compose = yaml.safe_load(PROD_COMPOSE_FILE.read_text(encoding="utf-8"))
+    assert prod_compose["services"]["web"]["depends_on"]["hycanvas-app"]["condition"] == "service_healthy"
+
+
 def test_external_config_and_data_roots_are_used():
     compose = load_compose()
 
