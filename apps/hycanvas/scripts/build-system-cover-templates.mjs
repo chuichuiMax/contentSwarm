@@ -52,9 +52,11 @@ const entries = source.map(({ id, title, tags = [], file }) => {
   const subtitles = new Set(coverStyleTemplates.filter((item) => item.category === '副标题').map((item) => item.id));
   const titleNode = nodes.find((node) => node.type === 'text' && (node.data?.slotId === 'title' || node.name.includes('主标题') || titles.has(node.data?.coverElementId) || ['two-line', 'headline', 'big-title'].includes(node.data?.coverElementId)));
   const subtitle = nodes.find((node) => node.type === 'text' && node !== titleNode && (node.data?.slotId === 'subtitle' || node.name.includes('副标题') || subtitles.has(node.data?.coverElementId)));
+  const projectNameEn = nodes.find((node) => node.type === 'text' && node.data?.binding === 'project_name_en');
   const fillableFields = [
     ...(titleNode ? [{ nodeId: titleNode.id, kind: 'text', label: '主标题', semanticRole: 'title', constraints: { maxChars: 48 } }] : []),
     ...(subtitle ? [{ nodeId: subtitle.id, kind: 'text', label: '副标题', semanticRole: 'subtitle', constraints: { maxChars: 60 } }] : []),
+    ...(projectNameEn ? [{ nodeId: projectNameEn.id, kind: 'text', label: '项目英文名', semanticRole: 'project_name_en', constraints: { maxChars: 48 } }] : []),
   ];
   if (id === 'before-after') {
     for (const node of nodes.filter((item) => item.type === 'shape' && item.name.endsWith('照片占位'))) {
