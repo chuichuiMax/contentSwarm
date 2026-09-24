@@ -1013,6 +1013,33 @@ func TestTemplates_DB(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateCollection: %v", err)
 	}
+	if _, err := svc.RenameCollection(ctx, owner.ID, col.ID, "  "); err != ErrBadRequest {
+		t.Fatalf("blank collection name should be rejected, got %v", err)
+	}
+	if _, err := svc.RenameCollection(ctx, other.ID, col.ID, "Unauthorized"); err != ErrForbidden {
+		t.Fatalf("non-member should not rename a collection, got %v", err)
+	}
+	col, err = svc.RenameCollection(ctx, owner.ID, col.ID, "  Brand Covers  ")
+	if err != nil {
+		t.Fatalf("RenameCollection: %v", err)
+	}
+	if col.Name != "Brand Covers" || col.WorkspaceID != ws.ID {
+		t.Fatalf("renamed collection metadata is wrong: %+v", col)
+	}
+	publicCategories, err := svc.PublicCategories(ctx)
+	if err != nil {
+		t.Fatalf("PublicCategories after rename: %v", err)
+	}
+	foundRenamedCategory := false
+	for _, category := range publicCategories {
+		if category.ID == col.ID {
+			foundRenamedCategory = category.Name == col.Name
+			break
+		}
+	}
+	if !foundRenamedCategory {
+		t.Fatalf("public categories did not expose renamed collection: %+v", publicCategories)
+	}
 	// Re-save as a workspace template so it can be collected (private is owner-only but workspace-scoped column is set).
 	wsTmpl, err := svc.SaveAsTemplate(ctx, owner.ID, SaveInput{WorkspaceID: ws.ID, File: loaded.File, Title: "WS Tmpl", Visibility: "workspace"})
 	if err != nil {

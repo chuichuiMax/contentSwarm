@@ -1823,6 +1823,9 @@ export class HyCanvasClient {
   createTemplateCollection(workspaceId: string, name: string): Promise<TemplateCollectionSummary> {
     return this.request("POST", "/v1/templates/collections", { workspaceId, name });
   }
+  renameTemplateCollection(id: string, name: string): Promise<TemplateCollectionSummary> {
+    return this.request("PATCH", `/v1/templates/collections/${id}`, { name });
+  }
   deleteTemplateCollection(id: string): Promise<void> {
     return this.request("DELETE", `/v1/templates/collections/${id}`);
   }

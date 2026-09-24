@@ -216,6 +216,9 @@ export function DashboardApp({ view }: { view: DashboardView }) {
   const [templateRenameTarget, setTemplateRenameTarget] = useState<TemplateSummary | null>(null);
   const [templateRenameValue, setTemplateRenameValue] = useState("");
   const [templateRenaming, setTemplateRenaming] = useState(false);
+  const [collectionRenameTarget, setCollectionRenameTarget] = useState<TemplateCollectionSummary | null>(null);
+  const [collectionRenameValue, setCollectionRenameValue] = useState("");
+  const [collectionRenaming, setCollectionRenaming] = useState(false);
   const [templateDeleteTarget, setTemplateDeleteTarget] = useState<TemplateSummary | null>(null);
   const [templateDeleting, setTemplateDeleting] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<HomeItem | null>(null);
@@ -465,6 +468,7 @@ export function DashboardApp({ view }: { view: DashboardView }) {
   const visibleItems = effectiveFilter === "all" ? sortedItems : sortedItems.filter((i) => itemKind(i) === effectiveFilter);
 
   const activeWs = workspaces.find((w) => w.id === activeWorkspaceId);
+  const canManageCollections = activeWs?.role === "member" || activeWs?.role === "admin" || activeWs?.role === "owner";
   const firstName = user?.name?.trim().split(/\s+/)[0] || user?.email?.split("@")[0] || "there";
 
   const open = (id: string, brief?: string) =>
@@ -685,6 +689,22 @@ export function DashboardApp({ view }: { view: DashboardView }) {
       toast.error(tr("dashboard.could_not_rename_template"));
     } finally {
       setTemplateRenaming(false);
+    }
+  }
+
+  async function confirmCollectionRename() {
+    const name = collectionRenameValue.trim();
+    if (!collectionRenameTarget || !name || collectionRenaming) return;
+    setCollectionRenaming(true);
+    try {
+      const renamed = await oc.renameTemplateCollection(collectionRenameTarget.id, name);
+      setCollections((current) => current.map((collection) => (collection.id === renamed.id ? renamed : collection)));
+      setCollectionRenameTarget(null);
+      toast.success(tr("dashboard.collection_renamed"));
+    } catch {
+      toast.error(tr("dashboard.could_not_rename_collection"));
+    } finally {
+      setCollectionRenaming(false);
     }
   }
 
@@ -1292,14 +1312,28 @@ export function DashboardApp({ view }: { view: DashboardView }) {
                   {tr("dashboard.all")}
                 </button>
                 {collections.map((collection) => (
-                  <button
-                    type="button"
+                  <div
                     key={collection.id}
-                    onClick={() => setTplCollection(collection.id)}
-                    className={`rounded-lg border px-3 py-1 text-sm transition ${tplCollection === collection.id ? "border-brand-200 bg-brand-50 text-brand-ink" : "border-neutral-200 bg-surface text-neutral-600 hover:bg-neutral-50"}`}
+                    className={`inline-flex overflow-hidden rounded-lg border text-sm transition ${tplCollection === collection.id ? "border-brand-200 bg-brand-50 text-brand-ink" : "border-neutral-200 bg-surface text-neutral-600 hover:bg-neutral-50"}`}
                   >
-                    {collection.name}
-                  </button>
+                    <button type="button" onClick={() => setTplCollection(collection.id)} className="px-3 py-1">
+                      {collection.name}
+                    </button>
+                    {canManageCollections && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCollectionRenameTarget(collection);
+                          setCollectionRenameValue(collection.name);
+                        }}
+                        className="grid w-7 place-items-center border-s border-current/15 opacity-65 transition hover:bg-black/5 hover:opacity-100 focus-visible:opacity-100"
+                        aria-label={`${tr("dashboard.rename_collection")}: ${collection.name}`}
+                        title={tr("dashboard.rename_collection")}
+                      >
+                        <Pencil size={12} />
+                      </button>
+                    )}
+                  </div>
                 ))}
               </div>
               {templateZone && filteredTemplates.length > 0 && (
@@ -1533,6 +1567,17 @@ export function DashboardApp({ view }: { view: DashboardView }) {
           <Button variant="ghost" disabled={templateRenaming} onClick={() => setTemplateRenameTarget(null)}>{tr("dashboard.cancel")}</Button>
           <Button disabled={templateRenaming || !templateRenameValue.trim()} onClick={() => void confirmTemplateRename()}>
             {templateRenaming ? <Loader2 size={16} className="animate-spin" /> : null}
+            {tr("dashboard.save")}
+          </Button>
+        </div>
+      </Modal>
+
+      <Modal open={!!collectionRenameTarget} onClose={() => { if (!collectionRenaming) setCollectionRenameTarget(null); }} title={tr("dashboard.rename_collection")}>
+        <Input label={tr("dashboard.collection_name")} value={collectionRenameValue} onChange={(e) => setCollectionRenameValue(e.target.value)} autoFocus />
+        <div className="mt-5 flex justify-end gap-2">
+          <Button variant="ghost" disabled={collectionRenaming} onClick={() => setCollectionRenameTarget(null)}>{tr("dashboard.cancel")}</Button>
+          <Button disabled={collectionRenaming || !collectionRenameValue.trim()} onClick={() => void confirmCollectionRename()}>
+            {collectionRenaming ? <Loader2 size={16} className="animate-spin" /> : null}
             {tr("dashboard.save")}
           </Button>
         </div>

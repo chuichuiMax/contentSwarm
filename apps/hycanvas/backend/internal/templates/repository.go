@@ -232,6 +232,16 @@ func (s *Service) createCollection(ctx context.Context, workspaceID, name string
 	return c, err
 }
 
+func (s *Service) renameCollection(ctx context.Context, id, name string) (collectionRow, error) {
+	var c collectionRow
+	err := s.db.QueryRow(ctx, `UPDATE "template_collections" SET name = $2 WHERE id = $1 RETURNING id,"workspace_id",name`, id, name).
+		Scan(&c.ID, &c.WorkspaceID, &c.Name)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return collectionRow{}, ErrNotFound
+	}
+	return c, err
+}
+
 func (s *Service) deleteCollection(ctx context.Context, id string) error {
 	_, err := s.db.Exec(ctx, `DELETE FROM "template_collections" WHERE id = $1`, id)
 	return err
