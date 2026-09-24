@@ -286,13 +286,18 @@ func fillTextFields(file map[string]any, declarations []any, values map[string]s
 	return nil
 }
 
-const titleSubtitleGap = 32.0
+const (
+	titleSubtitleGap    = 16.0
+	titleFlowPageMargin = 32.0
+)
 
 // adjustTextFieldFlow keeps a vertically stacked subtitle below the rendered
-// height of an auto-growing title. Template coordinates remain authoritative
-// for short text; only content that grows past the authored title box moves the
-// subtitle. Both nodes are updated in the instantiated design, so the editor
-// and server export share the same layout.
+// height of a wrapped title. Template coordinates remain authoritative for
+// short text; only content that reaches the subtitle moves the subtitle. Fixed
+// boxes grow when their text needs more room, and bottom-aligned title groups
+// move upward so the subtitle remains inside the page. Both nodes are updated
+// in the instantiated design, so the editor and server export share the same
+// layout.
 func adjustTextFieldFlow(file map[string]any, declarations []any) {
 	titleID, subtitleID := "", ""
 	for _, raw := range declarations {
@@ -346,7 +351,7 @@ func adjustTextFieldFlow(file map[string]any, declarations []any) {
 			continue
 		}
 		box := asObj(title["box"])
-		if asStr(box["mode"]) != "autoHeight" {
+		if enabled, _ := asObj(box["autoFit"])["enabled"].(bool); enabled {
 			continue
 		}
 		height := estimateAutoHeightText(title)
@@ -359,9 +364,39 @@ func adjustTextFieldFlow(file map[string]any, declarations []any) {
 				size["height"] = height
 			}
 		}
-		if desiredY := titleY + height + titleSubtitleGap; desiredY > subtitleY {
-			subtitleTransform["y"] = desiredY
+		desiredY := titleY + height + titleSubtitleGap
+		if desiredY <= subtitleY {
+			continue
 		}
+
+		subtitleHeight := estimateAutoHeightText(subtitle)
+		if subtitleHeight <= 0 {
+			subtitleHeight = asNum(asObj(subtitle["size"])["height"])
+		}
+		subtitleBox := asObj(subtitle["box"])
+		if current := asNum(subtitleBox["height"]); subtitleHeight > current {
+			subtitleBox["height"] = subtitleHeight
+			if size := asObj(subtitle["size"]); size != nil {
+				size["height"] = subtitleHeight
+			}
+		}
+
+		if pageHeight := asNum(asObj(pageRaw)["height"]); pageHeight > 0 {
+			overflow := desiredY + subtitleHeight + titleFlowPageMargin - pageHeight
+			if overflow > 0 {
+				maxShift := titleY - titleFlowPageMargin
+				if maxShift < 0 {
+					maxShift = 0
+				}
+				if overflow > maxShift {
+					overflow = maxShift
+				}
+				titleY -= overflow
+				desiredY -= overflow
+				titleTransform["y"] = titleY
+			}
+		}
+		subtitleTransform["y"] = desiredY
 	}
 }
 

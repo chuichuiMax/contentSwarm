@@ -27,9 +27,13 @@ class FakeRepository:
 class FakeDb:
     def __init__(self):
         self.commits = 0
+        self.added = []
 
     async def commit(self):
         self.commits += 1
+
+    def add(self, value):
+        self.added.append(value)
 
 
 class FakeJobDb(FakeDb):
@@ -66,6 +70,7 @@ async def test_remote_config_state_is_redacted_and_superadmin_manageable(monkeyp
 
     assert state == {
         "base_url": "http://remote.example",
+        "base_url_editable": False,
         "configured": True,
         "source": "database",
         "can_manage": True,
@@ -74,6 +79,68 @@ async def test_remote_config_state_is_redacted_and_superadmin_manageable(monkeyp
     }
     assert "password" not in state
     assert "username" not in state
+
+
+@pytest.mark.asyncio
+async def test_first_remote_config_accepts_custom_base_url(monkeypatch: pytest.MonkeyPatch):
+    repository = FakeRepository()
+    db = FakeDb()
+    monkeypatch.setattr(service, "MaterialLibraryRepository", lambda db: repository)
+
+    async def accept_credentials(self, client):
+        del self, client
+
+    monkeypatch.setattr(service.VisioFlowMaterialClient, "authenticate", accept_credentials)
+
+    state = await service.verify_and_save_remote_material_config(
+        db,
+        SimpleNamespace(id=1, role="superadmin"),
+        service.RemoteMaterialConfigUpdate(
+            base_url="http://first.example:8088/",
+            username="remote-user",
+            password="remote-password",
+        ),
+    )
+
+    assert repository.saved["base_url"] == "http://first.example:8088"
+    assert state["base_url"] == "http://first.example:8088"
+    assert state["base_url_editable"] is False
+    assert db.commits == 1
+
+
+@pytest.mark.asyncio
+async def test_existing_remote_config_keeps_original_base_url(monkeypatch: pytest.MonkeyPatch):
+    repository = FakeRepository(
+        SimpleNamespace(
+            base_url="http://original.example",
+            username="old-user",
+            password="old-password",
+            verification_status="verified",
+            verified_at=None,
+        )
+    )
+    db = FakeDb()
+    monkeypatch.setattr(service, "MaterialLibraryRepository", lambda db: repository)
+
+    async def accept_credentials(self, client):
+        del self, client
+
+    monkeypatch.setattr(service.VisioFlowMaterialClient, "authenticate", accept_credentials)
+
+    state = await service.verify_and_save_remote_material_config(
+        db,
+        SimpleNamespace(id=1, role="superadmin"),
+        service.RemoteMaterialConfigUpdate(
+            base_url="http://replacement.example",
+            username="new-user",
+            password="new-password",
+        ),
+    )
+
+    assert repository.saved["base_url"] == "http://original.example"
+    assert state["base_url"] == "http://original.example"
+    assert state["base_url_editable"] is False
+    assert db.commits == 1
 
 
 @pytest.mark.asyncio
