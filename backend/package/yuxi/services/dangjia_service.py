@@ -86,18 +86,12 @@ class DangjiaPersona(BaseModel):
     serviceAdvantages: list[str] = Field(default_factory=list)
 
 
-class DangjiaQuotationInfo(BaseModel):
+class DangjiaHouseInfo(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
+    mySite: str | None = Field(default=None, max_length=500)
     houseArea: str = Field(min_length=1, max_length=100)
     houseType: str = Field(min_length=1, max_length=100)
-
-
-class DangjiaPrice(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-
-    format: str = Field(min_length=1, max_length=100)
-    content: str = Field(min_length=1, max_length=8000)
 
 
 class DangjiaTitlePrice(BaseModel):
@@ -107,14 +101,20 @@ class DangjiaTitlePrice(BaseModel):
     displayText: str = Field(min_length=1, max_length=100)
 
 
+class DangjiaPrice(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    format: str = Field(min_length=1, max_length=100)
+    content: str = Field(min_length=1, max_length=8000)
+    titlePrice: DangjiaTitlePrice | None = None
+
+
 class DangjiaRequirementType(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     typeName: str = Field(min_length=1, max_length=100)
-    quotationInfo: DangjiaQuotationInfo
+    houseInfo: DangjiaHouseInfo
     prices: list[DangjiaPrice] = Field(min_length=1, max_length=20)
-    titlePrice: DangjiaTitlePrice | None = None
-    mySite: str | None = Field(default=None, max_length=500)
 
 
 class DangjiaImage(BaseModel):
@@ -211,7 +211,8 @@ def _resolve_ct_code(requirement: DangjiaRequirementType) -> str:
             "DANGJIA_PRICE_COUNT_INVALID",
             "施工报价必须有且仅有一条 prices",
         )
-    if requirement.titlePrice is None:
+    price = requirement.prices[0]
+    if price.titlePrice is None:
         raise _dj_error(
             422,
             "DANGJIA_TITLE_PRICE_REQUIRED",
@@ -255,9 +256,12 @@ def build_trusted_quote_snapshot(
     requirement = payload.requirementType
     if requirement.typeName.strip() != "施工报价":
         return None
-    if len(requirement.prices) != 1 or requirement.titlePrice is None:
+    if len(requirement.prices) != 1:
         raise _dj_error(422, "DANGJIA_QUOTE_METADATA_INVALID", "施工报价元数据不完整")
     price = requirement.prices[0]
+    title_price = price.titlePrice
+    if title_price is None:
+        raise _dj_error(422, "DANGJIA_QUOTE_METADATA_INVALID", "施工报价元数据不完整")
     original_content = price.content
     content_hash = hashlib.sha256(original_content.encode("utf-8")).hexdigest()
     quote_format = price.format.strip().replace(" ", "")
@@ -269,8 +273,8 @@ def build_trusted_quote_snapshot(
         "quote_format": quote_format,
         "quote_type": QUOTE_TYPE_BY_CT_CODE[content_type_code],
         "title_price": {
-            "label": requirement.titlePrice.label,
-            "display_text": requirement.titlePrice.displayText,
+            "label": title_price.label,
+            "display_text": title_price.displayText,
         },
         "quote_block": {
             "original_content": original_content,
@@ -285,9 +289,10 @@ def build_dangjia_form_values(payload: DangjiaContentCreate) -> dict[str, Any]:
     """映射为装修行业表单事实；brand_name/audience/pain 为平台必填，由真实入参推导。"""
     persona = payload.persona
     requirement = payload.requirementType
+    house_info = requirement.houseInfo
     city = _clean(persona.serviceCity)
-    house_type = requirement.quotationInfo.houseType.strip()
-    house_area = requirement.quotationInfo.houseArea.strip()
+    house_type = house_info.houseType.strip()
+    house_area = house_info.houseArea.strip()
     skills = [item.strip() for item in persona.skills if item.strip()]
     advantages = [item.strip() for item in persona.serviceAdvantages if item.strip()]
     is_quote = requirement.typeName.strip() == "施工报价"
@@ -303,11 +308,11 @@ def build_dangjia_form_values(payload: DangjiaContentCreate) -> dict[str, Any]:
         "audience": [f"{city}准备装修{house_type}的业主" if city else f"准备装修{house_type}的业主"],
         "pain": [f"想搞清楚{house_area}{house_type}的施工报价明细"],
         "advantage": advantages,
-        "location": city or _clean(requirement.mySite),
+        "location": city or _clean(house_info.mySite),
         "project_type": house_type,
         "area": house_area,
         "craft_and_materials": "；".join(craft_parts),
-        "project_site": _clean(requirement.mySite),
+        "project_site": _clean(house_info.mySite),
         "content_tags": [item.strip() for item in payload.tags if item.strip()],
         "type_name": requirement.typeName.strip(),
     }
