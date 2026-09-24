@@ -113,11 +113,14 @@ async def test_success_notification_reads_committed_cover_and_posts_once(monkeyp
         object_name="cover-1.png",
     )
     install_callback_fakes(monkeypatch, task=task, artifact=artifact, asset=asset)
-    monkeypatch.setenv("DANGJIA_CALLBACK_BASE_URL", "http://mgr.dev.dangjia.com:8001/")
-    monkeypatch.setenv("DANGJIA_CALLBACK_API_KEY", "test-secret")
-    monkeypatch.setenv(
-        "DANGJIA_MEDIA_PUBLIC_BASE_URL",
-        "https://content.example.com/api/dangjia/content/media/",
+    monkeypatch.setattr(
+        dangjia_callback_service.config,
+        "resolve_dangjia_callback_settings",
+        lambda: {
+            "dangjia_callback_base_url": "http://mgr.dev.dangjia.com:8001/",
+            "dangjia_callback_api_key": "test-secret",
+            "dangjia_media_public_base_url": "https://content.example.com/api/dangjia/content/media/",
+        },
     )
     calls = []
 
