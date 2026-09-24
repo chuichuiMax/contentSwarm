@@ -421,6 +421,7 @@ import {
 } from 'lucide-vue-next'
 import { mcpApi } from '@/apis/mcp_api'
 import { formatFullDateTime } from '@/utils/time'
+import { copyTextToClipboard } from '@/utils/clipboard'
 import McpEnvEditor from '@/components/McpEnvEditor.vue'
 
 const route = useRoute()
@@ -652,10 +653,11 @@ const handleToggleTool = async (tool) => {
 
 const copyToolName = async (toolName) => {
   try {
-    await navigator.clipboard.writeText(toolName)
+    await copyTextToClipboard(toolName)
     message.success('已复制到剪贴板')
-  } catch {
-    message.error('复制失败')
+  } catch (error) {
+    console.error('复制工具名称失败:', error)
+    message.error('复制失败，请手动复制')
   }
 }
 

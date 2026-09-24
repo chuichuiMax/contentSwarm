@@ -49,6 +49,7 @@ import {
   hasSelectedViralReference
 } from '@/utils/contentEvidencePresentation'
 import { formatDateTime } from '@/utils/time'
+import { copyTextToClipboard } from '@/utils/clipboard'
 import {
   appendContentNarrativeText,
   buildContentEvidenceUsageSnapshot,
@@ -2105,9 +2106,10 @@ const handleAiEditKeydown = (event) => {
 
 const copyResultText = async (value, label) => {
   try {
-    await navigator.clipboard.writeText(value)
+    await copyTextToClipboard(value)
     message.success(`${label}已复制`)
-  } catch {
+  } catch (error) {
+    console.error(`${label}复制失败:`, error)
     message.error(`${label}复制失败，请稍后重试`)
   }
 }

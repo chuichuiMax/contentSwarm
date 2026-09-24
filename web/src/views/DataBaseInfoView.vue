@@ -394,6 +394,7 @@ import { authApi } from '@/apis/auth_api'
 import { CHUNK_PRESET_OPTIONS, getChunkPresetDescription } from '@/utils/chunk_presets'
 import { formatFileSize } from '@/utils/file_utils'
 import { getKbTypeIcon, getKbTypeLabel, kbUtils } from '@/utils/kb_utils'
+import { copyTextToClipboard } from '@/utils/clipboard'
 
 const FileDetailModal = defineAsyncComponent(() => import('@/components/FileDetailModal.vue'))
 const FileUploadModal = defineAsyncComponent(() => import('@/components/FileUploadModal.vue'))
@@ -732,16 +733,11 @@ const copyDatabaseId = async () => {
   }
 
   try {
-    await navigator.clipboard.writeText(database.value.kb_id)
+    await copyTextToClipboard(database.value.kb_id)
     message.success('知识库ID已复制到剪贴板')
-  } catch {
-    const textArea = document.createElement('textarea')
-    textArea.value = database.value.kb_id
-    document.body.appendChild(textArea)
-    textArea.select()
-    document.execCommand('copy')
-    document.body.removeChild(textArea)
-    message.success('知识库ID已复制到剪贴板')
+  } catch (error) {
+    console.error('复制知识库ID失败:', error)
+    message.error('知识库ID复制失败，请手动复制')
   }
 }
 

@@ -159,6 +159,7 @@ import { storeToRefs } from 'pinia'
 import { MessageProcessor } from '@/utils/messageProcessor'
 import { inferImageMimeTypeFromBase64, normalizeAttachmentPreviews } from '@/utils/file_utils'
 import { buildMentionDisplayLabels } from '@/utils/mention_utils'
+import { copyTextToClipboard } from '@/utils/clipboard'
 import FileTypeIcon from '@/components/common/FileTypeIcon.vue'
 import { enrichTaskToolCalls } from '@/components/ToolCallingResult/toolRegistry'
 
@@ -234,22 +235,7 @@ const isCopied = ref(false)
 
 const copyToClipboard = async (text) => {
   try {
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      await navigator.clipboard.writeText(text)
-    } else {
-      // 降级处理：使用传统的 execCommand 方法
-      const textArea = document.createElement('textarea')
-      textArea.value = text
-      textArea.style.position = 'fixed'
-      textArea.style.left = '-999999px'
-      textArea.style.top = '-999999px'
-      document.body.appendChild(textArea)
-      textArea.focus()
-      textArea.select()
-      const successful = document.execCommand('copy')
-      document.body.removeChild(textArea)
-      if (!successful) throw new Error('execCommand failed')
-    }
+    await copyTextToClipboard(text)
     isCopied.value = true
     setTimeout(() => {
       isCopied.value = false
