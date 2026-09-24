@@ -49,12 +49,19 @@ def make_payload(
             },
             "requirementType": {
                 "typeName": type_name,
-                "quotationInfo": {"houseArea": "115平", "houseType": "三室二厅"},
+                "houseInfo": {
+                    "mySite": "湖南省长沙市岳麓区梅溪湖街道金茂府",
+                    "houseArea": "115平",
+                    "houseType": "三室二厅",
+                },
                 "prices": [
-                    {"format": price_format, "content": f"{price_format}测试报价"} for price_format in price_formats
+                    {
+                        "format": price_format,
+                        "content": f"{price_format}测试报价",
+                        "titlePrice": {"label": "整套人工合计", "displayText": "1.16w"},
+                    }
+                    for price_format in price_formats
                 ],
-                "titlePrice": {"label": "整套人工合计", "displayText": "1.16w"},
-                "mySite": "湖南省长沙市岳麓区梅溪湖街道金茂府",
             },
             "tags": ["营销报价", "中式风格"],
             "images": images,
@@ -161,7 +168,7 @@ def test_resolve_ct_code_rejects_unknown_or_conflicting_quotation_formats():
 
 def test_resolve_ct_code_requires_confirmed_title_price():
     payload = make_payload()
-    payload.requirementType.titlePrice = None
+    payload.requirementType.prices[0].titlePrice = None
     with pytest.raises(HTTPException) as exc:
         _resolve_ct_code(payload.requirementType)
     assert exc.value.detail["error"]["code"] == "DANGJIA_TITLE_PRICE_REQUIRED"

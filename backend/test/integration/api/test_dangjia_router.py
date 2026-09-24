@@ -82,12 +82,18 @@ def _payload(serial_no: str, images: list[dict], *, type_name: str = "施工报�
         },
         "requirementType": {
             "typeName": type_name,
-            "quotationInfo": {"houseArea": "120平", "houseType": "三室两厅"},
+            "houseInfo": {
+                "mySite": "长沙市雨花区某某小区",
+                "houseArea": "120平",
+                "houseType": "三室两厅",
+            },
             "prices": [
-                {"format": "单价面积", "content": "防水 6 元/㎡ × 20㎡ = 120 元"},
+                {
+                    "format": "单价面积",
+                    "content": "防水 6 元/㎡ × 20㎡ = 120 元",
+                    "titlePrice": {"label": "整套人工合计", "displayText": "1.16w"},
+                },
             ],
-            "titlePrice": {"label": "整套人工合计", "displayText": "1.16w"},
-            "mySite": "长沙市雨花区某某小区",
         },
         "tags": ["报价透明", "长沙装修"],
         "images": images,

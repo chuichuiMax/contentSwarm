@@ -153,14 +153,14 @@ def _trusted_quote_evidence_items(snapshot: dict[str, Any], *, content_type_code
             display_text,
             allowed_usage=("title",),
             source_hash=title_price_hash,
-            metadata={"label": label, "source_path": "requirementType.titlePrice.displayText"},
+            metadata={"label": label, "source_path": "requirementType.prices[0].titlePrice.displayText"},
         ),
         item(
             "title_price_label",
             label,
             allowed_usage=("title", "body"),
             source_hash=label_hash,
-            metadata={"source_path": "requirementType.titlePrice.label"},
+            metadata={"source_path": "requirementType.prices[0].titlePrice.label"},
         ),
         item(
             "quote_type",
