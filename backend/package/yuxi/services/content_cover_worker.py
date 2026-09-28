@@ -8,7 +8,6 @@ import uuid
 from typing import Any
 
 from PIL import Image, ImageOps, UnidentifiedImageError
-
 from yuxi.content_cover import COVER_PROCESSING_VERSION
 from yuxi.content_cover.editor_renderer import CoverEditorRenderError, render_editor_scene
 from yuxi.content_cover.image2_client import Image2Client, Image2Error
@@ -32,8 +31,8 @@ from yuxi.content_cover.template_replication import (
     TemplateReplicationError,
     _best_text_match,
     _normalize_text,
-    apply_layout_overrides,
     analyze_template,
+    apply_layout_overrides,
     build_copy_plan,
     build_edit_mask,
     ensure_clean_source,
@@ -139,7 +138,11 @@ async def _download_asset(asset: ContentCoverAsset) -> bytes:
 
 def _output_title_overlay(job: ContentCoverJob) -> str:
     request = job.request_json or {}
-    if job.mode in {"hycanvas", "poster_billboard", "editor_render"} or request.get("template_replicate"):
+    if (
+        job.mode in {"hycanvas", "poster_billboard", "editor_render"}
+        or request.get("template_replicate")
+        or request.get("render_copy_with_image2")
+    ):
         return ""
     return str(request.get("title") or "").strip()
 
