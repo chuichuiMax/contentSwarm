@@ -18,6 +18,7 @@ from yuxi.content.model.workflows.definition import workflow_definition_hash
 from yuxi.content.rules import BODY_FORMULAS, INDUSTRIES, METHODS, TITLE_FORMULAS
 from yuxi.content.v3.fixtures import load_decoration_matrix
 from yuxi.content.v3.modular_rules import (
+    SINGLE_BLUEPRINT_WORKFLOW_ID,
     STANDARDIZED_FACTORY_WORKFLOW_V1_ID,
     STANDARDIZED_FACTORY_WORKFLOW_V2_ID,
     STANDARDIZED_FACTORY_WORKFLOW_V3_ID,
@@ -34,6 +35,7 @@ from yuxi.content.v3.joint_workflow import (
     WORKFLOW_MODULAR_AUTHOR,
     WORKFLOW_VIRAL_AUTHOR,
     WORKFLOW_STANDARDIZED_FACTORY,
+    WORKFLOW_SINGLE_BLUEPRINT,
 )
 from yuxi.content.v3.workflow import PLATFORM_WORKFLOW_V3_ID, WORKFLOW_V3
 from yuxi.storage.postgres.models_content import (
@@ -235,6 +237,23 @@ async def _ensure_workflow_v3(db: AsyncSession) -> None:
         PLATFORM_WORKFLOW_STANDARDIZED_FACTORY_ID,
         WORKFLOW_STANDARDIZED_FACTORY,
     )
+
+    single_workflow = await db.get(ContentWorkflowVersion, SINGLE_BLUEPRINT_WORKFLOW_ID)
+    if single_workflow is None:
+        db.add(
+            ContentWorkflowVersion(
+                id=SINGLE_BLUEPRINT_WORKFLOW_ID,
+                slug="single-blueprint",
+                version=4,
+                schema_version=3,
+                status="draft",
+                definition_json=deepcopy(WORKFLOW_SINGLE_BLUEPRINT),
+                definition_hash=workflow_definition_hash(WORKFLOW_SINGLE_BLUEPRINT),
+                input_schema={"type": "ContentBrief", "version": 3},
+                output_schema={"type": "ContentArtifact", "version": 3},
+                created_by="system",
+            )
+        )
 
     standardized_workflow = await db.get(ContentWorkflowVersion, PLATFORM_WORKFLOW_STANDARDIZED_FACTORY_ID)
     if standardized_workflow is None:
@@ -755,6 +774,17 @@ async def _activate_v3_seed_data(db: AsyncSession) -> None:
     if standardized_workflow.status != "published":
         standardized_workflow.status = "published"
     standardized_workflow.published_at = standardized_workflow.published_at or now
+    single_workflow = await db.get(ContentWorkflowVersion, SINGLE_BLUEPRINT_WORKFLOW_ID)
+    single_hash = workflow_definition_hash(WORKFLOW_SINGLE_BLUEPRINT)
+    if (
+        single_workflow is None
+        or single_workflow.status not in {"draft", "validated", "canary", "published"}
+        or single_workflow.definition_hash != single_hash
+        or workflow_definition_hash(single_workflow.definition_json) != single_hash
+    ):
+        raise RuntimeError("原文仿写工作流缺失或定义已变更，停止启动")
+    single_workflow.status = "published"
+    single_workflow.published_at = single_workflow.published_at or now
     default_workflow = await db.get(ContentWorkflowVersion, PLATFORM_WORKFLOW_PRICE_RECOVERY_ID)
     if default_workflow is None:
         raise RuntimeError("现行爆款仿写工作流缺失")
@@ -809,7 +839,7 @@ async def _activate_v3_seed_data(db: AsyncSession) -> None:
             },
             "default_knowledge_scope": [],
             "default_workflow_version_id": (
-                PLATFORM_WORKFLOW_STANDARDIZED_FACTORY_ID
+                SINGLE_BLUEPRINT_WORKFLOW_ID
                 if template is None
                 or template.default_workflow_version_id
                 in {

@@ -486,6 +486,11 @@ class AgentNodeHandler:
                             lexicon_terms[scope][code] = terms
             domain_context = replace(
                 domain_context,
+                body_writing_mode=(
+                    ((production_pack.get("content_rule_bundle") or {}).get("runtime_rules") or {})
+                    .get("viral-body-author", {})
+                    .get("writing_mode")
+                ),
                 allowed_title_lexicon_terms=lexicon_terms["title"],
                 allowed_body_lexicon_terms=lexicon_terms["body"],
                 locked_title_lexicon_terms=locked_lexicon_terms["title"],
@@ -516,6 +521,7 @@ class AgentNodeHandler:
                 "production_pack": state["production_pack"],
                 "evidence_bundle": evidence_bundle,
                 "content_brief": state["content_brief"],
+                "raw_business_json": (state.get("runtime_config_snapshot") or {}).get("raw_business_json"),
                 "required_review_codes": list(required_review_codes(state)),
             }
             domain_context = replace(domain_context, single_blueprint_input=blueprint_input)

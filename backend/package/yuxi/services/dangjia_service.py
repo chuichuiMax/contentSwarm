@@ -473,6 +473,7 @@ async def create_dangjia_content(db: AsyncSession, user: User, payload: DangjiaC
     task.runtime_config_snapshot_json = {
         **(task.runtime_config_snapshot_json or {}),
         "dangjia_request_fingerprint": request_fingerprint,
+        "raw_business_json": payload.model_dump(mode="json", exclude_unset=True),
         **({TRUSTED_QUOTE_SNAPSHOT_KEY: trusted_quote_snapshot} if trusted_quote_snapshot else {}),
     }
     await db.commit()

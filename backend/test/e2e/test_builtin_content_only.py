@@ -217,26 +217,56 @@ async def _run_builtin_cases(monkeypatch, *, preflight_only):
                     assert all(actual[key] == expected[key] for key in ("id", "source_hash", "reference_blueprint"))
                     record["frozen_reference_verified"] = True
                 if preflight_only:
-                    view = project_input(state)
-                    assert view["reference"]["body"]
-                    assert view["reference"]["blocks"]
-                    assert state["material_quality_report"]["status"] == "passed"
-                    codes = {code for fact in view["facts"] for code in fact["variables"]}
-                    assert {"scene", "quantity", "product", "persona_fact", "case_background"} <= codes
-                    assert not {"external_serial_no", "number"} & codes
-                    assert any(fact["role"] == "reader_context" for fact in view["facts"])
-                    assert (
-                        view["quote"]["context"]
-                        == extract_locked_quote_block(state["production_pack"])["rendered_content"]
-                    )
+                    policy = state["production_pack"]["content_rule_bundle"]["single_blueprint"]
+                    if policy.get("writing_mode") == "raw_reference_text":
+                        from yuxi.content.model.raw_reference import project_input as project_raw_input
+
+                        view = project_raw_input(
+                            {**state, "raw_business_json": state["runtime_config_snapshot"]["raw_business_json"]}
+                        )
+                        assert view["原始业务JSON"] == json.loads(inputs[code])
+                        assert view["爆款原文"]["正文"]
+                    else:
+                        view = project_input(state)
+                        assert view["reference"]["body"]
+                        if (
+                            state["production_pack"]["content_rule_bundle"]["single_blueprint"].get("writing_mode")
+                            != "direct_reference"
+                        ):
+                            assert view["reference"]["blocks"]
+                        assert state["material_quality_report"]["status"] == "passed"
+                        codes = {code for fact in view["facts"] for code in fact["variables"]}
+                        assert {"scene", "quantity", "product", "persona_fact", "case_background"} <= codes
+                        assert not {"external_serial_no", "number"} & codes
+                        assert any(fact["role"] == "reader_context" for fact in view["facts"])
+                        assert (
+                            view["quote"]["context"]
+                            == extract_locked_quote_block(state["production_pack"])["rendered_content"]
+                        )
                     record.update(status="passed", model_view=view)
                     return
+                policy = state["production_pack"]["content_rule_bundle"].get("single_blueprint") or {}
+                if policy.get("writing_mode") == "direct_reference":
+                    view = project_input({**state, "content_draft": None})
+                    assert view["reference"]["body"] and not view["reference"]["blocks"]
+                    assert view["title_requirements"] == {}
+                    assert "candidates" not in view["topics"]
+                    assert not workflow.definition_json.get("semantic_review_enabled", True)
+                    if code == "CT02":
+                        assert "旧房局改" in view["writing_requirements"]["tags"]
+                if policy.get("writing_mode") == "raw_reference_text":
+                    assert state["runtime_config_snapshot"]["raw_business_json"] == json.loads(inputs[code])
+                    assert state["content_draft"]["raw_model_text"]
+                    assert not state["content_draft"].get("blueprint_content")
+                    assert not state["content_draft"]["paragraph_evidence"]
+                    assert not workflow.definition_json.get("semantic_review_enabled", True)
                 if workflow.definition_json.get("semantic_review_enabled", True):
                     assert state["review_report"]["status"] in {"passed", "warning"}, state["review_report"]
                     assert not any(item["status"] == "blocked" for item in state["review_report"]["checks"])
                 else:
                     assert not state.get("review_report")
-                    assert state["validation_report"]["status"] == "passed"
+                    assert state["validation_report"]["status"] in {"passed", "warning"}
+                    assert not any(c["level"] == "error" for c in state["validation_report"]["checks"])
                 if os.getenv("BUILTIN_CONTENT_EXPECT_FORBIDDEN_KB"):
                     bundle = state["production_pack"]["content_rule_bundle"]
                     platform = bundle["runtime_rules"]["viral-platform-expression"]
@@ -257,7 +287,7 @@ async def _run_builtin_cases(monkeypatch, *, preflight_only):
                         separators=(",", ":"),
                     )
                     assert bundle["bundle_hash"] == hashlib.sha256(canonical.encode()).hexdigest()
-                if code in {"CT02", "CT03", "CT04", "CT05"}:
+                if code in {"CT02", "CT03", "CT04", "CT05"} and policy.get("writing_mode") != "raw_reference_text":
                     quote = extract_locked_quote_block(state["production_pack"])
                     assert quote is not None and quote["render_policy"] == "checkmark-lines-v1"
                     assert all(
@@ -303,6 +333,7 @@ async def _run_builtin_cases(monkeypatch, *, preflight_only):
                     production_order=state.get("production_order"),
                     body_formula=(state.get("strategy_snapshot") or {}).get("body_formula"),
                 )
+                policy = state.get("production_pack", {}).get("content_rule_bundle", {}).get("single_blueprint") or {}
                 review_history = []
                 if graph is not None and config is not None:
                     async for checkpoint in graph.aget_state_history(config):
@@ -339,6 +370,16 @@ async def _run_builtin_cases(monkeypatch, *, preflight_only):
                     record["model_events"] = []
                     for node in nodes:
                         view = node.input_snapshot.get("model_visible_payload")
+                        if (
+                            view is not None
+                            and policy.get("writing_mode") == "raw_reference_text"
+                            and node.node_id == "generate_content"
+                        ):
+                            assert set(view) == {"仿写要求", "爆款原文", "原始业务JSON"}
+                            assert view["原始业务JSON"] == json.loads(inputs[code])
+                            assert view["爆款原文"]["正文"] == record["reference_snapshot"]["body"]
+                            runtime = node.input_snapshot["runtime_config_snapshot"]
+                            assert runtime["tools"] == [] and runtime["output_contract"] == "PlainArticleTextV1"
                         if view is not None:
                             (model_inputs / f"{node.node_id}-{node.attempt}.json").write_text(
                                 json.dumps(view, ensure_ascii=False, indent=2)
@@ -353,10 +394,20 @@ async def _run_builtin_cases(monkeypatch, *, preflight_only):
                                     record["model_events"].append(
                                         {"event": event["event_type"], **event["payload"]["payload"]}
                                     )
+                    if (
+                        policy.get("writing_mode") == "raw_reference_text"
+                        and not preflight_only
+                        and record["status"] == "passed"
+                    ):
+                        assert sum(e["event"] == "content.model.started" for e in record["model_events"]) == 1
+                        assert not record["retries"]
                     frozen_skills = {item["slug"]: item for item in record["skill_versions"]}
                     for event in record["model_events"]:
                         if event["event"] != "content.model.started":
                             continue
+                        if policy.get("writing_mode") == "raw_reference_text":
+                            assert event["system_chars"] == 0
+                            assert event["tool_schema_chars"] == 2  # serialized empty list
                         for slug, applied in event.get("applied_skills", {}).items():
                             if slug not in frozen_skills:
                                 continue

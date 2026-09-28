@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from yuxi.content.model.contracts import (
@@ -81,6 +83,19 @@ def test_formula_without_variants_rejects_extra_variant() -> None:
             _outline_payload(formula_code="C02", section_ids=section_ids, variant_key="service_contrast"),
             _context("C02"),
         )
+
+
+def test_reference_rewrite_uses_article_outline_without_formula_order_or_variant() -> None:
+    context = replace(_context("C01"), body_writing_mode="reference_rewrite")
+    payload = _outline_payload(formula_code="C01", section_ids=["reader_scene", "project", "closing"])
+
+    result = validate_content_node_result("OutlineResultV1", payload, context)
+
+    assert [section.section_id for section in result.sections] == ["reader_scene", "project", "closing"]
+    assert result.variant_key is None
+    payload["sections"][0]["evidence_ids"] = ["invented-reference"]
+    with pytest.raises(ContractDomainValidationError, match="未授权 Evidence"):
+        validate_content_node_result("OutlineResultV1", payload, context)
 
 
 def test_formula_lexicon_requirements_cover_all_title_formulas_and_locked_body_formula() -> None:

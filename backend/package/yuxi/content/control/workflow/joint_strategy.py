@@ -204,6 +204,8 @@ async def lock_joint_strategy(*, db, state, node_run_id):
             "locator": asset.source_json["locator"],
             "source_hash": asset.source_hash,
             "preparation_skill_hash": asset.preparation_skill_hash,
+            "title": asset.source_json["title"],
+            "body": asset.source_json["body"],
             "reference_card": next(
                 item["reference_card"] for item in state["reference_candidates"] if item["id"] == asset.id
             ),
