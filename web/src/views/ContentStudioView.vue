@@ -1316,6 +1316,7 @@ watch(taskId, () => {
   accumulatedWorkflowNarrative.value = []
   streamedWorkflowNarrative.value = ''
   workflowStrategyNarrativeAnchor.value = null
+  if (route.name === 'ContentNew') void initializeCreationView()
 })
 
 watch(
@@ -2211,7 +2212,6 @@ const openVersions = async () => {
 
 const returnToContentCreation = async () => {
   await router.push({ name: 'ContentNew' })
-  await initializeCreationView()
 }
 </script>
 
