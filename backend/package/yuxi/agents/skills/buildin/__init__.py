@@ -240,12 +240,13 @@ BUILTIN_SKILLS: list[BuiltinSkillSpec] = [
     BuiltinSkillSpec(
         slug="viral-author-core",
         display_name="爆款仿写编排",
-        version="1.1.0",
+        version="1.3.0",
         source_dir=_SKILLS_ROOT / "viral-author-core",
         description="编排单次爆款仿写生成，并执行事实、策略和输出合并检查。",
     ),
     BuiltinSkillSpec(
         slug="viral-title-author",
+        version="1.1.0",
         display_name="爆款标题创作",
         source_dir=_SKILLS_ROOT / "viral-title-author",
         description="按锁定公式和真实证据生成单一卖点的装修小红书标题。",
@@ -253,7 +254,7 @@ BUILTIN_SKILLS: list[BuiltinSkillSpec] = [
     BuiltinSkillSpec(
         slug="viral-body-author",
         display_name="爆款正文创作",
-        version="1.1.0",
+        version="1.2.0",
         source_dir=_SKILLS_ROOT / "viral-body-author",
         description="按锁定正文公式和爆款结构蓝图生成有价值的装修正文。",
     ),
@@ -299,7 +300,7 @@ BUILTIN_SKILLS: list[BuiltinSkillSpec] = [
     BuiltinSkillSpec(
         slug="viral-modular-reviewer",
         display_name="模块化爆款审核",
-        version="1.1.0",
+        version="1.4.0",
         source_dir=_SKILLS_ROOT / "viral-modular-reviewer",
         description="按照创作时冻结的模块规则快照审核完整爆款仿写。",
     ),
