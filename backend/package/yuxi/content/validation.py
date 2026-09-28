@@ -7,7 +7,9 @@ from collections.abc import Iterable
 from typing import Any
 
 
-_NUMBER_RE = re.compile(r"(?<![A-Za-z0-9])\d+(?:\.\d+)?(?:%|元|万元|天|周|月|年|个|次|㎡|m²)?")
+_NUMBER_WITH_UNIT = r"\d+(?:\.\d+)?(?:%|元|万元|天|周|月|年|个|次|㎡|m²)?"
+_NUMBER_RE = re.compile(rf"(?<![A-Za-z0-9]){_NUMBER_WITH_UNIT}")
+_REPLACEMENT_NUMBER_RE = re.compile(_NUMBER_WITH_UNIT)
 
 
 class ComplianceEngine:
@@ -144,7 +146,8 @@ class ComplianceEngine:
 
     @staticmethod
     def _numeric_meaning_changed(before: str, after: str) -> bool:
-        return _NUMBER_RE.findall(before) != _NUMBER_RE.findall(after)
+        # 替换校验须保留所有数字；“报价280元→报J280元”不能因字母前缀漏检金额。
+        return _REPLACEMENT_NUMBER_RE.findall(before) != _REPLACEMENT_NUMBER_RE.findall(after)
 
 
 def validate_numeric_evidence_coverage(text: str, evidence_bundle: dict[str, Any]) -> dict[str, Any]:

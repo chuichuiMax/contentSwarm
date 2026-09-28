@@ -1218,6 +1218,28 @@ async def test_image2_retries_network_error_for_idempotent_generation():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("error_type", [httpx.ReadTimeout, httpx.WriteTimeout, httpx.RemoteProtocolError])
+async def test_image2_interrupted_generation_is_not_automatically_resubmitted(error_type):
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        raise error_type("Server disconnected without sending a response.", request=request)
+
+    async with _client(handler) as client:
+        with pytest.raises(Image2Error) as exc_info:
+            await client.submit(
+                Image2Request(mode="text_to_image", prompt="封面", size="1080x1440"),
+                idempotency_key="interrupted-cover",
+            )
+
+    assert calls == 1
+    assert exc_info.value.code in {"IMAGE2_REQUEST_TIMEOUT", "IMAGE2_CONNECTION_CLOSED"}
+    assert "未自动重复提交" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
 async def test_image2_post_500_is_retryable_but_not_automatically_resubmitted():
     calls = 0
 

@@ -23,6 +23,36 @@ def test_longest_words_win_and_replacements_do_not_cascade():
         replace_forbidden_words("100元/㎡", {"100": "200"})
 
 
+@pytest.mark.parametrize(
+    ("text", "replacements", "expected"),
+    [
+        ("石膏板吊顶：报价280元", {"报价": "报J"}, "石膏板吊顶：报J280元"),
+        ("长沙120平两卫翻新报价1.2万？", {"报价": "报J"}, "长沙120平两卫翻新报J1.2万？"),
+        ("总价1.206万元", {"价": "jia"}, "总jia1.206万元"),
+        ("报价100元/㎡×30㎡=3000元", {"报价": "报J"}, "报J100元/㎡×30㎡=3000元"),
+        ("报J280元", {"报J": "费用"}, "费用280元"),
+    ],
+)
+def test_replacement_preserves_numbers_adjacent_to_latin_letters(text, replacements, expected):
+    assert replace_forbidden_words(text, replacements) == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "replacements"),
+    [
+        ("报J280元", {"280": "380"}),
+        ("报J280元", {"280": ""}),
+        ("报J1.2万元", {"1.2": "1.3"}),
+        ("报J280元", {"元": "万元"}),
+        ("报J280元", {"元": "天"}),
+        ("面积30㎡", {"㎡": "个"}),
+    ],
+)
+def test_replacement_still_rejects_changed_amounts_and_units(text, replacements):
+    with pytest.raises(ValueError, match="封禁词库替换会改变数字或计价单位"):
+        replace_forbidden_words(text, replacements)
+
+
 def test_empty_candidate_is_still_checked_in_topics():
     from yuxi.content.validators import validate_modular_content
 

@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 from yuxi.content.validators import (
     evidence_number_tokens,
     merge_evidence,
@@ -125,6 +127,16 @@ def test_price_unit_spacing_in_evidence_does_not_block_same_amount():
 
     assert unsupported_number_tokens("铲墙20元/㎡×28㎡=560元，吊顶70元/㎡×4㎡=280元", evidence) == []
     assert unsupported_number_tokens("铲墙20元/㎡×28㎡=560元，额外收费999元", evidence) == ["999元"]
+
+
+@pytest.mark.parametrize("amount", ["12060元", "1.206万元"])
+def test_quote_currency_units_match_only_exactly_equivalent_amounts(amount):
+    evidence = {"items": [{"value": amount}]}
+
+    assert unsupported_number_tokens("整套12060元，约1.206万元", evidence) == []
+    assert unsupported_number_tokens("报J1.2万元", evidence) == ["1.2万元"]
+    assert unsupported_number_tokens("报J12061元", evidence) == ["12061元"]
+    assert unsupported_number_tokens("12060天", evidence) == ["12060天"]
 
 
 def test_unsupported_number_tokens_ignore_keycap_emoji_only():
