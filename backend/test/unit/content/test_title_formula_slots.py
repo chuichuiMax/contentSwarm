@@ -389,3 +389,23 @@ async def test_craft_emotion_slots_require_selected_expression(monkeypatch, code
     current["selected_title"]["text"] = title.replace("真香", "")
     blocked = await handler.execute(db=object(), node={"id": "deterministic_validate"}, state=current, node_run_id="n")
     assert blocked["validation_report"]["status"] == "blocked"
+
+
+@pytest.mark.asyncio
+async def test_title_required_fact_accepts_frozen_forbidden_replacement(monkeypatch):
+    monkeypatch.setattr(
+        "yuxi.content.control.workflow.deterministic_node.validate_content",
+        lambda **kwargs: {"status": "passed", "checks": []},
+    )
+    state = _validation_state(
+        formula=_formula_by_code("FRT05"),
+        title="长沙半包报J透明",
+        variables={"scene": "半包", "advantages": ["报价透明"]},
+    )
+    state["production_pack"]["content_rule_bundle"] = {
+        "runtime_rules": {"viral-platform-expression": {"forbidden_replacements": {"报价": "报J"}}}
+    }
+    result = await V3DeterministicNodeHandler().execute(
+        db=object(), node={"id": "deterministic_validate"}, state=state, node_run_id="mapped-title"
+    )
+    assert result["validation_report"] == {"status": "passed", "checks": []}

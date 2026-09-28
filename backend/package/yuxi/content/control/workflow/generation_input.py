@@ -174,6 +174,16 @@ def _redact_composed_locked_quote(projected: dict) -> None:
     if not isinstance(original, str) or not original:
         raise ValueError("锁定报价块缺少可脱敏的原文")
     rendered = render_locked_quote(original, value.get("render_policy"))
+    platform = (
+        (projected.get("runtime_config_snapshot") or {})
+        .get("content_rule_bundle", {})
+        .get("runtime_rules", {})
+        .get("viral-platform-expression", {})
+    )
+    if platform.get("forbidden_lexicon"):
+        from yuxi.content.model.forbidden_words import replace_forbidden_words
+
+        rendered = replace_forbidden_words(rendered, platform["forbidden_replacements"])
     draft = projected.get("content_draft") or {}
     body = str(draft.get("body") or "")
     marker = "[锁定报价块已由程序插入；原文不提供给模型]"

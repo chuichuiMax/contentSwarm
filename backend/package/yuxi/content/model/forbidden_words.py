@@ -37,3 +37,9 @@ def replace_forbidden_words(text: str, replacements: dict[str, str]) -> str:
     if ComplianceEngine._numeric_meaning_changed(text, output):
         raise ValueError("封禁词库替换会改变数字或计价单位，请修正映射")
     return output
+
+
+def contains_frozen_term(text: str, term: str, replacements: dict[str, str]) -> bool:
+    """冻结事实/词条允许原文或词库映射后的展示形式，不接受任意同义改写。"""
+    display_term = replace_forbidden_words(term, replacements)
+    return term in text or bool(display_term and display_term in text)

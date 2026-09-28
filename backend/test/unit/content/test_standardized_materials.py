@@ -1148,6 +1148,51 @@ def test_standardize_evidence_materials_builds_typed_price_from_confirmed_bundle
     assert validate_material_gate(manifest=manifest, materials=materials).status == "passed"
 
 
+@pytest.mark.asyncio
+async def test_default_factory_freezes_live_forbidden_knowledge(monkeypatch):
+    from yuxi.content.control.workflow.deterministic_node import V3DeterministicNodeHandler
+    from yuxi.content.v3.modular_rules import build_modular_rule_bundle
+    from yuxi.services import content_forbidden_words_service
+
+    calls = []
+
+    async def load(uid, name):
+        calls.append((uid, name))
+        return {"snapshot_hash": "f" * 64, "alternatives": {"报价": ["报J", "费用"], "APP": []}}
+
+    monkeypatch.setattr(content_forbidden_words_service, "load_forbidden_words", load)
+    manifest = build_material_manifest(catalog=_catalog(), order=_order())
+    materials = [_business_material("product", "水电改造"), _price_material(), _reference_material()]
+    bundle = build_modular_rule_bundle({})
+    bundle["topic_candidates"] = ["装修报价", "APP"]
+    state = {
+        "task_id": "task-1",
+        "uid": "user-1",
+        "production_order": _order().model_dump(mode="json"),
+        "material_manifest": manifest.model_dump(mode="json"),
+        "material_quality_report": validate_material_gate(manifest=manifest, materials=materials).model_dump(
+            mode="json"
+        ),
+        "standardized_materials": [item.model_dump(mode="json") for item in materials],
+        "strategy_snapshot": {
+            "title_formula": {"code": "FRT07"},
+            "body_formula": {"code": "FRB06"},
+            "reference_snapshot": {"id": "asset-1", "source_hash": "r" * 64},
+        },
+        "evidence_bundle": {"id": "bundle-1", "version": 2, "status": "frozen", "bundle_hash": "e" * 64},
+        "formula_lexicon_bundle": {"bundle_hash": "l" * 64},
+        "runtime_config_snapshot": {"content_rule_bundle": bundle},
+    }
+    update = await V3DeterministicNodeHandler._freeze_production_pack(db=None, state=state, node_run_id="node")
+    frozen = update["production_pack"]["content_rule_bundle"]
+    assert calls == [("user-1", "封禁词库")]
+    assert "single_blueprint" not in frozen
+    assert frozen["runtime_rules"]["viral-platform-expression"]["forbidden_replacements"] == {"报价": "报J"}
+    assert frozen["topic_candidates"] == ["装修报J"]
+    assert update["runtime_config_snapshot"]["content_rule_bundle"] == frozen
+    assert "forbidden_lexicon" not in bundle["runtime_rules"]["viral-platform-expression"]
+
+
 def test_frozen_production_pack_hash_is_stable_and_covers_materials():
     manifest = build_material_manifest(catalog=_catalog(), order=_order())
     materials = [_business_material("product", "水电改造"), _price_material(), _reference_material()]

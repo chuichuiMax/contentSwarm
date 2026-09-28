@@ -487,6 +487,11 @@ class AgentNodeHandler:
                 allowed_body_lexicon_terms=lexicon_terms["body"],
                 locked_title_lexicon_terms=locked_lexicon_terms["title"],
                 locked_body_lexicon_terms=locked_lexicon_terms["body"],
+                forbidden_replacements=(
+                    ((production_pack.get("content_rule_bundle") or {}).get("runtime_rules") or {})
+                    .get("viral-platform-expression", {})
+                    .get("forbidden_replacements", {})
+                ),
                 normalize_generation_evidence_ids=True,
                 locked_required_body_evidence_ids=tuple(
                     sorted(

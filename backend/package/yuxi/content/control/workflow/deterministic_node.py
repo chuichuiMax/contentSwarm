@@ -894,7 +894,10 @@ class V3DeterministicNodeHandler:
         try:
             runtime = deepcopy(state.get("runtime_config_snapshot") or {})
             bundle = runtime.get("content_rule_bundle") or {}
-            lexicon_name = (bundle.get("single_blueprint") or {}).get("forbidden_knowledge_base")
+            platform = (bundle.get("runtime_rules") or {}).get("viral-platform-expression") or {}
+            lexicon_name = platform.get("forbidden_knowledge_base") or (bundle.get("single_blueprint") or {}).get(
+                "forbidden_knowledge_base"
+            )
             if lexicon_name:
                 from yuxi.content.model.forbidden_words import replace_forbidden_words
                 from yuxi.services.content_forbidden_words_service import load_forbidden_words
@@ -2474,6 +2477,7 @@ class V3DeterministicNodeHandler:
         body = draft.get("body", "")
         production_pack = state.get("production_pack") or {}
         blueprint_policy = production_pack.get("content_rule_bundle", {}).get("single_blueprint") or {}
+        from yuxi.content.model.forbidden_words import contains_frozen_term
         from yuxi.content.model.single_blueprint import title_publication_year
 
         report = validate_content(
@@ -2515,12 +2519,19 @@ class V3DeterministicNodeHandler:
             title = str((state.get("selected_title") or {}).get("text") or "")
             title_for_numbers = title.replace(",", "")
             strategy_snapshot = production_pack.get("strategy_snapshot") or state.get("strategy_snapshot") or {}
+            replacements = (
+                ((production_pack.get("content_rule_bundle") or {}).get("runtime_rules") or {})
+                .get("viral-platform-expression", {})
+                .get("forbidden_replacements", {})
+            )
             missing_title_facts = {
                 code: options
                 for code, options in _required_title_fact_options(
                     state["content_brief"], strategy_snapshot, production_pack
                 ).items()
-                if not any(option.replace(",", "") in title_for_numbers for option in options)
+                if not any(
+                    contains_frozen_term(title_for_numbers, option.replace(",", ""), replacements) for option in options
+                )
             }
             if missing_title_facts:
                 descriptions = [
