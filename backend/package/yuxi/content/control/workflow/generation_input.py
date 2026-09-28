@@ -162,6 +162,9 @@ def project_locked_quote_safe_input(payload: dict) -> dict | None:
 
 
 def _redact_composed_locked_quote(projected: dict) -> None:
+    # 原文仿写保留模型报价排版，不经过程序锁定块合成。
+    if projected.get("body_writing_mode") == "raw_reference_text":
+        return
     quote_items = [
         item
         for item in (projected.get("evidence_bundle") or {}).get("items") or []

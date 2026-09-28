@@ -564,6 +564,7 @@ class SemanticReviewInputV1(StrictContract):
 class PlanVisualsInputV1(StrictContract):
     selected_title: dict[str, Any] = Field(min_length=1)
     content_draft: dict[str, Any] = Field(min_length=1)
+    body_writing_mode: str | None = None
     strategy_snapshot: StrategySnapshotV1 | StrategySnapshotV2
     evidence_bundle: dict[str, Any] = Field(min_length=1)
     media_evidence_items: list[dict[str, Any]]
@@ -607,6 +608,7 @@ class SubmitCoverJobInputV1(StrictContract):
 class VisualReviewInputV1(StrictContract):
     selected_title: dict[str, Any] = Field(min_length=1)
     content_draft: dict[str, Any] = Field(min_length=1)
+    body_writing_mode: str | None = None
     visual_plan: dict[str, Any] = Field(min_length=1)
     cover_job: dict[str, Any] = Field(min_length=1)
     cover_assets: list[dict[str, Any]] = Field(min_length=1)

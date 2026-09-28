@@ -8,6 +8,7 @@ import pytest
 
 from yuxi.content.control.errors import ContentApplicationError
 from yuxi.content.control.workflow.content_node_input import ContentNodeInputAssembler
+from yuxi.content.control.workflow.generation_input import project_visual_input, project_visual_review_input
 from yuxi.content.model.contracts import INPUT_CONTRACT_REGISTRY
 from yuxi.content.model.contracts.content_nodes import PlanVisualsInputV1
 from yuxi.content.v3.workflow import WORKFLOW_V3
@@ -89,6 +90,50 @@ def test_visual_plan_input_does_not_expose_material_names_as_image_evidence():
 
     media = payload.media_evidence_items[0]
     assert media == {"id": "asset-1", "selected_for_cover": True}
+
+
+@pytest.mark.parametrize(
+    ("node_id", "project"), [("plan_visuals", project_visual_input), ("visual_review", project_visual_review_input)]
+)
+@pytest.mark.parametrize("writing_mode", ["raw_reference_text", "direct_reference", None])
+def test_visual_inputs_apply_quote_redaction_only_to_composed_articles(node_id, project, writing_mode):
+    original_quote = "拆除：1000元；水电：2400元"
+    article = "开场。\n\n✔ 拆除：1000元\n✔ 水电：2400元\n\n结尾。"
+    state = {
+        "selected_title": {"text": "装修工费明细"},
+        "content_draft": {"body": article},
+        "strategy_snapshot": deepcopy(STRATEGY),
+        "evidence_bundle": {
+            "items": [
+                {
+                    "id": "ev-quote",
+                    "variable_codes": ["quote_block"],
+                    "value": {"original_content": original_quote, "render_policy": "checkmark-lines-v1"},
+                }
+            ]
+        },
+        "media_evidence_items": [],
+        "artifact_version": {"id": "artifact-1"},
+        "channel_profile": {},
+        "visual_plan": {"cover": "quote"},
+        "cover_job": {"id": "job-1"},
+        "cover_assets": [{"id": "asset-1"}],
+        "runtime_config_snapshot": {},
+        "production_pack": {"content_rule_bundle": {"single_blueprint": {"writing_mode": writing_mode}}},
+    }
+    original_state = deepcopy(state)
+    node = next(item for item in WORKFLOW_V3["nodes"] if item["id"] == node_id)
+
+    assembly = ContentNodeInputAssembler.build(node=node, state=state)
+
+    if writing_mode == "raw_reference_text":
+        view = project(assembly.payload)
+        assert view["content_draft"]["body"] == article
+        assert original_quote not in json.dumps(view, ensure_ascii=False)
+    else:
+        with pytest.raises(ValueError, match="合成后的锁定报价块无法在模型正文输入中定位"):
+            project(assembly.payload)
+    assert state == original_state
 
 
 EVIDENCE_BUNDLE = {
