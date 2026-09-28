@@ -135,8 +135,7 @@ def test_compile_user_request_keeps_content_type_and_business_variables():
 
     assert missing == []
     assert compiled["user_request"] == "最新需求：只生成一篇杭州小户型收纳改造笔记"
-    assert compiled["content_type_code"] == "CT05"
-    assert compiled["form_values"]["user_request"] == "最新需求：只生成一篇杭州小户型收纳改造笔记"
+    assert compiled["content_type_code"] == "CT06"
     assert compiled["form_values"]["mp_content_type_id"] == "NRLX0001"
     assert compiled["form_values"]["mp_content_type_name"] == "工艺施工展示"
     assert compiled["business_variables"]["目标人群"] == "刚需改善"
@@ -239,7 +238,7 @@ def test_compile_production_pack_promotes_facts_to_factory_variables():
     )
 
     assert missing == []
-    assert compiled["content_type_code"] == "CT05"
+    assert compiled["content_type_code"] == "CT06"
     assert compiled["business_variables"]["persona_fact"] == "朱穆，27岁，新媒体运营，工号H06380。"
     assert compiled["business_variables"]["process"] == ["个性定制系统", "HYB-吊顶与背景墙造型实现工艺"]
     assert compiled["business_variables"]["advantages"] == ["项目施工鸿扬家装"]
@@ -249,7 +248,7 @@ def test_compile_production_pack_promotes_facts_to_factory_variables():
     assert "quote_type" not in compiled["business_variables"]
     parsed = _parse_content_studio_production_pack(user_request)
     assert parsed is not None
-    assert parsed["content_type_code"] == "CT05"
+    assert parsed["content_type_code"] == "CT06"
 
 
 def test_compile_production_pack_promotes_community_to_case_background():

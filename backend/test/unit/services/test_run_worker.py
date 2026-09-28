@@ -262,6 +262,11 @@ async def test_worker_startup_ensures_builtin_mcp_servers(monkeypatch: pytest.Mo
         del session
         calls.append("ensure_content_seed_data")
 
+    async def fake_knowledge_base_initialize():
+        calls.append("knowledge_base_initialize")
+
+    from yuxi import knowledge_base
+
     monkeypatch.setattr(run_worker.pg_manager, "initialize", fake_initialize)
     monkeypatch.setattr(run_worker.pg_manager, "create_business_tables", fake_create_business_tables)
     monkeypatch.setattr(run_worker.pg_manager, "ensure_business_schema", fake_ensure_business_schema)
@@ -270,6 +275,7 @@ async def test_worker_startup_ensures_builtin_mcp_servers(monkeypatch: pytest.Mo
     monkeypatch.setattr(run_worker, "ensure_builtin_mcp_servers_in_db", fake_ensure_builtin_mcp_servers_in_db)
     monkeypatch.setattr(run_worker, "init_builtin_skills", fake_init_builtin_skills)
     monkeypatch.setattr(content_module, "ensure_content_seed_data", fake_ensure_content_seed_data)
+    monkeypatch.setattr(knowledge_base, "initialize", fake_knowledge_base_initialize)
 
     await run_worker._worker_startup({})
 
@@ -281,4 +287,5 @@ async def test_worker_startup_ensures_builtin_mcp_servers(monkeypatch: pytest.Mo
         "ensure_builtin_mcp_servers_in_db",
         "init_builtin_skills",
         "ensure_content_seed_data",
+        "knowledge_base_initialize",
     ]

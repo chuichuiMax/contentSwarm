@@ -14,6 +14,11 @@ class KnowledgeBaseRepository:
             result = await session.execute(select(KnowledgeBase))
             return list(result.scalars().all())
 
+    async def list_by_name(self, name: str) -> list[KnowledgeBase]:
+        async with pg_manager.get_async_session_context() as session:
+            result = await session.execute(select(KnowledgeBase).where(KnowledgeBase.name == name))
+            return list(result.scalars().all())
+
     async def get_by_kb_id(self, kb_id: str) -> KnowledgeBase | None:
         async with pg_manager.get_async_session_context() as session:
             result = await session.execute(select(KnowledgeBase).where(KnowledgeBase.kb_id == kb_id))

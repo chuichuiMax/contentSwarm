@@ -80,7 +80,7 @@ INDUSTRY_SLUG = "decoration"
 SMS_TTL_SECONDS = 300
 WECHAT_SESSION_TTL_SECONDS = 600
 NRLX_TO_CT = {
-    "NRLX0001": "CT05",
+    "NRLX0001": "CT06",  # 工艺施工展示 → 工厂工艺展示方向（非 CT05 施工报价）
     "NRLX0002": "CT02",
     "NRLX0003": "CT03",
     "NRLX0004": "CT04",

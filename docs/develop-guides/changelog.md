@@ -6,6 +6,10 @@
 
 ## v0.7.1 (current)
 
+- 修复内容生产读取封禁词库时因 worker 进程内 Milvus 元数据缓存名称过期而报「当前找到 0 个」：改为按 Postgres 知识库名与权限解析唯一词库；列表接口同步以库表名称为准；worker 启动时等待知识库元数据加载完成。
+
+- 修复工艺施工展示误映射为 CT05（工厂施工报价）导致创作计划强要 `quote_block`/`title_price` 等锁定报价字段：托管类型「工艺施工展示」改为 CT06（工艺展示），名称优先于历史 `contentTypeCode`；CT05 仍留给人工辅材等真实报价链路。
+
 - 内容创作页封面模板下方新增独立的 image2 封面测试入口：复用当前选择的图库原图，可单独填写 AI 创作提示词、标题、副标题和标签并预览生成结果；测试请求会把图库条目正确解析为底层图片资产，避免误传条目 ID 导致“原图不存在或角色不正确”；后端增加显式的 image2 文案直出模式，避免默认确定性标题叠加覆盖测试结果，现有正式创作与封面生成默认行为保持不变。
 
 - 新增知识库词条删除迁移：拉取代码后执行 `docker compose exec -T api uv run python scripts/remove_national_standard_lexicon_term.py --apply`，从「正文词库 / 工艺干货资料库-专业正解词库.txt」移除独立词条“国标施工规范”，同步原文件、解析文本、PostgreSQL 分块和向量索引。默认仅预览，知识库重名时用 `--kb-id` 指定；执行前备份到 `saves/migrations/remove-national-standard-term`，重复执行不重复修改，不覆盖其他词条和历史内容。Git 拉取本身不会修改运行数据库。

@@ -524,6 +524,9 @@ async def _worker_startup(ctx):
         from yuxi.content import ensure_content_seed_data
 
         await ensure_content_seed_data(session)
+    from yuxi import knowledge_base
+
+    await knowledge_base.initialize()
 
 
 async def _worker_shutdown(ctx):

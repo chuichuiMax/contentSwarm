@@ -4,8 +4,8 @@ const CONSTRUCTION_BRAND = '鸿扬家装'
 const BRAND_POSITIONING = '定制化家装'
 const QUOTE_KEYS = ['基础', '木制品', '主材']
 const CONTENT_TYPE_TO_CODE = {
-  工艺施工展示: 'CT05',
-  工艺展示: 'CT05',
+  工艺施工展示: 'CT06',
+  工艺展示: 'CT06',
   装修报价清单: 'CT02',
   报价清单: 'CT02',
   装修避坑分享: 'CT03',

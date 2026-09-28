@@ -55,10 +55,11 @@ QUOTATION_LIST_WRITING_INSTRUCTION = (
     "不展开某套房案例故事，不编造数字与改造情节。"
 )
 CRAFT_SHOWCASE_TYPE_NAMES = frozenset({"工艺施工展示", "工艺展示"})
-CRAFT_SHOWCASE_DIRECTION_CODE = "CT05"
+# 工厂规则 CT05=施工报价（需锁定报价字段）；工艺展示对应 CT06。
+CRAFT_SHOWCASE_DIRECTION_CODE = "CT06"
 CONTENT_TYPE_NAME_TO_DIRECTION = {
-    "工艺施工展示": "CT05",
-    "工艺展示": "CT05",
+    "工艺施工展示": "CT06",
+    "工艺展示": "CT06",
     "装修报价清单": "CT02",
     "报价清单": "CT02",
     "装修避坑分享": "CT03",
@@ -126,23 +127,27 @@ def content_direction_from_form_values(values: dict[str, Any] | None) -> str | N
 def content_direction_from_brief(brief: dict[str, Any] | None) -> str | None:
     if not isinstance(brief, dict):
         return None
-    code = str(brief.get("content_type_code") or "").strip()
-    if code in CONTENT_TYPE_NAME_TO_DIRECTION.values():
-        return code
+    # 表单内容类型名称优先：历史任务可能把工艺展示误存成 CT05（施工报价）。
     for key in ("form_values", "business_variables"):
         section = brief.get(key)
         direction = content_direction_from_form_values(section if isinstance(section, dict) else None)
         if direction:
             return direction
+    code = str(brief.get("content_type_code") or "").strip()
+    if code in CONTENT_TYPE_NAME_TO_DIRECTION.values():
+        return code
     return None
 
 
 def resolve_task_content_type_code(task: Any) -> str | None:
     """任务页所选内容类型优先于自动方向，用来锁定对应爆款库。"""
+    direction = content_direction_from_brief(getattr(task, "brief_json", None) or {})
+    if direction:
+        return direction
     code = str(getattr(task, "content_type_code", None) or "").strip()
     if code in CONTENT_TYPE_NAME_TO_DIRECTION.values():
         return code
-    return content_direction_from_brief(getattr(task, "brief_json", None) or {})
+    return None
 
 
 def _filter_formulas_for_craft_showcase(

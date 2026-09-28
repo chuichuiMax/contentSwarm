@@ -82,10 +82,18 @@ def test_visual_projection_recognizes_replaced_quote():
 @pytest.mark.asyncio
 async def test_loads_full_authorized_table_and_refreshes_between_runs(monkeypatch):
     from yuxi import knowledge_base
+    from yuxi.repositories import knowledge_base_repository as kb_repo_mod
+    from yuxi.repositories import user_repository as user_repo_mod
 
-    async def accessible(uid):
+    user = SimpleNamespace(uid="user", role="superadmin", department_id=1)
+
+    async def get_user(uid):
         assert uid == "user"
-        return {"databases": [{"kb_id": "kb", "name": "封禁词库"}]}
+        return user
+
+    async def list_by_name(self, name):
+        assert name == "封禁词库"
+        return [SimpleNamespace(kb_id="kb", created_by="user", share_config={"access_level": "global"})]
 
     chunks = [
         SimpleNamespace(
@@ -97,8 +105,10 @@ async def test_loads_full_authorized_table_and_refreshes_between_runs(monkeypatc
         assert kb_id == "kb"
         return chunks
 
-    monkeypatch.setattr(knowledge_base, "get_databases_by_uid", accessible)
+    monkeypatch.setattr(user_repo_mod.UserRepository, "get_by_uid", staticmethod(get_user))
+    monkeypatch.setattr(kb_repo_mod.KnowledgeBaseRepository, "list_by_name", list_by_name)
     monkeypatch.setattr(service.KnowledgeChunkRepository, "list_by_kb_id", list_chunks)
+    monkeypatch.setattr(knowledge_base, "_database_info_accessible", staticmethod(lambda _user, _db: True))
     first = await service.load_forbidden_words("user", "封禁词库")
     chunks[0].content = chunks[0].content.replace("费用", "报J")
     second = await service.load_forbidden_words("user", "封禁词库")
@@ -111,11 +121,20 @@ async def test_loads_full_authorized_table_and_refreshes_between_runs(monkeypatc
 @pytest.mark.asyncio
 async def test_inaccessible_knowledge_base_fails_before_reading_chunks(monkeypatch):
     from yuxi import knowledge_base
+    from yuxi.repositories import knowledge_base_repository as kb_repo_mod
+    from yuxi.repositories import user_repository as user_repo_mod
 
-    async def inaccessible(uid):
-        return {"databases": []}
+    user = SimpleNamespace(uid="user", role="user", department_id=1)
 
-    monkeypatch.setattr(knowledge_base, "get_databases_by_uid", inaccessible)
+    async def get_user(uid):
+        return user
+
+    async def list_by_name(self, name):
+        return [SimpleNamespace(kb_id="kb", created_by="other", share_config={"access_level": "user", "user_uids": []})]
+
+    monkeypatch.setattr(user_repo_mod.UserRepository, "get_by_uid", staticmethod(get_user))
+    monkeypatch.setattr(kb_repo_mod.KnowledgeBaseRepository, "list_by_name", list_by_name)
+    monkeypatch.setattr(knowledge_base, "_database_info_accessible", staticmethod(lambda _user, _db: False))
     with pytest.raises(ValueError, match="能访问唯一"):
         await service.load_forbidden_words("user", "封禁词库")
 

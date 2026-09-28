@@ -134,7 +134,7 @@ def test_composition_layout_supports_grid_counts_only():
 
 def test_resolve_ct_code_maps_known_type_and_rejects_unknown():
     for type_name, expected in {
-        "工艺施工展示": "CT05",
+        "工艺施工展示": "CT06",
         "装修报价清单": "CT02",
         "装修避坑分享": "CT03",
         "装修省钱攻略": "CT04",

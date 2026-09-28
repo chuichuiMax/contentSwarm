@@ -30,7 +30,7 @@ from yuxi.services.mp_service import (
 
 
 def test_map_nrlx_to_ct_code_uses_default_mapping():
-    assert map_nrlx_to_ct_code("NRLX0001", "工艺施工展示") == "CT05"
+    assert map_nrlx_to_ct_code("NRLX0001", "工艺施工展示") == "CT06"
     assert map_nrlx_to_ct_code("NRLX0005", "装修案例分享") == "CT01"
     assert map_nrlx_to_ct_code("NRLX0007", "人设自荐") == "CT07"
 

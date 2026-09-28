@@ -310,6 +310,34 @@ def test_locked_quote_plan_still_requires_trusted_quote_fields():
     assert {"quote_block", "title_price", "title_price_label", "quote_type"} <= set(gaps["missing_variable_codes"])
 
 
+def test_craft_showcase_name_does_not_require_locked_quote_fields():
+    """工艺施工展示走 CT06，不能落到 CT05 施工报价的锁定报价字段。"""
+    from yuxi.content.service_entry_form import content_direction_from_brief
+
+    brief = {
+        "content_type_code": "CT05",
+        "form_values": {"mp_content_type_name": "工艺施工展示"},
+        "business_variables": {
+            "product": "洋湖天街定制化家装项目",
+            "process": ["安全用电系统", "HYB-强电箱内空开安装工艺"],
+            "location": "长沙",
+            "persona_fact": "徐铁锤，管理员。",
+            "advantages": ["项目施工鸿扬家装"],
+        },
+    }
+    assert content_direction_from_brief(brief) == "CT06"
+    gaps = analyze_plan_gaps(
+        catalog=craft_catalog(),
+        references=[reference(content_type="CT06")],
+        content_brief=brief,
+        evidence_bundle={"items": []},
+        runtime_config_snapshot={},
+    )
+    assert not {"quote_block", "quote_type", "title_price", "title_price_label"} & set(
+        gaps["missing_variable_codes"]
+    )
+
+
 @pytest.mark.parametrize("persona_source", ["missing", "brief", "evidence", "rejected"])
 def test_craft_plan_extracts_manifest_persona_requirement(persona_source):
     brief = {

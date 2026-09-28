@@ -3013,6 +3013,11 @@ const returnToContentCreation = async () => {
                   </section>
                 </div>
               </div>
+            <fieldset
+              class="creation-fields"
+              :disabled="creationSubmitting || briefLocked"
+              :inert="creationSubmitting || briefLocked"
+            >
             <div class="field-block creation-request">
               <div class="creation-request-heading">
                 <label id="content-request-label" for="content-request">内容需求</label>

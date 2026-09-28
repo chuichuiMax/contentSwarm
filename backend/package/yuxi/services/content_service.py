@@ -626,9 +626,10 @@ def _parse_content_studio_production_pack(user_request: str) -> dict[str, Any] |
     if community and not variables.get("case_background"):
         variables["case_background"] = community
     content_type = raw_payload.get("contentType") if isinstance(raw_payload.get("contentType"), dict) else {}
-    content_type_code = str(content_type.get("contentTypeCode") or "").strip() or CONTENT_TYPE_NAME_TO_DIRECTION.get(
-        type_name
-    )
+    declared_code = str(content_type.get("contentTypeCode") or "").strip()
+    mapped_code = CONTENT_TYPE_NAME_TO_DIRECTION.get(type_name)
+    # 托管内容类型名称优先：工艺施工展示必须走 CT06，不能被历史客户端传的 CT05（施工报价）带走。
+    content_type_code = mapped_code or declared_code or None
     audience = variables.get("audience")
     if isinstance(audience, str) and audience.strip():
         audience = [audience.strip()]
@@ -791,7 +792,11 @@ def compile_content_brief(
             if quote_case is not None
             else _parse_content_studio_persona_case(user_request, content_type_code=content_type_code)
         )
-        persona = quote_case["persona"] if quote_case is not None else {}
+        persona = (
+            quote_case["persona"]
+            if quote_case is not None
+            else dict((production_pack or {}).get("persona") or {})
+        )
         if (
             quote_case is None
             and normalized_variables.get("persona_fact")
