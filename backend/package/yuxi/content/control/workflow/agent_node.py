@@ -413,6 +413,9 @@ class AgentNodeHandler:
                 max_chars = constraints.get("maxChars")
                 if isinstance(max_chars, int) and max_chars > 0:
                     limits[role] = min(limits.get(role, max_chars), max_chars)
+            if visual_material.get("cover_mode") == "ai":
+                limits["title"] = min(limits.get("title", 60), 60)
+                limits["subtitle"] = min(limits.get("subtitle", 120), 120)
             locked_values["visual_text_max_chars"] = limits
             locked_values["allowed_visual_template_fields"] = allowed_template_fields
             required_template_fields = missing_required_template_fields(

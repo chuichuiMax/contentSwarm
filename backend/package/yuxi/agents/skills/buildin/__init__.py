@@ -316,7 +316,7 @@ BUILTIN_SKILLS: list[BuiltinSkillSpec] = [
         display_name="内容视觉规划",
         source_dir=_SKILLS_ROOT / "content-visual-planner",
         description="按内容快照和渠道规范产出字段不重复的结构化视觉方案。",
-        version="1.7.0",
+        version="1.8.0",
     ),
     BuiltinSkillSpec(
         slug="content-cover-generator",

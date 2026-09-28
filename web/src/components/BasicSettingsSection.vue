@@ -132,6 +132,71 @@
       </div>
     </template>
 
+    <template v-if="userStore.isAdmin">
+      <div class="section-title">image2 封面模型配置</div>
+      <div class="settings-panel">
+        <div class="image2-panel-header">
+          <p class="section-description">
+            配置 AI 封面与图片设计使用的 image2 中转站。配置按当前账号保存，环境变量仅作为未配置时的兜底。
+          </p>
+          <span class="image2-status" :data-status="image2VerificationStatus">
+            {{ image2StatusText }}
+          </span>
+        </div>
+        <div class="setting-row two-cols">
+          <div class="col-item">
+            <div class="setting-label">中转站 Base URL</div>
+            <a-input
+              v-model:value="image2Form.baseUrl"
+              placeholder="例如：https://relay.example.com/v1"
+              autocomplete="off"
+            />
+          </div>
+          <div class="col-item">
+            <div class="setting-label">模型 ID</div>
+            <a-input
+              v-model:value="image2Form.model"
+              placeholder="例如：gpt-image-2"
+              autocomplete="off"
+            />
+          </div>
+        </div>
+        <div class="setting-row">
+          <div class="setting-label">API Key</div>
+          <a-input-password
+            v-model:value="image2Form.apiKey"
+            :placeholder="
+              image2State?.api_key_configured
+                ? '已配置；留空表示保持不变'
+                : '请输入中转站 API Key'
+            "
+            autocomplete="new-password"
+          />
+          <span class="setting-help">API Key 保存后不会在页面或接口中回显。</span>
+        </div>
+        <div v-if="image2State?.capabilities?.message" class="image2-capability-message">
+          {{ image2State.capabilities.message }}
+        </div>
+        <div class="settings-actions image2-actions">
+          <a-button
+            :loading="image2Testing"
+            :disabled="image2Saving || image2Loading"
+            @click="testImage2Settings"
+          >
+            测试连接与模型
+          </a-button>
+          <a-button
+            type="primary"
+            :loading="image2Saving"
+            :disabled="image2Testing || image2Loading"
+            @click="saveImage2Settings"
+          >
+            保存 image2 配置
+          </a-button>
+        </div>
+      </div>
+    </template>
+
     <!-- 服务链接部分 -->
     <div v-if="userStore.isAdmin" class="section-title">服务链接</div>
     <div v-if="userStore.isAdmin">
@@ -204,9 +269,10 @@
 </template>
 
 <script setup>
-import { computed, h, reactive, ref, watch } from 'vue'
+import { computed, h, onMounted, reactive, ref, watch } from 'vue'
 import { message } from 'ant-design-vue'
 import { useConfigStore } from '@/stores/config'
+import { useCoverGenerationStore } from '@/stores/coverGeneration'
 import { useUserStore } from '@/stores/user'
 import { Globe } from 'lucide-vue-next'
 import ModelSelectorComponent from '@/components/ModelSelectorComponent.vue'
@@ -214,6 +280,7 @@ import EmbeddingModelSelector from '@/components/EmbeddingModelSelector.vue'
 import RerankModelSelector from '@/components/RerankModelSelector.vue'
 
 const configStore = useConfigStore()
+const coverGenerationStore = useCoverGenerationStore()
 const userStore = useUserStore()
 const items = computed(() => configStore.config?._config_items || {})
 const dangjiaSaving = ref(false)
@@ -221,6 +288,22 @@ const dangjiaForm = reactive({
   callbackBaseUrl: '',
   callbackApiKey: '',
   mediaPublicBaseUrl: ''
+})
+const image2Loading = ref(false)
+const image2Saving = ref(false)
+const image2Testing = ref(false)
+const image2Form = reactive({
+  baseUrl: '',
+  apiKey: '',
+  model: 'gpt-image-2'
+})
+const image2State = computed(() => coverGenerationStore.bootstrap?.image2 || null)
+const image2VerificationStatus = computed(() => image2State.value?.verification_status || 'unverified')
+const image2StatusText = computed(() => {
+  if (!image2State.value?.configured) return '未配置'
+  if (image2VerificationStatus.value === 'verified') return '已验证'
+  if (image2VerificationStatus.value === 'warning') return '已连通（模型别名待确认）'
+  return '待验证'
 })
 
 watch(
@@ -296,6 +379,80 @@ const saveDangjiaSettings = async () => {
   }
 }
 
+const syncImage2Form = () => {
+  image2Form.baseUrl = image2State.value?.base_url || ''
+  image2Form.apiKey = ''
+  image2Form.model = image2State.value?.model || 'gpt-image-2'
+}
+
+const loadImage2Settings = async () => {
+  if (!userStore.isAdmin) return
+  image2Loading.value = true
+  try {
+    await coverGenerationStore.loadBootstrap(true)
+    syncImage2Form()
+  } catch (error) {
+    message.error(error.message || 'image2 配置加载失败')
+  } finally {
+    image2Loading.value = false
+  }
+}
+
+const validateImage2Form = () => {
+  const baseUrl = image2Form.baseUrl.trim()
+  const apiKey = image2Form.apiKey.trim()
+  const model = image2Form.model.trim()
+  if (!isHttpUrl(baseUrl)) {
+    message.warning('请输入有效的 image2 HTTP 或 HTTPS 地址')
+    return null
+  }
+  if (!model) {
+    message.warning('请输入 image2 模型 ID')
+    return null
+  }
+  if (!apiKey && !image2State.value?.api_key_configured) {
+    message.warning('首次配置请填写 API Key')
+    return null
+  }
+  return { base_url: baseUrl, api_key: apiKey || null, model }
+}
+
+const saveImage2Settings = async () => {
+  const payload = validateImage2Form()
+  if (!payload) return
+  image2Saving.value = true
+  try {
+    await coverGenerationStore.saveImage2Config(payload)
+    syncImage2Form()
+    message.success('image2 配置已保存')
+  } catch (error) {
+    message.error(error.message || 'image2 配置保存失败')
+  } finally {
+    image2Saving.value = false
+  }
+}
+
+const testImage2Settings = async () => {
+  const payload = validateImage2Form()
+  if (!payload) return
+  image2Testing.value = true
+  try {
+    const response = await coverGenerationStore.testImage2Config(payload)
+    syncImage2Form()
+    message.success(
+      response.profile?.model_discovered === false
+        ? '中转站可访问，但模型列表未发现该模型，请确认模型 ID'
+        : '中转站与模型验证通过'
+    )
+  } catch (error) {
+    message.error(error.message || 'image2 连接验证失败')
+  } finally {
+    image2Testing.value = false
+  }
+}
+
+onMounted(loadImage2Settings)
+
 const openLink = (url) => {
   window.open(url, '_blank')
 }
@@ -327,6 +484,55 @@ const openLink = (url) => {
     .section-description {
       margin-bottom: 2px;
     }
+  }
+
+  .image2-panel-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+
+    .section-description {
+      margin: 0;
+    }
+  }
+
+  .image2-status {
+    flex-shrink: 0;
+    padding: 3px 8px;
+    border-radius: 999px;
+    color: var(--gray-600);
+    background: var(--gray-100);
+    font-size: 12px;
+    font-weight: 500;
+
+    &[data-status='verified'] {
+      color: var(--color-success-700);
+      background: var(--color-success-50);
+    }
+
+    &[data-status='warning'] {
+      color: var(--color-warning-900);
+      background: var(--color-warning-50);
+    }
+  }
+
+  .setting-help,
+  .image2-capability-message {
+    color: var(--color-text-secondary);
+    font-size: 12px;
+    line-height: 1.5;
+  }
+
+  .image2-capability-message {
+    padding: 10px 12px;
+    border: 1px solid var(--gray-150);
+    border-radius: 6px;
+    background: var(--gray-25);
+  }
+
+  .image2-actions {
+    gap: 8px;
   }
 
   .settings-actions {
@@ -440,6 +646,11 @@ const openLink = (url) => {
   }
 
   @media (max-width: 768px) {
+    .setting-row.two-cols,
+    .image2-panel-header {
+      flex-direction: column;
+    }
+
     .agent-select {
       width: 100%;
     }

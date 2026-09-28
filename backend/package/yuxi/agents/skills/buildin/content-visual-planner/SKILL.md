@@ -1,7 +1,7 @@
 ---
 name: content-visual-planner
 description: 使用已审批内容、已冻结证据和渠道规范制定结构化视觉方案。
-version: 1.7.0
+version: 1.8.0
 ---
 
 # 视觉方案规划
@@ -11,6 +11,7 @@ version: 1.7.0
 - `artifact_version_id` 必须逐字复制 `payload.artifact_version.id`，不得使用内容哈希、任务 ID 或自行生成的 ID。
 - `visual_intent` 必须逐字复制 `payload.required_visual_intent`，不得重新判断或改写；该值已经由服务端依据正文主题锁定。
 - `source_asset_ids` 必须按原顺序逐字复制 `payload.required_source_asset_ids`，不得增加、删减或替换。
+- 当 `payload.runtime_config_snapshot.visual_material.cover_mode=ai` 时，`text` 按固定顺序填写封面文案：`text[0]` 是标题，`text[1]` 是副标题，`text[2]` 起是标签，三类文案都必须非空。标题表达核心主题且不超过 60 字，副标题补充最重要的信息点且不超过 120 字，单个标签不超过 30 字；标签使用简短且有证据的主题词，不添加 `#` 符号。这些文字会逐字交给 image2，不得在其他字段重复一套不同文案。非 AI 封面继续按模板字段约束生成，不新增标签替换文案。
 - `evidence_ids` 只能从 `payload.allowed_visual_evidence_ids` 中选择；该列表为空时必须提交空数组，不得引用仅允许用于标题、正文或风格参考的 Evidence。
 - `media_evidence_items` 中 `selected_for_cover=true` 的图片是用户在素材库中锁定的唯一封面原图；`source_asset_ids` 必须且只能填写该图片的 `id`，不得省略或替换。
 - 图片文件名、素材显示名不是图片内容证据，不得据此识别城市、项目、品牌、人物或场景，也不得由此新增 `risks`。

@@ -27,3 +27,14 @@ def test_visual_material_rejects_invalid_hycanvas_template_id():
             image_item_id="image-1",
             hycanvas_template_id="not-a-template-id",
         )
+
+
+def test_visual_material_accepts_ai_cover_mode_with_single_image():
+    selection = ContentVisualMaterialSelection(
+        cover_mode="ai",
+        image_item_id="image-1",
+    )
+
+    assert selection.cover_mode == "ai"
+    assert selection.image_item_id == "image-1"
+    assert selection.hycanvas_template_id is None

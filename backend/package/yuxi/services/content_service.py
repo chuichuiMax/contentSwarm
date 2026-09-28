@@ -1329,6 +1329,7 @@ async def save_content_brief(
     )
     compiled, missing = compile_content_brief(task=task, template=template, brief=brief)
     selection = brief.visual_material
+    requested_cover_mode = selection.cover_mode if selection else None
     requested_image_item_id = selection.image_item_id if selection else None
     requested_poster_template_id = selection.poster_template_id if selection else None
     requested_hycanvas_template_id = selection.hycanvas_template_id if selection else None
@@ -1339,9 +1340,17 @@ async def save_content_brief(
             "CONTENT_COVER_TEMPLATE_CONFLICT",
             "内置封面与精选封面只能选择其一",
         )
+    if requested_cover_mode == "ai" and (
+        requested_poster_template_id or requested_hycanvas_template_id or requested_featured_cover_template_id
+    ):
+        raise _content_error(
+            422,
+            "CONTENT_AI_COVER_TEMPLATE_CONFLICT",
+            "AI 封面只使用图库原图，不能选择或叠加封面模板",
+        )
     if (
         compile_now
-        and (requested_hycanvas_template_id or requested_featured_cover_template_id)
+        and (requested_cover_mode == "ai" or requested_hycanvas_template_id or requested_featured_cover_template_id)
         and not requested_image_item_id
     ):
         raise _content_error(
@@ -1352,10 +1361,17 @@ async def save_content_brief(
     requested_composition = (
         selection.photo_composition.model_dump() if selection and selection.photo_composition else None
     )
+    if requested_cover_mode == "ai" and requested_composition:
+        raise _content_error(
+            422,
+            "CONTENT_AI_COVER_COMPOSITION_UNSUPPORTED",
+            "AI 封面只支持一张封面原图，不能使用图片组合",
+        )
     current_visual_material = (getattr(task, "brief_json", None) or {}).get("visual_material") or {}
     if task.current_stage != "brief" and (
         task.selected_image_item_id != requested_image_item_id
         or task.selected_poster_template_id != requested_poster_template_id
+        or current_visual_material.get("cover_mode") != requested_cover_mode
         or current_visual_material.get("hycanvas_template_id") != requested_hycanvas_template_id
         or current_visual_material.get("featured_cover_template_id") != requested_featured_cover_template_id
         or current_visual_material.get("photo_composition") != requested_composition
@@ -1372,6 +1388,7 @@ async def save_content_brief(
         or requested_poster_template_id
         or requested_hycanvas_template_id
         or requested_featured_cover_template_id
+        or requested_cover_mode
         else None
     )
     if requested_image_item_id:
@@ -1389,6 +1406,7 @@ async def save_content_brief(
             raise _content_error(422, "CONTENT_IMAGE_ASSET_INVALID", "所选图库图片的文件记录无效")
         await ContentCoverRepository(db).retain_material_use([image_asset.id], owner_uid)
         visual_snapshot = {
+            "cover_mode": requested_cover_mode,
             "image_item_id": image_item.id,
             "image_asset_id": image_asset.id,
             "image_name": image_item.display_name,
@@ -1491,6 +1509,7 @@ async def save_content_brief(
     task.runtime_config_snapshot_json = runtime_snapshot
     compiled["visual_material"] = (
         {
+            "cover_mode": requested_cover_mode,
             "image_item_id": visual_snapshot.get("image_item_id"),
             "image_asset_id": visual_snapshot.get("image_asset_id"),
             "image_name": visual_snapshot.get("image_name"),

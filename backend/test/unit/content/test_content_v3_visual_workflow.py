@@ -10,6 +10,7 @@ import yuxi.agents.toolkits.content.tools as content_tools
 import yuxi.content.control.workflow.agent_node as agent_node_module
 from yuxi.content.control.workflow.agent_node import AgentNodeHandler, AgentNodeResultMapper
 from yuxi.content.control.workflow.external_wait import ExternalWaitNodeHandler
+from yuxi.content_cover.ai_cover_prompt import AI_COVER_PROMPT
 from yuxi.repositories.content_cover_repository import ContentCoverRepository
 from yuxi.storage.postgres.models_content import ContentCoverAsset, ContentCoverJob, ContentNodeRun, ContentTask
 
@@ -328,6 +329,107 @@ async def test_cover_tool_uses_locked_plan_and_persists_event_resume_metadata(mo
         "content.cover.started",
         "content.tool.completed",
     ]
+
+
+@pytest.mark.asyncio
+async def test_cover_tool_routes_ai_mode_to_single_image_image2_copy(monkeypatch):
+    visual_plan = {
+        **_visual_plan(),
+        "text": ["89㎡老房焕新", "收纳与动线细节分析", "旧房改造"],
+        "plan_hash": "a" * 64,
+    }
+    node_input = SimpleNamespace(
+        task_id="task-1",
+        parent_run_id="run-parent",
+        node_id="submit_cover_job",
+    )
+    context = SimpleNamespace(
+        uid="user-1",
+        _content_node_output_contract="CoverJobSubmissionResultV1",
+        _content_node_result_collector=SimpleNamespace(
+            domain_context=SimpleNamespace(
+                visual_plan_hash="a" * 64,
+                allowed_asset_ids=frozenset({"source-1"}),
+            )
+        ),
+        _content_node_input=node_input,
+        _content_node_governance={
+            "locked_values": {
+                "state_version": 7,
+                "visual_plan_hash": "a" * 64,
+                "visual_plan": visual_plan,
+            }
+        },
+    )
+
+    class FakeResult:
+        def scalar_one_or_none(self):
+            return SimpleNamespace(uid="user-1")
+
+    class FakeDB:
+        async def execute(self, query):
+            del query
+            return FakeResult()
+
+    @asynccontextmanager
+    async def fake_session():
+        yield FakeDB()
+
+    async def fake_get_task_for_user(repo, task_id, user):
+        del repo, task_id, user
+        return SimpleNamespace(
+            runtime_config_snapshot_json={
+                "visual_material": {
+                    "cover_mode": "ai",
+                    "image_asset_id": "source-1",
+                }
+            }
+        )
+
+    captured = []
+
+    async def fake_generate(db, user, payload):
+        del db, user
+        captured.append(payload)
+        return {"job": {"id": "ai-job-1", "mode": "image_to_image"}, "deduplicated": False}
+
+    async def fake_event(*args, **kwargs):
+        del args, kwargs
+
+    monkeypatch.setattr(content_tools.pg_manager, "get_async_session_context", fake_session)
+    monkeypatch.setattr(content_tools.ContentRepository, "get_task_for_user", fake_get_task_for_user)
+    monkeypatch.setattr(content_tools, "create_cover_generate_job", fake_generate)
+    monkeypatch.setattr(content_tools, "_emit_content_tool_event", fake_event)
+
+    result = await content_tools.create_content_cover_job.coroutine(
+        task_id="task-1",
+        runtime=SimpleNamespace(context=context),
+    )
+
+    assert result["cover_job_id"] == "ai-job-1"
+    assert result["source_asset_ids"] == ["source-1"]
+    assert len(captured) == 1
+    payload = captured[0]
+    assert payload.mode == "image_to_image"
+    assert payload.source_asset_ids == ["source-1"]
+    assert payload.template_asset_id is None
+    assert payload.title == "89㎡老房焕新"
+    assert payload.subtitle == "收纳与动线细节分析"
+    assert payload.tags == ["旧房改造"]
+    assert payload.render_copy_with_image2 is True
+    assert payload.prompt == AI_COVER_PROMPT
+    assert payload.size == "1080x1440"
+    assert payload.n == 1
+    assert payload.parameters == {
+        "quality": "high",
+        "output_format": "png",
+        "visual_plan_hash": "a" * 64,
+        "workflow_resume": {
+            "parent_run_id": "run-parent",
+            "node_id": "wait_cover_job",
+            "expected_state_version": 7,
+        },
+    }
 
 
 @pytest.mark.asyncio

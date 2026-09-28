@@ -173,6 +173,17 @@ async def test_unified_creation_preserves_inputs_and_existing_request_sequence()
                     await page.locator(".gallery-folder-card").filter(has_text="测试图库").click()
                     await page.locator(".gallery-modal-content .image-choice").filter(has_text="测试素材").click()
                     await page.locator(".gallery-modal-content").get_by_role("button", name="确认选择 （1）").click()
+                    await page.get_by_text("AI 封面", exact=True).click()
+                    await expect(page.get_by_text("使用 image2 智能生成", exact=True)).to_be_visible()
+                    await expect(page.locator(".poster-choice")).to_have_count(0)
+                    await expect(page.locator(".selected-gallery-preview-grid.single")).to_be_visible()
+                    await expect(page.locator(".selected-gallery-preview-card")).to_have_count(1)
+                    await submit.click()
+                    await expect(page.get_by_text("测试简报校验失败", exact=True)).to_be_visible()
+                    await expect(
+                        page.get_by_text("请选择一个封面模板（内置封面或精选封面）", exact=True)
+                    ).to_have_count(0)
+                    await page.get_by_text("内置封面", exact=True).click()
                     covers = page.locator(".poster-choice")
                     await expect(covers.first).to_be_visible(timeout=30000)
                     await covers.first.click()
@@ -197,8 +208,6 @@ async def test_unified_creation_preserves_inputs_and_existing_request_sequence()
                         await expect(page.locator(".poster-choice.selected")).to_have_count(1)
                         await page.locator("#creation-model").fill("ui-test-model")
 
-                    await submit.click()
-                    await expect(page.get_by_text("测试简报校验失败", exact=True)).to_be_visible()
                     await expect(request_input).to_have_value(content)
                     await expect(page.locator(".creation-fields")).not_to_have_attribute("inert", "")
                     async with page.expect_response(lambda response: response.url.endswith("/brief")):
@@ -227,7 +236,9 @@ async def test_unified_creation_preserves_inputs_and_existing_request_sequence()
                     briefs = [payload["brief"] for path, payload in writes if path.endswith("/compile-brief")]
                     assert all(brief["user_request"] == content for brief in briefs)
                     assert all(brief["visual_material"]["image_item_id"] == "ui-image" for brief in briefs)
-                    assert all(brief["visual_material"]["hycanvas_template_id"] for brief in briefs)
+                    assert briefs[0]["visual_material"]["cover_mode"] == "ai"
+                    assert briefs[0]["visual_material"]["hycanvas_template_id"] is None
+                    assert all(brief["visual_material"]["hycanvas_template_id"] for brief in briefs[1:])
                     assert all(
                         payload["model_spec"] == "ui-test-model" for path, payload in writes if path.endswith("/runs")
                     )
