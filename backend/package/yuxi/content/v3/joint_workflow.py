@@ -288,3 +288,36 @@ WORKFLOW_STANDARDIZED_FACTORY["edges"].extend(
         ["validate_composed_content", "semantic_review"],
     ]
 )
+
+
+WORKFLOW_SINGLE_BLUEPRINT = deepcopy(WORKFLOW_STANDARDIZED_FACTORY)
+WORKFLOW_SINGLE_BLUEPRINT.pop("expression_knowledge_policy", None)
+for _route in WORKFLOW_SINGLE_BLUEPRINT["revision_routes"]:
+    if _route["to"] == "generate_content":
+        _route["max_attempts"] = 1
+for _node in WORKFLOW_SINGLE_BLUEPRINT["nodes"]:
+    if _node["id"] in {"generate_content", "semantic_review"}:
+        _node["state_inputs"].remove("expression_guidance")
+    if _node["id"] == "generate_content":
+        _node.update(
+            agent_slug="content-single-blueprint-author",
+            required_skills=["single-blueprint-author"],
+            output_contract="SingleBlueprintResultV1",
+            prompt="根据本篇唯一蓝图和事实组织内容，提交有序正文块。",
+        )
+    elif _node["id"] == "semantic_review":
+        _node.update(
+            agent_slug="content-single-blueprint-reviewer",
+            required_skills=["single-blueprint-reviewer"],
+            prompt="按同一蓝图与事实审核最终组装稿，定位具体问题。",
+        )
+
+# 新候选停用正文模型审核；已发布版本的定义仍由数据库冻结保存。
+WORKFLOW_SINGLE_BLUEPRINT["semantic_review_enabled"] = False
+WORKFLOW_SINGLE_BLUEPRINT["nodes"] = [
+    node for node in WORKFLOW_SINGLE_BLUEPRINT["nodes"] if node["id"] != "semantic_review"
+]
+WORKFLOW_SINGLE_BLUEPRINT["edges"] = [
+    edge for edge in WORKFLOW_SINGLE_BLUEPRINT["edges"] if "semantic_review" not in edge
+]
+WORKFLOW_SINGLE_BLUEPRINT["edges"].append(["validate_composed_content", "human_content_approval"])

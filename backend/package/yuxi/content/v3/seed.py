@@ -856,6 +856,7 @@ async def _activate_v3_seed_data(db: AsyncSession) -> None:
                     select(IndustryTemplateVersion).where(
                         IndustryTemplateVersion.slug == slug,
                         IndustryTemplateVersion.id != template_id,
+                        IndustryTemplateVersion.created_by == "system",
                         IndustryTemplateVersion.status == "published",
                     )
                 )

@@ -22,7 +22,7 @@ def test_research_skill_freezes_forbidden_replacement_map_from_knowledge_base():
 def test_review_skill_blocks_unreplaced_or_invalid_forbidden_terms():
     version, skill_text = _skill_text("content-reviewer")
 
-    assert version == "1.7.0"
+    assert version == "1.13.0"
     assert "rule_kind=forbidden_replacement_map" in skill_text
     assert "逐项复查最终标题、正文和话题" in skill_text
     assert "FACT_CHECK_FAILED" in skill_text

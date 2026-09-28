@@ -372,10 +372,18 @@ def brief_variable_map(brief: dict[str, Any]) -> dict[str, Any]:
     return variables
 
 
-def canonical_brief_facts(brief: dict[str, Any]) -> list[tuple[str, Any, tuple[str, ...]]]:
+def canonical_brief_facts(
+    brief: dict[str, Any], *, derive_numbers: bool = True
+) -> list[tuple[str, Any, tuple[str, ...]]]:
     """仅合并已知同源字段别名；保留冲突值，不把运行配置转换为业务证据。"""
     variables = brief_variable_map(brief)
     controls = {"attachments", "required_terms", "forbidden_terms", "visual_material", "number"}
+    if not derive_numbers:
+        variables.pop("number", None)
+        for section in ("business_variables", "form_values"):
+            if "number" in (brief.get(section) or {}):
+                variables["number"] = brief[section]["number"]
+        controls.remove("number")
     variables = {
         key: value
         for key, value in variables.items()
@@ -391,6 +399,7 @@ def canonical_brief_facts(brief: dict[str, Any]) -> list[tuple[str, Any, tuple[s
         "result": "project_result",
         "pain_points": "owner_pain",
         "advantages": "advantage",
+        "case_background": "project_site",
     }
     grouped: dict[str, tuple[Any, list[str]]] = {}
     original_fields = brief.get("form_values") or {}
@@ -408,7 +417,7 @@ def canonical_brief_facts(brief: dict[str, Any]) -> list[tuple[str, Any, tuple[s
             grouped[canonical][1].append(key)
     text_values = " ".join(str(value) for value, _ in grouped.values())
     numbers = list(dict.fromkeys(re.findall(r"\d+(?:\.\d+)?(?:%|元|天|周|月|年|个|次|㎡)?", text_values)))
-    if numbers:
+    if numbers and derive_numbers:
         grouped["number"] = (numbers, ["number"])
     return [(key, value, tuple(codes)) for key, (value, codes) in grouped.items()]
 

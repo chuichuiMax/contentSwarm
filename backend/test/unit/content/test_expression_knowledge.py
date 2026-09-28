@@ -100,6 +100,11 @@ async def test_expression_knowledge_separates_advantage_evidence_from_style_refe
     assert len(queries) == 3
     assert all("长沙旧房装修报价" in query for query in queries)
 
+    state["runtime_config_snapshot"]["content_rule_bundle"] = {"single_blueprint": {"version": "1.0.0"}}
+    candidate = await deterministic_node.load_expression_knowledge(state)
+    assert candidate["evidence_items"] == []
+    assert len(candidate["expression_guidance"]["sources"]) == 3
+
 
 @pytest.mark.unit
 @pytest.mark.asyncio

@@ -17,8 +17,18 @@ STANDARDIZED_FACTORY_WORKFLOW_V1_ID = "content-workflow-standardized-factory-v1"
 STANDARDIZED_FACTORY_WORKFLOW_V2_ID = "content-workflow-standardized-factory-v2"
 STANDARDIZED_FACTORY_WORKFLOW_V3_ID = "content-workflow-standardized-factory-v3"
 STANDARDIZED_FACTORY_WORKFLOW_ID = "content-workflow-standardized-factory-v4"
+SINGLE_BLUEPRINT_WORKFLOW_ID = "content-workflow-single-blueprint-v4"
+SINGLE_BLUEPRINT_WORKFLOW_IDS = frozenset(
+    {
+        "content-workflow-single-blueprint-v1",
+        "content-workflow-single-blueprint-v2",
+        "content-workflow-single-blueprint-v3",
+        SINGLE_BLUEPRINT_WORKFLOW_ID,
+    }
+)
 MODULAR_WORKFLOW_IDS = frozenset(
     {
+        *SINGLE_BLUEPRINT_WORKFLOW_IDS,
         MODULAR_WORKFLOW_ID,
         EXPRESSION_GUIDANCE_WORKFLOW_ID,
         DETERMINISTIC_PLAN_WORKFLOW_ID,
@@ -140,7 +150,7 @@ def _topic_candidates(content_brief: dict[str, Any]) -> list[str]:
     return list(dict.fromkeys(candidates))
 
 
-def build_modular_rule_bundle(content_brief: dict[str, Any]) -> dict[str, Any]:
+def build_modular_rule_bundle(content_brief: dict[str, Any], *, single_blueprint: bool = False) -> dict[str, Any]:
     """从各 Skill 的规则文件编译紧凑快照，供生成、审核和硬校验共同读取。"""
 
     modules: list[dict[str, Any]] = []
@@ -167,6 +177,25 @@ def build_modular_rule_bundle(content_brief: dict[str, Any]) -> dict[str, Any]:
         "runtime_rules": runtime_rules,
         "topic_candidates": _topic_candidates(content_brief),
     }
+    if single_blueprint:
+        snapshot["single_blueprint"] = json.loads(
+            (_SKILL_ROOT / "single-blueprint-author/references/policy.json").read_text()
+        )
+        snapshot["bundle_version"] = "single-blueprint-v1"
+        snapshot["modules"] = [
+            {
+                "slug": slug,
+                "version": snapshot["single_blueprint"]["version"],
+                "content_hash": _skill_content_hash(slug),
+                "instructions": (_SKILL_ROOT / slug / "SKILL.md").read_text().split("---", 2)[2].strip(),
+            }
+            for slug in ("single-blueprint-author", "single-blueprint-reviewer")
+        ]
+        snapshot["runtime_rules"] = {
+            key: runtime_rules[key] for key in ("viral-author-core", "viral-platform-expression", "viral-topic-author")
+        }
+        snapshot["runtime_rules"]["viral-layout-expression"] = snapshot["single_blueprint"].get("layout", {})
+        snapshot["active_rule_ids"] = []
     canonical = json.dumps(snapshot, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return {**snapshot, "bundle_hash": hashlib.sha256(canonical.encode()).hexdigest()}
 
@@ -216,6 +245,13 @@ def requires_persona_review(payload: dict[str, Any]) -> bool:
 def required_review_codes(payload: dict[str, Any]) -> tuple[str, ...]:
     """返回当前审核契约要求模型逐项提交的完整 code 清单。"""
 
+    bundle = (
+        (payload.get("production_pack") or {}).get("content_rule_bundle")
+        or (payload.get("runtime_config_snapshot") or {}).get("content_rule_bundle")
+        or {}
+    )
+    if codes := (bundle.get("single_blueprint") or {}).get("review_codes"):
+        return tuple(codes)
     strategy = payload.get("strategy_snapshot") or {}
     expression_policy = payload.get("expression_policy") or (
         (payload.get("production_pack") or {}).get("expression_policy") or {}

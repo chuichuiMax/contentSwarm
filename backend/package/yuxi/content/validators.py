@@ -167,10 +167,14 @@ def validate_content(
     brief: dict[str, Any],
     evidence_bundle: dict[str, Any],
     strategy: dict[str, Any],
+    title_publication_year: str | None = None,
 ) -> dict[str, Any]:
     checks: list[dict[str, Any]] = []
     combined = f"{title}\n{body}\n{' '.join(topics)}"
-    for number in unsupported_number_tokens(combined, evidence_bundle):
+    allowed_year_tokens = {title_publication_year, f"{title_publication_year}年"} if title_publication_year else set()
+    unsupported = set(unsupported_number_tokens(title, evidence_bundle)) - allowed_year_tokens
+    unsupported.update(unsupported_number_tokens(f"{body}\n{' '.join(topics)}", evidence_bundle))
+    for number in sorted(unsupported):
         checks.append(
             {
                 "code": "FACT_NUMBER_WITHOUT_SOURCE",
@@ -302,8 +306,11 @@ def validate_modular_content(
         )
 
     platform_rules = rules.get("viral-platform-expression") or {}
-    combined = f"{title}\n{body}"
-    residual_terms = [term for term in (platform_rules.get("forbidden_replacements") or {}) if term in combined]
+    combined = "\n".join([title, body, *topics])
+    forbidden = (platform_rules.get("forbidden_lexicon") or {}).get("alternatives")
+    if forbidden is None:
+        forbidden = platform_rules.get("forbidden_replacements") or {}
+    residual_terms = [term for term in forbidden if term in combined]
     if residual_terms:
         checks.append(
             {
@@ -370,8 +377,12 @@ def validate_modular_content(
                 "evidence_ids": [],
             }
         )
-    max_paragraph_chars = int(layout_rules.get("max_paragraph_chars") or 160)
-    long_paragraphs = [part for part in re.split(r"\n\s*\n", body) if len(part.strip()) > max_paragraph_chars]
+    max_paragraph_chars = layout_rules.get("max_paragraph_chars", 160)
+    long_paragraphs = [
+        part
+        for part in re.split(r"\n\s*\n", body)
+        if max_paragraph_chars is not None and len(part.strip()) > int(max_paragraph_chars)
+    ]
     if long_paragraphs:
         checks.append(
             {

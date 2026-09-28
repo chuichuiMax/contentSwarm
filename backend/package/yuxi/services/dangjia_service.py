@@ -346,7 +346,11 @@ def build_dangjia_brief(
     return ContentBriefPayload(
         brand={"name": ""},
         audience=[],
-        persona={"description": build_persona_description(payload.persona)},
+        persona={
+            "description": build_persona_description(payload.persona),
+            "tone": payload.persona.tone,
+            "structured": payload.persona.model_dump(mode="json"),
+        },
         form_values=build_dangjia_form_values(payload),
         visual_material=visual_material,
     )

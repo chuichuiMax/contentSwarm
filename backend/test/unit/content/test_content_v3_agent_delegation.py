@@ -1180,8 +1180,10 @@ def test_parallel_research_agents_receive_only_their_knowledge_scope(node_id, ex
 
 
 def test_formal_content_agent_catalog_and_conflict_policy():
-    assert len(CONTENT_AGENT_SPECS) == 17
+    assert len(CONTENT_AGENT_SPECS) == 19
     assert {item.slug for item in CONTENT_AGENT_SPECS} == {
+        "content-single-blueprint-author",
+        "content-single-blueprint-reviewer",
         "content-fact-extraction-agent",
         "content-strategy-agent",
         "content-research-agent",

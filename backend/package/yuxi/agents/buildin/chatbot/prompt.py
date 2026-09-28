@@ -54,6 +54,9 @@ TODO_MID_PROMPT = """
 
 
 def build_prompt_with_context(context):
+    node_input = getattr(context, "_content_node_input", None)
+    if getattr(node_input, "input_contract", None) == "SingleBlueprintPromptV1":
+        return (context.system_prompt or "").strip()
     current_date = f"当前日期：{shanghai_now().strftime('%Y-%m-%d')}"
     system_prompt = f"{current_date}\n\n{PROMPT.strip()}\n\n{context.system_prompt or ''}"
     return system_prompt.strip()

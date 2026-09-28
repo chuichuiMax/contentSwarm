@@ -235,6 +235,26 @@ CONTENT_AGENT_SPECS = (
         skill_tools=("create_content_cover_job",),
         config_version=4,
     ),
+    ContentAgentSpec(
+        slug="content-single-blueprint-author",
+        name="单蓝图内容创作智能体",
+        description="根据唯一蓝图与事实创作",
+        skills=("single-blueprint-author",),
+        inherit_context_from="content-viral-generation-agent",
+        reasoning_effort="medium",
+        model_call_timeout_seconds=120,
+        model_retry_times=0,
+    ),
+    ContentAgentSpec(
+        slug="content-single-blueprint-reviewer",
+        name="单蓝图内容审核智能体",
+        description="同一规则验收",
+        skills=("single-blueprint-reviewer",),
+        inherit_context_from="content-viral-review-agent",
+        reasoning_effort="medium",
+        model_call_timeout_seconds=120,
+        model_retry_times=0,
+    ),
 )
 
 LEGACY_CONTENT_AGENT_NAMES = {
@@ -475,6 +495,7 @@ async def ensure_content_v3_agents(db: AsyncSession) -> tuple[Agent, ...]:
             updated_at=now,
         )
         db.add(item)
+        existing_by_slug[spec.slug] = item
         result.append(item)
     await db.flush()
     return tuple(result)

@@ -11,9 +11,10 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from yuxi.content.control.evidence import EvidenceApplicationService
 from yuxi.content.control.errors import ContentApplicationError
+from yuxi.content.control.evidence import EvidenceApplicationService
 from yuxi.content.control.strategy.recommend_v3 import StrategyPreviewActor
+from yuxi.content.industry_matrix import resolve_industry_formula
 from yuxi.content.infrastructure.postgres.decision_snapshot_repository import PostgresDecisionSnapshotRepository
 from yuxi.content.infrastructure.postgres.strategy_preview_repository import PostgresStrategyPreviewRepository
 from yuxi.content.model.contracts import ContractDomainContext, StrategySnapshotV1, validate_content_node_result
@@ -30,6 +31,12 @@ from yuxi.content.model.formulas.selector import (
     FormulaSelectionRequest,
     FormulaSelector,
 )
+from yuxi.content.model.locked_blocks import (
+    QUOTE_RENDER_POLICIES,
+    compose_after_opening_paragraph,
+    extract_locked_quote_block,
+    quote_body_limits,
+)
 from yuxi.content.model.materials import (
     MaterialRequirementManifestV1,
     ProductionOrderV1,
@@ -38,24 +45,18 @@ from yuxi.content.model.materials import (
     standardize_evidence_materials,
     validate_material_gate,
 )
-from yuxi.content.model.locked_blocks import (
-    QUOTE_RENDER_POLICIES,
-    compose_after_opening_paragraph,
-    extract_locked_quote_block,
-    quote_body_limits,
-)
 from yuxi.content.model.rules.engine import CombinationMatcher, MatchRequest
 from yuxi.content.rules import brief_variable_map, canonical_brief_facts
-from yuxi.content.validation import ComplianceEngine, validate_numeric_evidence_coverage
-from yuxi.content.validators import validate_content, validate_modular_content
+from yuxi.content.v3.modular_rules import SINGLE_BLUEPRINT_WORKFLOW_IDS
 from yuxi.content.v3.body_calling import get_decoration_body_calling, get_decoration_body_calling_source
-from yuxi.content.industry_matrix import resolve_industry_formula
 from yuxi.content.v3.formula_lexicons import get_formula_lexicon_requirements
 from yuxi.content.v3.title_formula_slots import (
     enrich_decoration_title_formula,
     required_title_lexicon_codes,
     title_formula_slot_schema,
 )
+from yuxi.content.validation import ComplianceEngine, validate_numeric_evidence_coverage
+from yuxi.content.validators import validate_content, validate_modular_content
 from yuxi.services.run_queue_service import append_run_stream_event
 from yuxi.storage.postgres.models_content import ContentFormula, ContentTask, CreationMethod, TitleFormula
 from yuxi.storage.postgres.models_knowledge import KnowledgeBase, KnowledgeChunk, KnowledgeFile
@@ -313,6 +314,9 @@ def _required_title_fact_options(
             for variable_code in binding.get("variable_codes") or []:
                 options_by_variable.setdefault(str(variable_code), []).append(term)
 
+    title_policy = ((production_pack or {}).get("content_rule_bundle") or {}).get("single_blueprint") or {}
+    if title_policy.get("title_styles", {}).get(strategy_snapshot.get("content_direction")) == "local_labor_standard":
+        return {"location（地域）": tuple(dict.fromkeys(options_by_variable["location"]))}
     if not slots:
         return {
             code: tuple(dict.fromkeys(options_by_variable.get(code) or []))
@@ -566,6 +570,11 @@ def _advantage_formula_section(strategy_snapshot: dict[str, Any]) -> str:
 async def load_expression_knowledge(state: dict[str, Any]) -> dict[str, Any]:
     """并行检索 V5 绑定资料，并将事实与纯表达参考分开冻结。"""
 
+    blueprint_policy = ((state.get("runtime_config_snapshot") or {}).get("content_rule_bundle") or {}).get(
+        "single_blueprint"
+    ) or {}
+    if blueprint_policy.get("skip_expression_knowledge"):
+        return {"evidence_items": [], "citations": [], "expression_guidance": None}
     policy = (state.get("runtime_config_snapshot") or {}).get("expression_knowledge_policy") or {}
     sources = policy.get("sources") or []
     if not sources:
@@ -636,7 +645,9 @@ async def load_expression_knowledge(state: dict[str, Any]) -> dict[str, Any]:
     body_formula_code = str((strategy_snapshot.get("body_formula") or {}).get("code") or "")
     formula_section = _advantage_formula_section(strategy_snapshot)
     for source in loaded:
-        if source["usage"] == "body_evidence":
+        if source["usage"] == "body_evidence" and not (
+            (state.get("runtime_config_snapshot") or {}).get("content_rule_bundle") or {}
+        ).get("single_blueprint"):
             for chunk in source["chunks"]:
                 source_hash = hashlib.sha256(chunk["content"].encode("utf-8")).hexdigest()
                 evidence_key = f"{source['kb_id']}:{chunk['chunk_id']}:{source_hash}"
@@ -826,13 +837,17 @@ class V3DeterministicNodeHandler:
             raise ContentApplicationError("LOCKED_QUOTE_BLOCK_INTEGRITY_FAILED", str(exc), "invalid") from exc
         if locked_quote is not None:
             limits = quote_body_limits(
-                {"channel_profile": state.get("channel_profile") or {}},
+                {
+                    "channel_profile": state.get("channel_profile") or {},
+                    "content_rule_bundle": (state.get("runtime_config_snapshot") or {}).get("content_rule_bundle")
+                    or {},
+                },
                 locked_quote["rendered_content"],
             )
             if limits["creative_body_max_chars"] < limits["creative_body_min_chars"]:
                 raise ContentApplicationError(
                     "LOCKED_QUOTE_BLOCK_TOO_LONG",
-                    "报价原文超过渠道正文容量，无法保留至少 200 字的创作空间",
+                    f"报价原文超过渠道正文容量，无法保留至少 {limits['creative_body_min_chars']} 字的创作空间",
                     "invalid",
                 )
         references = [item for item in materials if item.material_type == "viral_reference"]
@@ -854,10 +869,13 @@ class V3DeterministicNodeHandler:
             if str(entry.get("code") or "").strip()
         }
         required_title_codes = required_title_lexicon_codes(strategy_title_formula)
+        single_blueprint = ((state.get("runtime_config_snapshot") or {}).get("content_rule_bundle") or {}).get(
+            "single_blueprint"
+        )
         unresolved = [
             code
             for code in lexicon_constraints["unresolved_fact_bound_codes"]
-            if code not in title_lexicon_codes or code in required_title_codes
+            if code in required_title_codes or (not single_blueprint and code not in title_lexicon_codes)
         ]
         if unresolved:
             raise ContentApplicationError(
@@ -874,12 +892,43 @@ class V3DeterministicNodeHandler:
     async def _freeze_production_pack(*, db: AsyncSession, state: dict[str, Any], node_run_id: str) -> dict[str, Any]:
         del db, node_run_id
         try:
-            runtime = state.get("runtime_config_snapshot") or {}
+            runtime = deepcopy(state.get("runtime_config_snapshot") or {})
+            bundle = runtime.get("content_rule_bundle") or {}
+            lexicon_name = (bundle.get("single_blueprint") or {}).get("forbidden_knowledge_base")
+            if lexicon_name:
+                from yuxi.content.model.forbidden_words import replace_forbidden_words
+                from yuxi.services.content_forbidden_words_service import load_forbidden_words
+
+                snapshot = await load_forbidden_words(state["uid"], lexicon_name)
+                platform = bundle["runtime_rules"]["viral-platform-expression"]
+                platform["forbidden_lexicon"] = snapshot
+                platform["forbidden_replacements"] = {
+                    term: alternatives[0] for term, alternatives in snapshot["alternatives"].items() if alternatives
+                }
+                bundle["topic_candidates"] = list(
+                    dict.fromkeys(
+                        replace_forbidden_words(topic, platform["forbidden_replacements"])
+                        for topic in bundle.get("topic_candidates") or []
+                        if not any(term in topic for term, values in snapshot["alternatives"].items() if not values)
+                    )
+                )
+                bundle["bundle_hash"] = hashlib.sha256(
+                    json.dumps(
+                        {key: value for key, value in bundle.items() if key != "bundle_hash"},
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ).encode()
+                ).hexdigest()
             brief = state.get("content_brief") or {}
             writing_request = (
                 _display_business_value(brief.get("user_request") or brief_variable_map(brief).get("user_request"))
                 or None
             )
+            if (runtime.get("content_rule_bundle", {}).get("single_blueprint") or {}).get(
+                "full_context_repair"
+            ) and writing_request:
+                writing_request = writing_request.removesuffix("；标题价格与报价明细已作为锁定事实保存。")
             pack = freeze_production_pack(
                 task_id=state["task_id"],
                 production_order=ProductionOrderV1.model_validate(state["production_order"]),
@@ -899,7 +948,7 @@ class V3DeterministicNodeHandler:
             )
         except (KeyError, ValueError) as exc:
             raise ContentApplicationError("PRODUCTION_PACK_INVALID", str(exc), "invalid") from exc
-        return {"production_pack": pack.model_dump(mode="json")}
+        return {"production_pack": pack.model_dump(mode="json"), "runtime_config_snapshot": runtime}
 
     @staticmethod
     async def _compose_locked_quote_block(
@@ -941,7 +990,12 @@ class V3DeterministicNodeHandler:
                 "invalid",
             )
         try:
-            composed_body = compose_after_opening_paragraph(creative_body, rendered)
+            if draft.get("blueprint_content"):
+                composed_body = "\n\n".join(
+                    rendered if b["kind"] == "quote_ref" else b["text"] for b in draft["blueprint_content"]["blocks"]
+                )
+            else:
+                composed_body = compose_after_opening_paragraph(creative_body, rendered)
         except ValueError as exc:
             raise ContentApplicationError("LOCKED_QUOTE_BLOCK_INTEGRITY_FAILED", str(exc), "invalid") from exc
         draft["body"] = composed_body
@@ -959,6 +1013,8 @@ class V3DeterministicNodeHandler:
         channel_result = deepcopy(state.get("channel_result") or {})
         if channel_result:
             channel_result["body"] = composed_body
+            if locked_quote.get("replacement_diffs"):
+                channel_result.setdefault("replacement_diffs", []).extend(locked_quote["replacement_diffs"])
         return {
             "creative_content_draft": creative_draft,
             "content_draft": draft,
@@ -973,7 +1029,9 @@ class V3DeterministicNodeHandler:
                 "rendered_char_count": len(rendered),
                 "creative_body_hash": hashlib.sha256(creative_body.encode("utf-8")).hexdigest(),
                 "final_body_hash": hashlib.sha256(composed_body.encode("utf-8")).hexdigest(),
-                "insertion_policy": locked_quote["insertion_policy"],
+                "insertion_policy": "agent-ordered-reference-v1"
+                if draft.get("blueprint_content")
+                else locked_quote["insertion_policy"],
             },
         }
 
@@ -1033,6 +1091,21 @@ class V3DeterministicNodeHandler:
                     "code": "COMPOSED_CONTENT_COMPLIANCE_FAILED",
                     "level": "error",
                     "message": "合成后全文命中阻断或自动替换规则；锁定报价原文禁止自动修改",
+                }
+            )
+        platform = (production_pack.get("content_rule_bundle", {}).get("runtime_rules") or {}).get(
+            "viral-platform-expression", {}
+        )
+        combined = "\n".join(
+            [str((state.get("selected_title") or {}).get("text") or ""), body, *draft.get("topics", [])]
+        )
+        residual = [term for term in platform.get("forbidden_lexicon", {}).get("alternatives", {}) if term in combined]
+        if residual:
+            checks.append(
+                {
+                    "code": "CONTENT_FORBIDDEN_TERM",
+                    "level": "error",
+                    "message": "合成后仍有封禁词：" + "、".join(residual),
                 }
             )
         if checks:
@@ -1502,7 +1575,10 @@ class V3DeterministicNodeHandler:
         from yuxi.content.v3.modular_rules import MODULAR_WORKFLOW_IDS, build_modular_rule_bundle
 
         if task.workflow_version_id in MODULAR_WORKFLOW_IDS:
-            runtime["content_rule_bundle"] = build_modular_rule_bundle(state.get("content_brief") or {})
+            runtime["content_rule_bundle"] = build_modular_rule_bundle(
+                state.get("content_brief") or {},
+                single_blueprint=task.workflow_version_id in SINGLE_BLUEPRINT_WORKFLOW_IDS,
+            )
         workflow = await repo.get_workflow(task.workflow_version_id)
         expression_policy = (
             deepcopy((workflow.definition_json or {}).get("expression_knowledge_policy")) if workflow else None
@@ -1533,7 +1609,12 @@ class V3DeterministicNodeHandler:
     async def _normalize_evidence(self, *, db: AsyncSession, state: dict[str, Any], node_run_id: str) -> dict[str, Any]:
         del node_run_id
         items: list[EvidenceItemV1] = []
-        for key, value, variable_codes in canonical_brief_facts(state["content_brief"]):
+        single_blueprint = bool(
+            (state.get("runtime_config_snapshot", {}).get("content_rule_bundle") or {}).get("single_blueprint")
+        )
+        for key, value, variable_codes in canonical_brief_facts(
+            state["content_brief"], derive_numbers=not single_blueprint
+        ):
             if value in (None, "", [], {}):
                 continue
             source_hash = hashlib.sha256(
@@ -1550,6 +1631,11 @@ class V3DeterministicNodeHandler:
                     verified_status="user_confirmed",
                     allowed_usage=("title", "body", "visual"),
                     source_hash=source_hash,
+                    metadata={
+                        "locator": (state["content_brief"].get("fact_source_paths") or {}).get(
+                            key, f"content_brief.{key}"
+                        )
+                    },
                 )
             )
         derived_scene = _derive_scene_evidence(state["task_id"], state["content_brief"])
@@ -2289,34 +2375,84 @@ class V3DeterministicNodeHandler:
         del db, node_run_id
         draft = dict(state.get("content_draft") or {})
         title = dict(state.get("selected_title") or {})
+        blueprint = deepcopy(draft.get("blueprint_content"))
+        policies = state.get("compliance_policies") or []
+        block_results = []
+        if blueprint:
+            # 有序块是创作正文的唯一来源，合规替换直接落到块上，不能在报价组装时恢复旧文字。
+            for block in blueprint["blocks"]:
+                if block["kind"] == "text":
+                    adapted = ComplianceEngine().validate_and_adapt(
+                        title="", body=block["text"], topics=[], channel_profile={}, policies=policies
+                    )
+                    block["text"] = adapted["body"]
+                    for item in [*adapted["checks"], *adapted["replacement_diffs"]]:
+                        item["location"] = block["id"]
+                    block_results.append(adapted)
+            draft["body"] = "\n\n".join(b["text"] for b in blueprint["blocks"] if b["kind"] == "text")
+            title_result = ComplianceEngine().validate_and_adapt(
+                title=title.get("text", ""), body="", topics=[], channel_profile={}, policies=policies
+            )
+            title["text"] = title_result["title"]
+            block_results.append(title_result)
+        channel_profile = deepcopy(state.get("channel_profile") or {})
+        blueprint_policy = ((state.get("production_pack") or {}).get("content_rule_bundle") or {}).get(
+            "single_blueprint"
+        ) or {}
+        if blueprint_policy.get("full_context_repair"):
+            channel_profile.setdefault("body_constraints", {})["min_length"] = 0
         result = ComplianceEngine().validate_and_adapt(
             title=title.get("text", ""),
             body=draft.get("body", ""),
             topics=draft.get("topics") or [],
-            channel_profile=state.get("channel_profile") or {},
-            policies=state.get("compliance_policies") or [],
+            channel_profile=channel_profile,
+            policies=[] if blueprint else policies,
         )
-        rule_bundle = (state.get("runtime_config_snapshot") or {}).get("content_rule_bundle") or {}
+        for adapted in block_results:
+            result["checks"].extend(adapted["checks"])
+            result["replacement_diffs"].extend(adapted["replacement_diffs"])
+        if block_results:
+            result["status"] = (
+                "blocked"
+                if any(c["level"] == "error" for c in result["checks"])
+                else "warning"
+                if result["checks"] or result["replacement_diffs"]
+                else "passed"
+            )
+        rule_bundle = (
+            (state.get("production_pack") or {}).get("content_rule_bundle")
+            or (state.get("runtime_config_snapshot") or {}).get("content_rule_bundle")
+            or {}
+        )
         platform_rules = (rule_bundle.get("runtime_rules") or {}).get("viral-platform-expression") or {}
-        for source, replacement in sorted(
-            (platform_rules.get("forbidden_replacements") or {}).items(),
-            key=lambda item: len(item[0]),
-            reverse=True,
-        ):
-            for location in ("title", "body"):
-                before = result[location]
-                after = before.replace(source, replacement)
-                if after == before:
-                    continue
+        from yuxi.content.model.forbidden_words import replace_forbidden_words
+
+        replacements = platform_rules.get("forbidden_replacements") or {}
+        for location in ("title", "body", "topics"):
+            before = result[location]
+            after = (
+                [replace_forbidden_words(topic, replacements) for topic in before]
+                if location == "topics"
+                else replace_forbidden_words(before, replacements)
+            )
+            if after != before:
                 result[location] = after
                 result["replacement_diffs"].append(
                     {
                         "location": location,
                         "before": before,
                         "after": after,
-                        "rule_id": "viral-platform-expression.v1",
+                        "rule_id": (platform_rules.get("forbidden_lexicon") or {}).get("snapshot_hash")
+                        or "viral-platform-expression.v1",
                     }
                 )
+        if blueprint:
+            blueprint["title"]["text"] = result["title"]
+            blueprint["topics"] = result["topics"]
+            for block in blueprint["blocks"]:
+                if block["kind"] == "text":
+                    block["text"] = replace_forbidden_words(block["text"], replacements)
+            draft["blueprint_content"] = blueprint
         title["text"] = result["title"]
         draft["body"] = result["body"]
         draft["topics"] = result["topics"]
@@ -2337,12 +2473,16 @@ class V3DeterministicNodeHandler:
         draft = state.get("content_draft") or {}
         body = draft.get("body", "")
         production_pack = state.get("production_pack") or {}
+        blueprint_policy = production_pack.get("content_rule_bundle", {}).get("single_blueprint") or {}
+        from yuxi.content.model.single_blueprint import title_publication_year
+
         report = validate_content(
             title=(state.get("selected_title") or {}).get("text", ""),
             body=body,
             topics=draft.get("topics") or [],
             brief=state["content_brief"],
             evidence_bundle=state["evidence_bundle"],
+            title_publication_year=title_publication_year(production_pack),
             strategy={
                 "methods": (state.get("strategy_snapshot") or {}).get("creation_methods"),
                 "title_formula_code": ((state.get("strategy_snapshot") or {}).get("title_formula") or {}).get("code"),
@@ -2350,8 +2490,12 @@ class V3DeterministicNodeHandler:
             },
         )
         locked_quote = extract_locked_quote_block(production_pack) if production_pack else None
-        body_minimum = 200
-        body_maximum = 650
+        body_minimum = (production_pack.get("content_rule_bundle", {}).get("single_blueprint") or {}).get(
+            "creative_min_chars", 200
+        )
+        body_maximum = blueprint_policy.get("creative_max_chars", 650) or production_pack["channel_profile"][
+            "body_constraints"
+        ].get("max_length", 1000)
         if locked_quote is not None:
             limits = quote_body_limits(production_pack, locked_quote["rendered_content"])
             body_minimum = limits["creative_body_min_chars"]
@@ -2568,7 +2712,11 @@ class V3DeterministicNodeHandler:
                 and item.get("metadata", {}).get("material_type")
                 not in {"viral_example", "platform_rule", "compliance_rule", "forbidden_terms"}
             }
-        if knowledge_body_evidence and not used_body_evidence.intersection(knowledge_body_evidence):
+        if (
+            not blueprint_policy
+            and knowledge_body_evidence
+            and not used_body_evidence.intersection(knowledge_body_evidence)
+        ):
             report["checks"].append(
                 {
                     "code": "KNOWLEDGE_EVIDENCE_UNUSED",
@@ -2621,7 +2769,7 @@ class V3DeterministicNodeHandler:
             and mapping.get("required", True)
             and not used_body_evidence.intersection(mapping.get("evidence_ids") or [])
         ]
-        if missing_product_slots:
+        if not blueprint_policy and missing_product_slots:
             report["checks"].append(
                 {
                     "code": "BODY_PRODUCT_EVIDENCE_NOT_USED",
@@ -2632,6 +2780,55 @@ class V3DeterministicNodeHandler:
                 }
             )
             report["status"] = "blocked"
+        if blueprint_policy.get("full_context_repair"):
+            # 对最终可见全文检查词语；锁定报价尚未插入时也不能漏检或误报。
+            combined = "\n".join(
+                [
+                    (state.get("selected_title") or {}).get("text", ""),
+                    body,
+                    *(draft.get("topics") or []),
+                    locked_quote["rendered_content"] if locked_quote else "",
+                ]
+            )
+            report["checks"] = [c for c in report["checks"] if c["code"] != "CONTENT_REQUIRED_TERM_MISSING"]
+            for code, terms, should_contain in (
+                ("CONTENT_REQUIRED_TERM_MISSING", state["content_brief"].get("required_terms") or [], True),
+                ("CONTENT_FORBIDDEN_TERM", state["content_brief"].get("forbidden_terms") or [], False),
+            ):
+                for term in terms:
+                    if term and (term in combined) != should_contain:
+                        report["checks"].append(
+                            {
+                                "code": code,
+                                "level": "error",
+                                "location": "content",
+                                "message": f"最终稿{'缺少要求词' if should_contain else '含禁用词'}：{term}",
+                                "evidence_ids": [],
+                            }
+                        )
+            if locked_quote and not blueprint_policy.get("allow_price_anchor"):
+                amounts = set(re.findall(r"\d+(?:\.\d+)?(?=\s*元)", locked_quote["original_content"].replace(",", "")))
+                for block in draft.get("blueprint_content", {}).get("blocks", []):
+                    if block["kind"] != "text":
+                        continue
+                    repeated = amounts & set(re.findall(r"\d+(?:\.\d+)?(?=\s*元)", block["text"].replace(",", "")))
+                    if repeated:
+                        report["checks"].append(
+                            {
+                                "code": "QUOTE_AMOUNT_REPEATED",
+                                "level": "error",
+                                "location": block["id"],
+                                "message": "原创正文重复报价金额：" + "、".join(sorted(repeated)),
+                                "evidence_ids": [],
+                            }
+                        )
+            report["status"] = (
+                "blocked"
+                if any(c["level"] == "error" for c in report["checks"])
+                else "warning"
+                if report["checks"]
+                else "passed"
+            )
         return {"validation_report": report}
 
     @staticmethod

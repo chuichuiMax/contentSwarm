@@ -428,7 +428,11 @@ class AgentNodeHandler:
         if node["id"] == "submit_cover_job":
             locked_values["visual_plan"] = state.get("visual_plan") or {}
         assembly = ContentNodeInputAssembler.build(node=node, state=assembly_state)
-        if node["id"] == "generate_content" and state.get("production_pack"):
+        if (
+            node["id"] == "generate_content"
+            and state.get("production_pack")
+            and not content_rule_bundle.get("single_blueprint")
+        ):
             from yuxi.content.control.workflow.revision import build_generation_repair_constraints
 
             locked_values["generation_repair_constraints"] = build_generation_repair_constraints(assembly.payload)
@@ -496,6 +500,29 @@ class AgentNodeHandler:
                     )
                 ),
             )
+        if content_rule_bundle.get("single_blueprint") and node["id"] in {"generate_content", "semantic_review"}:
+            from yuxi.content.v3.modular_rules import required_review_codes
+
+            blueprint_input = {
+                **assembly.payload,
+                "production_pack": state["production_pack"],
+                "evidence_bundle": evidence_bundle,
+                "content_brief": state["content_brief"],
+                "required_review_codes": list(required_review_codes(state)),
+            }
+            domain_context = replace(domain_context, single_blueprint_input=blueprint_input)
+            if content_rule_bundle["single_blueprint"].get("review_codes"):
+                domain_context = replace(
+                    domain_context,
+                    require_emoji_review=False,
+                    require_persona_review=False,
+                    require_composition_review=False,
+                    required_modular_review_codes=tuple(required_review_codes(state))
+                    if node["id"] == "semantic_review"
+                    else (),
+                )
+            if node["id"] == "generate_content" and generation_draft:
+                node = {**node, "output_contract": "SingleBlueprintPatchV1"}
         required_skills = tuple(node["required_skills"])
         if node["id"] == "generate_content" and "viral-author-core" in required_skills:
             from yuxi.content.v3.modular_rules import select_modular_generation_skills
@@ -506,6 +533,12 @@ class AgentNodeHandler:
         if node["output_contract"] in {"JointStrategyDecisionV1", "JointStrategyDecisionV2"}:
             domain_context = replace(domain_context, joint_strategy_input=assembly.payload)
             required_skills = (*required_skills, state["strategy_candidates"]["selection_skill"])
+        prohibited_actions = PROHIBITED_ACTIONS.get(node["id"], ())
+        if domain_context.single_blueprint_input and node["id"] == "generate_content":
+            prohibited_actions = (
+                "不检索网页或知识库",
+                "不改写接口数字、项目参数、身份资质与报价范围；普通经历和情境按 narrative_policy 创作",
+            )
         delegation = AgentDelegationService(db)
         delegated = await delegation.execute(
             AgentDelegationRequest(
@@ -539,7 +572,7 @@ class AgentNodeHandler:
                 max_knowledge_bases=int(node.get("max_knowledge_bases") or 0),
                 max_chunks_per_knowledge_base=int(node.get("max_chunks_per_knowledge_base") or 0),
                 max_chars_per_knowledge_chunk=int(node.get("max_chars_per_knowledge_chunk") or 0),
-                prohibited_actions=PROHIBITED_ACTIONS.get(node["id"], ()),
+                prohibited_actions=prohibited_actions,
                 model_spec=state.get("model_spec"),
             )
         )
