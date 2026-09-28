@@ -586,7 +586,8 @@ provide('settingsModal', {
       <keep-alive v-if="route.meta.keepAlive !== false">
         <component :is="Component" />
       </keep-alive>
-      <component :is="Component" v-else />
+      <!-- 同组件多路由（如 /content/new 与 /content/tasks/:id）必须按 path 强制重建，否则 onMounted 不跑、创建任务后仍停在新建页 -->
+      <component :is="Component" v-else :key="route.path" />
     </router-view>
 
     <!-- Debug Modal -->

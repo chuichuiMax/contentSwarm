@@ -74,6 +74,7 @@ const userStore = useUserStore()
 
 const stage = ref(1)
 const creationSubmitting = ref(false)
+const creatingTask = ref(false)
 const isCreationView = computed(
   () =>
     stage.value === 1 ||
@@ -1628,12 +1629,35 @@ watch(
   { immediate: true }
 )
 
-watch(taskId, () => {
+watch(taskId, async (id, previousId) => {
   window.clearTimeout(workflowNarrativeTimer)
   followWorkflowOutput.value = true
   accumulatedWorkflowNarrative.value = []
   streamedWorkflowNarrative.value = ''
   workflowStrategyNarrativeAnchor.value = null
+  if (id === previousId) return
+  // 路由组件被复用时补一次同步；有 :key=path 时主要由 remount 的 onMounted 处理。
+  if (!id) {
+    if (previousId) await initializeCreationView()
+    return
+  }
+  if (store.task?.id === id) {
+    stage.value = stageFromTask(store.task)
+    return
+  }
+  try {
+    await store.loadTask(id)
+    creation.industry_template_id = store.template?.id || ''
+    creation.content_goal = store.task.content_goal
+    await nextTick()
+    creation.content_type_code = store.task.content_type_code
+    initializeFormValues()
+    initializeVisualSelection()
+    syncEditor()
+    if (isCreationView.value) await loadVisualMaterials()
+  } catch (error) {
+    message.error(error.message || '内容任务加载失败')
+  }
 })
 
 watch(
@@ -2099,6 +2123,7 @@ onMounted(async () => {
 })
 
 const createTask = async () => {
+  if (creatingTask.value || store.loading.saving) return
   if (!creation.industry_template_id) {
     message.warning('请选择行业模板')
     return
@@ -2111,14 +2136,18 @@ const createTask = async () => {
     message.warning('请选择本次内容方向')
     return
   }
+  creatingTask.value = true
   try {
     await ensureCreationTask()
     initializeFormValues()
     initializeVisualSelection()
-    await loadVisualMaterials()
-    message.success('内容任务已创建')
+    // 素材加载不阻塞进入填写页；路由切换后由新实例 onMounted / watch 续载
+    void loadVisualMaterials()
+    message.success('内容任务已创建，请填写素材后开始生成')
   } catch (error) {
     message.error(error.message || '创建任务失败')
+  } finally {
+    creatingTask.value = false
   }
 }
 
@@ -2741,7 +2770,11 @@ const returnToContentCreation = async () => {
             </label>
 
             <div class="stage-actions">
-              <a-button type="primary" :loading="store.loading.saving" @click="createTask">
+              <a-button
+                type="primary"
+                :loading="creatingTask || store.loading.saving"
+                @click="createTask"
+              >
                 创建任务并填写素材
               </a-button>
             </div>
@@ -3092,106 +3125,6 @@ const returnToContentCreation = async () => {
               </a-spin>
             </section>
           </fieldset>
-          <section class="cover-image2-test" aria-labelledby="cover-image2-test-title">
-            <header class="cover-image2-test-header">
-              <div>
-                <span class="cover-image2-test-icon"><WandSparkles :size="17" /></span>
-                <div>
-                  <strong id="cover-image2-test-title">AI 封面测试</strong>
-                  <small>固定调用 image2；使用上方已选图库原图，不写入正式创作流程</small>
-                </div>
-              </div>
-              <span class="cover-image2-test-badge">测试用</span>
-            </header>
-            <div class="cover-image2-test-layout">
-              <div class="cover-image2-test-form">
-                <div class="cover-image2-test-copy-fields">
-                  <label>
-                    <span>标题</span>
-                    <a-input
-                      v-model:value="coverImage2Test.title"
-                      :maxlength="60"
-                      :disabled="coverImage2TestState.submitting"
-                    />
-                  </label>
-                  <label>
-                    <span>副标题</span>
-                    <a-input
-                      v-model:value="coverImage2Test.subtitle"
-                      :maxlength="120"
-                      :disabled="coverImage2TestState.submitting"
-                    />
-                  </label>
-                  <label class="cover-image2-test-tags">
-                    <span>标签</span>
-                    <a-select
-                      v-model:value="coverImage2Test.tags"
-                      mode="tags"
-                      :token-separators="[',', '，']"
-                      :disabled="coverImage2TestState.submitting"
-                      placeholder="输入标签后回车"
-                    />
-                  </label>
-                </div>
-                <label class="cover-image2-test-prompt">
-                  <span>AI 创作提示词</span>
-                  <a-textarea
-                    v-model:value="coverImage2Test.prompt"
-                    :rows="8"
-                    :maxlength="8000"
-                    :disabled="coverImage2TestState.submitting"
-                    show-count
-                  />
-                </label>
-                <div class="cover-image2-test-actions">
-                  <div>
-                    <strong>背景图</strong>
-                    <span>{{ selectedImageSummary?.name || '尚未选择图库图片' }}</span>
-                  </div>
-                  <a-button
-                    type="primary"
-                    :loading="coverImage2TestState.submitting"
-                    :disabled="!selectedImageAssetId"
-                    @click="runCoverImage2Test"
-                  >
-                    <WandSparkles :size="16" />生成测试封面
-                  </a-button>
-                </div>
-                <div
-                  v-if="coverImage2TestState.status || coverImage2TestState.error"
-                  class="cover-image2-test-status"
-                  :class="{ error: coverImage2TestState.error }"
-                  role="status"
-                >
-                  <span>{{ coverImage2TestState.error || coverImage2TestStatusLabel }}</span>
-                  <small v-if="coverImage2TestState.submitting">
-                    {{ coverImage2TestState.progress }}%
-                  </small>
-                </div>
-              </div>
-              <button
-                v-if="coverImage2TestResultUrl"
-                type="button"
-                class="cover-image2-test-result"
-                aria-label="放大查看 image2 测试封面"
-                @click="
-                  openImagePreview(
-                    coverImage2TestResultUrl,
-                    'image2 测试封面',
-                    coverImage2Test.title
-                  )
-                "
-              >
-                <img :src="coverImage2TestResultUrl" :alt="coverImage2Test.title" />
-                <span><ZoomIn :size="17" />查看大图</span>
-              </button>
-              <div v-else class="cover-image2-test-empty">
-                <Image :size="28" />
-                <strong>生成结果</strong>
-                <span>完成后在这里预览</span>
-              </div>
-            </div>
-          </section>
             </div>
           <a-spin v-if="usesDeterministicPlan && briefLocked" :spinning="creationPlanLoading">
             <section v-if="creationPlan" class="creation-plan-preview">
