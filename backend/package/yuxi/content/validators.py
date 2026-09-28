@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from decimal import Decimal
 from typing import Any
 
 from yuxi.content.rules import brief_variable_map
@@ -26,9 +27,12 @@ def _canonical_number_token(token: str) -> str:
     if matched is None:
         return token
     value = matched.group("value")
+    unit = matched.group("unit") or ""
+    if unit == "万元":
+        value = format(Decimal(value) * 10000, "f")
+        unit = "元"
     if "." in value:
         value = value.rstrip("0").rstrip(".")
-    unit = matched.group("unit") or ""
     if unit in {"平方米", "平米", "m²", "平"}:
         unit = "㎡"
     return f"{value}{unit}"

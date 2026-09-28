@@ -365,13 +365,27 @@ class Image2Client:
         for attempt in range(3):
             try:
                 response = await self._client.request(method, url, headers=request_headers, **kwargs)
-            except (httpx.TimeoutException, httpx.NetworkError) as exc:
-                # 生成请求携带幂等键，网络错误重试不会重复创建供应商任务；
-                # 没有幂等键的 POST 仍不自动重发，避免未知的重复扣费。
-                can_retry_network = method == "GET" or "Idempotency-Key" in request_headers
+            except (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError) as exc:
+                # 提交后超时或断连时，上游可能仍在生图；仅有幂等键不能证明
+                # 中转站支持去重，因此只自动重试 GET 或尚未建立连接的请求。
+                can_retry_network = method == "GET" or (
+                    "Idempotency-Key" in request_headers
+                    and isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout))
+                )
                 if can_retry_network and attempt < 2:
                     await asyncio.sleep(0.5 * (2**attempt))
                     continue
+                if isinstance(exc, (httpx.ReadTimeout, httpx.WriteTimeout)):
+                    raise Image2Error(
+                        "IMAGE2_REQUEST_TIMEOUT",
+                        f"image2 请求等待超过 {self.config.timeout_seconds:g} 秒，结果未知；"
+                        "未自动重复提交，请先在中转站确认任务状态",
+                    ) from exc
+                if isinstance(exc, httpx.RemoteProtocolError):
+                    raise Image2Error(
+                        "IMAGE2_CONNECTION_CLOSED",
+                        "image2 中转站在返回结果前断开连接；未自动重复提交，请检查中转站任务及网关超时设置",
+                    ) from exc
                 raise Image2Error("IMAGE2_NETWORK_ERROR", "image2 中转站连接失败", retryable=True) from exc
             can_retry = response.status_code == 429 or (method == "GET" and response.status_code >= 500)
             if can_retry and attempt < 2:
