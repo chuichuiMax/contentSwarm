@@ -10,43 +10,42 @@ from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-
-from yuxi.content.generation import SKILL_VERSIONS, refine_generated_content, review_generated_content
-from yuxi.content.rules import CONTENT_GOALS
-from yuxi.content.schemas import (
-    ContentArtifactAIEdit,
-    ContentArtifactUpdate,
-    ContentArtifactRegenerate,
-    ContentBriefPayload,
-    ChannelPreviewRequest,
-    ContentRunCreate,
-    ContentRunResume,
-    ContentTaskCreate,
-    ContentTaskUpdate,
-    MaterialConfirmation,
-    MaterialCreate,
-    IndustryPackRegressionSubmission,
-    IndustryPackTransitionRequest,
-    RuleBundleUpdate,
-    RuleDraftCreate,
-)
-from yuxi.content.validators import normalize_manual_evidence, validate_content
-from yuxi.content.validation import ComplianceEngine
-from yuxi.content.model.workflows.definition import workflow_definition_hash
-from yuxi.content.model.workflows.definition import WorkflowCatalog, WorkflowDefinitionPolicy
-from yuxi.content.model.industry.pack import CONTENT_TYPE_CODES, IndustryPackPolicy
+from yuxi.agents.skills.repository import SkillRepository
 from yuxi.content.control.industry.pack import (
     EvaluateIndustryPackRegressionHandler,
     ValidateIndustryPackHandler,
 )
+from yuxi.content.generation import SKILL_VERSIONS, refine_generated_content, review_generated_content
+from yuxi.content.model.industry.pack import CONTENT_TYPE_CODES, IndustryPackPolicy
+from yuxi.content.model.workflows.definition import WorkflowCatalog, WorkflowDefinitionPolicy, workflow_definition_hash
+from yuxi.content.rules import CONTENT_GOALS
+from yuxi.content.v3.modular_rules import SINGLE_BLUEPRINT_WORKFLOW_IDS
+from yuxi.content.schemas import (
+    ChannelPreviewRequest,
+    ContentArtifactAIEdit,
+    ContentArtifactRegenerate,
+    ContentArtifactUpdate,
+    ContentBriefPayload,
+    ContentRunCreate,
+    ContentRunResume,
+    ContentTaskCreate,
+    ContentTaskUpdate,
+    IndustryPackRegressionSubmission,
+    IndustryPackTransitionRequest,
+    MaterialConfirmation,
+    MaterialCreate,
+    RuleBundleUpdate,
+    RuleDraftCreate,
+)
 from yuxi.content.v3.seed import PLATFORM_RULE_V3_ID
 from yuxi.content.v3.workflow import LEGACY_PLATFORM_WORKFLOW_V3_IDS
+from yuxi.content.validation import ComplianceEngine
+from yuxi.content.validators import normalize_manual_evidence, validate_content
 from yuxi.models.providers.cache import model_cache
-from yuxi.repositories.agent_run_repository import AgentRunRepository
 from yuxi.repositories.agent_repository import AgentRepository
-from yuxi.agents.skills.repository import SkillRepository
-from yuxi.repositories.content_repository import ContentRepository
+from yuxi.repositories.agent_run_repository import AgentRunRepository
 from yuxi.repositories.content_cover_repository import ContentCoverRepository
+from yuxi.repositories.content_repository import ContentRepository
 from yuxi.repositories.material_library_repository import MaterialLibraryRepository
 from yuxi.services.run_queue_service import get_arq_pool, list_run_stream_events
 from yuxi.storage.postgres.models_business import AgentRun, User
@@ -416,8 +415,8 @@ def _parse_content_studio_quote_case(
 
     # Local import avoids a module cycle: Dangjia's HTTP orchestration calls this service.
     from yuxi.services.dangjia_service import (
-        DangjiaContentCreate,
         TRUSTED_QUOTE_SNAPSHOT_KEY,
+        DangjiaContentCreate,
         _resolve_ct_code,
         build_dangjia_form_values,
         build_persona_description,
@@ -461,9 +460,7 @@ def _parse_content_studio_quote_case(
     quote_format = str(form_values.get("quote_format") or "").strip()
     tags = [str(item).strip() for item in form_values.get("content_tags") or [] if str(item).strip()]
     positioning = (
-        "旧房改造"
-        if any(token in tag for tag in tags for token in ("旧房", "老房", "二手房"))
-        else "同城装修"
+        "旧房改造" if any(token in tag for tag in tags for token in ("旧房", "老房", "二手房")) else "同城装修"
     )
     canonical_house_type = next(
         (
@@ -498,9 +495,7 @@ def _parse_content_studio_quote_case(
         "quote_format": quote_format,
         "type_name": form_values["type_name"],
     }
-    business_variables = {
-        key: value for key, value in business_variables.items() if value not in (None, "", [], {})
-    }
+    business_variables = {key: value for key, value in business_variables.items() if value not in (None, "", [], {})}
     trusted_snapshot = build_trusted_quote_snapshot(
         payload,
         content_type_code=resolved_content_type_code,
@@ -518,7 +513,11 @@ def _parse_content_studio_quote_case(
         "business_variables": business_variables,
         "brand": {"name": form_values["brand_name"]},
         "audience": form_values["audience"],
-        "persona": {"description": persona_fact},
+        "persona": {
+            "description": persona_fact,
+            "tone": payload.persona.tone,
+            "structured": payload.persona.model_dump(mode="json"),
+        },
         "trusted_snapshot_key": TRUSTED_QUOTE_SNAPSHOT_KEY,
         "trusted_snapshot": trusted_snapshot,
     }
@@ -583,6 +582,54 @@ def _parse_content_studio_persona_case(user_request: str, *, content_type_code: 
     return {key: value for key, value in values.items() if value not in (None, "", [], {})}
 
 
+def _separate_app_persona_facts(compiled: dict, task) -> None:
+    """新工作流不把 App 的能力聚合字段当作施工过程；原始结构化资料仍保留。"""
+    if getattr(task, "workflow_version_id", None) not in SINGLE_BLUEPRINT_WORKFLOW_IDS:
+        return
+    persona = compiled.get("persona") or {}
+    structured = persona.get("structured")
+    if not structured:
+        return
+    compiled["fact_source_paths"] = {
+        "persona_fact": "persona",
+        "capability_description": "persona.skills,persona.serviceAdvantages",
+        "advantages": "persona.serviceAdvantages",
+        "advantage": "persona.serviceAdvantages",
+        "location": "persona.serviceCity,requirementType.mySite",
+        "quantity": "requirementType.quotationInfo.houseArea",
+        "area": "requirementType.quotationInfo.houseArea",
+        "product": "requirementType.quotationInfo.houseType",
+        "project_type": "requirementType.quotationInfo.houseType",
+        "project_site": "requirementType.mySite",
+        "case_background": "requirementType.mySite",
+    }
+    from yuxi.services.dangjia_service import DangjiaPersona, build_persona_description
+
+    fact_persona = DangjiaPersona.model_validate({**structured, "tone": ""})
+    persona["description"] = build_persona_description(fact_persona)
+    variables = compiled["business_variables"]
+    variables["persona_fact"] = persona["description"]
+    if variables.get("external_source") in {"dangjia", "content_studio_case"}:
+        # App 适配器为旧表单补出的痛点不是接口资料，也不应规定新作者的文章主题。
+        for source in (variables, compiled["form_values"]):
+            source.pop("pain", None)
+            source.pop("pain_points", None)
+    if variables.get("project_site"):
+        # App 的项目背景沿用行业包已发布变量，不另建无治理的自由事实入口。
+        variables.setdefault("case_background", variables["project_site"])
+    if variables.get("scene") and variables.get("product"):
+        tags = variables.get("content_tags") or []
+        positioning = (
+            "旧房改造" if any(token in tag for tag in tags for token in ("旧房", "老房", "二手房")) else "同城装修"
+        )
+        variables["scene"] = f"{positioning}，{variables['product']}"
+    for source in (variables, compiled["form_values"]):
+        for key in ("process", "craft_and_materials"):
+            value = source.get(key)
+            if isinstance(value, str) and value.startswith(("工种能力：", "服务优势：")):
+                source.pop(key)
+
+
 def compile_content_brief(
     *, task: ContentTask, template: Any, brief: ContentBriefPayload
 ) -> tuple[dict[str, Any], list[dict[str, str]]]:
@@ -610,14 +657,25 @@ def compile_content_brief(
             "CT04": "project_quote",
             "CT05": "project_quote",
         }.get(content_type_code)
-        normalized_user_request = (
-            quote_case["sanitized_user_request"] if quote_case is not None else user_request
-        )
+        normalized_user_request = quote_case["sanitized_user_request"] if quote_case is not None else user_request
         normalized_variables = (
             quote_case["business_variables"]
             if quote_case is not None
             else _parse_content_studio_persona_case(user_request, content_type_code=content_type_code)
         )
+        persona = quote_case["persona"] if quote_case is not None else {}
+        if (
+            quote_case is None
+            and normalized_variables.get("persona_fact")
+            and getattr(task, "workflow_version_id", None) in SINGLE_BLUEPRINT_WORKFLOW_IDS
+        ):
+            # 上面的结构化案例解析已完成验证；非报价类型同样保留语气与事实的边界。
+            structured = json.loads(user_request)["persona"]
+            persona = {
+                "description": normalized_variables["persona_fact"],
+                "tone": structured.get("tone"),
+                "structured": structured,
+            }
         compiled = {
             "task_id": task.id,
             "industry": template.slug,
@@ -634,16 +692,22 @@ def compile_content_brief(
                 **({"quote_type": quote_type} if quote_type and quote_case is None else {}),
                 **normalized_variables,
             },
-            "persona": quote_case["persona"] if quote_case is not None else {},
-            "required_terms": [],
-            "forbidden_terms": [],
+            "persona": persona,
+            "required_terms": list(raw.get("required_terms") or []),
+            "forbidden_terms": list(raw.get("forbidden_terms") or []),
             "attachments": [],
             "locked_fields": [],
+            **(
+                {"original_user_request": user_request}
+                if getattr(task, "workflow_version_id", None) in SINGLE_BLUEPRINT_WORKFLOW_IDS
+                else {}
+            ),
             "user_request": normalized_user_request,
             "form_values": {"user_request": normalized_user_request},
             "material_confirmations": [],
             "visual_material": raw.get("visual_material"),
         }
+        _separate_app_persona_facts(compiled, task)
         return compiled, []
 
     form_values = dict(raw.get("form_values") or {})
@@ -715,6 +779,7 @@ def compile_content_brief(
         value = _brief_field_value(compiled, field["key"])
         if value in (None, "", []):
             missing.append({"field": field["key"], "label": field.get("label") or field["key"]})
+    _separate_app_persona_facts(compiled, task)
     return compiled, missing
 
 
@@ -941,8 +1006,8 @@ async def create_content_task(db: AsyncSession, user: User, payload: ContentTask
     if schema_version != 3:
         raise _content_error(409, "CONTENT_WORKFLOW_V3_REQUIRED", "新任务只能使用 V3 工作流")
     from yuxi.content.v3.joint_workflow import (
-        PLATFORM_WORKFLOW_EXPRESSION_GUIDANCE_ID,
         PLATFORM_WORKFLOW_DETERMINISTIC_PLAN_ID,
+        PLATFORM_WORKFLOW_EXPRESSION_GUIDANCE_ID,
         PLATFORM_WORKFLOW_MODULAR_AUTHOR_ID,
         PLATFORM_WORKFLOW_PRICE_RECOVERY_ID,
         PLATFORM_WORKFLOW_STANDARDIZED_FACTORY_ID,
@@ -950,6 +1015,7 @@ async def create_content_task(db: AsyncSession, user: User, payload: ContentTask
     )
 
     if workflow_version.id not in {
+        *SINGLE_BLUEPRINT_WORKFLOW_IDS,
         PLATFORM_WORKFLOW_PRICE_RECOVERY_ID,
         PLATFORM_WORKFLOW_VIRAL_AUTHOR_ID,
         PLATFORM_WORKFLOW_MODULAR_AUTHOR_ID,

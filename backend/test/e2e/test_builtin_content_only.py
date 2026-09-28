@@ -15,12 +15,12 @@ import pytest
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.types import Command
 from sqlalchemy import select
-
 from yuxi.agents.buildin.content_workflow.context import ContentWorkflowContext
 from yuxi.agents.buildin.content_workflow.graph import ContentWorkflowAgent
 from yuxi.content.model.locked_blocks import extract_locked_quote_block
+from yuxi.content.model.single_blueprint import project_input
 from yuxi.services.content_run_worker import _load_content_run
-from yuxi.services.run_queue_service import close_queue_clients
+from yuxi.services.run_queue_service import close_queue_clients, list_run_stream_events
 from yuxi.storage.postgres.manager import pg_manager
 from yuxi.storage.postgres.models_business import AgentRun, User
 from yuxi.storage.postgres.models_content import ContentArtifactVersion, ContentNodeRun, ContentTask
@@ -39,7 +39,17 @@ CASES = {
 
 @pytest.mark.e2e
 @pytest.mark.asyncio
-async def test_builtin_cases_reach_content_artifact_without_images():
+async def test_builtin_cases_reach_content_artifact_without_images(monkeypatch):
+    await _run_builtin_cases(monkeypatch, preflight_only=False)
+
+
+@pytest.mark.e2e
+@pytest.mark.asyncio
+async def test_builtin_cases_preserve_materials_before_generation(monkeypatch):
+    await _run_builtin_cases(monkeypatch, preflight_only=True)
+
+
+async def _run_builtin_cases(monkeypatch, *, preflight_only):
     case_dir = os.getenv("BUILTIN_CONTENT_CASE_DIR")
     uid = os.getenv("RULE_EDITOR_TEST_UID")
     if not case_dir or not uid:
@@ -50,6 +60,20 @@ async def test_builtin_cases_reach_content_artifact_without_images():
     concurrency = int(os.getenv("BUILTIN_CONTENT_CONCURRENCY", "2"))
     assert repeats > 0 and concurrency > 0
     inputs = {code: (Path(case_dir) / CASES[code]).read_text() for code in selected}
+    frozen_references = {}
+    if frozen_path := os.getenv("BUILTIN_CONTENT_FROZEN_REFERENCES"):
+        # 仅限对照实验：仍走现有检索、映射和授权，只从可用候选中选基线资产。
+        from yuxi.content.control.workflow import creation_plan
+
+        frozen_references = json.loads(Path(frozen_path).read_text())
+        rank = creation_plan.rank_reference_candidates
+
+        def frozen_rank(candidates, **kwargs):
+            expected = frozen_references[kwargs["direction_code"]]
+            ranked = rank(candidates, **kwargs)
+            return [item for item in ranked if item["id"] == expected["id"]]
+
+        monkeypatch.setattr(creation_plan, "rank_reference_candidates", frozen_rank)
     output_dir = Path(os.getenv("BUILTIN_CONTENT_OUTPUT_DIR", "/tmp/builtin-content-only"))
     output_dir.mkdir(parents=True, exist_ok=True)
     pg_manager.initialize()
@@ -64,6 +88,7 @@ async def test_builtin_cases_reach_content_artifact_without_images():
             started = time.monotonic()
             label = f"{code}-{repetition:02d}" if repeats > 1 else code
             record = {
+                "validation_scope": "material_preflight" if preflight_only else "generated_artifact",
                 "type": code,
                 "case": filename,
                 "repetition": repetition,
@@ -81,7 +106,8 @@ async def test_builtin_cases_reach_content_artifact_without_images():
                 ) as client:
                     response = await client.get("/api/content/bootstrap")
                     response.raise_for_status()
-                    template = next(t for t in response.json()["industry_templates"] if t["slug"] == "decoration")
+                    template_id = os.getenv("BUILTIN_CONTENT_TEMPLATE_ID", "industry-decoration-v3")
+                    template = next(t for t in response.json()["industry_templates"] if t["id"] == template_id)
                     response = await client.post(
                         "/api/content/tasks",
                         json={
@@ -132,13 +158,14 @@ async def test_builtin_cases_reach_content_artifact_without_images():
                     rule_bundle=rules,
                 )
                 full_graph = await agent.get_graph(context)
-                graph = full_graph.builder.compile(checkpointer=agent.checkpointer, interrupt_before=["plan_visuals"])
+                stop_node = "generate_content" if preflight_only else "plan_visuals"
+                graph = full_graph.builder.compile(checkpointer=agent.checkpointer, interrupt_before=[stop_node])
                 config = {"configurable": {"thread_id": context.thread_id, "uid": uid}, "recursion_limit": 150}
                 state = {
                     "task_id": task_id,
                     "run_id": run_id,
                     "uid": uid,
-                    "model_spec": None,
+                    "model_spec": os.getenv("BUILTIN_CONTENT_MODEL"),
                     "workflow_version_id": task.workflow_version_id,
                     "rule_version_id": task.rule_version_id,
                     "industry_template_version_id": task.industry_template_version_id,
@@ -172,7 +199,7 @@ async def test_builtin_cases_reach_content_artifact_without_images():
                 print(f"START {label} {task_id}", flush=True)
                 await graph.ainvoke(state, config=config, context=context)
                 snapshot = await graph.aget_state(config)
-                while snapshot.next != ("plan_visuals",):
+                while snapshot.next != (stop_node,):
                     interrupts = list(snapshot.interrupts)
                     assert interrupts, f"Unexpected stop: {snapshot.next}"
                     prompt = interrupts[0].value
@@ -184,8 +211,52 @@ async def test_builtin_cases_reach_content_artifact_without_images():
                     )
                     snapshot = await graph.aget_state(config)
                 state = snapshot.values
-                assert state["review_report"]["status"] in {"passed", "warning"}, state["review_report"]
-                assert not any(item["status"] == "blocked" for item in state["review_report"]["checks"])
+                if frozen_references:
+                    actual = state["production_pack"]["reference_snapshot"]
+                    expected = frozen_references[code]
+                    assert all(actual[key] == expected[key] for key in ("id", "source_hash", "reference_blueprint"))
+                    record["frozen_reference_verified"] = True
+                if preflight_only:
+                    view = project_input(state)
+                    assert view["reference"]["body"]
+                    assert view["reference"]["blocks"]
+                    assert state["material_quality_report"]["status"] == "passed"
+                    codes = {code for fact in view["facts"] for code in fact["variables"]}
+                    assert {"scene", "quantity", "product", "persona_fact", "case_background"} <= codes
+                    assert not {"external_serial_no", "number"} & codes
+                    assert any(fact["role"] == "reader_context" for fact in view["facts"])
+                    assert (
+                        view["quote"]["context"]
+                        == extract_locked_quote_block(state["production_pack"])["rendered_content"]
+                    )
+                    record.update(status="passed", model_view=view)
+                    return
+                if workflow.definition_json.get("semantic_review_enabled", True):
+                    assert state["review_report"]["status"] in {"passed", "warning"}, state["review_report"]
+                    assert not any(item["status"] == "blocked" for item in state["review_report"]["checks"])
+                else:
+                    assert not state.get("review_report")
+                    assert state["validation_report"]["status"] == "passed"
+                if os.getenv("BUILTIN_CONTENT_EXPECT_FORBIDDEN_KB"):
+                    bundle = state["production_pack"]["content_rule_bundle"]
+                    platform = bundle["runtime_rules"]["viral-platform-expression"]
+                    lexicon = platform["forbidden_lexicon"]
+                    assert lexicon["name"] == "封禁词库" and lexicon["sources"] and lexicon["alternatives"]
+                    combined = "\n".join(
+                        [
+                            state["selected_title"]["text"],
+                            state["content_draft"]["body"],
+                            *state["content_draft"]["topics"],
+                        ]
+                    )
+                    assert not [term for term in lexicon["alternatives"] if term in combined]
+                    canonical = json.dumps(
+                        {key: value for key, value in bundle.items() if key != "bundle_hash"},
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    )
+                    assert bundle["bundle_hash"] == hashlib.sha256(canonical.encode()).hexdigest()
                 if code in {"CT02", "CT03", "CT04", "CT05"}:
                     quote = extract_locked_quote_block(state["production_pack"])
                     assert quote is not None and quote["render_policy"] == "checkmark-lines-v1"
@@ -213,6 +284,9 @@ async def test_builtin_cases_reach_content_artifact_without_images():
                     artifact=state["artifact_version"],
                     model_spec=artifact.model_spec,
                 )
+            except asyncio.CancelledError:
+                record.update(status="cancelled", error="测试批次主动中止，不计入内容成功率")
+                raise
             except Exception as exc:
                 record.update(status="failed", error_type=type(exc).__name__, error=str(exc))
                 if graph is not None and config is not None:
@@ -239,12 +313,58 @@ async def test_builtin_cases_reach_content_artifact_without_images():
                 if run_id:
                     async with pg_manager.AsyncSession() as db:
                         run = await db.get(AgentRun, run_id)
-                        run.status = "completed" if record["status"] == "passed" else "failed"
+                        run.status = "completed" if record["status"] == "passed" else record["status"]
                         run.error_message = record.get("error")
-                        if record["status"] == "failed":
+                        if record["status"] in {"failed", "cancelled"}:
                             task = await db.get(ContentTask, task_id)
-                            task.status = "failed"
+                            task.status = record["status"]
                         await db.commit()
+                if state.get("production_pack", {}).get("content_rule_bundle", {}).get("single_blueprint"):
+                    platform = state["production_pack"]["content_rule_bundle"]["runtime_rules"][
+                        "viral-platform-expression"
+                    ]
+                    record["forbidden_lexicon"] = platform.get("forbidden_lexicon")
+                    record["replacement_diffs"] = (state.get("channel_result") or {}).get("replacement_diffs", [])
+                    record["reference_snapshot"] = state["production_pack"]["reference_snapshot"]
+                    record["rule_bundle_hash"] = state["production_pack"]["content_rule_bundle"]["bundle_hash"]
+                    record["skill_versions"] = state["production_pack"]["content_rule_bundle"]["modules"]
+                    async with pg_manager.AsyncSession() as db:
+                        nodes = (
+                            (await db.execute(select(ContentNodeRun).where(ContentNodeRun.task_id == task_id)))
+                            .scalars()
+                            .all()
+                        )
+                    model_inputs = output_dir / "model-inputs" / label
+                    model_inputs.mkdir(parents=True, exist_ok=True)
+                    record["model_events"] = []
+                    for node in nodes:
+                        view = node.input_snapshot.get("model_visible_payload")
+                        if view is not None:
+                            (model_inputs / f"{node.node_id}-{node.attempt}.json").write_text(
+                                json.dumps(view, ensure_ascii=False, indent=2)
+                            )
+                        if node.delegated_agent_run_id:
+                            for event in await list_run_stream_events(node.delegated_agent_run_id, limit=1000):
+                                if event["event_type"] in {
+                                    "content.model.started",
+                                    "content.model.completed",
+                                    "content.model.usage",
+                                }:
+                                    record["model_events"].append(
+                                        {"event": event["event_type"], **event["payload"]["payload"]}
+                                    )
+                    frozen_skills = {item["slug"]: item for item in record["skill_versions"]}
+                    for event in record["model_events"]:
+                        if event["event"] != "content.model.started":
+                            continue
+                        for slug, applied in event.get("applied_skills", {}).items():
+                            if slug not in frozen_skills:
+                                continue
+                            frozen = frozen_skills[slug]
+                            assert applied["content_hash"] == frozen["content_hash"]
+                            assert (
+                                applied["applied_hash"] == hashlib.sha256(frozen["instructions"].encode()).hexdigest()
+                            )
                 results.append(record)
                 (output_dir / f"{label}.json").write_text(json.dumps(record, ensure_ascii=False, indent=2))
                 print(
@@ -264,4 +384,9 @@ async def test_builtin_cases_reach_content_artifact_without_images():
         ]
     finally:
         await close_queue_clients()
-        await pg_manager.async_engine.dispose()
+        await pg_manager.close()
+        # 本测试在进程内加载检索器，显式关闭它创建的 gRPC 客户端，避免退出等待。
+        from pymilvus import connections
+
+        for alias, _ in connections.list_connections():
+            connections.disconnect(alias)

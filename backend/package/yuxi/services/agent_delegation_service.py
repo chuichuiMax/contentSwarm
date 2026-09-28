@@ -259,6 +259,19 @@ class AgentDelegationService:
             ]
             context._content_runtime_prepared = True
             activated_scope = set(context._required_skill_closure)
+        if request.domain_context.single_blueprint_input:
+            frozen_modules = request.domain_context.single_blueprint_input["production_pack"]["content_rule_bundle"][
+                "modules"
+            ]
+            for module in frozen_modules:
+                slug = module["slug"]
+                if slug in request.required_skills:
+                    context._runtime_skill_metadata[slug] = {**context._runtime_skill_metadata[slug], **module}
+            context._runtime_skill_snapshots = [
+                {key: module[key] for key in ("slug", "version", "content_hash")}
+                for module in frozen_modules
+                if module["slug"] in request.required_skills
+            ]
         runtime_snapshot = build_runtime_config_snapshot(agent=agent, context=context, request=request)
         visible_payload = get_input_contract_model(request.input_contract).model_validate(request.input_payload)
         node_input_payload = {
@@ -276,7 +289,13 @@ class AgentDelegationService:
         }
         node_input = ContentAgentNodeInputV2.model_validate(node_input_payload)
         model_view = None
-        if request.node_run.node_id == "generate_content":
+        if request.domain_context.single_blueprint_input:
+            from yuxi.content.model.single_blueprint import project_input
+
+            model_view = project_input(
+                request.domain_context.single_blueprint_input, review=request.node_run.node_id == "semantic_review"
+            )
+        elif request.node_run.node_id == "generate_content":
             model_view = project_generation_input(
                 node_input.payload,
                 active_skills=request.required_skills,
@@ -301,6 +320,8 @@ class AgentDelegationService:
         safe_view = project_locked_quote_safe_input(model_view or node_input.payload)
         if safe_view is not None:
             model_view = safe_view
+        if request.domain_context.single_blueprint_input:
+            runtime_snapshot["model_input_contract"] = "SingleBlueprintPromptV1"
         if model_view is not None:
             canonical_view = json.dumps(model_view, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
             runtime_snapshot["model_input_hash"] = hashlib.sha256(canonical_view.encode()).hexdigest()

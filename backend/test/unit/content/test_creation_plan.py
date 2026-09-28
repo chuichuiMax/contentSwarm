@@ -414,6 +414,7 @@ async def test_preview_allows_user_request_when_fact_extraction_can_complete_pla
     from yuxi.services import content_viral_assets
 
     task = SimpleNamespace(
+        workflow_version_id="content-workflow-standardized-factory-v1",
         brief_json={"user_request": "长沙业主最担心装修报价不透明", "form_values": {}},
         evidence_json={"items": []},
         runtime_config_snapshot_json={},
@@ -461,6 +462,7 @@ async def test_preview_uses_runtime_policy_for_partial_reference_mapping(monkeyp
         }
     )
     task = SimpleNamespace(
+        workflow_version_id="content-workflow-standardized-factory-v1",
         brief_json={"form_values": {"pain": "担心报价不透明"}},
         evidence_json={"items": []},
         runtime_config_snapshot_json={},

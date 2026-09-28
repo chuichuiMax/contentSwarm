@@ -1,17 +1,16 @@
-from copy import deepcopy
 import hashlib
 import json
+from copy import deepcopy
 
 import pytest
 from pydantic import ValidationError
-
-from yuxi.content.control.workflow.generation_input import project_generation_input
 from yuxi.content.control.workflow.deterministic_node import _derive_formula_calculation_evidence
+from yuxi.content.control.workflow.generation_input import project_generation_input
 from yuxi.content.model.materials import (
     FrozenProductionPackV1,
-    MaterialRequirementV1,
     MaterialEnvelopeV2,
     MaterialRequirementManifestV1,
+    MaterialRequirementV1,
     ProductionOrderV1,
     build_expression_policy,
     build_formula_lexicon_constraints,
@@ -134,6 +133,66 @@ def _order() -> ProductionOrderV1:
         selection_mode="fixed",
         order_hash="o" * 64,
     )
+
+
+def test_single_blueprint_manifest_is_independent_of_body_formula_and_optional_persona():
+    catalog = _catalog()
+    for code in ("persona_fact", "process", "advantages", "quote_block"):
+        catalog["variables"].append({"code": code, "value_type": "string", "allowed_usages": ["body"]})
+    first = build_material_manifest(catalog=catalog, order=_order(), single_blueprint=True)
+    catalog["content_formulas"][0]["required_variables"] = ["persona_fact", "process"]
+    catalog["methods"][0]["variable_schema"] = ["advantages"]
+    catalog["source_rules"][0]["required_variable_codes"] = ["persona_fact", "process"]
+    changed = build_material_manifest(catalog=catalog, order=_order(), single_blueprint=True)
+    assert first.requirements == changed.requirements
+    required = {r.variable_code for r in changed.requirements if r.required}
+    assert "quote_block" in required
+    assert not required & {"persona_fact", "process", "advantages"}
+    assert not any("persona:value" in r.validation_schema.get("alternative_groups", []) for r in changed.requirements)
+
+
+def test_single_blueprint_preserves_optional_confirmed_result_through_material_gate():
+    catalog = _catalog()
+    catalog["variables"].append(
+        {
+            "code": "result",
+            "value_type": "string",
+            "allowed_usages": ["body"],
+            "evidence_policy": {"allowed_sources": ["manual_input"], "review_policy": "user_confirmed"},
+        }
+    )
+    legacy = build_material_manifest(catalog=catalog, order=_order())
+    assert "result" not in {r.variable_code for r in legacy.requirements}
+    manifest = build_material_manifest(catalog=catalog, order=_order(), single_blueprint=True)
+    requirement = next(r for r in manifest.requirements if r.variable_code == "result")
+    assert not requirement.required
+    evidence = {
+        "items": [
+            {
+                "id": "completion",
+                "variable_codes": ["result"],
+                "value": "验收记录：保留原墙面，无新增铲墙施工。",
+                "source_type": "manual_input",
+                "source_id": "record",
+                "source_version": "1",
+                "verified_status": "user_confirmed",
+                "allowed_usage": ["body"],
+            }
+        ]
+    }
+    materials = standardize_evidence_materials(evidence_bundle=evidence, manifest=manifest)
+    assert any("result" in m.variable_codes for m in materials)
+    report = validate_material_gate(manifest=manifest, materials=materials)
+    assert any(b.requirement_id == "variable:result" for b in report.bindings)
+    evidence["items"][0]["verified_status"] = "retrieved"
+    report = validate_material_gate(
+        manifest=manifest,
+        materials=standardize_evidence_materials(
+            evidence_bundle=evidence,
+            manifest=manifest,
+        ),
+    )
+    assert not any(b.requirement_id == "variable:result" for b in report.bindings)
 
 
 def _business_material(code: str, value: object, *, approved: bool = True) -> MaterialEnvelopeV2:

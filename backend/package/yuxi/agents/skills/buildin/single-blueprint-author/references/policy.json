@@ -1,0 +1,24 @@
+{
+  "version": "1.9.3",
+  "forbidden_knowledge_base": "封禁词库",
+  "title_styles": {"CT02": "local_labor_standard"},
+  "allow_price_anchor": true,
+  "compact_reference": true,
+  "full_context_repair": true,
+  "review_codes": ["FACTUAL_ACCURACY", "WRITING_QUALITY"],
+  "skip_expression_knowledge": true,
+  "creative_max_chars": null,
+  "narrative_policy": "允许围绕已有资料合理适当虚构经历与叙事情境；不得改写接口数字、项目参数、身份资质、报价范围，不虚构客户背书、施工成效和服务承诺。虚构叙述不作为接口证据，不得伪挂事实引用；用户要求纪实或真实记录时仅用记录。",
+  "creative_min_chars": 0,
+  "layout": {"max_paragraph_chars": null, "forbidden_markdown_patterns": ["```", "**"]},
+  "expression": {"minimum_semantic_categories": 0, "required_categories": [], "placement_rule": "学习参考表情的情绪、位置和阅读节奏，在本篇对应语境自然使用；报价清单标记和封禁词替换符号不能代替正文情绪表情，有耐心、靠谱不意味着减少表情；参考较少时可按语义补充，不设固定数量或类别配额，不为表情新增段落", "policy_version": "blueprint-expression-v3"},
+  "requirements": {
+    "CT01": ["真实身份与有据服务特点"],
+    "CT02": ["项目单价报价引用"],
+    "CT03": ["本篇项目及面积口径", "原始报价引用"],
+    "CT04": ["工种报价引用"],
+    "CT05": ["人工与辅材报价引用"],
+    "CT06": ["有据工艺信息"],
+    "CT07": ["有据日常工作信息"]
+  }
+}

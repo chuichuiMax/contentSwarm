@@ -50,6 +50,24 @@ def extract_locked_quote_block(production_pack: dict[str, Any]) -> dict[str, Any
     if value.get("insertion_policy") != "after-opening-paragraph-v1":
         raise ValueError("quote_block 使用了未发布的插入策略")
     rendered_content = render_locked_quote(original_content, value.get("render_policy"))
+    replacement_diffs = []
+    platform = (
+        production_pack.get("content_rule_bundle", {}).get("runtime_rules", {}).get("viral-platform-expression", {})
+    )
+    if lexicon := platform.get("forbidden_lexicon"):
+        from yuxi.content.model.forbidden_words import replace_forbidden_words
+
+        adapted = replace_forbidden_words(rendered_content, platform["forbidden_replacements"])
+        if adapted != rendered_content:
+            replacement_diffs.append(
+                {
+                    "location": "quote_block",
+                    "before": rendered_content,
+                    "after": adapted,
+                    "rule_id": lexicon["snapshot_hash"],
+                }
+            )
+        rendered_content = adapted
     return {
         "material_id": material.get("id"),
         "evidence_ids": list(material.get("evidence_ids") or []),
@@ -58,17 +76,22 @@ def extract_locked_quote_block(production_pack: dict[str, Any]) -> dict[str, Any
         "rendered_content": rendered_content,
         "render_policy": value["render_policy"],
         "insertion_policy": value["insertion_policy"],
+        "replacement_diffs": replacement_diffs,
     }
 
 
 def quote_body_limits(production_pack: dict[str, Any], rendered_content: str) -> dict[str, int]:
     constraints = (production_pack.get("channel_profile") or {}).get("body_constraints") or {}
     final_max = int(constraints.get("max_length") or 1000)
+    policy = production_pack.get("content_rule_bundle", {}).get("single_blueprint", {})
+    creative_max = policy.get("creative_max_chars", 650)
     separators = 4
     return {
         "final_body_max_chars": final_max,
-        "creative_body_min_chars": 200,
-        "creative_body_max_chars": min(650, final_max - len(rendered_content) - separators),
+        "creative_body_min_chars": production_pack.get("content_rule_bundle", {})
+        .get("single_blueprint", {})
+        .get("creative_min_chars", 200),
+        "creative_body_max_chars": min(creative_max or final_max, final_max - len(rendered_content) - separators),
     }
 
 
