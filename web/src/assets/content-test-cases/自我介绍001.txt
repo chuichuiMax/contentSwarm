@@ -22,13 +22,10 @@
     },
     "requirementType": {
         "typeName": "自我介绍",
-        "quotationInfo": {
-
+        "houseInfo": {
+            "mySite": "湖南省长沙市岳麓区梅溪湖街道金茂府"
         },
-        "prices": [
-
-        ],
-        "mySite": "湖南省长沙市岳麓区梅溪湖街道金茂府"
+        "prices": []
     },
     "tags": [
         "自我推荐"

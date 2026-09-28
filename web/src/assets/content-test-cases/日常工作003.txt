@@ -22,13 +22,10 @@
     },
     "requirementType": {
         "typeName": "日常",
-        "quotationInfo": {
-
+        "houseInfo": {
+            "mySite": "湖南省长沙市雨花区保利大都汇"
         },
-        "prices": [
-
-        ],
-        "mySite": "湖南省长沙市雨花区保利大都汇"
+        "prices": []
     },
     "tags": [
         "泥瓦",

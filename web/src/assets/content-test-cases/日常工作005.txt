@@ -8,7 +8,7 @@
         "skills": [
             "工长",
             "拆除",
-            "水电"
+            "水电",
             "泥瓦"
         ],
         "honors": {
@@ -23,13 +23,10 @@
     },
     "requirementType": {
         "typeName": "日常",
-        "quotationInfo": {
-
+        "houseInfo": {
+            "mySite": "湖南省长沙市雨花区雨花大厦"
         },
-        "prices": [
-
-        ],
-        "mySite": "湖南省长沙市雨花区雨花大厦"
+        "prices": []
     },
     "tags": [
         "泥瓦",
