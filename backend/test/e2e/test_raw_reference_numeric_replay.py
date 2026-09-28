@@ -9,7 +9,7 @@ from langchain_core.messages import HumanMessage
 
 from yuxi.agents.models import load_chat_model
 from yuxi.content.control.workflow.deterministic_node import V3DeterministicNodeHandler
-from yuxi.content.model.raw_reference import assemble_article, project_input
+from yuxi.content.model.raw_reference import assemble_article, project_input, topic_validation_checks
 from yuxi.content.v3.modular_rules import build_modular_rule_bundle
 
 
@@ -47,3 +47,4 @@ async def test_raw_reference_keeps_business_numbers_in_real_model_replay():
         json.dumps({"article": article, "validation": result["validation_report"]}, ensure_ascii=False, indent=2)
     )
     assert result["validation_report"]["status"] in {"passed", "warning"}, result["validation_report"]
+    assert topic_validation_checks(state["content_draft"]["topics"]) == []

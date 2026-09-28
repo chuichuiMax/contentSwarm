@@ -332,6 +332,98 @@ async def test_cover_tool_uses_locked_plan_and_persists_event_resume_metadata(mo
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("visual_text", "template_fields", "expected_title"),
+    [
+        ([], {"cover_title": "长沙旧房重装", "副标题": "项目明细提前讲清楚"}, "长沙旧房重装"),
+        (["旧标题"], {"cover_title": "长沙旧房重装", "副标题": "项目明细提前讲清楚"}, "长沙旧房重装"),
+        (["原有标题", "原有副标题"], {}, "原有标题"),
+        ([], {"副标题": "只有副标题"}, None),
+    ],
+)
+async def test_cover_tool_uses_resolved_hycanvas_title(monkeypatch, visual_text, template_fields, expected_title):
+    import yuxi.services.content_cover_service as cover_service
+
+    visual_plan = {
+        **_visual_plan(),
+        "mode": "template",
+        "text": visual_text,
+        "template_fields": template_fields,
+        "plan_hash": "a" * 64,
+    }
+    context = SimpleNamespace(
+        uid="user-1",
+        _content_node_output_contract="CoverJobSubmissionResultV1",
+        _content_node_result_collector=SimpleNamespace(
+            domain_context=SimpleNamespace(
+                visual_plan_hash="a" * 64,
+                allowed_asset_ids=frozenset({"source-1"}),
+            )
+        ),
+        _content_node_input=SimpleNamespace(task_id="task-1", parent_run_id="run-parent"),
+        _content_node_governance={
+            "locked_values": {"visual_plan_hash": "a" * 64, "visual_plan": visual_plan, "state_version": 7}
+        },
+    )
+
+    class FakeDB:
+        async def execute(self, query):
+            return SimpleNamespace(scalar_one_or_none=lambda: SimpleNamespace(uid="user-1"))
+
+    @asynccontextmanager
+    async def fake_session():
+        yield FakeDB()
+
+    async def fake_get_task_for_user(repo, task_id, user):
+        return SimpleNamespace(
+            brief_json={},
+            runtime_config_snapshot_json={
+                "visual_material": {
+                    "image_asset_id": "source-1",
+                    "hycanvas_template_id": "template-1",
+                    "hycanvas_fillable_fields": [
+                        {"kind": "text", "label": "副标题", "semanticRole": "subtitle"},
+                        {"kind": "text", "key": "cover_title", "label": "主标题", "semanticRole": "title"},
+                        {"kind": "image", "label": "主图"},
+                    ],
+                }
+            },
+        )
+
+    captured = []
+
+    async def fake_create(db, user, **kwargs):
+        captured.append(kwargs)
+        return {"job": {"id": "hycanvas-job-1", "mode": "hycanvas"}, "deduplicated": False}
+
+    monkeypatch.setattr(content_tools.pg_manager, "get_async_session_context", fake_session)
+    monkeypatch.setattr(content_tools.ContentRepository, "get_task_for_user", fake_get_task_for_user)
+    monkeypatch.setattr(cover_service, "create_hycanvas_cover_job", fake_create)
+
+    if expected_title is None:
+        with pytest.raises(ValueError, match="封面模板缺少主标题"):
+            await content_tools.create_content_cover_job.coroutine(
+                task_id="task-1", runtime=SimpleNamespace(context=context)
+            )
+        assert captured == []
+        return
+
+    result = await content_tools.create_content_cover_job.coroutine(
+        task_id="task-1", runtime=SimpleNamespace(context=context)
+    )
+    assert result["cover_job_id"] == "hycanvas-job-1"
+    assert captured[0]["title"] == expected_title
+    assert captured[0]["fields"] == {
+        "cover_title": expected_title,
+        "副标题": template_fields.get("副标题") or visual_text[1],
+    }
+    assert captured[0]["source_asset_id"] == "source-1"
+    assert captured[0]["template_id"] == "template-1"
+    assert captured[0]["image_field_label"] == "主图"
+    assert captured[0]["parameters"]["workflow_resume"]["parent_run_id"] == "run-parent"
+
+
+@pytest.mark.asyncio
 async def test_cover_tool_routes_ai_mode_to_single_image_image2_copy(monkeypatch):
     visual_plan = {
         **_visual_plan(),

@@ -11,7 +11,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from yuxi.content.model.raw_reference import is_raw_reference
+from yuxi.content.model.raw_reference import is_raw_reference, topic_validation_checks
 from yuxi.content.control.errors import ContentApplicationError
 from yuxi.content.control.evidence import EvidenceApplicationService
 from yuxi.content.control.strategy.recommend_v3 import StrategyPreviewActor
@@ -2505,6 +2505,7 @@ class V3DeterministicNodeHandler:
         )
         if is_raw_reference(production_pack):
             report["checks"].extend((state.get("channel_result") or {}).get("checks") or [])
+            report["checks"].extend(topic_validation_checks(draft.get("topics") or []))
             platform = production_pack["content_rule_bundle"]["runtime_rules"]["viral-platform-expression"]
             combined = "\n".join([(state.get("selected_title") or {}).get("text", ""), body, *draft.get("topics", [])])
             for term in (platform.get("forbidden_lexicon") or {}).get("alternatives", {}):
