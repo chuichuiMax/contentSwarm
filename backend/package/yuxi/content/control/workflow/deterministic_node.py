@@ -57,7 +57,7 @@ from yuxi.content.v3.title_formula_slots import (
     title_formula_slot_schema,
 )
 from yuxi.content.validation import ComplianceEngine, validate_numeric_evidence_coverage
-from yuxi.content.validators import validate_content, validate_modular_content
+from yuxi.content.validators import merge_evidence, validate_content, validate_modular_content
 from yuxi.services.run_queue_service import append_run_stream_event
 from yuxi.storage.postgres.models_content import ContentFormula, ContentTask, CreationMethod, TitleFormula
 from yuxi.storage.postgres.models_knowledge import KnowledgeBase, KnowledgeChunk, KnowledgeFile
@@ -2490,12 +2490,32 @@ class V3DeterministicNodeHandler:
         from yuxi.content.model.forbidden_words import contains_frozen_term
         from yuxi.content.model.single_blueprint import title_publication_year
 
+        evidence_bundle = state["evidence_bundle"]
+        if is_raw_reference(production_pack):
+            raw_business_json = (state.get("runtime_config_snapshot") or {}).get("raw_business_json")
+            if isinstance(raw_business_json, dict) and raw_business_json:
+                evidence_bundle = merge_evidence(
+                    evidence_bundle,
+                    [
+                        {
+                            "id": "ev_raw_business_json",
+                            "type": "business_fact",
+                            "key": "raw_business_json",
+                            "value": raw_business_json,
+                            "source_type": "manual_input",
+                            "source_id": "dangjia_request",
+                            "source_version": "raw-v1",
+                            "verified_status": "user_confirmed",
+                            "allowed_usage": ["title", "body"],
+                        }
+                    ],
+                )
         report = validate_content(
             title=(state.get("selected_title") or {}).get("text", ""),
             body=body,
             topics=draft.get("topics") or [],
             brief=state["content_brief"],
-            evidence_bundle=state["evidence_bundle"],
+            evidence_bundle=evidence_bundle,
             title_publication_year=title_publication_year(production_pack),
             strategy={
                 "methods": (state.get("strategy_snapshot") or {}).get("creation_methods"),

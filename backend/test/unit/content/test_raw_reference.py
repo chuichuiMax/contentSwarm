@@ -82,7 +82,7 @@ async def test_reference_comparison_price_needs_its_own_business_evidence(payloa
         "title": "长沙厨房翻新报价两万？老杨3590搞定",
         "body": "厨房翻新要预备两万块？看看这个案例。",
     }
-    payload["raw_business_json"] = {"requirementType": {"titlePrice": "1.206w"}}
+    payload["raw_business_json"] = {"requirementType": {"prices": [{"content": "整套人工报价1.206w，合计12060元"}]}}
     view = project_input(payload)
     assert "数字事实（包括中文数字）只能来自原始业务 JSON" in view["仿写要求"]
     assert "已有的金额、面积、数量、年限、单位及报价明细原样保留" in view["仿写要求"]
@@ -92,7 +92,8 @@ async def test_reference_comparison_price_needs_its_own_business_evidence(payloa
         "selected_title": {"text": title},
         "content_draft": {"body": "整套人工报价12060元，按实际项目核对范围。", "topics": TOPICS},
         "content_brief": {},
-        "evidence_bundle": {"items": [{"value": "整套人工报价1.206w，合计12060元"}]},
+        "evidence_bundle": {"items": []},
+        "runtime_config_snapshot": {"raw_business_json": payload["raw_business_json"]},
         "strategy_snapshot": {
             "creation_methods": ["FRM03"],
             **payload["production_pack"]["strategy_snapshot"],
@@ -108,6 +109,39 @@ async def test_reference_comparison_price_needs_its_own_business_evidence(payloa
         assert "1.5" in report["checks"][0]["message"]
     else:
         assert report["checks"] == []
+
+
+@pytest.mark.asyncio
+async def test_raw_reference_quote_numbers_are_validated_against_original_business_json(payload):
+    quote = "、".join(
+        [
+            "水电12088元",
+            "拆除2121.6元",
+            "泥瓦2182元",
+            "木作3166.8元",
+            "防水3285.98元",
+            "人工50255元",
+            "安装5763元",
+            "油工6158元",
+            "其他9462.9元",
+        ]
+    )
+    state = {
+        "production_pack": payload["production_pack"],
+        "selected_title": {"text": "旧房施工报价明细"},
+        "content_draft": {"body": quote, "topics": TOPICS},
+        "content_brief": {},
+        "evidence_bundle": {"items": []},
+        "runtime_config_snapshot": {"raw_business_json": {"requirementType": {"prices": [{"content": quote}]}}},
+        "strategy_snapshot": {
+            "creation_methods": ["FRM03"],
+            **payload["production_pack"]["strategy_snapshot"],
+        },
+    }
+
+    result = await V3DeterministicNodeHandler._deterministic_validate(db=None, state=state, node_run_id="test")
+
+    assert result["validation_report"] == {"status": "passed", "checks": []}
 
 
 def test_plain_text_is_not_rewritten_or_replaced_during_storage_mapping(payload):
