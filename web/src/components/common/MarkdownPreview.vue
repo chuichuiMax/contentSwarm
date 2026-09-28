@@ -14,6 +14,7 @@
 import { computed, shallowRef, watch } from 'vue'
 import { useThemeStore } from '@/stores/theme'
 import { renderMarkdown } from '@/utils/markdown_preview'
+import { copyTextToClipboard } from '@/utils/clipboard'
 import 'katex/dist/katex.min.css'
 
 const props = defineProps({
@@ -69,7 +70,7 @@ const handleSvgAction = async (e) => {
 // 复制 SVG 源代码
 const copySvgText = async (svgEl, btn) => {
   try {
-    await navigator.clipboard.writeText(svgEl.outerHTML)
+    await copyTextToClipboard(svgEl.outerHTML)
     showCopiedFeedback(btn)
   } catch (err) {
     console.error('复制 SVG 失败:', err)
@@ -129,7 +130,8 @@ const copySvgAsPng = async (svgEl, btn) => {
     console.error('复制为 PNG 失败:', err)
     // fallback: 尝试复制 SVG 源码
     try {
-      await navigator.clipboard.writeText(svgContent)
+      await copyTextToClipboard(svgContent)
+      showCopiedFeedback(btn)
       console.log('PNG 复制失败，已回退复制 SVG 源码')
     } catch (fallbackErr) {
       console.error('复制 SVG 源码失败:', fallbackErr)

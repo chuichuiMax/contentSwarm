@@ -677,12 +677,13 @@ def _parse_content_studio_persona_case(user_request: str, *, content_type_code: 
     tags = payload.get("tags") or []
     if not isinstance(tags, list) or any(not isinstance(tag, str) for tag in tags):
         raise _content_error(422, "CONTENT_PERSONA_CASE_INVALID", "结构化案例 tags 必须为字符串数组")
+    house_info = requirement.get("houseInfo") if isinstance(requirement.get("houseInfo"), dict) else {}
     values = {
         "location": (persona.serviceCity or "").strip(),
         "persona_fact": build_persona_description(persona),
         "product": "、".join(item.strip() for item in persona.skills if item.strip()),
         "advantages": [item.strip() for item in persona.serviceAdvantages if item.strip()],
-        "project_site": requirement.get("mySite"),
+        "project_site": house_info.get("mySite"),
         "content_tags": tags,
     }
     if content_type_code in {"CT06", "CT07"}:
@@ -692,7 +693,7 @@ def _parse_content_studio_persona_case(user_request: str, *, content_type_code: 
             if tag.strip() and tag.strip() not in {"工艺展示", "施工工艺", "日常", "日常工作"}
         ]
         values["process"] = process_tags
-        values["case_background"] = requirement.get("mySite")
+        values["case_background"] = house_info.get("mySite")
         values["project"] = "、".join(process_tags)
         values["craft_role"] = [
             skill.strip() for skill in persona.skills if skill.strip() not in {"工长", "设计师", "项目经理"}

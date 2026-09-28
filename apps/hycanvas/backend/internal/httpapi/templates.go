@@ -28,6 +28,7 @@ func mountTemplates(api chi.Router, tm *templates.Service, acct *accounts.Servic
 		r.Post("/templates", templatesSaveHandler(tm))
 		r.Get("/templates/collections", templatesListCollectionsHandler(tm))
 		r.Post("/templates/collections", templatesCreateCollectionHandler(tm))
+		r.Patch("/templates/collections/{id}", templatesRenameCollectionHandler(tm))
 		r.Delete("/templates/collections/{id}", templatesDeleteCollectionHandler(tm))
 		r.Get("/templates/{id}", templatesGetHandler(tm))
 		r.Patch("/templates/{id}", templatesRenameHandler(tm))
@@ -424,6 +425,25 @@ func templatesCreateCollectionHandler(tm *templates.Service) http.HandlerFunc {
 			return
 		}
 		writeJSON(w, http.StatusCreated, col)
+	}
+}
+
+func templatesRenameCollectionHandler(tm *templates.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Name string `json:"name"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			problemWithCode(w, r, http.StatusBadRequest, "Bad Request", "invalid body", "invalid_body")
+			return
+		}
+		u := userFrom(r.Context())
+		collection, err := tm.RenameCollection(r.Context(), u.ID, chi.URLParam(r, "id"), body.Name)
+		if err != nil {
+			templatesProblem(w, r, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, collection)
 	}
 }
 

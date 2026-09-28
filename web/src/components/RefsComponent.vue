@@ -91,7 +91,6 @@
 
 <script setup>
 import { ref, computed, reactive, watch } from 'vue'
-import { useClipboard } from '@vueuse/core'
 import { message as antMessage } from 'ant-design-vue'
 import {
   ThumbsUp,
@@ -106,6 +105,7 @@ import {
 import { agentApi } from '@/apis'
 import KnowledgeSourceSection from '@/components/KnowledgeSourceSection.vue'
 import WebSearchSourceSection from '@/components/WebSearchSourceSection.vue'
+import { copyTextToClipboard } from '@/utils/clipboard'
 
 const emit = defineEmits(['retry', 'openRefs'])
 const props = defineProps({
@@ -179,9 +179,6 @@ const dislikeModalVisible = ref(false)
 const dislikeReason = ref('')
 const submittingFeedback = ref(false)
 
-// 使用 useClipboard 实现复制功能
-const { copy, isSupported } = useClipboard()
-
 const showKey = (key) => {
   if (props.showRefs === true) {
     return true
@@ -194,21 +191,16 @@ const isCopied = ref(false)
 
 // 定义 copy 方法
 const copyText = async (text) => {
-  if (isSupported) {
-    try {
-      await copy(text)
-      antMessage.success('文本已复制到剪贴板')
-      isCopied.value = true
-      setTimeout(() => {
-        isCopied.value = false
-      }, 2000)
-    } catch (error) {
-      console.error('复制失败:', error)
-      antMessage.error('复制失败，请手动复制')
-    }
-  } else {
-    console.warn('浏览器不支持自动复制')
-    antMessage.warning('浏览器不支持自动复制，请手动复制')
+  try {
+    await copyTextToClipboard(text)
+    antMessage.success('文本已复制到剪贴板')
+    isCopied.value = true
+    setTimeout(() => {
+      isCopied.value = false
+    }, 2000)
+  } catch (error) {
+    console.error('复制失败:', error)
+    antMessage.error('复制失败，请手动复制')
   }
 }
 

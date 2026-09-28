@@ -319,7 +319,7 @@ async def _run_builtin_cases(monkeypatch, *, preflight_only):
                             task = await db.get(ContentTask, task_id)
                             task.status = record["status"]
                         await db.commit()
-                if state.get("production_pack", {}).get("content_rule_bundle", {}).get("single_blueprint"):
+                if state.get("production_pack", {}).get("content_rule_bundle"):
                     platform = state["production_pack"]["content_rule_bundle"]["runtime_rules"][
                         "viral-platform-expression"
                     ]
@@ -361,6 +361,8 @@ async def _run_builtin_cases(monkeypatch, *, preflight_only):
                             if slug not in frozen_skills:
                                 continue
                             frozen = frozen_skills[slug]
+                            if "instructions" not in frozen:
+                                continue
                             assert applied["content_hash"] == frozen["content_hash"]
                             assert (
                                 applied["applied_hash"] == hashlib.sha256(frozen["instructions"].encode()).hexdigest()

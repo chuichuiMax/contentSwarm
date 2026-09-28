@@ -22,6 +22,17 @@ from yuxi.utils.auth_utils import AuthUtils
 @pytest.mark.e2e
 @pytest.mark.asyncio
 async def test_worker_persists_single_blueprint_body_without_semantic_review():
+    await _run_body_via_worker("industry-decoration-single-blueprint-candidate", "CT02", "北京报价002.txt")
+
+
+@pytest.mark.e2e
+@pytest.mark.asyncio
+async def test_default_factory_worker_replaces_forbidden_words():
+    await _run_body_via_worker("industry-decoration-v3", "CT03", "施工报价json模板.txt")
+
+
+async def _run_body_via_worker(template_id, content_type, filename):
+    semantic_review_enabled = template_id == "industry-decoration-v3"
     case_dir, uid = os.getenv("BUILTIN_CONTENT_CASE_DIR"), os.getenv("RULE_EDITOR_TEST_UID")
     if not case_dir or not uid:
         pytest.skip("需配置本地真实服务测试用户与报价案例目录")
@@ -36,26 +47,22 @@ async def test_worker_persists_single_blueprint_body_without_semantic_review():
         try:
             bootstrap = await client.get("/api/content/bootstrap")
             bootstrap.raise_for_status()
-            template = next(
-                t
-                for t in bootstrap.json()["industry_templates"]
-                if t["id"] == "industry-decoration-single-blueprint-candidate"
-            )
+            template = next(t for t in bootstrap.json()["industry_templates"] if t["id"] == template_id)
             response = await client.post(
                 "/api/content/tasks",
                 json={
-                    "industry_template_id": "industry-decoration-single-blueprint-candidate",
+                    "industry_template_id": template_id,
                     "content_goal": template["default_goal"],
-                    "content_type_code": "CT02",
+                    "content_type_code": content_type,
                     "creation_mode": "viral_rewrite",
-                    "name": "单蓝图真实 Worker 正文验收",
+                    "name": f"{content_type} 真实 Worker 封禁词与正文验收",
                 },
             )
             assert response.status_code == 200, response.text
             task_id = response.json()["task"]["id"]
             response = await client.post(
                 f"/api/content/tasks/{task_id}/compile-brief",
-                json={"brief": {"user_request": (Path(case_dir) / "北京报价002.txt").read_text()}},
+                json={"brief": {"user_request": (Path(case_dir) / filename).read_text()}},
             )
             assert response.status_code == 200, response.text
             response = await client.post(
@@ -75,7 +82,8 @@ async def test_worker_persists_single_blueprint_body_without_semantic_review():
                         .scalars()
                         .all()
                     )
-                assert not any(n.node_id == "semantic_review" for n in nodes)
+                if not semantic_review_enabled:
+                    assert not any(n.node_id == "semantic_review" for n in nodes)
                 approvals = [n for n in nodes if n.node_id == "human_content_approval" and n.status == "completed"]
                 if approvals:
                     snapshot = await AsyncPostgresSaver(pg_manager.langgraph_pool).aget(
@@ -88,8 +96,23 @@ async def test_worker_persists_single_blueprint_body_without_semantic_review():
                         quote = extract_locked_quote_block(state["production_pack"])
                         assert state["content_draft"]["body"].count(quote["rendered_content"]) == 1
                         assert state["composed_content_validation_report"]["status"] == "passed"
-                        assert state["content_draft"]["blueprint_content"]["blocks"]
-                        assert not state.get("review_report")
+                        if semantic_review_enabled:
+                            assert state["review_report"]["status"] in {"passed", "warning"}
+                        else:
+                            assert state["content_draft"]["blueprint_content"]["blocks"]
+                            assert not state.get("review_report")
+                        lexicon = state["production_pack"]["content_rule_bundle"]["runtime_rules"][
+                            "viral-platform-expression"
+                        ]["forbidden_lexicon"]
+                        assert lexicon["sources"] and lexicon["alternatives"]
+                        final_text = "\n".join(
+                            [
+                                state["selected_title"]["text"],
+                                state["content_draft"]["body"],
+                                *state["content_draft"]["topics"],
+                            ]
+                        )
+                        assert not [term for term in lexicon["alternatives"] if term in final_text]
                         output = Path(os.environ["BLUEPRINT_WORKER_TEST_OUTPUT"])
                         output.parent.mkdir(parents=True, exist_ok=True)
                         output.write_text(
@@ -101,10 +124,12 @@ async def test_worker_persists_single_blueprint_body_without_semantic_review():
                                     "title": state["selected_title"],
                                     "draft": state["content_draft"],
                                     "review": state.get("review_report"),
-                                    "semantic_review_status": "not_run",
+                                    "semantic_review_status": "run" if semantic_review_enabled else "not_run",
+                                    "forbidden_lexicon": lexicon,
+                                    "replacement_diffs": state["channel_result"]["replacement_diffs"],
                                     "workflow_version_id": template["default_workflow_version_id"],
                                     "nodes": [{"id": n.node_id, "status": n.status} for n in nodes],
-                                    "scope": "Worker 跳过语义审核，正文通过程序校验并持久化；主动取消后续图片流程",
+                                    "scope": "真实 Worker 正文与封禁词校验，正文 checkpoint 持久化后取消图片流程",
                                 },
                                 ensure_ascii=False,
                                 indent=2,

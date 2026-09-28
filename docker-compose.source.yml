@@ -237,6 +237,7 @@ services:
       - ${WEB_HOST_PORT:-8090}:80
     depends_on:
       api: {condition: service_healthy}
+      hycanvas-app: {condition: service_healthy}
     networks: [app-network]
     volumes:
       - ${SOURCE_ROOT:?SOURCE_ROOT must be set}/docker/nginx/nginx.conf:/etc/nginx/nginx.conf:ro

@@ -143,6 +143,10 @@ def test_trusted_quote_snapshot_becomes_four_confirmed_high_risk_facts(render_po
     }
     assert all(item.source_type == "business_record" for item in items)
     assert all(item.verified_status == "user_confirmed" and item.risk_level == "high_risk" for item in items)
+    title_price = next(item for item in items if item.variable_codes == ("title_price",))
+    title_price_label = next(item for item in items if item.variable_codes == ("title_price_label",))
+    assert title_price.metadata["source_path"] == "requirementType.prices[0].titlePrice.displayText"
+    assert title_price_label.metadata["source_path"] == "requirementType.prices[0].titlePrice.label"
     quote = next(item for item in items if item.variable_codes == ("quote_block",))
     assert quote.value["original_content"] == original
     assert quote.value["render_policy"] == render_policy

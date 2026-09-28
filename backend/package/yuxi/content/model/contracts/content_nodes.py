@@ -21,6 +21,7 @@ from yuxi.content.model.contracts.joint_strategy import (
     validate_joint_strategy,
 )
 from yuxi.content.model.contracts.strategy import SelectStrategyInputV2, StrategyDecisionV2, validate_strategy_decision
+from yuxi.content.model.forbidden_words import contains_frozen_term
 from yuxi.content.model.materials import FrozenProductionPackV1, GenerationSlotV1
 from yuxi.content.model.viral_document import ViralDocumentResultV1, validate_document_result
 from yuxi.content.model.viral_assets import (
@@ -1136,6 +1137,7 @@ class ContractDomainContext:
     allowed_body_lexicon_codes: frozenset[str] = frozenset()
     allowed_body_lexicon_terms: dict[str, frozenset[str]] = field(default_factory=dict)
     locked_body_lexicon_terms: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    forbidden_replacements: dict[str, str] = field(default_factory=dict)
     locked_required_body_evidence_ids: tuple[str, ...] = ()
     normalize_generation_evidence_ids: bool = False
     body_variant_lexicon_codes: dict[str, frozenset[str]] = field(default_factory=dict)
@@ -1436,7 +1438,11 @@ def _validate_formula_lexicon_usage(result: GeneratedContentResultV1, context: C
             invalid_title_terms.extend(
                 f"{usage.code}:{term}" for term in sorted(set(usage.selected_terms) - set(allowed_terms))
             )
-        missing_title_terms.extend(term for term in usage.selected_terms if term not in result.title.text)
+        missing_title_terms.extend(
+            term
+            for term in usage.selected_terms
+            if not contains_frozen_term(result.title.text, term, context.forbidden_replacements)
+        )
     if invalid_title_terms or missing_title_terms:
         messages = []
         if invalid_title_terms:
@@ -1463,7 +1469,11 @@ def _validate_formula_lexicon_usage(result: GeneratedContentResultV1, context: C
             invalid_body_terms.extend(
                 f"{usage.code}:{term}" for term in sorted(set(usage.selected_terms) - set(allowed_terms))
             )
-        missing_body_terms.extend(term for term in usage.selected_terms if term not in result.draft.body)
+        missing_body_terms.extend(
+            term
+            for term in usage.selected_terms
+            if not contains_frozen_term(result.draft.body, term, context.forbidden_replacements)
+        )
     if invalid_body_terms or missing_body_terms:
         messages = []
         if invalid_body_terms:
@@ -2303,10 +2313,21 @@ class ContentNodeResultCollector:
                 title["lexicon_usage"] = [
                     {
                         "code": code,
-                        "selected_terms": [term for term in terms if term in str(title.get("text") or "")],
+                        "selected_terms": [
+                            term
+                            for term in terms
+                            if contains_frozen_term(
+                                str(title.get("text") or ""), term, self.domain_context.forbidden_replacements
+                            )
+                        ],
                     }
                     for code, terms in sorted(self.domain_context.locked_title_lexicon_terms.items())
-                    if any(term in str(title.get("text") or "") for term in terms)
+                    if any(
+                        contains_frozen_term(
+                            str(title.get("text") or ""), term, self.domain_context.forbidden_replacements
+                        )
+                        for term in terms
+                    )
                 ]
         if self.domain_context.locked_body_formula_code:
             if isinstance(outline, dict):

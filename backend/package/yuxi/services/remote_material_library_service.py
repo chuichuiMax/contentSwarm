@@ -8,6 +8,7 @@ import uuid
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 from fastapi import HTTPException
@@ -47,8 +48,20 @@ RemoteProgressCallback = Callable[..., Awaitable[None]]
 
 
 class RemoteMaterialConfigUpdate(BaseModel):
+    base_url: str | None = Field(default=None, max_length=500)
     username: str = Field(min_length=1, max_length=255)
     password: str = Field(min_length=1, max_length=500)
+
+    @field_validator("base_url")
+    @classmethod
+    def validate_base_url(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip().rstrip("/")
+        parsed = urlsplit(value)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ValueError("必须是有效的 HTTP 或 HTTPS 地址")
+        return value
 
     @field_validator("username", "password")
     @classmethod
@@ -201,6 +214,7 @@ async def get_remote_material_config_state(db: AsyncSession, user: User) -> dict
     if setting is not None:
         return {
             "base_url": setting.base_url,
+            "base_url_editable": False,
             "configured": bool(setting.username and setting.password),
             "source": "database",
             "can_manage": user.role == "superadmin",
@@ -210,6 +224,7 @@ async def get_remote_material_config_state(db: AsyncSession, user: User) -> dict
     client = VisioFlowMaterialClient()
     return {
         "base_url": client.base_url,
+        "base_url_editable": True,
         "configured": bool(client.token or (client.username and client.password)),
         "source": "environment",
         "can_manage": user.role == "superadmin",
@@ -225,7 +240,14 @@ async def verify_and_save_remote_material_config(
     user: User,
     payload: RemoteMaterialConfigUpdate,
 ) -> dict[str, Any]:
-    client_api = VisioFlowMaterialClient(token="", username=payload.username, password=payload.password)
+    setting = await MaterialLibraryRepository(db).get_remote_setting()
+    base_url = setting.base_url if setting is not None else payload.base_url
+    client_api = VisioFlowMaterialClient(
+        base_url=base_url,
+        token="",
+        username=payload.username,
+        password=payload.password,
+    )
     timeout = httpx.Timeout(REMOTE_TIMEOUT_SECONDS, connect=min(15.0, REMOTE_TIMEOUT_SECONDS))
     async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
         await client_api.authenticate(client)

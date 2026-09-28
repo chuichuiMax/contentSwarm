@@ -279,6 +279,7 @@ BUILTIN_SKILLS: list[BuiltinSkillSpec] = [
     BuiltinSkillSpec(
         slug="viral-platform-expression",
         display_name="平台表达规范",
+        version="1.1.0",
         source_dir=_SKILLS_ROOT / "viral-platform-expression",
         description="执行问题词替换、绝对化限制和克制 CTA。",
     ),

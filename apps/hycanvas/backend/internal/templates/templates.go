@@ -723,6 +723,27 @@ func (s *Service) ListCollections(ctx context.Context, userID, workspaceID strin
 	return out, nil
 }
 
+// RenameCollection updates a collection name without changing its identity or
+// the templates assigned to it.
+func (s *Service) RenameCollection(ctx context.Context, userID, id, name string) (Collection, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return Collection{}, ErrBadRequest
+	}
+	collection, err := s.getCollection(ctx, id)
+	if err != nil {
+		return Collection{}, err
+	}
+	if err := s.access.AssertMember(ctx, userID, collection.WorkspaceID, "member"); err != nil {
+		return Collection{}, ErrForbidden
+	}
+	updated, err := s.renameCollection(ctx, id, name)
+	if err != nil {
+		return Collection{}, err
+	}
+	return Collection{ID: updated.ID, WorkspaceID: updated.WorkspaceID, Name: updated.Name}, nil
+}
+
 func (s *Service) PublicCategorizedCatalog(ctx context.Context) ([]Category, error) {
 	rows, err := s.listAllCollections(ctx)
 	if err != nil {

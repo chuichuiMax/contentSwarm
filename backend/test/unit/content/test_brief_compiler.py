@@ -26,10 +26,18 @@ def _quote_request(*, price_format: str = "单价面积", title_price: dict | No
         },
         "requirementType": {
             "typeName": "施工报价",
-            "quotationInfo": {"houseArea": "115平", "houseType": "三室二厅"},
-            "prices": [{"format": price_format, "content": "拆除：1000元；水电：2400元"}],
-            "titlePrice": title_price or {"label": "整套人工合计", "displayText": "1.16w"},
-            "mySite": "湖南省长沙市岳麓区梅溪湖街道金茂府",
+            "houseInfo": {
+                "mySite": "湖南省长沙市岳麓区梅溪湖街道金茂府",
+                "houseArea": "115平",
+                "houseType": "三室二厅",
+            },
+            "prices": [
+                {
+                    "format": price_format,
+                    "content": "拆除：1000元；水电：2400元",
+                    "titlePrice": title_price or {"label": "整套人工合计", "displayText": "1.16w"},
+                }
+            ],
         },
         "tags": ["营销报价", "旧房局改"],
         "images": [
@@ -522,7 +530,7 @@ def test_standard_quote_case_rejects_task_type_mismatch():
 
 def test_standard_quote_case_requires_confirmed_title_price():
     request = json.loads(_quote_request())
-    request["requirementType"].pop("titlePrice")
+    request["requirementType"]["prices"][0].pop("titlePrice")
 
     with pytest.raises(HTTPException) as exc_info:
         _parse_content_studio_quote_case(json.dumps(request, ensure_ascii=False), content_type_code="CT03")
@@ -685,7 +693,7 @@ def test_structured_persona_case_preserves_identity_without_inventing_pain(conte
                 "skills": ["工长", "水电", "泥瓦"],
                 "serviceAdvantages": ["自有工人无转包"],
             },
-            "requirementType": {"typeName": type_name, "mySite": "长沙金茂府"},
+            "requirementType": {"typeName": type_name, "houseInfo": {"mySite": "长沙金茂府"}},
             "tags": tags,
         },
         ensure_ascii=False,

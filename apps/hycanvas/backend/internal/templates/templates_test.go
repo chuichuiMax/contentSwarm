@@ -74,11 +74,11 @@ func TestSystemCoverTemplatesAreSelectableAndFillable(t *testing.T) {
 		if err := json.Unmarshal(entry.File, &file); err != nil {
 			t.Fatal(err)
 		}
-		nodeIDs := map[string]bool{}
+		nodesByID := map[string]map[string]any{}
 		for _, page := range asArr(file["pages"]) {
 			for _, root := range asArr(asObj(page)["children"]) {
 				visitTree(asObj(root), func(node map[string]any) {
-					nodeIDs[asStr(node["id"])] = true
+					nodesByID[asStr(node["id"])] = node
 					data := asObj(node["data"])
 					if contains([]string{"city", "layout", "trade", "service", "price", "area", "number"}, asStr(data["coverElementId"])) ||
 						contains([]string{"tag", "number"}, asStr(data["elementType"])) || asStr(node["name"]) == "数字与标签分隔线" {
@@ -90,14 +90,54 @@ func TestSystemCoverTemplatesAreSelectableAndFillable(t *testing.T) {
 		if len(template.FillableFields) == 0 {
 			t.Fatalf("system cover has no fillable fields: %s", template.ID)
 		}
-		fields := map[string]string{"主标题": "装修案例", "副标题": "施工细节"}
+		fields := map[string]string{"主标题": "北京两室旧房改造施工报价明细全流程避坑指南", "副标题": "施工范围和计价口径先说清"}
+		titleID, subtitleID, projectNameEnID := "", "", ""
 		for _, raw := range template.FillableFields {
-			if !nodeIDs[asStr(asObj(raw)["nodeId"])] {
+			field := asObj(raw)
+			if nodesByID[asStr(field["nodeId"])] == nil {
 				t.Fatalf("field refers to missing node in %s", template.ID)
 			}
+			switch asStr(field["semanticRole"]) {
+			case "title":
+				titleID = asStr(field["nodeId"])
+			case "subtitle":
+				subtitleID = asStr(field["nodeId"])
+			case "project_name_en":
+				projectNameEnID = asStr(field["nodeId"])
+				fields[asStr(field["label"])] = ""
+			}
+		}
+		if contains(template.Tags, "自动排版模板") && projectNameEnID == "" {
+			t.Fatalf("personalized cover must declare its optional project English name: %s", template.ID)
 		}
 		if err := fillTextFields(file, template.FillableFields, fields); err != nil {
 			t.Fatalf("system cover cannot fill title and subtitle in %s: %v", template.ID, err)
+		}
+		if projectNameEnID != "" {
+			node := nodesByID[projectNameEnID]
+			for _, paragraph := range asArr(node["content"]) {
+				for _, run := range asArr(asObj(paragraph)["runs"]) {
+					if asStr(asObj(run)["text"]) != "" {
+						t.Fatalf("blank project English name left template placeholder in %s", template.ID)
+					}
+				}
+			}
+		}
+		if title, subtitle := nodesByID[titleID], nodesByID[subtitleID]; title != nil && subtitle != nil {
+			titleTransform, subtitleTransform := asObj(title["transform"]), asObj(subtitle["transform"])
+			titleX, titleY := asNum(titleTransform["x"]), asNum(titleTransform["y"])
+			subtitleX, subtitleY := asNum(subtitleTransform["x"]), asNum(subtitleTransform["y"])
+			titleWidth := asNum(asObj(title["box"])["width"])
+			subtitleWidth := asNum(asObj(subtitle["box"])["width"])
+			stacked := asNum(titleTransform["rotation"]) == 0 && asNum(subtitleTransform["rotation"]) == 0 &&
+				subtitleY > titleY && titleX+titleWidth > subtitleX && subtitleX+subtitleWidth > titleX
+			if stacked && subtitleY < titleY+estimateAutoHeightText(title)+titleSubtitleGap-0.01 {
+				t.Fatalf("long title overlaps subtitle in %s", template.ID)
+			}
+			pageHeight := asNum(asObj(asArr(file["pages"])[0])["height"])
+			if stacked && subtitleY+estimateAutoHeightText(subtitle) > pageHeight-titleFlowPageMargin+0.01 {
+				t.Fatalf("long title pushes subtitle outside page in %s", template.ID)
+			}
 		}
 	}
 	if count != 70 {
@@ -300,6 +340,74 @@ func TestFillTextFieldsDynamicallySeparatesStackedTitleAndSubtitle(t *testing.T)
 			}
 			if asNum(asObj(title["box"])["height"]) != titleHeight || asNum(asObj(title["size"])["height"]) != titleHeight {
 				t.Fatalf("auto-height title bounds were not updated: box=%+v size=%+v", title["box"], title["size"])
+			}
+		})
+	}
+}
+
+func TestFillTextFieldsSeparatesFixedTitleAndSubtitleWithinPage(t *testing.T) {
+	tests := []struct {
+		name          string
+		title         string
+		titleY        float64
+		subtitleY     float64
+		wantTitleMove bool
+		wantSubMove   bool
+	}{
+		{name: "short title keeps authored spacing", title: "北京两室", titleY: 72, subtitleY: 256.7},
+		{name: "wrapped top title pushes subtitle", title: "北京两室旧房改造施工报价明细全流程避坑指南", titleY: 72, subtitleY: 256.7, wantSubMove: true},
+		{name: "wrapped bottom title shifts group upward", title: "北京两室旧房改造施工报价明细全流程避坑指南", titleY: 945.6, subtitleY: 1130.3, wantTitleMove: true, wantSubMove: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			title := map[string]any{
+				"id": "title-node", "type": "text",
+				"transform": map[string]any{"x": 72.0, "y": tt.titleY, "rotation": 0.0},
+				"size":      map[string]any{"width": 949.5, "height": 320.0},
+				"box": map[string]any{
+					"mode": "fixed", "width": 949.5, "height": 320.0,
+					"padding": map[string]any{"t": 8.0, "r": 8.0, "b": 8.0, "l": 8.0},
+				},
+				"content": []any{map[string]any{
+					"runs": []any{map[string]any{"text": "旧标题", "style": map[string]any{"fontSize": 126.6}}},
+				}},
+			}
+			subtitle := map[string]any{
+				"id": "subtitle-node", "type": "text",
+				"transform": map[string]any{"x": 72.0, "y": tt.subtitleY, "rotation": 0.0},
+				"size":      map[string]any{"width": 702.2, "height": 157.4},
+				"box": map[string]any{
+					"mode": "fixed", "width": 702.2, "height": 157.4,
+					"padding": map[string]any{"t": 8.0, "r": 8.0, "b": 8.0, "l": 8.0},
+				},
+				"content": []any{map[string]any{
+					"runs": []any{map[string]any{"text": "旧副标题", "style": map[string]any{"fontSize": 46.0}}},
+				}},
+			}
+			file := map[string]any{"pages": []any{map[string]any{
+				"width": 1080.0, "height": 1440.0, "children": []any{title, subtitle},
+			}}}
+			fields := []any{
+				map[string]any{"nodeId": "title-node", "kind": "text", "label": "主标题", "semanticRole": "title"},
+				map[string]any{"nodeId": "subtitle-node", "kind": "text", "label": "副标题", "semanticRole": "subtitle"},
+			}
+			if err := fillTextFields(file, fields, map[string]string{"主标题": tt.title, "副标题": "施工范围和计价口径先说清"}); err != nil {
+				t.Fatalf("fillTextFields: %v", err)
+			}
+
+			gotTitleY := asNum(asObj(title["transform"])["y"])
+			gotSubtitleY := asNum(asObj(subtitle["transform"])["y"])
+			if (gotTitleY < tt.titleY) != tt.wantTitleMove {
+				t.Fatalf("title y=%v, want moved=%v", gotTitleY, tt.wantTitleMove)
+			}
+			if (gotSubtitleY != tt.subtitleY) != tt.wantSubMove {
+				t.Fatalf("subtitle y=%v, want moved=%v", gotSubtitleY, tt.wantSubMove)
+			}
+			if gotSubtitleY < gotTitleY+estimateAutoHeightText(title)+titleSubtitleGap-0.01 {
+				t.Fatalf("subtitle overlaps wrapped title: titleY=%v subtitleY=%v", gotTitleY, gotSubtitleY)
+			}
+			if gotSubtitleY+estimateAutoHeightText(subtitle) > 1440-titleFlowPageMargin+0.01 {
+				t.Fatalf("subtitle left the page: y=%v height=%v", gotSubtitleY, estimateAutoHeightText(subtitle))
 			}
 		})
 	}
@@ -937,6 +1045,33 @@ func TestTemplates_DB(t *testing.T) {
 	col, err := svc.CreateCollection(ctx, owner.ID, ws.ID, "Brand")
 	if err != nil {
 		t.Fatalf("CreateCollection: %v", err)
+	}
+	if _, err := svc.RenameCollection(ctx, owner.ID, col.ID, "  "); err != ErrBadRequest {
+		t.Fatalf("blank collection name should be rejected, got %v", err)
+	}
+	if _, err := svc.RenameCollection(ctx, other.ID, col.ID, "Unauthorized"); err != ErrForbidden {
+		t.Fatalf("non-member should not rename a collection, got %v", err)
+	}
+	col, err = svc.RenameCollection(ctx, owner.ID, col.ID, "  Brand Covers  ")
+	if err != nil {
+		t.Fatalf("RenameCollection: %v", err)
+	}
+	if col.Name != "Brand Covers" || col.WorkspaceID != ws.ID {
+		t.Fatalf("renamed collection metadata is wrong: %+v", col)
+	}
+	publicCategories, err := svc.PublicCategories(ctx)
+	if err != nil {
+		t.Fatalf("PublicCategories after rename: %v", err)
+	}
+	foundRenamedCategory := false
+	for _, category := range publicCategories {
+		if category.ID == col.ID {
+			foundRenamedCategory = category.Name == col.Name
+			break
+		}
+	}
+	if !foundRenamedCategory {
+		t.Fatalf("public categories did not expose renamed collection: %+v", publicCategories)
 	}
 	// Re-save as a workspace template so it can be collected (private is owner-only but workspace-scoped column is set).
 	wsTmpl, err := svc.SaveAsTemplate(ctx, owner.ID, SaveInput{WorkspaceID: ws.ID, File: loaded.File, Title: "WS Tmpl", Visibility: "workspace"})

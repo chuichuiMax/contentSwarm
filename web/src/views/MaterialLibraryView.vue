@@ -42,8 +42,8 @@ const remoteConfigOpen = ref(false)
 const remoteConfigSaving = ref(false)
 const remoteConfigState = ref(null)
 const resumeRemoteSync = ref(false)
-const remoteConfigForm = reactive({ username: '', password: '' })
 let remoteSyncPollTimer = 0
+const remoteConfigForm = reactive({ baseUrl: '', username: '', password: '' })
 const uploading = ref(false)
 const categories = ref([])
 const galleries = ref([])
@@ -855,6 +855,7 @@ function remoteErrorCode(error) {
 
 function openRemoteConfig(state, { resumeSync = true } = {}) {
   remoteConfigState.value = state
+  remoteConfigForm.baseUrl = state.base_url || ''
   remoteConfigForm.username = ''
   remoteConfigForm.password = ''
   resumeRemoteSync.value = resumeSync
@@ -954,16 +955,18 @@ async function syncRemoteMaterials() {
 }
 
 async function saveRemoteConfig() {
-  if (!remoteConfigForm.username.trim() || !remoteConfigForm.password.trim()) {
-    message.warning('请填写远程素材库账号和密码')
+  if ((remoteConfigState.value?.base_url_editable && !remoteConfigForm.baseUrl.trim()) || !remoteConfigForm.username.trim() || !remoteConfigForm.password.trim()) {
+    message.warning('请填写远程素材库地址、账号和密码')
     return
   }
   remoteConfigSaving.value = true
   try {
-    remoteConfigState.value = await materialLibraryApi.saveRemoteConfig({
+    const payload = {
       username: remoteConfigForm.username.trim(),
       password: remoteConfigForm.password
-    })
+    }
+    if (remoteConfigState.value?.base_url_editable) payload.base_url = remoteConfigForm.baseUrl.trim()
+    remoteConfigState.value = await materialLibraryApi.saveRemoteConfig(payload)
     const shouldResume = resumeRemoteSync.value
     remoteConfigForm.password = ''
     remoteConfigOpen.value = false
@@ -978,6 +981,7 @@ async function saveRemoteConfig() {
 }
 
 function closeRemoteConfig() {
+  remoteConfigForm.baseUrl = ''
   remoteConfigForm.username = ''
   remoteConfigForm.password = ''
   resumeRemoteSync.value = false
@@ -1153,6 +1157,15 @@ onBeforeUnmount(() => {
       @ok="uploadFiles"
       @cancel="resetUpload"
     >
+      <div class="remote-config-form">
+        <p>配置全站共享的远程素材库凭据。远程地址仅首次配置时可修改；密码只用于服务端登录验证，不会在页面中回显。</p>
+        <label><span>远程地址</span><a-input v-model:value="remoteConfigForm.baseUrl" :disabled="!remoteConfigState?.base_url_editable" :maxlength="500" placeholder="请输入 HTTP 或 HTTPS 地址" /></label>
+        <label><span>账号</span><a-input v-model:value="remoteConfigForm.username" :maxlength="255" autocomplete="off" placeholder="请输入远程素材库账号" /></label>
+        <label><span>密码</span><a-input-password v-model:value="remoteConfigForm.password" :maxlength="500" autocomplete="new-password" placeholder="请输入远程素材库密码" /></label>
+      </div>
+    </a-modal>
+
+    <a-modal v-model:open="uploadOpen" :title="`上传${materialType === 'image' ? '素材图片' : '封面模板'}`" :confirm-loading="uploading" ok-text="开始上传" @ok="uploadFiles" @cancel="resetUpload">
       <div class="upload-form">
         <input ref="fileInput" type="file" multiple accept="image/png,image/jpeg,image/webp,image/*" hidden @change="onFiles" />
         <input ref="folderInput" type="file" webkitdirectory multiple accept="image/png,image/jpeg,image/webp,image/*" hidden @change="onFolderFiles" />
