@@ -188,7 +188,7 @@ const hycanvasPreviewQueue = []
 const hycanvasPreviewQueued = new Set()
 let hycanvasPreviewRunning = false
 const selectedHyCanvasTemplateId = ref('')
-const coverTemplateTab = ref('builtin')
+const coverTemplateTab = ref('ai')
 const hycanvasFields = reactive({})
 const hycanvasCreating = ref(false)
 const hycanvasDesign = ref(null)
@@ -471,7 +471,9 @@ const loadHyCanvasTemplates = async () => {
     )
     const savedVisual = store.task?.brief?.visual_material || {}
     coverTemplateTab.value =
-      savedVisual.cover_mode === 'ai' || savedVisual.featured_cover_template_id ? 'ai' : 'builtin'
+      !store.task || savedVisual.cover_mode === 'ai' || savedVisual.featured_cover_template_id
+        ? 'ai'
+        : 'builtin'
     selectedHyCanvasTemplateId.value =
       coverTemplateTab.value === 'builtin'
         ? savedVisual.hycanvas_template_id || store.artifact?.hycanvas_design_snapshot?.template_id || ''
@@ -1261,7 +1263,7 @@ const initializeVisualSelection = () => {
   selectedPosterTemplateId.value =
     store.task?.selected_poster_template_id || saved.poster_template_id || ''
   coverTemplateTab.value =
-    saved.cover_mode === 'ai' || saved.featured_cover_template_id ? 'ai' : 'builtin'
+    !store.task || saved.cover_mode === 'ai' || saved.featured_cover_template_id ? 'ai' : 'builtin'
   selectedHyCanvasTemplateId.value =
     coverTemplateTab.value === 'builtin' ? saved.hycanvas_template_id || '' : ''
   photoComposition.value = coverTemplateTab.value === 'builtin' ? saved.photo_composition || null : null
