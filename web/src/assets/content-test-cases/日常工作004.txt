@@ -22,13 +22,10 @@
     },
     "requirementType": {
         "typeName": "日常",
-        "quotationInfo": {
-
+        "houseInfo": {
+            "mySite": "湖南省开福区天健城"
         },
-        "prices": [
-
-        ],
-        "mySite": "湖南省开福区天健城"
+        "prices": []
     },
     "tags": [
         "油漆",

@@ -22,13 +22,10 @@
     },
     "requirementType": {
         "typeName": "日常",
-        "quotationInfo": {
-
+        "houseInfo": {
+            "mySite": "湖南省长沙市岳麓区天顶街道长房云时代"
         },
-        "prices": [
-
-        ],
-        "mySite": "湖南省长沙市岳麓区天顶街道长房云时代"
+        "prices": []
     },
     "tags": [
         "水电",

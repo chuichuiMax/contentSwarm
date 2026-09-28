@@ -22,21 +22,21 @@
     },
     "requirementType": {
         "typeName": "施工报价",
-        "quotationInfo": {
+        "houseInfo": {
+            "mySite": "成都青羊老小区",
             "houseArea": "115平",
             "houseType": "四室一厅"
         },
         "prices": [
             {
                 "format": "工种总价",
-                "content": " 拆除施工：1695；泥瓦施工：8465； 水电施工：5700；木工施工：2788； 油漆施工：5060；所有部分总计：32708"
+                "content": " 拆除施工：1695；泥瓦施工：8465； 水电施工：5700；木工施工：2788； 油漆施工：5060；所有部分总计：32708",
+                "titlePrice": {
+                    "label": "所有部分总计",
+                    "displayText": "32708元"
+                }
             }
-        ],
-        "titlePrice": {
-            "label": "所有部分总计",
-            "displayText": "32708元"
-        },
-        "mySite": "成都青羊老小区"
+        ]
     },
     "tags": [
         "营销报价",
