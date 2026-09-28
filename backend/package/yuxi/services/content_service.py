@@ -570,8 +570,9 @@ def _parse_content_studio_persona_case(user_request: str, *, content_type_code: 
         values["process"] = process_tags
         values["case_background"] = house_info.get("mySite")
         values["project"] = "、".join(process_tags)
+        # 身份可作为标题说话人；会水电/泥瓦不代表本次拆除对象就是水电/泥瓦。
         values["craft_role"] = [
-            skill.strip() for skill in persona.skills if skill.strip() not in {"工长", "设计师", "项目经理"}
+            skill.strip() for skill in persona.skills if skill.strip() in {"工长", "设计师", "项目经理"}
         ]
         inspections = [tag for tag in process_tags if "巡检" in tag or "巡查" in tag]
         if inspections:

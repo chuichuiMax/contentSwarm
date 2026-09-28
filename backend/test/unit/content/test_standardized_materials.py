@@ -1267,7 +1267,7 @@ def test_frozen_production_pack_hash_is_stable_and_covers_materials():
     assert model_view["production_pack"]["generation_slots"]
     assert "review_contract" in {item["slot_id"] for item in model_view["production_pack"]["generation_slots"]}
     assert "original_content" not in json.dumps(model_view["production_pack"]["generation_slots"], ensure_ascii=False)
-    assert first.formula_lexicon_bundle["selection"]["policy"] == "shortest_then_lexicographic_v1"
+    assert first.formula_lexicon_bundle["selection"]["policy"] == "title_candidates_body_shortest_v2"
     assert "content_brief" not in model_view
     assert "evidence_bundle" not in model_view
 
@@ -1506,7 +1506,7 @@ def test_formula_lexicon_constraints_use_body_fact_materials_bound_by_manifest()
     assert constraints["unresolved_fact_bound_codes"] == []
 
 
-def test_frozen_production_pack_locks_one_term_per_formula_lexicon():
+def test_frozen_production_pack_freezes_title_candidates_and_body_terms():
     manifest = build_material_manifest(catalog=_catalog(), order=_order())
     materials = [_business_material("product", "长沙同城装修水电改造"), _price_material(), _reference_material()]
     report = validate_material_gate(manifest=manifest, materials=materials)
@@ -1540,8 +1540,8 @@ def test_frozen_production_pack_locks_one_term_per_formula_lexicon():
     )
 
     assert pack.formula_lexicon_bundle["selection"]["title"] == {
-        "title.instruction_value": ["先存后看"],
-        "title.positioning": ["同城装修"],
+        "title.instruction_value": ["先存后看", "装修人必看"],
+        "title.positioning": ["同城装修", "水电改造"],
     }
     assert pack.formula_lexicon_bundle["selection"]["body"] == {"ending.quotation_cta": ["报价对比"]}
     assert pack.formula_lexicon_bundle["fact_bindings"] == {
@@ -1553,7 +1553,14 @@ def test_frozen_production_pack_locks_one_term_per_formula_lexicon():
                     "variable_codes": ["product"],
                     "material_ids": ["mat-product"],
                     "evidence_ids": [],
-                }
+                },
+                {
+                    "term": "水电改造",
+                    "resolution_type": "exact",
+                    "variable_codes": ["product"],
+                    "material_ids": ["mat-product"],
+                    "evidence_ids": [],
+                },
             ]
         },
         "body": {},
@@ -1653,3 +1660,16 @@ def test_persona_alternative_bindings_compile_value_slot_without_unselected_evid
     assert value_slot.source_variable_codes == ("advantages",)
     assert value_slot.evidence_ids == ("ev-selected",)
     assert validate_material_gate(manifest=manifest, materials=[]).status == "blocked"
+
+
+def test_title_lexicon_freezes_candidates_without_preselecting_emotion():
+    constraints = {
+        "title": {"title.oral_emotion": ["劝退", "听劝", "谁懂啊"], "title.positioning": ["旧房改造", "同城装修"]},
+        "body": {"ending.quotation_cta": ["免费量房报价", "报价对比"]},
+    }
+    selection = select_formula_lexicon_terms(constraints)
+    assert set(selection["title"]["title.oral_emotion"]) == {"劝退", "听劝", "谁懂啊"}
+    assert set(selection["title"]["title.positioning"]) == {"旧房改造", "同城装修"}
+    assert selection["body"] == {"ending.quotation_cta": ["报价对比"]}
+    constraints["title"]["title.oral_emotion"].reverse()
+    assert select_formula_lexicon_terms(constraints) == selection

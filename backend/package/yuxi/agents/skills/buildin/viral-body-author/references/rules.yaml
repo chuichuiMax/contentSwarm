@@ -1,6 +1,6 @@
 {
   "module_id": "viral-body-author",
-  "version": "1.0.0",
+  "version": "1.2.0",
   "applies_when": {
     "creation_mode": "viral_rewrite"
   },

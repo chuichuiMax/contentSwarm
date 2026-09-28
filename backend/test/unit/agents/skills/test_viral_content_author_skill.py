@@ -65,8 +65,8 @@ def test_modular_author_preserves_locked_slots_and_exact_evidence_ids():
     assert "每个对象是必填槽位" in title_instructions
     assert "`persona_fact` 槽位可用已核验身份或年限表达" in title_instructions
     assert "`title.lexicon_usage` 只登记标题中实际出现的冻结词条" in title_instructions
-    assert "Evidence ID 必须从错误消息的允许列表或输入逐字复制" in core_instructions
-    assert "一次修正错误消息列出的全部位置" in core_instructions
+    assert "Evidence ID 逐字复制允许列表或输入" in core_instructions
+    assert "仅修工具指出的全部路径" in core_instructions
     assert "所有 Evidence ID 只能从输入逐字复制" in body_instructions
 
 
@@ -92,14 +92,14 @@ def test_modular_persona_rules_require_three_layer_opening_and_relevant_advantag
     reviewer = next(item for item in BUILTIN_SKILLS if item.slug == "viral-modular-reviewer")
     review_instructions = (Path(reviewer.source_dir) / "SKILL.md").read_text(encoding="utf-8")
 
-    assert "正文前两个自然段必须自然完成三层表达" in instructions
+    assert "其他情况在前两个自然段完成" in instructions
     assert all(term in instructions for term in ("身份人设", "价值人设", "证据人设"))
     assert "当前场景和核心痛点最相关的 2～3 项" in instructions
     assert persona.version == "1.1.0"
     assert rules["version"] == "1.1.0"
     assert rules["runtime_rules"]["opening_layers"] == ["identity", "value", "evidence"]
     assert rules["runtime_rules"]["relevant_advantage_count"] == {"min": 2, "max": 3}
-    assert reviewer.version == "1.1.0"
+    assert reviewer.version == "1.4.0"
     assert "少于 2 项、超过 3 项、机械罗列、不相关或无 Evidence 时阻断" in review_instructions
     assert "不能因标题自然或主题一致就放行缺槽标题" in review_instructions
     assert "不能把“只登记未使用词条”判为通过" in review_instructions

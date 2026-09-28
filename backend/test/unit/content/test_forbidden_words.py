@@ -174,6 +174,8 @@ async def test_locked_lexicon_accepts_frozen_replacements_during_emoji_repair(ma
     with pytest.raises(ContractDomainValidationError, match="标题未逐字使用"):
         validate_content_node_result("GeneratedContentResultV1", result, context)
     result["title"]["text"] = title
-    result["draft"]["body"] = "装修细节"
-    with pytest.raises(ContractDomainValidationError, match="正文未逐字使用"):
+    result["draft"]["body"] = "先看看每项包含哪些活儿，别只看一开始说的便宜。"
+    validate_content_node_result("GeneratedContentResultV1", result, context)
+    result["draft"]["lexicon_usage"][0]["selected_terms"] = ["自行编造的词库来源"]
+    with pytest.raises(ContractDomainValidationError, match="候选外词条"):
         validate_content_node_result("GeneratedContentResultV1", result, context)
