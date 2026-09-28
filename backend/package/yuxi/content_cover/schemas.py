@@ -17,7 +17,7 @@ class HyCanvasDesignCreate(BaseModel):
         pattern=(
             r"^(?:(?:xiaohongshu|system-cover)-[a-z0-9-]+|"
             r"[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$"
-        )
+        ),
     )
     title: str = Field(min_length=1, max_length=200)
     fields: dict[str, str]
@@ -131,6 +131,8 @@ class CoverGenerateCreate(BaseModel):
     mask_asset_id: str | None = None
     title: str = Field(default="", max_length=60)
     subtitle: str = Field(default="", max_length=120)
+    tags: list[str] = Field(default_factory=list, max_length=10)
+    render_copy_with_image2: bool = False
     reference_mode: Literal["replicate", "style"] = "replicate"
     prompt: str = Field(default="", max_length=8000)
     negative_prompt: str | None = Field(default=None, max_length=4000)
@@ -154,6 +156,14 @@ class CoverGenerateCreate(BaseModel):
         if len(set(value)) != len(value):
             raise ValueError("source_asset_ids 不能重复")
         return value
+
+    @field_validator("tags")
+    @classmethod
+    def normalize_tags(cls, value: list[str]) -> list[str]:
+        normalized = [item.strip() for item in value if item.strip()]
+        if any(len(item) > 30 for item in normalized):
+            raise ValueError("单个标签不能超过 30 个字符")
+        return normalized
 
     @model_validator(mode="after")
     def validate_mode_inputs(self):
@@ -184,6 +194,8 @@ class CoverGenerateCreate(BaseModel):
                 raise ValueError("蒙版生成不能同时携带模板图")
         if self.reference_mode == "style" and not (self.mode == "multi_reference" and self.template_asset_id):
             raise ValueError("风格参考模式需要多图参考并携带模板图")
+        if self.render_copy_with_image2 and self.mode != "image_to_image":
+            raise ValueError("image2 文案直出仅支持单图图生图")
         return self
 
 
