@@ -447,11 +447,22 @@ class MinIOClient:
 _default_client = None
 
 
+def reset_storage_client() -> None:
+    """清除缓存的存储客户端，便于测试或切换 STORAGE_BACKEND。"""
+    global _default_client
+    _default_client = None
+
+
 def get_minio_client() -> MinIOClient:
-    """获取 MinIO 客户端实例"""
+    """获取对象存储客户端。STORAGE_BACKEND=oss 时素材库/封面走阿里云 OSS。"""
     global _default_client
     if _default_client is None:
-        _default_client = MinIOClient()
+        if os.getenv("STORAGE_BACKEND", "minio").strip().lower() == "oss":
+            from yuxi.storage.oss.client import OssStorageClient, RoutedStorageClient
+
+            _default_client = RoutedStorageClient(MinIOClient(), OssStorageClient())
+        else:
+            _default_client = MinIOClient()
     return _default_client
 
 

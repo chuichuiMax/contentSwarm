@@ -17,12 +17,29 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.content.catalog import CONTENT_TYPES
-from yuxi.content.schemas import ContentBriefPayload, ContentRunCreate, ContentRunResume, ContentTaskCreate
+from yuxi.content.schemas import (
+    ContentBriefPayload,
+    ContentRunCreate,
+    ContentRunResume,
+    ContentTaskCreate,
+    ContentVisualMaterialSelection,
+)
+from yuxi.content.service_entry_form import (
+    BRAND_NAME,
+    CONTENT_TYPE_NAME_TO_DIRECTION,
+    FIELD_SELECT_OPTIONS,
+    catalog_select_options,
+    configured_business_variable_fields,
+    map_service_entry_form_values,
+)
+from yuxi.repositories.content_cover_repository import ContentCoverRepository
 from yuxi.repositories.content_repository import ContentRepository
 from yuxi.repositories.cover_repository import CoverRepository
 from yuxi.repositories.employee_repository import EmployeeRepository
+from yuxi.repositories.material_library_repository import MaterialLibraryRepository
 from yuxi.services.agent_run_service import stream_agent_run_events
-from yuxi.services.content_cover_service import create_cover_asset, get_cover_asset_file
+from yuxi.services.business_variable_service import list_business_variables
+from yuxi.services.content_cover_service import get_cover_asset_file, serialize_asset
 from yuxi.services.content_service import (
     create_content_run,
     create_content_task,
@@ -32,19 +49,33 @@ from yuxi.services.content_service import (
     get_content_task,
     get_task_artifact,
     resume_content_run,
+    retry_content_node,
     save_content_brief,
 )
 from yuxi.services.content_type_service import ensure_default_content_types, list_content_types
+from yuxi.services.material_library_service import (
+    delete_material_item,
+    get_material_file,
+    get_material_thumbnail,
+    import_material_images,
+    list_image_galleries,
+    list_material_items,
+)
+from yuxi.services.process_standard_service import (
+    list_enabled_process_names_by_type,
+    list_enabled_process_type_names,
+)
+from yuxi.services.resident_population_service import list_enabled_resident_population_names
 from yuxi.services.run_queue_service import get_redis_client, list_run_stream_events
+from yuxi.services.target_audience_service import list_enabled_target_audience_names
 from yuxi.services.user_identity_service import is_valid_phone_number, normalize_phone_number
-from yuxi.services.variable_service import SERVICE_ENTRIES, ensure_default_variables, list_variables
+from yuxi.services.variable_service import SERVICE_ENTRIES, ensure_default_variables
 from yuxi.storage.minio.client import StorageError, get_minio_client
 from yuxi.storage.postgres.models_business import Department, User
 from yuxi.storage.postgres.models_content import ContentArtifact, ContentEmployee, ContentMpFavorite, ContentTask
 from yuxi.utils.auth_utils import AuthUtils
-from yuxi.utils.datetime_utils import format_utc_datetime, shanghai_now, utc_now_naive
+from yuxi.utils.datetime_utils import SHANGHAI_TZ, ensure_utc, format_utc_datetime, shanghai_now, utc_now_naive
 
-BRAND_NAME = "鸿扬家装"
 INDUSTRY_SLUG = "decoration"
 SMS_TTL_SECONDS = 300
 WECHAT_SESSION_TTL_SECONDS = 600
@@ -57,38 +88,31 @@ NRLX_TO_CT = {
     "NRLX0006": "CT06",
     "NRLX0007": "CT07",
 }
-NAME_TO_CT = {
-    "工艺施工展示": "CT05",
-    "装修报价清单": "CT02",
-    "报价清单": "CT02",
-    "装修避坑分享": "CT03",
-    "避坑分享": "CT03",
-    "装修省钱攻略": "CT04",
-    "省钱攻略": "CT04",
-    "装修案例分享": "CT01",
-    "案例分享": "CT01",
-    "装修知识科普": "CT06",
-    "知识科普": "CT06",
-    "人设自荐": "CT07",
-    "装修人设自荐": "CT07",
-}
+NAME_TO_CT = CONTENT_TYPE_NAME_TO_DIRECTION
 FRAME_AREA_PRICING: tuple[dict[str, Any], ...] = (
-    {"value": "50-70㎡", "label": "50-70㎡", "quotes": {"基础": "4-5万", "木制品": "2-3万", "主材": "2-3万"}},
-    {"value": "90-110㎡", "label": "90-110㎡", "quotes": {"基础": "7-8万", "木制品": "3-4万", "主材": "4-5万"}},
-    {"value": "110-130㎡", "label": "110-130㎡", "quotes": {"基础": "9-11万", "木制品": "4-5万", "主材": "5-6万"}},
-    {"value": "130-150㎡", "label": "130-150㎡", "quotes": {"基础": "11-12万", "木制品": "5-6万", "主材": "6-7万"}},
-    {"value": "150-200㎡", "label": "150-200㎡", "quotes": {"基础": "15-18万", "木制品": "6-8万", "主材": "7-8万"}},
-    {"value": "200-300㎡", "label": "200-300㎡", "quotes": {"基础": "20-30万", "木制品": "9-11万", "主材": "8-10万"}},
+    {"value": "50-70㎡", "label": "50-70㎡", "min": 50, "max": 70, "quotes": {"基础": "4-5万", "木制品": "2-3万", "主材": "2-3万"}},
+    {"value": "90-110㎡", "label": "90-110㎡", "min": 90, "max": 110, "quotes": {"基础": "7-8万", "木制品": "3-4万", "主材": "4-5万"}},
+    {"value": "110-130㎡", "label": "110-130㎡", "min": 110, "max": 130, "quotes": {"基础": "9-11万", "木制品": "4-5万", "主材": "5-6万"}},
+    {"value": "130-150㎡", "label": "130-150㎡", "min": 130, "max": 150, "quotes": {"基础": "11-12万", "木制品": "5-6万", "主材": "6-7万"}},
+    {"value": "150-200㎡", "label": "150-200㎡", "min": 150, "max": 200, "quotes": {"基础": "15-18万", "木制品": "6-8万", "主材": "7-8万"}},
+    {"value": "200-300㎡", "label": "200-300㎡", "min": 200, "max": 300, "quotes": {"基础": "20-30万", "木制品": "9-11万", "主材": "8-10万"}},
     {
         "value": "300㎡以上",
         "label": "300㎡以上",
+        "min": 300,
+        "max": None,
         "quotes": {"基础": "30万以上", "木制品": "11万以上", "主材": "16万以上"},
     },
 )
+_AREA_SQM = re.compile(r"^(\d+(?:\.\d+)?)\s*(?:㎡|m²|m2|平米|平)?$", re.I)
 _QUOTE_RANGE = re.compile(r"^(\d+(?:\.\d+)?)-(\d+(?:\.\d+)?)万$")
 _QUOTE_FLOOR = re.compile(r"^(\d+(?:\.\d+)?)万以上$")
+_HYCANVAS_TEMPLATE_ID = re.compile(
+    r"^(?:(?:xiaohongshu|system-cover)-[a-z0-9-]+|"
+    r"[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$"
+)
 _OPEN_QUOTE_SPAN = 10
-DESIGN_STYLES: tuple[str, ...] = ("现代简约", "轻奢", "新中式", "北欧", "奶油风", "原木风")
+DESIGN_STYLES: tuple[str, ...] = tuple(FIELD_SELECT_OPTIONS["设计风格"])
 REGION_TREE: tuple[tuple[str, tuple[str, ...]], ...] = (
     (
         "长沙市",
@@ -241,9 +265,11 @@ class MpCompileBriefPayload(BaseModel):
     service_entry: ServiceEntry
     content_type_code: str | None = None
     form_values: dict[str, Any] = Field(default_factory=dict)
-    cover_asset_id: str = Field(min_length=1, max_length=64)
+    cover_asset_id: str | None = Field(default=None, max_length=64)
     cover_asset_ids: list[str] = Field(default_factory=list, max_length=3)
     cover_template_id: str | None = None
+    hycanvas_template_id: str | None = None
+    image_item_id: str | None = Field(default=None, max_length=64)
 
 
 class MpRunCreatePayload(BaseModel):
@@ -254,6 +280,11 @@ class MpRunCreatePayload(BaseModel):
 class MpRunResumePayload(BaseModel):
     request_id: str | None = None
     resume: dict[str, Any]
+
+
+class MpRunRetryPayload(BaseModel):
+    request_id: str | None = None
+    node_id: str | None = None
 
 
 @dataclass
@@ -308,11 +339,12 @@ def map_nrlx_to_ct_code(type_code: str | None, name: str | None) -> str:
 
 def resolve_content_goal(service_entry: str, ct_code: str) -> str:
     supported = next((item["supported_goals"] for item in CONTENT_TYPES if item["code"] == ct_code), ["acquire"])
-    preferred = ("brand", "acquire", "educate") if service_entry == "好评笔记" else ("acquire", "educate", "brand")
+    # 好评笔记是业主评价项目成员的口碑记录，禁止落入获客转化目标。
+    preferred = ("brand", "educate") if service_entry == "好评笔记" else ("acquire", "educate", "brand")
     for goal in preferred:
         if goal in supported:
             return goal
-    return supported[0]
+    return next((item for item in supported if item != "acquire"), supported[0])
 
 
 def _format_wan(value: float) -> str:
@@ -349,16 +381,37 @@ def _frame_area_payload(item: dict[str, Any]) -> dict[str, Any]:
     return {
         "value": item["value"],
         "label": item["label"],
+        "min": item["min"],
+        "max": item["max"],
         "quotes": dict(item["quotes"]),
         "quote_choices": {key: list(expand_quote_range(value)) for key, value in item["quotes"].items()},
     }
 
 
-def lookup_frame_area_pricing(frame_area: str) -> dict[str, Any]:
+def match_frame_area_pricing(frame_area: str) -> dict[str, Any] | None:
+    raw = str(frame_area or "").strip()
     for item in FRAME_AREA_PRICING:
-        if item["value"] == frame_area:
+        if item["value"] == raw:
             return item
-    raise _mp_error(422, "MP_FRAME_AREA_INVALID", "外框面积不在可选范围内")
+    matched = _AREA_SQM.fullmatch(raw)
+    if matched is None:
+        return None
+    number = float(matched.group(1))
+    hits = [
+        item
+        for item in FRAME_AREA_PRICING
+        if number >= item["min"] and (item["max"] is None or number <= item["max"])
+    ]
+    if not hits:
+        return None
+    return max(hits, key=lambda item: item["min"])
+
+
+def lookup_frame_area_pricing(frame_area: str) -> dict[str, Any]:
+    item = match_frame_area_pricing(frame_area)
+    if item is None:
+        raise _mp_error(422, "MP_FRAME_AREA_INVALID", "外框面积不在报价范围内")
+    return item
 
 
 def next_mp_content_code(existing_codes: list[str], *, day: str) -> str:
@@ -385,65 +438,34 @@ def build_mp_brief_payload(
     service_entry: str,
     form_values: dict[str, Any],
     content_type_name: str,
-    cover_asset_id: str,
+    content_type_id: str | None,
+    cover_asset_id: str | None,
     cover_template_id: str | None,
     content_code: str,
     cover_asset_ids: list[str] | None = None,
+    visual_material: ContentVisualMaterialSelection | None = None,
 ) -> ContentBriefPayload:
-    photo_ids = _cover_asset_ids(cover_asset_id, cover_asset_ids)
     values = {str(key): value for key, value in form_values.items()}
     values["mp_service_entry"] = service_entry
     values["mp_content_code"] = content_code
+    values["mp_content_type_id"] = content_type_id or ""
     values["mp_content_type_name"] = content_type_name
-    values["cover_asset_id"] = photo_ids[0]
-    values["cover_asset_ids"] = photo_ids
+    photo_ids: list[str] = []
+    if service_entry != "好评笔记" and str(cover_asset_id or "").strip():
+        photo_ids = _cover_asset_ids(str(cover_asset_id).strip(), cover_asset_ids)
+        values["cover_asset_id"] = photo_ids[0]
+        values["cover_asset_ids"] = photo_ids
+    else:
+        values.pop("cover_asset_id", None)
+        values.pop("cover_asset_ids", None)
     if cover_template_id:
         values["cover_template_id"] = cover_template_id
+    if visual_material is not None:
+        values["hycanvas_template_id"] = visual_material.hycanvas_template_id
 
-    community = str(values.get("楼盘信息") or "").strip()
-    frame_area = str(values.get("外框面积") or "").strip()
-    style = str(values.get("设计风格") or "").strip()
-    region = str(values.get("所在区域") or "").strip()
-    budget_text = "；".join(
-        f"{label} {values[label]}".strip()
-        for label in ("基础", "木制品", "主材")
-        if str(values.get(label) or "").strip()
-    )
-    persona_text = "，".join(
-        f"{label} {values[label]}".strip()
-        for label in ("设计师", "预算师", "项目经理", "客户经理", "工匠")
-        if str(values.get(label) or "").strip()
-    )
-
-    if service_entry == "装修家居":
-        product = community or "整装项目"
-        process = budget_text or f"{style} {frame_area}".strip() or "整装交付"
-        pain = f"{community or '业主'}关注{frame_area or '户型'}装修落地"
-        advantage = style or "鸿扬整装标准化交付"
-        audience = [region] if region else ["装修业主"]
-        result = " ".join(part for part in (community, frame_area, style) if part)
-    else:
-        product = persona_text or "服务人设"
-        process = persona_text or "好评服务"
-        pain = "业主想找对的服务人"
-        advantage = persona_text or "鸿扬交付团队"
-        audience = [region] if region else ["装修业主"]
-        result = persona_text
-
-    mapped = {
-        **values,
-        "brand_name": BRAND_NAME,
-        "audience": audience,
-        "pain": pain,
-        "advantage": advantage,
-        "project_type": product,
-        "area": frame_area,
-        "budget": budget_text,
-        "craft_and_materials": process,
-        "owner_pain": pain,
-        "project_result": result,
-        "persona": persona_text,
-    }
+    mapped = map_service_entry_form_values(service_entry, values)
+    persona_text = str(mapped.get("persona") or "")
+    audience = mapped.get("audience") or []
     business_variables = {"persona_fact": persona_text} if persona_text else {}
     return ContentBriefPayload(
         brand={"name": BRAND_NAME},
@@ -453,6 +475,7 @@ def build_mp_brief_payload(
         attachments=[
             {"asset_id": item, "role": "cover" if index == 0 else "photo"} for index, item in enumerate(photo_ids)
         ],
+        visual_material=visual_material,
     )
 
 
@@ -473,9 +496,91 @@ def _compact_run(run_result: dict[str, Any], interrupt: dict[str, Any] | None) -
         "task_id": run["thread_id"],
         "status": run["status"],
         "request_id": run["request_id"],
+        "error_message": run.get("error_message"),
         "interrupt": interrupt,
         "stream_url": f"/api/mp/content/runs/{run['id']}/events",
     }
+
+
+async def _backfill_cover_selection_assets(
+    db: AsyncSession,
+    *,
+    task_id: str,
+    owner_uid: str,
+    interrupt: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if not interrupt or interrupt.get("interrupt_type") != "cover_selection":
+        return interrupt
+    existing = [str(item) for item in (interrupt.get("asset_ids") or []) if item]
+    if existing:
+        return interrupt
+    jobs, _ = await ContentCoverRepository(db).list_jobs(
+        owner_uid,
+        content_task_id=task_id,
+        page=1,
+        page_size=10,
+    )
+    for job in jobs:
+        if job.status != "succeeded":
+            continue
+        asset_ids = [str(item) for item in ((job.result_json or {}).get("asset_ids") or []) if item]
+        if asset_ids:
+            return {
+                **interrupt,
+                "asset_ids": asset_ids,
+                "cover_job_id": interrupt.get("cover_job_id") or job.id,
+            }
+    return interrupt
+
+
+def _cover_auto_resume_payload(interrupt: dict[str, Any] | None, run_id: str) -> dict[str, Any] | None:
+    if not interrupt or interrupt.get("interrupt_type") != "cover_selection":
+        return None
+    asset_ids = [str(item) for item in (interrupt.get("asset_ids") or []) if item]
+    version = interrupt.get("expected_state_version")
+    if not asset_ids or version is None:
+        return None
+    return {
+        "run_id": str(interrupt.get("run_id") or run_id),
+        "node_id": str(interrupt.get("node_id") or "select_cover"),
+        "expected_state_version": version,
+        "asset_id": asset_ids[0],
+    }
+
+
+def _content_approval_auto_resume_payload(interrupt: dict[str, Any] | None, run_id: str) -> dict[str, Any] | None:
+    if not interrupt or interrupt.get("interrupt_type") != "content_approval":
+        return None
+    version = interrupt.get("expected_state_version")
+    if version is None:
+        return None
+    return {
+        "run_id": str(interrupt.get("run_id") or run_id),
+        "node_id": str(interrupt.get("node_id") or "human_content_approval"),
+        "expected_state_version": version,
+        "decision": "approved",
+        "note": "小程序自动审批",
+    }
+
+
+def _continuation_runs(run_result: dict[str, Any]) -> list[dict[str, Any]]:
+    items = [item for item in (run_result.get("continuations") or []) if isinstance(item, dict) and item.get("id")]
+    return items or [run_result["run"]]
+
+
+def _visible_mp_run(run_result: dict[str, Any], *, task_status: str | None) -> dict[str, Any]:
+    """封面续跑会换新 run；轮询旧 run 时仍要跟到最新续跑，成品已保存则视为 completed。"""
+    requested = run_result["run"]
+    runs = _continuation_runs(run_result)
+    latest = runs[-1]
+    if str(task_status or "") in {"reviewed", "completed"}:
+        done = next((item for item in reversed(runs) if item.get("status") == "completed"), latest)
+        return {
+            **done,
+            "status": "completed",
+            "thread_id": requested.get("thread_id") or done.get("thread_id"),
+        }
+    return latest
 
 
 async def authenticate_mp_request(
@@ -762,38 +867,128 @@ def _cover_template_item(cover) -> dict[str, Any]:
     return data
 
 
-async def get_form_schema(db: AsyncSession, service_entry: str) -> dict[str, Any]:
+def _mp_hycanvas_template_item(item: dict[str, Any]) -> dict[str, Any]:
+    template_id = str(item["id"])
+    return {
+        **item,
+        "preview_urls": [f"/api/mp/content/hycanvas-templates/{template_id}/preview"],
+        "overlay_url": f"/api/mp/content/hycanvas-templates/{template_id}/overlay",
+    }
+
+
+async def _list_mp_hycanvas_templates() -> list[dict[str, Any]]:
+    from yuxi.services.hycanvas_service import HyCanvasClient
+
+    try:
+        catalog = await HyCanvasClient.from_env().list_xiaohongshu_templates()
+    except HTTPException:
+        return []
+    return [_mp_hycanvas_template_item(item) for item in catalog.get("templates") or []]
+
+
+async def _lock_decoration_visual_material(
+    db: AsyncSession,
+    user: User,
+    *,
+    image_item_id: str | None = None,
+    cover_asset_id: str | None = None,
+    hycanvas_template_id: str | None = None,
+) -> tuple[ContentVisualMaterialSelection, str]:
+    template_id = str(hycanvas_template_id or "").strip()
+    if not _HYCANVAS_TEMPLATE_ID.fullmatch(template_id):
+        raise _mp_error(422, "MP_HYCANVAS_TEMPLATE_REQUIRED", "请选择小红书封面模板")
+    repo = MaterialLibraryRepository(db, include_shared=True)
+    owner_uid = str(user.uid)
+    item = None
+    if str(image_item_id or "").strip():
+        item = await repo.get_item_for_user(str(image_item_id).strip(), owner_uid)
+    elif str(cover_asset_id or "").strip():
+        candidate = await repo.get_item_by_asset(str(cover_asset_id).strip())
+        if candidate is not None:
+            item = await repo.get_item_for_user(candidate.id, owner_uid)
+    else:
+        raise _mp_error(422, "MP_COVER_REQUIRED", "请选择图库图片或上传封面图")
+    if item is None or item.material_type != "image" or item.status != "enabled":
+        raise _mp_error(422, "MP_COVER_LIBRARY_ITEM_MISSING", "封面图不存在、已停用或不在当前账号图库中")
+    if await repo.item_is_selected_by_task(item.id, owner_uid):
+        raise _mp_error(409, "MP_COVER_IN_USE", "该图库图片已被其他内容任务使用")
+    return ContentVisualMaterialSelection(image_item_id=item.id, hycanvas_template_id=template_id), item.asset_id
+
+
+async def get_form_schema(
+    db: AsyncSession, service_entry: str, *, include_hycanvas_templates: bool = True
+) -> dict[str, Any]:
     if service_entry not in SERVICE_ENTRIES:
         raise _mp_error(422, "MP_SERVICE_ENTRY_INVALID", "服务入口不存在")
     await ensure_default_content_types(db)
     await ensure_default_variables(db)
+    bindings = (await list_business_variables(db))["business_variables"]
     types = [item for item in (await list_content_types(db))["content_types"] if item["enabled"]]
-    variables = [
-        item
-        for item in (await list_variables(db))["variables"]
-        if (
-            item["enabled"]
-            and item["service_entry"] == service_entry
-            and "app" in item["ports"]
-            and "quick" in item["editions"]
+    content_types: list[dict[str, Any]] = []
+    flat_variables: list[dict[str, Any]] = []
+    requires_content_type = service_entry == "装修家居"
+    target_audiences = await list_enabled_target_audience_names(db) if service_entry == "装修家居" else []
+    resident_populations = await list_enabled_resident_population_names(db) if service_entry == "装修家居" else []
+    process_types = await list_enabled_process_type_names(db) if service_entry == "装修家居" else []
+    process_names_by_type = await list_enabled_process_names_by_type(db) if service_entry == "装修家居" else {}
+    select_options = catalog_select_options(
+        target_audiences=target_audiences,
+        resident_populations=resident_populations,
+        process_types=process_types,
+        process_names_by_type=process_names_by_type,
+    )
+    if requires_content_type:
+        for content_type in types:
+            fields = configured_business_variable_fields(
+                bindings,
+                service_entry=service_entry,
+                content_type_id=content_type["id"],
+                port="app",
+                select_options=select_options,
+            )
+            for field in fields:
+                field["content_type_code"] = content_type["type_code"]
+            content_types.append({**content_type, "variables": fields})
+            flat_variables.extend(fields)
+    else:
+        flat_variables = configured_business_variable_fields(
+            bindings,
+            service_entry=service_entry,
+            content_type_id=None,
+            port="app",
+            select_options=select_options,
         )
-    ]
     covers = [_cover_template_item(item) for item in await CoverRepository(db).list_enabled()]
+    hycanvas_templates = (
+        await _list_mp_hycanvas_templates() if include_hycanvas_templates and service_entry == "装修家居" else []
+    )
     return {
         "service_entry": service_entry,
+        "requires_content_type": requires_content_type,
         "service_entries": [
             {"value": "装修家居", "label": "装修家居", "goal": "acquire"},
             {"value": "好评笔记", "label": "好评笔记", "goal": "brand"},
         ],
-        "content_types": types,
-        "variables": variables,
+        "content_types": content_types,
+        "variables": flat_variables,
+        "business_variable_bindings": [
+            item
+            for item in bindings
+            if item.get("service_entry") == service_entry and item.get("enabled") and "app" in (item.get("ports") or [])
+        ],
         "frame_areas": [_frame_area_payload(item) for item in FRAME_AREA_PRICING]
         if service_entry == "装修家居"
         else [],
         "design_styles": list(DESIGN_STYLES) if service_entry == "装修家居" else [],
+        "project_stages": (list(FIELD_SELECT_OPTIONS["项目阶段"]) if service_entry == "装修家居" else []),
+        "target_audiences": target_audiences,
+        "resident_populations": resident_populations,
+        "process_types": process_types,
+        "process_names_by_type": process_names_by_type,
         "regions": list(REGIONS),
         "region_tree": [{"city": city, "districts": list(districts)} for city, districts in REGION_TREE],
         "cover_templates": covers,
+        "hycanvas_templates": hycanvas_templates,
     }
 
 
@@ -807,11 +1002,118 @@ async def list_cover_templates(db: AsyncSession) -> dict[str, Any]:
     return {"cover_templates": covers, "total": len(covers)}
 
 
-async def upload_cover(db: AsyncSession, ctx: MpContext, file: UploadFile) -> dict[str, Any]:
-    result = await create_cover_asset(db, ctx.user, file, role="source", content_task_id=None)
-    asset = result["asset"]
-    asset["file_url"] = f"/api/mp/content/covers/{asset['id']}/file"
-    return {"asset": asset}
+async def list_hycanvas_templates() -> dict[str, Any]:
+    return {"hycanvas_templates": await _list_mp_hycanvas_templates()}
+
+
+def _mp_gallery_item(item: dict[str, Any]) -> dict[str, Any]:
+    item_id = str(item["id"])
+    return {
+        **item,
+        "in_use": bool(item.get("in_use")),
+        "file_url": f"/api/mp/content/gallery-items/{item_id}/file",
+        "thumbnail_file_url": f"/api/mp/content/gallery-items/{item_id}/thumbnail",
+    }
+
+
+async def list_mp_galleries(
+    db: AsyncSession,
+    ctx: MpContext,
+    scope: Literal["private", "enterprise"] | None = None,
+) -> dict[str, Any]:
+    result = await list_image_galleries(db, ctx.user)
+    galleries = []
+    for item in result.get("galleries") or []:
+        visibility = item.get("visibility") or "private"
+        if scope and visibility != scope:
+            continue
+        cover_item_id = item.get("cover_item_id")
+        galleries.append(
+            {
+                **item,
+                "visibility": visibility,
+                "cover_file_url": f"/api/mp/content/gallery-items/{cover_item_id}/file" if cover_item_id else None,
+                "cover_thumbnail_file_url": (
+                    f"/api/mp/content/gallery-items/{cover_item_id}/thumbnail" if cover_item_id else None
+                ),
+            }
+        )
+    return {"galleries": galleries}
+
+
+async def list_mp_gallery_items(
+    db: AsyncSession,
+    ctx: MpContext,
+    category: str,
+    scope: Literal["private", "enterprise"] | None = None,
+    include_descendants: bool = False,
+    page: int = 1,
+    page_size: int = 100,
+) -> dict[str, Any]:
+    result = await list_material_items(
+        db,
+        ctx.user,
+        material_type="image",
+        category=category,
+        status="enabled",
+        query=None,
+        page=page,
+        page_size=page_size,
+        sort="newest",
+        scope=scope,
+        include_descendants=include_descendants,
+    )
+    items = [_mp_gallery_item(item) for item in result.get("items") or []]
+    return {
+        "items": items,
+        "total": result.get("total") or 0,
+        "page": result.get("page") or page,
+        "page_size": result.get("page_size") or page_size,
+    }
+
+
+async def read_mp_gallery_item_file(db: AsyncSession, ctx: MpContext, item_id: str) -> tuple[bytes, str, str]:
+    return await get_material_file(db, ctx.user, item_id)
+
+
+async def read_mp_gallery_item_thumbnail(db: AsyncSession, ctx: MpContext, item_id: str) -> bytes:
+    data, _ = await get_material_thumbnail(db, ctx.user, item_id)
+    return data
+
+
+async def delete_mp_gallery_item(db: AsyncSession, ctx: MpContext, item_id: str) -> dict[str, Any]:
+    return await delete_material_item(db, ctx.user, item_id)
+
+
+async def upload_cover(
+    db: AsyncSession,
+    ctx: MpContext,
+    file: UploadFile,
+    *,
+    category: str | None = None,
+    design_style: str | None = None,
+) -> dict[str, Any]:
+    resolved_category = (category or "uncategorized").strip() or "uncategorized"
+    try:
+        imported = await import_material_images(
+            db, ctx.user, [file], category=resolved_category, design_style=design_style
+        )
+    except HTTPException:
+        raise
+    item = (imported.get("items") or [None])[0]
+    if not item:
+        raise _mp_error(500, "MATERIAL_UPLOAD_EMPTY", "素材上传失败")
+    asset = await ContentCoverRepository(db).get_asset(str(item["asset_id"]))
+    if asset is None:
+        raise _mp_error(500, "MATERIAL_ASSET_MISSING", "素材上传后无法读取文件")
+    payload_asset = serialize_asset(asset)
+    payload_asset["file_url"] = f"/api/mp/content/covers/{asset.id}/file"
+    return {
+        "asset": payload_asset,
+        "library_item_id": item["id"],
+        "category": item.get("category") or resolved_category,
+        "category_name": item.get("category_name") or "",
+    }
 
 
 async def read_cover_file(db: AsyncSession, ctx: MpContext, asset_id: str) -> tuple[bytes, str, str]:
@@ -832,6 +1134,32 @@ async def read_cover_template_file(db: AsyncSession, cover_pk: str) -> tuple[byt
         raise _mp_error(404, "COVER_TEMPLATE_FILE_MISSING", "封面模板文件不可用") from exc
     content_type = "image/png" if object_name.lower().endswith(".png") else "image/jpeg"
     return data, content_type, cover.image_name
+
+
+async def read_hycanvas_template_preview(template_id: str) -> tuple[bytes, str]:
+    if not _HYCANVAS_TEMPLATE_ID.fullmatch(template_id):
+        raise _mp_error(404, "HYCANVAS_TEMPLATE_NOT_FOUND", "封面模板不存在")
+    from yuxi.services.hycanvas_service import HyCanvasClient
+
+    try:
+        return await HyCanvasClient.from_env().fetch_template_preview(template_id)
+    except HTTPException as exc:
+        if exc.status_code == 503:
+            raise _mp_error(503, "HYCANVAS_NOT_CONFIGURED", "封面模板服务尚未配置") from exc
+        raise _mp_error(404, "HYCANVAS_TEMPLATE_PREVIEW_MISSING", "封面模板预览不可用") from exc
+
+
+async def read_hycanvas_template_overlay(template_id: str) -> tuple[bytes, str]:
+    if not _HYCANVAS_TEMPLATE_ID.fullmatch(template_id):
+        raise _mp_error(404, "HYCANVAS_TEMPLATE_NOT_FOUND", "封面模板不存在")
+    from yuxi.services.hycanvas_service import HyCanvasClient
+
+    try:
+        return await HyCanvasClient.from_env().render_template_overlay_png(template_id)
+    except HTTPException as exc:
+        if exc.status_code == 503:
+            raise _mp_error(503, "HYCANVAS_NOT_CONFIGURED", "封面模板服务尚未配置") from exc
+        raise _mp_error(404, "HYCANVAS_TEMPLATE_OVERLAY_MISSING", "封面模板透明图不可用") from exc
 
 
 async def _next_code_for_user(db: AsyncSession, user: User) -> str:
@@ -881,6 +1209,42 @@ async def compile_brief(db: AsyncSession, ctx: MpContext, payload: MpCompileBrie
     ct_code = map_nrlx_to_ct_code(selected_type["type_code"], selected_type["name"])
     goal = resolve_content_goal(payload.service_entry, ct_code)
     template = await _decoration_template(db)
+    target_audiences = await list_enabled_target_audience_names(db) if payload.service_entry == "装修家居" else []
+    resident_populations = (
+        await list_enabled_resident_population_names(db) if payload.service_entry == "装修家居" else []
+    )
+    process_types = await list_enabled_process_type_names(db) if payload.service_entry == "装修家居" else []
+    process_names_by_type = await list_enabled_process_names_by_type(db) if payload.service_entry == "装修家居" else {}
+    form_fields = configured_business_variable_fields(
+        (await list_business_variables(db))["business_variables"],
+        service_entry=payload.service_entry,
+        content_type_id=selected_type["id"] if payload.service_entry == "装修家居" else None,
+        port="app",
+        select_options=catalog_select_options(
+            target_audiences=target_audiences,
+            resident_populations=resident_populations,
+            process_types=process_types,
+            process_names_by_type=process_names_by_type,
+        ),
+    )
+    for field in form_fields:
+        if not field.get("required"):
+            continue
+        if str((payload.form_values or {}).get(field["key"]) or "").strip():
+            continue
+        raise _mp_error(422, "MP_VARIABLE_REQUIRED", f"请填写{field['label']}")
+    visual_material = None
+    cover_asset_id = payload.cover_asset_id
+    if payload.service_entry == "装修家居":
+        visual_material, cover_asset_id = await _lock_decoration_visual_material(
+            db,
+            ctx.user,
+            image_item_id=payload.image_item_id,
+            cover_asset_id=payload.cover_asset_id,
+            hycanvas_template_id=payload.hycanvas_template_id,
+        )
+    else:
+        cover_asset_id = None
     content_code = await _next_code_for_user(db, ctx.user)
     created = await create_content_task(
         db,
@@ -898,19 +1262,26 @@ async def compile_brief(db: AsyncSession, ctx: MpContext, payload: MpCompileBrie
         service_entry=payload.service_entry,
         form_values=payload.form_values,
         content_type_name=selected_type["name"],
-        cover_asset_id=payload.cover_asset_id,
+        content_type_id=selected_type["id"],
+        cover_asset_id=cover_asset_id,
         cover_asset_ids=payload.cover_asset_ids,
         cover_template_id=payload.cover_template_id,
         content_code=content_code,
+        visual_material=visual_material,
     )
     saved = await save_content_brief(db, ctx.user, task_id, brief, compile_now=True)
-    return {
+    result = {
         "task_id": task_id,
         "status": "strategy_evidence_locked",
         "task_status": saved["task"]["status"],
         "content_code": content_code,
         "task": saved["task"],
     }
+    if payload.service_entry == "好评笔记":
+        run = await start_run(db, ctx, task_id, MpRunCreatePayload())
+        result["run_id"] = run["run_id"]
+        result["run_status"] = run["status"]
+    return result
 
 
 async def get_task(db: AsyncSession, ctx: MpContext, task_id: str) -> dict[str, Any]:
@@ -935,8 +1306,44 @@ async def start_run(db: AsyncSession, ctx: MpContext, task_id: str, payload: MpR
 
 async def get_run(db: AsyncSession, ctx: MpContext, run_id: str) -> dict[str, Any]:
     result = await get_content_run(db, ctx.user, run_id)
-    events = await list_run_stream_events(run_id, limit=500)
-    return _compact_run(result, _extract_interrupt(events))
+    task_id = str(result["run"]["thread_id"])
+    task = await db.get(ContentTask, task_id)
+    visible = _visible_mp_run(result, task_status=None if task is None else task.status)
+    if visible.get("status") == "completed":
+        return _compact_run({"run": visible}, None)
+    events = await list_run_stream_events(str(visible["id"]), limit=500)
+    interrupt = await _backfill_cover_selection_assets(
+        db,
+        task_id=task_id,
+        owner_uid=str(ctx.user.uid),
+        interrupt=_extract_interrupt(events),
+    )
+    resume_payload = _cover_auto_resume_payload(interrupt, str(visible["id"]))
+    resume_key = "mp-cover-auto"
+    if resume_payload is None and has_mp_content_code(None if task is None else task.brief_json):
+        resume_payload = _content_approval_auto_resume_payload(interrupt, str(visible["id"]))
+        resume_key = "mp-approval-auto"
+    if resume_payload:
+        try:
+            queued = await resume_content_run(
+                db,
+                ctx.user,
+                str(visible["id"]),
+                ContentRunResume(request_id=f"{resume_key}:{visible['id']}", resume=resume_payload),
+            )
+        except HTTPException:
+            queued = None
+        if queued:
+            return {
+                "run_id": queued["run_id"],
+                "task_id": queued["task_id"],
+                "status": queued["status"],
+                "request_id": queued["request_id"],
+                "error_message": None,
+                "interrupt": None,
+                "stream_url": f"/api/mp/content/runs/{queued['run_id']}/events",
+            }
+    return _compact_run({"run": visible}, interrupt)
 
 
 async def stream_run_events(run_id: str, after_seq: str, ctx: MpContext):
@@ -951,6 +1358,18 @@ async def resume_run(db: AsyncSession, ctx: MpContext, run_id: str, payload: MpR
     )
 
 
+async def retry_run(db: AsyncSession, ctx: MpContext, run_id: str, payload: MpRunRetryPayload) -> dict[str, Any]:
+    request_id = payload.request_id or str(uuid.uuid4())
+    return await retry_content_node(
+        db,
+        ctx.user,
+        run_id,
+        request_id=request_id,
+        node_id=payload.node_id,
+        model_spec=None,
+    )
+
+
 async def get_artifact(db: AsyncSession, ctx: MpContext, task_id: str) -> dict[str, Any]:
     result = await get_task_artifact(db, ctx.user, task_id)
     artifact = result.get("artifact")
@@ -959,32 +1378,67 @@ async def get_artifact(db: AsyncSession, ctx: MpContext, task_id: str) -> dict[s
     return result
 
 
+def _publish_status_label(status: str | None) -> str:
+    if status in {"reviewed", "completed"}:
+        return "已发布"
+    return "未发布"
+
+
+def _format_mp_created_at(value) -> str:
+    if value is None:
+        return ""
+    local = ensure_utc(value).astimezone(SHANGHAI_TZ)
+    return local.strftime("%Y%m%d %H:%M:%S")
+
+
+def _creation_methods_label(snapshot: dict[str, Any]) -> str:
+    methods = snapshot.get("creation_methods") or snapshot.get("methods") or snapshot.get("method_codes") or []
+    if not isinstance(methods, list):
+        return str(methods or "")
+    definitions = snapshot.get("creation_method_definitions") or []
+    name_by_code: dict[str, str] = {}
+    if isinstance(definitions, list):
+        for item in definitions:
+            if not isinstance(item, dict):
+                continue
+            code = str(item.get("code") or "").strip()
+            name = str(item.get("name") or item.get("label") or "").strip()
+            if code and name:
+                name_by_code[code] = name
+    labels = [name_by_code.get(str(code), str(code)) for code in methods if str(code).strip()]
+    return "+".join(labels)
+
+
 def _list_item(
     task: ContentTask, artifact: ContentArtifact | None, favorited: bool, cover_asset_id: str | None
 ) -> dict[str, Any]:
     brief = task.brief_json or {}
     form_values = brief.get("form_values") or {}
     snapshot = (artifact.strategy_snapshot if artifact else None) or task.strategy_json or {}
-    formula = snapshot.get("selected_body_formula_code") or snapshot.get("body_formula_code")
-    methods = snapshot.get("methods") or snapshot.get("method_codes") or []
-    method_label = "、".join(str(item) for item in methods) if isinstance(methods, list) else (str(methods) or "")
+    if not isinstance(snapshot, dict):
+        snapshot = {}
+    title_formula = snapshot.get("title_formula") if isinstance(snapshot.get("title_formula"), dict) else {}
+    body_formula = snapshot.get("body_formula") if isinstance(snapshot.get("body_formula"), dict) else {}
+    cover_id = cover_asset_id or form_values.get("cover_asset_id")
+    service_entry = str(form_values.get("mp_service_entry") or "")
     return {
         "task_id": task.id,
         "content_code": form_values.get("mp_content_code") or "",
-        "service_entry": form_values.get("mp_service_entry") or "",
+        "service_entry": service_entry,
         "content_type_name": form_values.get("mp_content_type_name") or "",
-        "method": method_label,
+        "creation_methods": _creation_methods_label(snapshot),
+        "method": _creation_methods_label(snapshot),
+        "viral_title_formula": str(title_formula.get("name") or title_formula.get("code") or ""),
         "title": artifact.title if artifact else "",
-        "formula": formula or "",
+        "content_formula": str(body_formula.get("name") or body_formula.get("code") or ""),
+        "formula": str(body_formula.get("name") or body_formula.get("code") or ""),
         "status": task.status,
+        "status_label": _publish_status_label(task.status),
         "created_at": format_utc_datetime(task.created_at),
+        "created_at_display": _format_mp_created_at(task.created_at),
         "favorited": favorited,
-        "cover_asset_id": cover_asset_id or form_values.get("cover_asset_id"),
-        "cover_file_url": (
-            f"/api/mp/content/covers/{cover_asset_id or form_values.get('cover_asset_id')}/file"
-            if (cover_asset_id or form_values.get("cover_asset_id"))
-            else None
-        ),
+        "cover_asset_id": cover_id,
+        "cover_file_url": (f"/api/mp/content/covers/{cover_id}/file" if cover_id else None),
     }
 
 

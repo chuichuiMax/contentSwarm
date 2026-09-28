@@ -162,10 +162,11 @@ def test_configured_business_variable_fields_filters_by_content_type_and_require
         select_options={"目标人群": ["毛坯", "精装房", "旧房改造", "别墅"]},
     )
     assert [(item["key"], item["required"], item["type"]) for item in fields] == [
-        ("外框面积", True, "select"),
+        ("外框面积", True, "text"),
         ("目标人群", True, "select"),
         ("楼盘信息", False, "text"),
     ]
+    assert fields[0]["placeholder"] == "请输入外框面积，如 120"
     assert fields[1]["name"] == "目标人群"
     assert fields[1]["options"] == ["毛坯", "精装房", "旧房改造", "别墅"]
     assert fields[1]["placeholder"] == "请选择目标人群"
@@ -297,6 +298,7 @@ def test_map_service_entry_form_values_quotation_list_brand_over_price():
     assert "整装" not in mapped["advantage"]
     assert mapped["brand_positioning"] == "定制化家装"
     assert mapped["location"] == "星河湾"
+    assert mapped["case_background"] == "星河湾"
     assert "定制化家装" in mapped["writing_instruction"]
     assert "禁止把鸿扬写成整装" in mapped["writing_instruction"]
 
@@ -314,6 +316,9 @@ def test_map_service_entry_form_values_craft_showcase_uses_project_stage_when_cr
     )
     assert mapped["craft_and_materials"] == "水电施工与隐蔽验收"
     assert mapped["location"] == "洋湖1号"
+    assert mapped["case_background"] == "洋湖1号"
+    assert mapped["renovation_scene"] == "水电阶段"
+    assert mapped["scene"] == "水电阶段"
     assert "水电施工与隐蔽验收" in mapped["pain"]
     assert "走过场" in mapped["pain"]
 

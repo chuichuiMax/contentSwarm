@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import io
 import os
+import re
 from urllib.parse import quote, urlencode
 
 import httpx
@@ -15,6 +16,10 @@ from yuxi.repositories.content_cover_repository import ContentCoverRepository
 from yuxi.repositories.content_repository import ContentRepository
 from yuxi.services.content_cover_service import create_cover_asset, get_cover_asset_file
 from yuxi.storage.postgres.models_business import User
+
+_WORKSPACE_TEMPLATE_ID = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+)
 
 
 def _composition_payload(composition, images):
@@ -124,6 +129,12 @@ class HyCanvasClient:
                 }
             )
         return {"configured": True, "templates": templates, "total": len(templates)}
+
+    async def fetch_template_preview(self, template_id: str) -> tuple[bytes, str]:
+        if _WORKSPACE_TEMPLATE_ID.fullmatch(template_id):
+            return await self.render_template_png(template_id)
+        response = await self._send("GET", f"/template-previews/{quote(template_id, safe='')}-p0.png")
+        return response.content, response.headers.get("content-type", "image/png")
 
     async def create_design(
         self,
@@ -327,6 +338,12 @@ class HyCanvasClient:
 
     async def render_template_png(self, template_id: str) -> tuple[bytes, str]:
         response = await self._send("GET", f"/api/v1/templates/{quote(template_id, safe='')}/render.png")
+        return response.content, response.headers.get("content-type", "image/png")
+
+    async def render_template_overlay_png(self, template_id: str) -> tuple[bytes, str]:
+        response = await self._send(
+            "GET", f"/api/v1/templates/{quote(template_id, safe='')}/render-overlay.png"
+        )
         return response.content, response.headers.get("content-type", "image/png")
 
     async def render_template_with_background_png(

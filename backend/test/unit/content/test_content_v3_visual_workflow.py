@@ -8,6 +8,10 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 import yuxi.agents.toolkits.content.tools as content_tools
 import yuxi.content.control.workflow.agent_node as agent_node_module
+from yuxi.content.control.visual_template_fields import (
+    compile_cover_narrative_fields,
+    missing_required_template_fields,
+)
 from yuxi.content.control.workflow.agent_node import AgentNodeHandler, AgentNodeResultMapper
 from yuxi.content.control.workflow.external_wait import ExternalWaitNodeHandler
 from yuxi.repositories.content_cover_repository import ContentCoverRepository
@@ -35,6 +39,48 @@ def test_visual_plan_mapper_adds_stable_hash_without_changing_agent_contract_fie
     assert len(first["plan_hash"]) == 64
     assert first == second
     assert {key: value for key, value in first.items() if key != "plan_hash"} == _visual_plan()
+
+
+def test_knowledge_cover_does_not_ask_agent_to_invent_project_name():
+    missing = missing_required_template_fields(
+        [
+            {
+                "key": "field_3",
+                "kind": "text",
+                "label": "湘熙水郡",
+                "semanticRole": "project_name",
+                "constraints": {"required": True, "maxChars": 4},
+            }
+        ],
+        {"form_values": {"目标人群": "毛坯"}},
+    )
+    assert missing == {}
+    compiled = compile_cover_narrative_fields(
+        declarations=[
+            {
+                "key": "field_1",
+                "kind": "text",
+                "label": "从沟通到落地",
+                "semanticRole": "title",
+                "constraints": {"maxChars": 6},
+            },
+            {
+                "key": "field_2",
+                "kind": "text",
+                "label": "记录一套完整的设计方案",
+                "semanticRole": "title",
+                "constraints": {"maxChars": 11},
+            },
+        ],
+        title="毛坯装修看强弱电布管？劝退先弄",
+        process_values=["安全用电系统", "HYB-强弱电布管特色工艺"],
+        audience=["毛坯"],
+    )
+    assert compiled["field_1"]
+    assert compiled["field_2"]
+    assert len(compiled["field_1"]) <= 6
+    assert len(compiled["field_2"]) <= 11
+    assert compiled["field_1"] != compiled["field_2"]
 
 
 @pytest.mark.asyncio
@@ -539,20 +585,73 @@ def test_hycanvas_template_fields_use_distinct_agent_text_for_repeated_title_rol
     assert fields == {"field_1": "89㎡收纳焕新", "field_2": "复尺后规划"}
 
 
-def test_hycanvas_template_fields_reject_missing_required_fact():
-    with pytest.raises(ValueError, match="完成年份"):
-        content_tools._hycanvas_template_fields(
-            [
-                {
-                    "kind": "text",
-                    "label": "完成年份",
-                    "semanticRole": "completion_year",
-                    "constraints": {"required": True},
-                }
-            ],
-            visual_text=["标题"],
-            brief={"form_values": {}},
-        )
+def test_hycanvas_template_fields_writes_ordinal_badge_instead_of_title():
+    fields = content_tools._hycanvas_template_fields(
+        [
+            {
+                "kind": "text",
+                "key": "field_1",
+                "label": "标题醒目",
+                "semanticRole": "title",
+                "constraints": {"maxChars": 22, "required": True},
+            },
+            {
+                "kind": "text",
+                "key": "field_2",
+                "label": "01",
+                "semanticRole": "title",
+                "constraints": {"maxChars": 1, "required": True},
+            },
+        ],
+        visual_text=["洋湖天旭工艺避坑"],
+        brief={},
+        template_fields={"field_1": "洋湖天旭工艺避坑", "field_2": "01"},
+    )
+
+    assert fields == {"field_1": "洋湖天旭工艺避坑", "field_2": "1"}
+
+
+def test_cover_narrative_ignores_ordinal_badge_when_compiling():
+    compiled = compile_cover_narrative_fields(
+        declarations=[
+            {
+                "key": "field_1",
+                "kind": "text",
+                "label": "主标题",
+                "semanticRole": "title",
+                "constraints": {"maxChars": 8},
+            },
+            {
+                "key": "field_2",
+                "kind": "text",
+                "label": "01",
+                "semanticRole": "title",
+                "constraints": {"maxChars": 1},
+            },
+        ],
+        title="强弱电布管要看清",
+        process_values=["强弱电布管"],
+    )
+
+    assert "field_2" not in compiled
+    assert compiled["field_1"]
+
+
+def test_hycanvas_template_fields_keep_template_when_required_fact_missing():
+    fields = content_tools._hycanvas_template_fields(
+        [
+            {
+                "kind": "text",
+                "label": "完成年份",
+                "semanticRole": "completion_year",
+                "constraints": {"required": True},
+            }
+        ],
+        visual_text=["标题"],
+        brief={"form_values": {}},
+    )
+
+    assert fields == {}
 
 
 def test_hycanvas_template_fields_use_agent_rewrite_for_missing_required_fact():

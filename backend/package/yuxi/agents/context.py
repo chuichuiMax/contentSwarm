@@ -112,7 +112,9 @@ def filter_config_by_role(
     restricted_fields = {
         f.name
         for f in fields(schema)
-        if f.metadata.get("auth") and not _role_can_access(str(f.metadata.get("auth")), role)
+        if f.metadata.get("auth")
+        and not f.metadata.get("hide")
+        and not _role_can_access(str(f.metadata.get("auth")), role)
     }
     if not restricted_fields:
         return dict(config_json)

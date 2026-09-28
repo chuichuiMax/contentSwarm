@@ -18,7 +18,7 @@ from langchain_core.tools import tool
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.errors import GraphRecursionError
 
-from yuxi.agents.models import _normalize_tool_call_chunks
+from yuxi.agents.models import _ToolCallChunkFixChatOpenAI, _normalize_tool_call_chunks
 
 
 @tool
@@ -78,6 +78,17 @@ async def _run_and_get_tool_calls(model: BaseChatModel) -> list[dict]:
         if msg.type == "ai" and msg.tool_calls:
             tool_calls.extend(msg.tool_calls)
     return tool_calls
+
+
+def test_reasoning_delta_is_kept_without_entering_content():
+    model = _ToolCallChunkFixChatOpenAI(model="deepseek-ai/DeepSeek-V4-Flash", api_key="test")
+    generation = model._convert_chunk_to_generation_chunk(
+        {"choices": [{"index": 0, "delta": {"content": "", "reasoning_content": "先核对工艺"}}]},
+        AIMessageChunk,
+        None,
+    )
+    assert generation.message.content == ""
+    assert generation.message.additional_kwargs["reasoning_content"] == "先核对工艺"
 
 
 def test_normalize_replaces_empty_string_with_none():

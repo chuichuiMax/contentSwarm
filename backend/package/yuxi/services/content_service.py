@@ -608,6 +608,20 @@ def _parse_content_studio_production_pack(user_request: str) -> dict[str, Any] |
     location = _resolve_studio_location(variables, raw_payload.get("businessVariables"))
     if location:
         variables["location"] = location
+    business_variables = raw_payload.get("businessVariables")
+    community = ""
+    for source in (variables, business_variables if isinstance(business_variables, dict) else {}):
+        community = str(
+            source.get("case_background")
+            or source.get("楼盘信息")
+            or source.get("community_name")
+            or source.get("project_site")
+            or ""
+        ).strip()
+        if community:
+            break
+    if community and not variables.get("case_background"):
+        variables["case_background"] = community
     content_type = raw_payload.get("contentType") if isinstance(raw_payload.get("contentType"), dict) else {}
     content_type_code = str(content_type.get("contentTypeCode") or "").strip() or CONTENT_TYPE_NAME_TO_DIRECTION.get(
         type_name
@@ -617,6 +631,9 @@ def _parse_content_studio_production_pack(user_request: str) -> dict[str, Any] |
         audience = [audience.strip()]
     if not isinstance(audience, list):
         audience = []
+    audience = [str(item).strip() for item in audience if str(item).strip()]
+    if content_type_code == "CT06" and not variables.get("craft_role") and audience:
+        variables["craft_role"] = audience
     persona_fact = str(variables.get("persona_fact") or "").strip()
     return {
         "type_name": type_name,
@@ -1681,6 +1698,14 @@ async def _enqueue_content_run(
     resume: dict[str, Any] | None = None,
     node_id: str | None = None,
 ) -> dict[str, Any]:
+    if task.selected_image_item_id:
+        occupying = await MaterialLibraryRepository(db, include_shared=True).item_is_selected_by_task(
+            task.selected_image_item_id,
+            str(user.uid),
+            exclude_task_id=task.id,
+        )
+        if occupying:
+            raise _content_error(409, "CONTENT_COVER_IN_USE", "该图库图片已被其他内容任务使用")
     run_repo = AgentRunRepository(db)
     existing = await run_repo.get_run_by_request_id(request_id)
     if existing:

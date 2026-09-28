@@ -230,15 +230,6 @@ def configured_form_fields(
 
 
 FIELD_SELECT_OPTIONS: dict[str, list[str]] = {
-    "外框面积": [
-        "50-70㎡",
-        "90-110㎡",
-        "110-130㎡",
-        "130-150㎡",
-        "150-200㎡",
-        "200-300㎡",
-        "300㎡以上",
-    ],
     "设计风格": [
         "复合写意",
         "写意木构",
@@ -267,6 +258,7 @@ FIELD_PLACEHOLDERS: dict[str, str] = {
     "居住人口": "请选择居住人口",
     "工艺类型": "请选择工艺类型",
     "工艺名称": "请选择工艺名称",
+    "外框面积": "请输入外框面积，如 120",
     "楼盘信息": "示例：洋湖天序",
     "项目阶段": "请选择项目阶段",
     "岗位": "请输入岗位",
@@ -483,12 +475,20 @@ def map_service_entry_form_values(service_entry: str, form_values: dict[str, Any
         result = " ".join(part for part in (community, frame_area, layout, style, f"施工{CONSTRUCTION_BRAND}") if part)
         if region or community:
             values["location"] = region or community
+        if community:
+            values["case_background"] = community
         values["community_name"] = community
         values["house_area"] = frame_area
         values["house_layout"] = layout
         values["design_style"] = style
         values["construction_brand"] = CONSTRUCTION_BRAND
         values["brand_positioning"] = BRAND_POSITIONING
+        scene = (project_stage or style) if is_craft_showcase else (style or project_stage)
+        if scene:
+            values["renovation_scene"] = scene
+            values["scene"] = scene
+        if is_quotation_list:
+            values["quote_type"] = "budget"
     else:
         product = "业主好评笔记"
         process = persona_text or "项目成员服务"

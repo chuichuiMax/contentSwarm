@@ -244,6 +244,25 @@ def test_compile_production_pack_promotes_facts_to_factory_variables():
     assert parsed["content_type_code"] == "CT05"
 
 
+def test_compile_production_pack_promotes_community_to_case_background():
+    request = {
+        "contentType": {"typeName": "装修知识科普", "contentTypeCode": "CT06"},
+        "businessVariables": {"楼盘信息": "新芙蓉之都", "所在区域": "长沙"},
+        "facts": {
+            "persona_fact": "张淑琪，新渠道。",
+            "process": ["HYB-强弱电布管特色工艺"],
+            "location": "长沙 · 新芙蓉之都",
+            "audience": ["毛坯"],
+        },
+    }
+
+    parsed = _parse_content_studio_production_pack(json.dumps(request, ensure_ascii=False))
+
+    assert parsed is not None
+    assert parsed["business_variables"]["case_background"] == "新芙蓉之都"
+    assert parsed["business_variables"]["location"] == "长沙 · 新芙蓉之都"
+
+
 def test_compile_quotation_list_pack_keeps_price_facts_without_locked_quote():
     task = SimpleNamespace(id="ct_quote_list", content_goal="acquire", mode="pro", content_type_code=None)
     template = SimpleNamespace(slug="decoration", quick_form_schema=[], pro_form_schema=[])
@@ -391,6 +410,7 @@ def test_compile_knowledge_pack_promotes_pain_and_process_without_quote():
     assert missing == []
     assert compiled["content_type_code"] == "CT06"
     assert compiled["audience"] == ["毛坯"]
+    assert compiled["business_variables"]["craft_role"] == ["毛坯"]
     assert compiled["business_variables"]["process"] == ["个性定制系统", "HYB-吊顶与背景墙造型实现工艺"]
     assert compiled["business_variables"]["pain"] == "毛坯不清楚HYB-吊顶与背景墙造型实现工艺该怎么判断、容易被话术带偏"
     assert compiled["business_variables"]["pain_points"] == compiled["business_variables"]["pain"]

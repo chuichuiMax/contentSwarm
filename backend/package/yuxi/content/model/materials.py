@@ -12,6 +12,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from yuxi.content.model.viral_assets import ReferenceCardV2
+from yuxi.content.v3.title_formula_slots import process_title_options
 
 MaterialType = Literal[
     "business_fact",
@@ -1635,6 +1636,27 @@ def persona_opening_instruction(content_rule_bundle: dict[str, Any], *, has_lock
     return f"前 {window} 个自然段自然完成身份、价值、证据三层，说明我是谁、做什么、如何回应顾虑及可信依据。"
 
 
+def _locked_title_slot_lines(
+    materials: list[MaterialEnvelopeV2] | tuple[MaterialEnvelopeV2, ...],
+    formula_lexicon_bundle: dict[str, Any],
+) -> tuple[str, ...]:
+    process_values = [
+        phrase
+        for material in materials
+        if "process" in material.variable_codes
+        for phrase in _fact_phrase_values(getattr(material.payload, "value", None))
+    ]
+    lines: list[str] = []
+    if process_values:
+        options = process_title_options(process_values)
+        lines.append("工艺必须逐字出现其一：" + " / ".join(options) + "；标题字数紧时优先较短项，不要只写完整 HYB 编码")
+    selected = ((formula_lexicon_bundle or {}).get("selection") or {}).get("title") or {}
+    emotion_terms = [str(term).strip() for term in selected.get("title.oral_emotion") or [] if str(term).strip()]
+    if emotion_terms:
+        lines.append("仅词库来源的情绪槽位必须逐字写入：" + " / ".join(emotion_terms))
+    return tuple(lines)
+
+
 def compile_generation_slots(
     *,
     material_manifest: MaterialRequirementManifestV1,
@@ -1644,6 +1666,7 @@ def compile_generation_slots(
     expression_policy: dict[str, Any],
     channel_profile: dict[str, Any],
     content_rule_bundle: dict[str, Any],
+    formula_lexicon_bundle: dict[str, Any] | None = None,
 ) -> tuple[GenerationSlotV1, ...]:
     """将物料、公式和审核契约编译为生成前的明确槽位。"""
 
@@ -1792,6 +1815,12 @@ def compile_generation_slots(
         acceptance=("所有必需槽位都有对应正文位置", "未新增生产包之外的事实或承诺"),
     )
     if title_codes:
+        locked_title_lines = _locked_title_slot_lines(materials, formula_lexicon_bundle or {})
+        title_instruction = "按锁定标题公式的槽位逐项成题；同一槽位内的变量或词库只需选择一个有证据的来源。"
+        if locked_title_lines:
+            title_instruction += "参考示例只学节奏和标点，不得用示例替换这些冻结词。" + "".join(
+                f"{line}。" for line in locked_title_lines
+            )
         add(
             slots,
             slot_id="title_formula",
@@ -1803,8 +1832,13 @@ def compile_generation_slots(
                 "TITLE_REQUIRED_FACT_MISSING",
                 "TITLE_FACT_UNSUPPORTED",
             ),
-            instruction="按锁定标题公式的槽位逐项成题；同一槽位内的变量或词库只需选择一个有证据的来源。",
-            acceptance=("标题使用已绑定事实", "标题与正文保持同一主题", "不新增数字或绝对化承诺"),
+            instruction=title_instruction,
+            acceptance=(
+                "标题使用已绑定事实",
+                "标题与正文保持同一主题",
+                "不新增数字或绝对化承诺",
+                *locked_title_lines,
+            ),
         )
     if body_codes or body_formula.get("structure_schema"):
         add(
@@ -2039,6 +2073,7 @@ def freeze_production_pack(
         expression_policy=expression_policy,
         channel_profile=channel_profile,
         content_rule_bundle=content_rule_bundle,
+        formula_lexicon_bundle=frozen_formula_lexicon_bundle,
     )
     payload = {
         "schema_version": 1,

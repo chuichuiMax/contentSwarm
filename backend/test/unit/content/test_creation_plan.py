@@ -862,3 +862,128 @@ async def test_scalar_variable_still_rejects_multiple_facts():
             state=extraction_state,
             node_run_id="node-1",
         )
+
+
+@pytest.mark.asyncio
+async def test_merge_keeps_one_identical_scalar_case_background(monkeypatch):
+    from yuxi.content.control.workflow.deterministic_node import V3DeterministicNodeHandler
+
+    freeze = AsyncMock(
+        return_value={
+            "evidence_bundle": {
+                "items": [
+                    {"variable_codes": ["case_background"], "value": "新芙蓉之都", "verified_status": "user_confirmed"}
+                ],
+                "bundle_hash": "f" * 64,
+            }
+        }
+    )
+    monkeypatch.setattr(V3DeterministicNodeHandler, "_freeze_evidence_bundle", freeze)
+    extraction_state = {
+        **state(),
+        "content_brief": {"user_request": "楼盘信息：新芙蓉之都，工艺名称：HYB-灯具防触电工艺"},
+        "creation_plan_gap_analysis": {
+            "missing_variable_codes": ["craft_role"],
+            "candidate_variable_codes": ["case_background"],
+        },
+        "extracted_creation_facts": {
+            "facts": [
+                {"variable_code": "case_background", "value": "新芙蓉之都", "source_quote": "新芙蓉之都"},
+                {"variable_code": "case_background", "value": "新芙蓉之都", "source_quote": "新芙蓉之都"},
+            ]
+        },
+    }
+
+    await merge_extracted_creation_facts(db=SimpleNamespace(), state=extraction_state, node_run_id="node-1")
+    frozen = freeze.await_args.kwargs["state"]["evidence_collection"]["evidence_items"]
+    assert [item["value"] for item in frozen] == ["新芙蓉之都"]
+
+
+@pytest.mark.asyncio
+async def test_merge_keeps_one_overlapping_scalar_case_background(monkeypatch):
+    from yuxi.content.control.workflow.deterministic_node import V3DeterministicNodeHandler
+
+    freeze = AsyncMock(
+        return_value={
+            "evidence_bundle": {
+                "items": [
+                    {"variable_codes": ["case_background"], "value": "新芙蓉之都", "verified_status": "user_confirmed"}
+                ],
+                "bundle_hash": "f" * 64,
+            }
+        }
+    )
+    monkeypatch.setattr(V3DeterministicNodeHandler, "_freeze_evidence_bundle", freeze)
+    extraction_state = {
+        **state(),
+        "content_brief": {"user_request": "楼盘信息：新芙蓉之都，所在区域：长沙 · 新芙蓉之都"},
+        "creation_plan_gap_analysis": {
+            "missing_variable_codes": [],
+            "candidate_variable_codes": ["case_background"],
+        },
+        "extracted_creation_facts": {
+            "facts": [
+                {"variable_code": "case_background", "value": "新芙蓉之都", "source_quote": "新芙蓉之都"},
+                {
+                    "variable_code": "case_background",
+                    "value": "长沙 · 新芙蓉之都",
+                    "source_quote": "长沙 · 新芙蓉之都",
+                },
+            ]
+        },
+    }
+
+    await merge_extracted_creation_facts(db=SimpleNamespace(), state=extraction_state, node_run_id="node-1")
+    frozen = freeze.await_args.kwargs["state"]["evidence_collection"]["evidence_items"]
+    assert [item["value"] for item in frozen] == ["新芙蓉之都"]
+
+
+@pytest.mark.asyncio
+async def test_merge_ignores_echoed_compiled_product_fact(monkeypatch):
+    from yuxi.content.control.workflow.deterministic_node import V3DeterministicNodeHandler
+
+    freeze = AsyncMock(
+        return_value={
+            "evidence_bundle": {
+                "items": [{"variable_codes": ["craft_role"], "value": "瓦工", "verified_status": "user_confirmed"}],
+                "bundle_hash": "f" * 64,
+            }
+        }
+    )
+    monkeypatch.setattr(V3DeterministicNodeHandler, "_freeze_evidence_bundle", freeze)
+    extraction_state = {
+        **state(),
+        "content_brief": {
+            "user_request": '{"facts": {"product": "HYB-OSB板打底工艺"}, "note": "瓦工"}',
+            "business_variables": {"product": "HYB-OSB板打底工艺"},
+        },
+        "creation_plan_gap_analysis": {"missing_variable_codes": ["craft_role"], "candidate_variable_codes": []},
+        "extracted_creation_facts": {
+            "facts": [
+                {"variable_code": "product", "value": "HYB-OSB板打底工艺", "source_quote": "HYB-OSB板打底工艺"},
+                {"variable_code": "craft_role", "value": "瓦工", "source_quote": "瓦工"},
+            ]
+        },
+    }
+
+    await merge_extracted_creation_facts(db=SimpleNamespace(), state=extraction_state, node_run_id="node-1")
+    frozen = freeze.await_args.kwargs["state"]["evidence_collection"]["evidence_items"]
+    assert [item["variable_codes"][0] for item in frozen] == ["craft_role"]
+
+
+@pytest.mark.asyncio
+async def test_merge_still_rejects_new_unrequested_variable():
+    extraction_state = {
+        **state(),
+        "content_brief": {"user_request": "长沙老房翻新，顺便提到工期", "business_variables": {"product": "半包"}},
+        "creation_plan_gap_analysis": {"missing_variable_codes": ["pain"]},
+        "extracted_creation_facts": {
+            "facts": [
+                {"variable_code": "pain", "value": "老房翻新", "source_quote": "老房翻新"},
+                {"variable_code": "location", "value": "长沙", "source_quote": "长沙"},
+            ]
+        },
+    }
+
+    with pytest.raises(ContentApplicationError, match="未请求的变量：location"):
+        await merge_extracted_creation_facts(db=SimpleNamespace(), state=extraction_state, node_run_id="node-1")

@@ -17,7 +17,18 @@ from yuxi.storage.postgres.models_content import (
     ContentTask,
 )
 
-# 失败/取消的任务释放图库占用，便于重新选图生产；删除任务本来就不计入占用。
+# 仅生成中或生成成功的任务占用图库图片；草稿、编译未开跑、失败、取消、审核拦截不占用。
+IMAGE_OCCUPANCY_ACTIVE_STATUSES = frozenset(
+    {
+        "queued",
+        "running",
+        "waiting_human",
+        "waiting_external",
+        "review_required",
+        "reviewed",
+        "completed",
+    }
+)
 IMAGE_OCCUPANCY_RELEASED_STATUSES = frozenset({"failed", "cancelled"})
 
 
@@ -229,7 +240,7 @@ class MaterialLibraryRepository:
             ContentTask.created_by == owner_uid,
             ContentTask.selected_image_item_id == item_id,
             ContentTask.deleted_at.is_(None),
-            ContentTask.status.notin_(IMAGE_OCCUPANCY_RELEASED_STATUSES),
+            ContentTask.status.in_(IMAGE_OCCUPANCY_ACTIVE_STATUSES),
         ]
         if exclude_task_id:
             filters.append(ContentTask.id != exclude_task_id)
@@ -242,7 +253,7 @@ class MaterialLibraryRepository:
             ContentTask.created_by == owner_uid,
             ContentTask.selected_image_item_id.is_not(None),
             ContentTask.deleted_at.is_(None),
-            ContentTask.status.notin_(IMAGE_OCCUPANCY_RELEASED_STATUSES),
+            ContentTask.status.in_(IMAGE_OCCUPANCY_ACTIVE_STATUSES),
         ]
         if exclude_task_id:
             filters.append(ContentTask.id != exclude_task_id)

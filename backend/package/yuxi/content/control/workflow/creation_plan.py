@@ -649,6 +649,19 @@ async def merge_extracted_creation_facts(*, db, state: dict[str, Any], node_run_
         return []
 
     source_texts = strings(state["content_brief"])
+    fact_index = build_fact_index(state["content_brief"], state.get("evidence_bundle") or {})
+    confirmed_values: dict[str, set[str]] = {}
+    for code, entry in (fact_index.get("facts") or {}).items():
+        confirmed_values[code] = {
+            text.strip()
+            for item in entry.get("values") or []
+            for text in strings(item.get("value"))
+            if str(text).strip()
+        }
+    def same_scalar(left: str, right: str) -> bool:
+        first, second = left.strip(), right.strip()
+        return bool(first and second) and (first == second or first in second or second in first)
+
     additions = []
     seen_codes = set()
     seen_facts = set()
@@ -657,10 +670,19 @@ async def merge_extracted_creation_facts(*, db, state: dict[str, Any], node_run_
         value = str(fact.get("value") or "").strip()
         quote = str(fact.get("source_quote") or "").strip()
         if code not in requested:
+            # 资料包已提升的变量不再进入抽取名单；模型从原文 JSON 回抄相同或互相包含的值不是新事实。
+            if value and any(same_scalar(value, item) for item in confirmed_values.get(code, set())):
+                continue
             raise ContentApplicationError(
                 "CONTENT_PLAN_CONFIGURATION_INVALID", f"事实抽取提交了未请求的变量：{code}", "invalid"
             )
-        if (code, quote) in seen_facts or (code in seen_codes and code not in list_variable_codes):
+        if (code, quote) in seen_facts:
+            continue
+        if code in seen_codes and code not in list_variable_codes:
+            if any(
+                same_scalar(item["value"], value) for item in additions if item["variable_codes"] == [code]
+            ):
+                continue
             raise ContentApplicationError(
                 "CONTENT_PLAN_CONFIGURATION_INVALID", f"事实抽取重复提交了单值变量或相同事实：{code}", "invalid"
             )

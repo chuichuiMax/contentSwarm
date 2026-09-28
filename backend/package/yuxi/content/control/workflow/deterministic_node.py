@@ -47,12 +47,13 @@ from yuxi.content.model.locked_blocks import (
 from yuxi.content.model.rules.engine import CombinationMatcher, MatchRequest
 from yuxi.content.rules import brief_variable_map, canonical_brief_facts
 from yuxi.content.validation import ComplianceEngine, validate_numeric_evidence_coverage
-from yuxi.content.validators import validate_content, validate_modular_content
+from yuxi.content.validators import lock_modular_topics, validate_content, validate_modular_content
 from yuxi.content.v3.body_calling import get_decoration_body_calling, get_decoration_body_calling_source
 from yuxi.content.industry_matrix import resolve_industry_formula
 from yuxi.content.v3.formula_lexicons import get_formula_lexicon_requirements, lexicon_kb_names
 from yuxi.content.v3.title_formula_slots import (
     enrich_decoration_title_formula,
+    process_title_options,
     required_title_lexicon_codes,
     title_formula_slot_schema,
 )
@@ -262,6 +263,15 @@ def _required_title_fact_options(
                             shortened = shortened[: -len(suffix)]
                     if shortened:
                         options.append(shortened)
+        elif code == "process":
+            options.extend(process_title_options(values))
+        elif code == "craft_role":
+            process_blocked = {
+                *raw_values(variables.get("process")),
+                *process_title_options(raw_values(variables.get("process"))),
+            }
+            role_values = [*values, *raw_values(variables.get("audience"))]
+            options.extend(item for item in role_values if item not in process_blocked)
         elif code in {"inspection", "kickoff"}:
             options.extend(values)
             pattern = r"巡检|巡查" if code == "inspection" else r"开工"
@@ -2358,6 +2368,8 @@ class V3DeterministicNodeHandler:
                         "rule_id": "viral-platform-expression.v1",
                     }
                 )
+        if rule_bundle:
+            result["topics"] = lock_modular_topics(result["topics"], rule_bundle)
         title["text"] = result["title"]
         draft["body"] = result["body"]
         draft["topics"] = result["topics"]

@@ -1116,6 +1116,7 @@ class ContractDomainContext:
     visual_text_max_chars: dict[str, int] = field(default_factory=dict)
     allowed_visual_template_fields: dict[str, dict[str, int]] = field(default_factory=dict)
     required_visual_template_fields: dict[str, dict[str, int]] = field(default_factory=dict)
+    compiled_visual_template_fields: dict[str, str] = field(default_factory=dict)
     required_visual_intent: str | None = None
     required_modular_review_codes: frozenset[str] = frozenset()
 
@@ -1278,6 +1279,11 @@ class ContractDomainContext:
                 str(label): dict(constraints)
                 for label, constraints in (locks.get("required_visual_template_fields") or {}).items()
                 if isinstance(constraints, dict)
+            },
+            compiled_visual_template_fields={
+                str(label): str(value).strip()
+                for label, value in (locks.get("compiled_visual_template_fields") or {}).items()
+                if str(label).strip() and str(value).strip()
             },
             required_visual_intent=locks.get("required_visual_intent"),
             required_modular_review_codes=frozenset(locks.get("required_modular_review_codes") or []),
@@ -2076,6 +2082,18 @@ def validate_content_node_result(
         for index, item in enumerate(result.checks):
             _validate_evidence_ids(item.evidence_ids, "any", context, f"checks.{index}.evidence_ids")
     elif isinstance(result, VisualPlanResultV1):
+        from yuxi.content.control.visual_template_fields import prepare_visual_plan_template_fields
+
+        result = result.model_copy(
+            update={
+                "template_fields": prepare_visual_plan_template_fields(
+                    supplied=result.template_fields,
+                    allowed=context.allowed_visual_template_fields,
+                    required=context.required_visual_template_fields,
+                    compiled=context.compiled_visual_template_fields,
+                )
+            }
+        )
         _require_equal(result.artifact_version_id, context.artifact_version_id, "artifact_version_id")
         if context.required_visual_intent:
             _require_equal(result.visual_intent, context.required_visual_intent, "visual_intent")

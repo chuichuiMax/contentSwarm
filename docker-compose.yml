@@ -14,6 +14,15 @@ x-api-worker-env: &api-worker-env
   MILVUS_DB_NAME: ${MILVUS_DB_NAME:-default}
   MILVUS_TOKEN: ${MILVUS_TOKEN:-}
   MINIO_URI: ${MINIO_URI:-http://minio:9000}
+  STORAGE_BACKEND: ${STORAGE_BACKEND:-minio}
+  OSS_BUCKET: ${OSS_BUCKET:-hongyang02}
+  OSS_REGION: ${OSS_REGION:-cn-hangzhou}
+  OSS_ENDPOINT: ${OSS_ENDPOINT:-oss-cn-hangzhou.aliyuncs.com}
+  OSS_ACCESS_KEY_ID: ${OSS_ACCESS_KEY_ID:-}
+  OSS_ACCESS_KEY_SECRET: ${OSS_ACCESS_KEY_SECRET:-}
+  OSS_PUBLIC_BASE_URL: ${OSS_PUBLIC_BASE_URL:-}
+  OSS_PART_SIZE: ${OSS_PART_SIZE:-5242880}
+  OSS_LOGICAL_BUCKETS: ${OSS_LOGICAL_BUCKETS:-image,content-covers}
   # 文档解析
   MINERU_API_URI: ${MINERU_API_URI:-http://mineru-api:30001}
   PADDLEX_URI: ${PADDLEX_URI:-http://paddlex:8080}

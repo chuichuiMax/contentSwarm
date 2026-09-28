@@ -564,6 +564,23 @@ def test_visual_plan_accepts_distinct_template_text_for_same_cover():
     assert result.template_fields["强调标题"] == "复尺后规划"
 
 
+def test_visual_plan_fills_missing_narrative_and_drops_unauthorized_fact_fields():
+    context = replace(
+        DOMAIN_CONTEXT,
+        allowed_visual_template_fields={
+            "field_1": {"maxChars": 6},
+            "field_2": {"maxChars": 11},
+        },
+        compiled_visual_template_fields={"field_1": "强弱电布管", "field_2": "毛坯装修看强弱电"},
+    )
+    payload = deepcopy(VALID_PAYLOADS["VisualPlanResultV1"])
+    payload["template_fields"] = {"field_3": "湘熙水郡"}
+
+    result = validate_content_node_result("VisualPlanResultV1", payload, context)
+
+    assert result.template_fields == {"field_1": "强弱电布管", "field_2": "毛坯装修看强弱电"}
+
+
 def test_formula_ranking_pool_comes_from_match_snapshot_before_selection_exists():
     node_input = ContentAgentNodeInputV1.model_validate(
         {

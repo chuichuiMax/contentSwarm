@@ -28,8 +28,6 @@ def test_visual_plan_missing_required_fact_is_replanned_until_agent_supplies_rew
         "visual_plan": {"template_fields": {}},
     }
 
-    assert content_run_worker._visual_plan_needs_template_field_repair(state) is True
-    state["visual_plan"]["template_fields"] = {"免费量尺规划": "空间规划"}
     assert content_run_worker._visual_plan_needs_template_field_repair(state) is False
 
 

@@ -390,7 +390,12 @@ class AgentNodeHandler:
         if node["id"] == "generate_content" and generation_draft:
             assembly_state = {**state, "content_draft": generation_draft}
         if node["id"] == "plan_visuals":
-            from yuxi.content.control.visual_template_fields import missing_required_template_fields
+            from yuxi.content.control.visual_template_fields import (
+                compile_cover_narrative_fields,
+                is_ordinal_badge_template_field,
+                missing_required_template_fields,
+            )
+            from yuxi.content.rules import brief_variable_map
             from yuxi.content.v3.modular_rules import derive_visual_intent
 
             if content_rule_bundle:
@@ -398,12 +403,18 @@ class AgentNodeHandler:
 
             limits: dict[str, int] = {}
             allowed_template_fields: dict[str, dict[str, int]] = {}
-            for field in visual_material.get("hycanvas_fillable_fields") or []:
+            decorative_template_fields: list[str] = []
+            fillable_fields = visual_material.get("hycanvas_fillable_fields") or []
+            for field in fillable_fields:
                 role = str(field.get("semanticRole") or "")
+                field_key = str(field.get("key") or field.get("label") or "").strip()
+                if is_ordinal_badge_template_field(field):
+                    if field_key and role != "label":
+                        decorative_template_fields.append(field_key)
+                    continue
                 if role == "label" or role not in {"title", "subtitle", "body_excerpt"}:
                     continue
                 constraints = field.get("constraints") or {}
-                field_key = str(field.get("key") or field.get("label") or "").strip()
                 if field_key:
                     allowed_template_fields[field_key] = {
                         key: value
@@ -415,14 +426,28 @@ class AgentNodeHandler:
                     limits[role] = min(limits.get(role, max_chars), max_chars)
             locked_values["visual_text_max_chars"] = limits
             locked_values["allowed_visual_template_fields"] = allowed_template_fields
-            required_template_fields = missing_required_template_fields(
-                visual_material.get("hycanvas_fillable_fields") or [], task.brief_json or {}
-            )
+            locked_values["decorative_visual_template_fields"] = decorative_template_fields
+            required_template_fields = missing_required_template_fields(fillable_fields, task.brief_json or {})
             locked_values["required_visual_template_fields"] = required_template_fields
+            brief_variables = brief_variable_map(task.brief_json or {})
+            process_value = brief_variables.get("process")
+            audience_value = brief_variables.get("audience") or brief_variables.get("craft_role")
+            locked_values["compiled_visual_template_fields"] = compile_cover_narrative_fields(
+                declarations=fillable_fields,
+                title=str((state.get("selected_title") or {}).get("text") or ""),
+                process_values=process_value if isinstance(process_value, (list, tuple)) else [process_value or ""],
+                audience=audience_value if isinstance(audience_value, (list, tuple)) else [audience_value or ""],
+            )
             runtime_snapshot = dict(state.get("runtime_config_snapshot") or {})
             runtime_snapshot["visual_material"] = {
                 **visual_material,
+                "hycanvas_fillable_fields": [
+                    field
+                    for field in fillable_fields
+                    if isinstance(field, dict) and not is_ordinal_badge_template_field(field)
+                ],
                 "required_template_field_repairs": required_template_fields,
+                "decorative_template_field_keys": decorative_template_fields,
             }
             assembly_state = {**state, "runtime_config_snapshot": runtime_snapshot}
         if node["id"] == "submit_cover_job":

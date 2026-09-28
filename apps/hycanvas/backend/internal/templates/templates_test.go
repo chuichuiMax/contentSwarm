@@ -497,15 +497,48 @@ func TestFillTextFieldsRejectsUnknownLabel(t *testing.T) {
 }
 
 func TestFillTextFieldsEnforcesRequiredAndMaxChars(t *testing.T) {
-	file := map[string]any{"pages": []any{}}
-	fields := []any{map[string]any{
-		"nodeId": "title-node", "kind": "text", "label": "项目名称",
-		"constraints": map[string]any{"required": true, "maxChars": 4.0},
-	}}
-	if err := fillTextFields(file, fields, map[string]string{}); err != ErrBadRequest {
-		t.Fatalf("missing required field: expected ErrBadRequest, got %v", err)
+	file := map[string]any{
+		"pages": []any{map[string]any{"children": []any{
+			map[string]any{
+				"id": "name-node", "type": "text",
+				"content": []any{map[string]any{"runs": []any{map[string]any{"text": "湘熙水郡"}}}},
+			},
+			map[string]any{
+				"id": "area-node", "type": "text",
+				"content": []any{map[string]any{"runs": []any{map[string]any{"text": "120㎡"}}}},
+			},
+		}}},
 	}
-	if err := fillTextFields(file, fields, map[string]string{"项目名称": "岳阳杏林小区"}); err != ErrBadRequest {
+	fields := []any{
+		map[string]any{
+			"nodeId": "name-node", "kind": "text", "label": "湘熙水郡", "key": "field_3",
+			"semanticRole": "project_name",
+			"constraints":  map[string]any{"required": true, "maxChars": 4.0},
+		},
+		map[string]any{
+			"nodeId": "area-node", "kind": "text", "label": "120㎡", "key": "field_4",
+			"semanticRole": "project_area",
+			"constraints":  map[string]any{"required": true, "maxChars": 2.0},
+		},
+	}
+	if err := fillTextFields(file, fields, map[string]string{"field_1": "强弱电布管"}); err != ErrBadRequest {
+		t.Fatalf("unknown narrative key should still fail: %v", err)
+	}
+	if err := fillTextFields(file, fields, map[string]string{}); err != nil {
+		t.Fatalf("omitted required facts should keep template text: %v", err)
+	}
+	name := asObj(asArr(asObj(asArr(file["pages"])[0])["children"])[0])
+	area := asObj(asArr(asObj(asArr(file["pages"])[0])["children"])[1])
+	if asStr(asObj(asArr(asObj(asArr(name["content"])[0])["runs"])[0])["text"]) != "湘熙水郡" {
+		t.Fatalf("project name original was replaced: %+v", name)
+	}
+	if asStr(asObj(asArr(asObj(asArr(area["content"])[0])["runs"])[0])["text"]) != "120㎡" {
+		t.Fatalf("project area original was replaced: %+v", area)
+	}
+	if err := fillTextFields(file, fields, map[string]string{"field_3": ""}); err != ErrBadRequest {
+		t.Fatalf("blank replacement: expected ErrBadRequest, got %v", err)
+	}
+	if err := fillTextFields(file, fields, map[string]string{"field_3": "岳阳杏林小区"}); err != ErrBadRequest {
 		t.Fatalf("oversized field: expected ErrBadRequest, got %v", err)
 	}
 }

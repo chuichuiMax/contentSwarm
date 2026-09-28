@@ -389,3 +389,103 @@ async def test_craft_emotion_slots_require_selected_expression(monkeypatch, code
     current["selected_title"]["text"] = title.replace("真香", "")
     blocked = await handler.execute(db=object(), node={"id": "deterministic_validate"}, state=current, node_run_id="n")
     assert blocked["validation_report"]["status"] == "blocked"
+
+
+@pytest.mark.unit
+def test_process_title_options_accept_hyb_catalog_short_name():
+    from yuxi.content.control.workflow.deterministic_node import _required_title_fact_options
+    from yuxi.content.v3.title_formula_slots import process_title_options
+
+    assert process_title_options(["功能舒适系统", "HYB-地面不积水工艺"]) == (
+        "功能舒适系统",
+        "功能舒适",
+        "HYB-地面不积水工艺",
+        "地面不积水工艺",
+        "地面不积水",
+    )
+    assert "强弱电布管" in process_title_options(["安全用电系统", "HYB-强弱电布管特色工艺"])
+    options = _required_title_fact_options(
+        {
+            "form_values": {
+                "craft_role": "水电工",
+                "process": ["功能舒适系统", "HYB-地面不积水工艺"],
+            }
+        },
+        {"title_formula": _formula_by_code("FRT16")},
+        {"formula_lexicon_bundle": {"selection": {"title": {"title.oral_emotion": ["劝退"]}}}},
+    )
+    process = next(values for key, values in options.items() if key.startswith("process"))
+    assert "地面不积水" in process
+    emotion = next(values for key, values in options.items() if key.startswith("emotion"))
+    assert emotion == ("劝退",)
+
+
+@pytest.mark.asyncio
+async def test_frt16_title_accepts_short_process_and_locked_emotion(monkeypatch):
+    monkeypatch.setattr(
+        "yuxi.content.control.workflow.deterministic_node.validate_content",
+        lambda **kwargs: {"status": "passed", "checks": []},
+    )
+    current = _validation_state(
+        formula=_formula_by_code("FRT16"),
+        title="水电工地面不积水劝退",
+        variables={
+            "craft_role": ["水电工"],
+            "process": ["功能舒适系统", "HYB-地面不积水工艺"],
+        },
+        formula_lexicon_bundle={"selection": {"title": {"title.oral_emotion": ["劝退"]}}},
+    )
+    handler = V3DeterministicNodeHandler()
+    passed = await handler.execute(db=object(), node={"id": "deterministic_validate"}, state=current, node_run_id="n")
+    assert passed["validation_report"] == {"status": "passed", "checks": []}
+
+    current["selected_title"]["text"] = "水电工告诉你地面为什么积水"
+    blocked = await handler.execute(db=object(), node={"id": "deterministic_validate"}, state=current, node_run_id="n")
+    codes = {item["code"] for item in blocked["validation_report"]["checks"]}
+    assert "TITLE_REQUIRED_FACT_MISSING" in codes
+    message = next(item["message"] for item in blocked["validation_report"]["checks"] if item["code"] == "TITLE_REQUIRED_FACT_MISSING")
+    assert "地面不积水" in message
+    assert "劝退" in message
+
+
+@pytest.mark.asyncio
+async def test_frt16_accepts_process_core_without_catalog_suffix(monkeypatch):
+    monkeypatch.setattr(
+        "yuxi.content.control.workflow.deterministic_node.validate_content",
+        lambda **kwargs: {"status": "passed", "checks": []},
+    )
+    current = _validation_state(
+        formula=_formula_by_code("FRT16"),
+        title="毛坯装修看强弱电布管？劝退先弄",
+        variables={
+            "craft_role": ["毛坯"],
+            "process": ["安全用电系统", "HYB-强弱电布管特色工艺"],
+        },
+        formula_lexicon_bundle={"selection": {"title": {"title.oral_emotion": ["劝退"]}}},
+    )
+    passed = await V3DeterministicNodeHandler().execute(
+        db=object(), node={"id": "deterministic_validate"}, state=current, node_run_id="n"
+    )
+    assert passed["validation_report"] == {"status": "passed", "checks": []}
+
+
+@pytest.mark.asyncio
+async def test_frt16_craft_role_ignores_process_type_and_uses_audience(monkeypatch):
+    monkeypatch.setattr(
+        "yuxi.content.control.workflow.deterministic_node.validate_content",
+        lambda **kwargs: {"status": "passed", "checks": []},
+    )
+    current = _validation_state(
+        formula=_formula_by_code("FRT16"),
+        title="毛坯装修看强弱电布管？劝退先弄",
+        variables={
+            "craft_role": ["安全用电系统"],
+            "process": ["安全用电系统", "HYB-强弱电布管特色工艺"],
+            "audience": ["毛坯"],
+        },
+        formula_lexicon_bundle={"selection": {"title": {"title.oral_emotion": ["劝退"]}}},
+    )
+    passed = await V3DeterministicNodeHandler().execute(
+        db=object(), node={"id": "deterministic_validate"}, state=current, node_run_id="n"
+    )
+    assert passed["validation_report"] == {"status": "passed", "checks": []}

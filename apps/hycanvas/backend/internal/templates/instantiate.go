@@ -214,7 +214,10 @@ func fillTextFields(file map[string]any, declarations []any, values map[string]s
 			if !present {
 				value, present = values[label]
 			}
-			if required, _ := constraints["required"].(bool); required && (!present || strings.TrimSpace(value) == "") {
+			if !present {
+				continue
+			}
+			if required, _ := constraints["required"].(bool); required && strings.TrimSpace(value) == "" {
 				return ErrBadRequest
 			}
 			if maxChars := int(asNum(constraints["maxChars"])); maxChars > 0 && present && utf8.RuneCountInString(strings.ReplaceAll(value, "\n", "")) > maxChars {

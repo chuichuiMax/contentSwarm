@@ -1549,3 +1549,59 @@ def test_persona_alternative_bindings_compile_value_slot_without_unselected_evid
     assert value_slot.source_variable_codes == ("advantages",)
     assert value_slot.evidence_ids == ("ev-selected",)
     assert validate_material_gate(manifest=manifest, materials=[]).status == "blocked"
+
+
+def test_title_generation_slot_lists_hyb_process_and_locked_emotion():
+    manifest = MaterialRequirementManifestV1(
+        order_hash="o" * 64,
+        content_type_code="CT06",
+        title_formula_code="FRT16",
+        body_formula_code="FRB11",
+        requirements=tuple(
+            MaterialRequirementV1(
+                requirement_id=f"variable:{code}",
+                variable_code=code,
+                material_types=("business_fact",),
+                value_type="list" if code == "process" else "string",
+                required=True,
+                allowed_sources=("manual_input",),
+                allowed_usage=("title", "body"),
+                review_policy="user_confirmed",
+                risk_level="normal",
+            )
+            for code in ("craft_role", "process")
+        ),
+        reference_required=False,
+        manifest_hash="m" * 64,
+    )
+    materials = [
+        _business_material("process", ["功能舒适系统", "HYB-地面不积水工艺"]),
+        _business_material("craft_role", "水电工"),
+    ]
+    slots = compile_generation_slots(
+        material_manifest=manifest,
+        material_quality_report=validate_material_gate(manifest=manifest, materials=materials),
+        materials=materials,
+        strategy_snapshot={
+            "title_formula": {
+                "code": "FRT16",
+                "variable_schema": ["craft_role", "process"],
+                "source_content": {
+                    "slot_schema": [
+                        {"code": "craft_role", "variable_codes": ["craft_role"], "lexicon_codes": []},
+                        {"code": "process", "variable_codes": ["process"], "lexicon_codes": []},
+                        {"code": "emotion", "variable_codes": [], "lexicon_codes": ["title.oral_emotion"]},
+                    ]
+                },
+            }
+        },
+        expression_policy={},
+        channel_profile={},
+        content_rule_bundle={},
+        formula_lexicon_bundle={"selection": {"title": {"title.oral_emotion": ["劝退"]}}},
+    )
+    title_slot = next(slot for slot in slots if slot.slot_id == "title_formula")
+    assert "地面不积水" in title_slot.instruction
+    assert "劝退" in title_slot.instruction
+    assert any("地面不积水" in item for item in title_slot.acceptance)
+    assert any("劝退" in item for item in title_slot.acceptance)

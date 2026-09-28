@@ -608,7 +608,6 @@ const studioContentTypeCode = computed(
 )
 const PROCESS_NAME_GUARD_HINT = '请先选择工艺类型，或没有工艺类型，请联系管理员配置'
 const FIELD_SELECT_OPTIONS = {
-  外框面积: ['50-70㎡', '90-110㎡', '110-130㎡', '130-150㎡', '150-200㎡', '200-300㎡', '300㎡以上'],
   设计风格: [
     '复合写意',
     '写意木构',
@@ -632,6 +631,7 @@ const FIELD_SELECT_OPTIONS = {
   项目阶段: ['拆改阶段', '水电阶段', '泥木阶段', '油漆阶段', '竣工交付']
 }
 const FIELD_PLACEHOLDERS = {
+  外框面积: '请输入外框面积，如 120',
   目标人群: '请选择目标人群',
   居住人口: '请选择居住人口',
   工艺类型: '请选择工艺类型',
@@ -649,6 +649,30 @@ const FRAME_AREA_QUOTES = {
   '150-200㎡': { 基础: '15-18万', 木制品: '6-8万', 主材: '7-8万' },
   '200-300㎡': { 基础: '20-30万', 木制品: '9-11万', 主材: '8-10万' },
   '300㎡以上': { 基础: '30万以上', 木制品: '11万以上', 主材: '16万以上' }
+}
+const FRAME_AREA_BOUNDS = [
+  { key: '50-70㎡', min: 50, max: 70 },
+  { key: '90-110㎡', min: 90, max: 110 },
+  { key: '110-130㎡', min: 110, max: 130 },
+  { key: '130-150㎡', min: 130, max: 150 },
+  { key: '150-200㎡', min: 150, max: 200 },
+  { key: '200-300㎡', min: 200, max: 300 },
+  { key: '300㎡以上', min: 300, max: null }
+]
+let appliedFrameAreaBand = ''
+
+function matchFrameAreaKey(text) {
+  const raw = String(text || '').trim()
+  if (FRAME_AREA_QUOTES[raw]) return raw
+  const matched = raw.match(/^(\d+(?:\.\d+)?)\s*(?:㎡|m²|m2|平米|平)?$/i)
+  if (!matched) return ''
+  const number = Number(matched[1])
+  const hits = FRAME_AREA_BOUNDS.filter(
+    (item) => number >= item.min && (item.max == null || number <= item.max)
+  )
+  if (!hits.length) return ''
+  hits.sort((a, b) => b.min - a.min)
+  return hits[0].key
 }
 
 function prioritizeFormFields(fields) {
@@ -1108,6 +1132,7 @@ const onContentTypeChange = (value) => {
   })
   syncGeneratedContentRequest()
   if (studioContentTypeCode.value) creation.content_type_code = studioContentTypeCode.value
+  appliedFrameAreaBand = ''
   if (store.task && studioContentTypeCode.value) {
     store.updateTask({ content_type_code: studioContentTypeCode.value }).catch((error) => {
       message.error(error.message || '更新内容类型失败')
@@ -1126,8 +1151,42 @@ const applyFrameAreaTemporaryQuotes = (frameArea) => {
   }
 }
 
+const clearFrameAreaQuotes = () => {
+  activeFields.value
+    .map((field) => field.key)
+    .filter((key) => DECORATION_QUOTE_KEYS.includes(key))
+    .forEach((key) => {
+      formValues[key] = ''
+    })
+}
+
+const syncFrameAreaQuotes = (value, { warn = false } = {}) => {
+  const band = matchFrameAreaKey(value)
+  if (!band) {
+    if (appliedFrameAreaBand) clearFrameAreaQuotes()
+    appliedFrameAreaBand = ''
+    if (warn && String(value || '').trim()) message.warning('外框面积不在报价范围内')
+    return
+  }
+  if (band === appliedFrameAreaBand) return
+  const quotesAlreadyFilled = DECORATION_QUOTE_KEYS.some((key) => String(formValues[key] || '').trim())
+  if (!appliedFrameAreaBand && quotesAlreadyFilled) {
+    appliedFrameAreaBand = band
+    return
+  }
+  appliedFrameAreaBand = band
+  applyFrameAreaTemporaryQuotes(band)
+}
+
+const onBusinessTextInput = (key, value) => {
+  if (key === '外框面积') syncFrameAreaQuotes(value)
+}
+
+const onBusinessTextBlur = (key, value) => {
+  if (key === '外框面积') syncFrameAreaQuotes(value, { warn: true })
+}
+
 const onBusinessSelectChange = (key, value) => {
-  if (key === '外框面积') applyFrameAreaTemporaryQuotes(value)
   if (key === '工艺类型') {
     const allowed = processNamesByType.value[value] || []
     const currentName = String(formValues['工艺名称'] || '').trim()
@@ -1232,7 +1291,8 @@ const loadGalleryImages = async () => {
       status: 'enabled',
       page: 1,
       page_size: 100,
-      sort: 'newest'
+      sort: 'newest',
+      exclude_task_id: store.task?.id
     })
     if (generation !== materialPreviewGeneration) return
     galleryImages.value = response.items || []
@@ -1294,10 +1354,20 @@ const openGallery = async (galleryId) => {
   await loadGalleryImages()
 }
 
+const isGalleryImageUsed = (item) => Boolean(item?.in_use)
+
+const pendingGalleryImageUsed = computed(() =>
+  pendingImageItems.value.some((item) => isGalleryImageUsed(item))
+)
+
 const togglePendingImage = (item) => {
   const index = pendingImageItems.value.findIndex((selected) => selected.id === item.id)
   if (index !== -1) {
     pendingImageItems.value = pendingImageItems.value.filter((selected) => selected.id !== item.id)
+    return
+  }
+  if (isGalleryImageUsed(item)) {
+    message.warning('该图库图片已被其他内容任务使用')
     return
   }
   if (pendingImageItems.value.length >= pendingImageLimit.value) {
@@ -1308,6 +1378,10 @@ const togglePendingImage = (item) => {
 }
 
 const confirmGalleryImages = () => {
+  if (pendingGalleryImageUsed.value) {
+    message.warning('该图库图片已被其他内容任务使用')
+    return
+  }
   if (compositionSlotIndex.value !== null) {
     const targetIndexes = compositionInsertIndexes.value
     const replacesPrimary = targetIndexes.some(
@@ -2702,6 +2776,8 @@ const openVersions = async () => {
                           v-if="field.type === 'text'"
                           v-model:value="formValues[field.key]"
                           :placeholder="field.placeholder || `请输入${field.label}`"
+                          @change="(event) => onBusinessTextInput(field.key, event.target.value)"
+                          @blur="(event) => onBusinessTextBlur(field.key, event.target.value)"
                         />
                         <a-textarea
                           v-else-if="field.type === 'textarea'"
@@ -4170,8 +4246,13 @@ const openVersions = async () => {
             :key="item.id"
             type="button"
             class="image-choice"
-            :class="{ selected: pendingImageItems.some((selected) => selected.id === item.id) }"
+            :class="{
+              selected: pendingImageItems.some((selected) => selected.id === item.id),
+              used: isGalleryImageUsed(item)
+            }"
+            :disabled="isGalleryImageUsed(item)"
             :aria-pressed="pendingImageItems.some((selected) => selected.id === item.id)"
+            :aria-disabled="isGalleryImageUsed(item)"
             @click="togglePendingImage(item)"
           >
             <span class="choice-preview">
@@ -4181,8 +4262,9 @@ const openVersions = async () => {
                 :alt="item.name"
               />
               <Image v-else :size="22" />
+              <span v-if="isGalleryImageUsed(item)" class="image-used-badge">已使用</span>
               <CheckCircle2
-                v-if="pendingImageItems.some((selected) => selected.id === item.id)"
+                v-else-if="pendingImageItems.some((selected) => selected.id === item.id)"
                 class="choice-check"
                 :size="20"
               />
@@ -4202,7 +4284,12 @@ const openVersions = async () => {
           </a-button>
           <span />
           <a-button @click="galleryModalOpen = false">取消</a-button>
-          <a-button type="primary" :loading="galleryImagesLoading" @click="confirmGalleryImages">
+          <a-button
+            type="primary"
+            :loading="galleryImagesLoading"
+            :disabled="pendingGalleryImageUsed"
+            @click="confirmGalleryImages"
+          >
             确认选择<span v-if="pendingImageItems.length">（{{ pendingImageItems.length }}）</span>
           </a-button>
         </div>
@@ -5067,6 +5154,26 @@ const openVersions = async () => {
 .poster-choice.selected {
   border-color: var(--main-color);
   box-shadow: 0 0 0 2px var(--main-30);
+}
+.image-choice.used {
+  opacity: 0.64;
+  cursor: not-allowed;
+}
+.image-choice.used:hover {
+  border-color: var(--gray-150);
+  transform: none;
+}
+.image-used-badge {
+  position: absolute;
+  z-index: 1;
+  top: 8px;
+  left: 8px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  color: var(--color-warning-700);
+  background: var(--color-warning-50);
+  font-size: 11px;
+  line-height: 16px;
 }
 .poster-choice.unavailable {
   opacity: 0.64;

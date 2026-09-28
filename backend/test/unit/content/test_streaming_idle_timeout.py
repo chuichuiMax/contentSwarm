@@ -88,6 +88,29 @@ async def test_no_output_or_stalled_output_times_out_and_closes_request(initial_
 
 
 @pytest.mark.asyncio
+async def test_reasoning_deltas_keep_a_silent_content_stream_alive():
+    context, request = context_and_request()
+
+    async def thinking(req):
+        for _ in range(8):
+            await asyncio.sleep(0.04)
+            await ContentModelProgress(context).on_llm_new_token(
+                "",
+                chunk=SimpleNamespace(
+                    message=SimpleNamespace(
+                        additional_kwargs={"reasoning_content": "先核对工艺"},
+                        tool_call_chunks=None,
+                    )
+                ),
+            )
+        return {"complete": True}
+
+    result = await ModelCallTimeoutMiddleware(0.12).awrap_model_call(request, thinking)
+    assert result == {"complete": True}
+    assert context._content_model_progress["chunks"] == 8
+
+
+@pytest.mark.asyncio
 async def test_empty_tool_heartbeat_does_not_count_as_output():
     context, request = context_and_request()
     stopped = asyncio.Event()

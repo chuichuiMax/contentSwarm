@@ -29,7 +29,10 @@ from yuxi.services.material_library_categories import (
     normalize_material_category,
     validate_material_category,
 )
-from yuxi.repositories.material_library_repository import IMAGE_OCCUPANCY_RELEASED_STATUSES
+from yuxi.repositories.material_library_repository import (
+    IMAGE_OCCUPANCY_ACTIVE_STATUSES,
+    IMAGE_OCCUPANCY_RELEASED_STATUSES,
+)
 from yuxi.storage.minio.client import MinIOClient
 from yuxi.storage.postgres.models_content import (
     ContentCoverAsset,
@@ -41,8 +44,19 @@ from yuxi.storage.postgres.models_content import (
 )
 
 
-def test_failed_and_cancelled_tasks_release_image_occupancy():
-    assert IMAGE_OCCUPANCY_RELEASED_STATUSES == frozenset({"failed", "cancelled"})
+def test_only_generating_or_succeeded_tasks_occupy_images():
+    assert IMAGE_OCCUPANCY_ACTIVE_STATUSES == frozenset(
+        {
+            "queued",
+            "running",
+            "waiting_human",
+            "waiting_external",
+            "review_required",
+            "reviewed",
+            "completed",
+        }
+    )
+    assert IMAGE_OCCUPANCY_RELEASED_STATUSES.isdisjoint(IMAGE_OCCUPANCY_ACTIVE_STATUSES)
     from sqlalchemy import func, select
 
     from yuxi.storage.postgres.models_content import ContentTask
@@ -53,13 +67,15 @@ def test_failed_and_cancelled_tasks_release_image_occupancy():
             ContentTask.created_by == "owner",
             ContentTask.selected_image_item_id == "mli_1",
             ContentTask.deleted_at.is_(None),
-            ContentTask.status.notin_(IMAGE_OCCUPANCY_RELEASED_STATUSES),
+            ContentTask.status.in_(IMAGE_OCCUPANCY_ACTIVE_STATUSES),
         )
         .compile(compile_kwargs={"literal_binds": True})
     )
-    assert "content_tasks.status NOT IN ('cancelled', 'failed')" in sql or (
-        "failed" in sql and "cancelled" in sql and "NOT IN" in sql
-    )
+    assert "IN (" in sql
+    for status in IMAGE_OCCUPANCY_ACTIVE_STATUSES:
+        assert f"'{status}'" in sql
+    for status in ("draft", "brief_ready", "failed", "cancelled", "review_blocked", "deleted"):
+        assert f"'{status}'" not in sql
 
 
 def test_material_library_bucket_defaults_to_image():

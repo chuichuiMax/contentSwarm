@@ -282,6 +282,37 @@ async def test_channel_adaptation_applies_versioned_problem_word_replacement():
     assert result["channel_result"]["replacement_diffs"]
 
 
+@pytest.mark.asyncio
+async def test_channel_adaptation_locks_unique_topics_from_candidate_pool():
+    bundle = build_modular_rule_bundle({"form_values": {"city": "长沙"}})
+    duplicated = bundle["topic_candidates"][:8] + [bundle["topic_candidates"][0], f"#{bundle['topic_candidates'][1]}"]
+    result = await V3DeterministicNodeHandler._adapt_to_channel(
+        db=object(),
+        node_run_id="node-topics",
+        state={
+            "selected_title": {"text": "工长的施工记录"},
+            "content_draft": {"body": "现场先核水电点位。", "topics": duplicated},
+            "channel_profile": {},
+            "compliance_policies": [],
+            "runtime_config_snapshot": {"content_rule_bundle": bundle},
+        },
+    )
+
+    locked = result["content_draft"]["topics"]
+    assert locked == bundle["topic_candidates"][:10]
+    assert len(locked) == len(set(locked)) == 10
+    checks = validate_modular_content(
+        title=result["selected_title"]["text"],
+        body=result["content_draft"]["body"],
+        topics=locked,
+        draft=result["content_draft"],
+        brief={"form_values": {"city": "长沙"}},
+        evidence_bundle={"items": []},
+        rule_bundle=bundle,
+    )
+    assert not {item["code"] for item in checks} & {"TOPIC_DUPLICATED", "TOPIC_COUNT_MISMATCH", "TOPIC_OUTSIDE_CANDIDATE_POOL"}
+
+
 def test_generation_skill_prompt_budget_stays_below_approved_limit():
     root = Path(__file__).resolve().parents[3] / "package" / "yuxi" / "agents" / "skills" / "buildin"
     chars = {slug: len((root / slug / "SKILL.md").read_text(encoding="utf-8")) for slug in GENERATION_SKILLS}

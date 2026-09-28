@@ -24,8 +24,39 @@ def _normalize_tool_call_chunks(message) -> None:
             chunk["id"] = None
 
 
+def _attach_provider_reasoning_delta(generation, raw_chunk: dict) -> None:
+    """保留兼容接口在 delta 里下发的思考片段。
+
+    ChatOpenAI 只认官方字段，会丢掉 DeepSeek / SiliconFlow 的 reasoning_content。
+    思考阶段正文为空，节点空闲计时会把仍在推理的调用当成无输出。思考文本只挂在
+    additional_kwargs 上，不写入 content，避免混进正文和可见输出预算。
+    """
+    if generation is None or getattr(generation, "message", None) is None:
+        return
+    choices = raw_chunk.get("choices") or []
+    nested = raw_chunk.get("chunk")
+    if not choices and isinstance(nested, dict):
+        choices = nested.get("choices") or []
+    if not choices or not isinstance(choices[0], dict):
+        return
+    delta = choices[0].get("delta") or {}
+    if not isinstance(delta, dict):
+        return
+    reasoning = delta.get("reasoning_content")
+    if not isinstance(reasoning, str) or not reasoning:
+        reasoning = delta.get("reasoning")
+    if isinstance(reasoning, str) and reasoning:
+        generation.message.additional_kwargs["reasoning_content"] = reasoning
+
+
 class _ToolCallChunkFixChatOpenAI(ChatOpenAI):
     """归一化流式 tool_call 续片中的空串 name/id，规避 v3 流式累积缺陷。"""
+
+    def _convert_chunk_to_generation_chunk(self, chunk, default_chunk_class, base_generation_info):
+        generation = super()._convert_chunk_to_generation_chunk(chunk, default_chunk_class, base_generation_info)
+        if isinstance(chunk, dict):
+            _attach_provider_reasoning_delta(generation, chunk)
+        return generation
 
     async def _astream(self, *args, **kwargs):
         async for chunk in super()._astream(*args, **kwargs):

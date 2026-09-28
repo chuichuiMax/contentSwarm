@@ -71,6 +71,23 @@ def test_filter_config_by_role_removes_unauthorized_context_values():
     assert config_json["context"]["summary_threshold"] == 10
 
 
+def test_filter_config_by_role_keeps_hidden_skill_tool_allowlist_for_non_admin():
+    filtered = filter_config_by_role(
+        {
+            "context": {
+                "system_prompt": "visible",
+                "skill_tool_allowlist": ["create_content_cover_job"],
+                "summary_threshold": 10,
+            }
+        },
+        "新渠道",
+    )
+
+    assert filtered["context"]["skill_tool_allowlist"] == ["create_content_cover_job"]
+    assert filtered["context"]["system_prompt"] == "visible"
+    assert "summary_threshold" not in filtered["context"]
+
+
 def test_filter_config_by_role_keeps_admin_context_values_for_admin():
     filtered = filter_config_by_role(
         {

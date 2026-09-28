@@ -49,9 +49,12 @@ class ContentModelProgress(AsyncCallbackHandler):
         if progress is None:
             return
         chunk = kwargs.get("chunk")
-        tool_chunks = getattr(getattr(chunk, "message", None), "tool_call_chunks", None)
+        message = getattr(chunk, "message", None)
+        tool_chunks = getattr(message, "tool_call_chunks", None)
         meaningful_tool_output = any(item.get("args") or item.get("name") for item in tool_chunks or [])
-        if not token and not meaningful_tool_output:
+        additional = getattr(message, "additional_kwargs", None) or {}
+        reasoning = additional.get("reasoning_content") or additional.get("reasoning")
+        if not token and not meaningful_tool_output and not (isinstance(reasoning, str) and reasoning):
             return
         now = time.monotonic()
         progress["last_progress_at"] = now

@@ -251,6 +251,41 @@ def validate_content(
     return {"status": status, "checks": checks}
 
 
+def lock_modular_topics(topics: list[str], rule_bundle: dict[str, Any]) -> list[str]:
+    """按冻结候选池去重并补齐话题，避免把互斥数量规则交给模型回修。"""
+
+    topic_rules = (rule_bundle.get("runtime_rules") or {}).get("viral-topic-author") or {}
+    if not topic_rules:
+        return [text for item in topics if (text := str(item).strip().lstrip("#").strip())]
+    required = int(topic_rules.get("topic_count") or 10)
+    must_use_pool = bool(topic_rules.get("must_use_candidate_pool"))
+    must_be_unique = topic_rules.get("must_be_unique", True) is not False
+
+    def normalize(item: Any) -> str:
+        return str(item or "").strip().lstrip("#").strip()
+
+    pool = list(dict.fromkeys(text for item in rule_bundle.get("topic_candidates") or [] if (text := normalize(item))))
+    allowed = set(pool)
+    locked: list[str] = []
+    seen: set[str] = set()
+    for item in topics:
+        text = normalize(item)
+        if not text or (must_use_pool and text not in allowed) or (must_be_unique and text in seen):
+            continue
+        locked.append(text)
+        seen.add(text)
+        if len(locked) == required:
+            return locked
+    for item in pool:
+        if item in seen:
+            continue
+        locked.append(item)
+        seen.add(item)
+        if len(locked) == required:
+            return locked
+    return locked
+
+
 def validate_modular_content(
     *,
     title: str,

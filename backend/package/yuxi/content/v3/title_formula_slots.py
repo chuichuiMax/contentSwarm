@@ -8,6 +8,40 @@ from typing import Any
 
 from yuxi.content.v3.foreman_rules import load_foreman_rule_catalog
 
+_PROCESS_PREFIXES = ("HYB-", "HYB")
+_PROCESS_SUFFIXES = ("工艺", "做法", "特色", "系统")
+
+
+def process_title_options(values: list[str] | tuple[str, ...]) -> tuple[str, ...]:
+    """标题工艺槽位的可接受原文：完整编码、去 HYB- 前缀，并逐级去掉目录后缀。"""
+
+    options: list[str] = []
+    for raw in values:
+        value = str(raw).strip()
+        if not value:
+            continue
+        options.append(value)
+        normalized = value
+        for prefix in _PROCESS_PREFIXES:
+            if normalized.startswith(prefix):
+                normalized = normalized[len(prefix) :]
+                break
+        current = normalized.strip(" -—·，,：:")
+        while current:
+            options.append(current)
+            stripped = next(
+                (
+                    current[: -len(suffix)]
+                    for suffix in _PROCESS_SUFFIXES
+                    if current.endswith(suffix) and len(current) > len(suffix) + 1
+                ),
+                None,
+            )
+            if stripped is None:
+                break
+            current = stripped
+    return tuple(dict.fromkeys(options))
+
 
 @lru_cache(maxsize=1)
 def _canonical_title_formulas() -> dict[str, dict[str, Any]]:
@@ -56,6 +90,7 @@ def required_title_lexicon_codes(formula: dict[str, Any]) -> frozenset[str]:
 
 __all__ = [
     "enrich_decoration_title_formula",
+    "process_title_options",
     "required_title_lexicon_codes",
     "title_formula_slot_schema",
 ]

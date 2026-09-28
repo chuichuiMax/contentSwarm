@@ -177,9 +177,11 @@ const buildFacts = (typeName, persona, businessVariables) => {
     result = [community, lockedArea || frameArea, style, `施工${CONSTRUCTION_BRAND}`].filter(Boolean).join(' ')
   }
   const personaFact = buildPersonaFact(persona, isPersona ? { job, years, region } : {})
+  const audience = compactList(household, audienceTarget) || compactList('装修业主')
   return compactFacts({
     persona_fact: personaFact ? `${personaFact}。` : undefined,
     process,
+    craft_role: isKnowledge ? audience : undefined,
     advantage,
     result: text(result) || undefined,
     product: isPersona
@@ -190,8 +192,9 @@ const buildFacts = (typeName, persona, businessVariables) => {
           ? `${community}${BRAND_POSITIONING}项目`
           : `${BRAND_POSITIONING}项目`,
     location: [region, community].filter(Boolean).join(' · ') || undefined,
+    case_background: community || undefined,
     scene: isCraft ? projectStage || style || undefined : style || projectStage || undefined,
-    audience: compactList(household, audienceTarget) || compactList('装修业主'),
+    audience,
     quantity: lockedArea || frameArea || undefined,
     price: isQuote || isCase ? compactList(...priceItems) || compactList(budgetText) : undefined,
     quote_type: isQuote || (isCase && priceItems.length) ? 'budget' : undefined,

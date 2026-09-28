@@ -1,10 +1,14 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, File, Query, UploadFile
+from typing import Literal
+
+from fastapi import APIRouter, Depends, File, Form, Query, Request, UploadFile, status
 from fastapi.responses import Response, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from server.utils.auth_middleware import get_db, get_mp_context
+from server.utils.public_url import request_public_base_url
+from yuxi.services.material_library_service import MaterialShareCreate, create_material_share
 from yuxi.services.mp_service import (
     AuthCancelPayload,
     AuthConfirmPayload,
@@ -13,6 +17,7 @@ from yuxi.services.mp_service import (
     MpContext,
     MpRunCreatePayload,
     MpRunResumePayload,
+    MpRunRetryPayload,
     SmsLoginPayload,
     SmsSendPayload,
     WechatCodePayload,
@@ -23,6 +28,7 @@ from yuxi.services.mp_service import (
     compile_brief,
     confirm_login,
     delete_content,
+    delete_mp_gallery_item,
     duplicate_content,
     get_artifact,
     get_form_schema,
@@ -32,13 +38,21 @@ from yuxi.services.mp_service import (
     get_task,
     list_contents,
     list_cover_templates,
+    list_hycanvas_templates,
+    list_mp_galleries,
+    list_mp_gallery_items,
     login_by_sms,
     login_by_wechat_code,
     logout,
     read_cover_file,
     read_cover_template_file,
+    read_hycanvas_template_overlay,
+    read_hycanvas_template_preview,
+    read_mp_gallery_item_file,
+    read_mp_gallery_item_thumbnail,
     remove_favorite,
     resume_run,
+    retry_run,
     send_sms_code,
     start_run,
     stream_run_events,
@@ -101,10 +115,11 @@ async def mp_update_me(
 @mp.get("/content/form-schema")
 async def mp_form_schema(
     service_entry: str = Query(...),
+    include_hycanvas_templates: bool = Query(True),
     _ctx: MpContext = Depends(get_mp_context),
     db: AsyncSession = Depends(get_db),
 ):
-    return await get_form_schema(db, service_entry)
+    return await get_form_schema(db, service_entry, include_hycanvas_templates=include_hycanvas_templates)
 
 
 @mp.get("/content/pricing")
@@ -131,13 +146,120 @@ async def mp_cover_template_file(
     )
 
 
-@mp.post("/content/uploads/cover")
-async def mp_upload_cover(
-    file: UploadFile = File(...),
+@mp.get("/content/hycanvas-templates")
+async def mp_hycanvas_templates(_ctx: MpContext = Depends(get_mp_context)):
+    return await list_hycanvas_templates()
+
+
+@mp.get("/content/hycanvas-templates/{template_id}/preview")
+async def mp_hycanvas_template_preview(
+    template_id: str,
+    _ctx: MpContext = Depends(get_mp_context),
+):
+    data, content_type = await read_hycanvas_template_preview(template_id)
+    return Response(content=data, media_type=content_type)
+
+
+@mp.get("/content/hycanvas-templates/{template_id}/overlay")
+async def mp_hycanvas_template_overlay(
+    template_id: str,
+    _ctx: MpContext = Depends(get_mp_context),
+):
+    data, content_type = await read_hycanvas_template_overlay(template_id)
+    return Response(content=data, media_type=content_type)
+
+
+@mp.get("/content/galleries")
+async def mp_galleries(
+    scope: Literal["private", "enterprise"] | None = Query(None),
     ctx: MpContext = Depends(get_mp_context),
     db: AsyncSession = Depends(get_db),
 ):
-    return await upload_cover(db, ctx, file)
+    return await list_mp_galleries(db, ctx, scope=scope)
+
+
+@mp.get("/content/gallery-items")
+async def mp_gallery_items(
+    category: str = Query(...),
+    scope: Literal["private", "enterprise"] | None = Query(None),
+    include_descendants: bool = Query(False),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(100, ge=1, le=100),
+    ctx: MpContext = Depends(get_mp_context),
+    db: AsyncSession = Depends(get_db),
+):
+    return await list_mp_gallery_items(
+        db,
+        ctx,
+        category,
+        scope=scope,
+        include_descendants=include_descendants,
+        page=page,
+        page_size=page_size,
+    )
+
+
+@mp.get("/content/gallery-items/{item_id}/file")
+async def mp_gallery_item_file(
+    item_id: str,
+    ctx: MpContext = Depends(get_mp_context),
+    db: AsyncSession = Depends(get_db),
+):
+    data, content_type, file_name = await read_mp_gallery_item_file(db, ctx, item_id)
+    return Response(
+        content=data,
+        media_type=content_type,
+        headers={"Content-Disposition": f'inline; filename="{file_name}"'},
+    )
+
+
+@mp.get("/content/gallery-items/{item_id}/thumbnail")
+async def mp_gallery_item_thumbnail(
+    item_id: str,
+    ctx: MpContext = Depends(get_mp_context),
+    db: AsyncSession = Depends(get_db),
+):
+    data = await read_mp_gallery_item_thumbnail(db, ctx, item_id)
+    return Response(
+        content=data,
+        media_type="image/webp",
+        headers={"Cache-Control": "private, max-age=86400"},
+    )
+
+
+@mp.delete("/content/gallery-items/{item_id}")
+async def mp_delete_gallery_item(
+    item_id: str,
+    ctx: MpContext = Depends(get_mp_context),
+    db: AsyncSession = Depends(get_db),
+):
+    return await delete_mp_gallery_item(db, ctx, item_id)
+
+
+@mp.post("/share/cases", status_code=status.HTTP_201_CREATED)
+async def mp_create_material_share(
+    payload: MaterialShareCreate,
+    request: Request,
+    ctx: MpContext = Depends(get_mp_context),
+    db: AsyncSession = Depends(get_db),
+):
+    return await create_material_share(
+        db,
+        ctx.user,
+        payload,
+        public_base_url=request_public_base_url(request),
+    )
+
+
+@mp.post("/content/uploads/cover")
+async def mp_upload_cover(
+    file: UploadFile = File(...),
+    category: str = Form("uncategorized"),
+    design_style: str | None = Form(None),
+    ctx: MpContext = Depends(get_mp_context),
+    db: AsyncSession = Depends(get_db),
+):
+    return await upload_cover(db, ctx, file, category=category, design_style=design_style)
 
 
 @mp.get("/content/covers/{asset_id}/file")
@@ -212,6 +334,16 @@ async def mp_resume_run(
     db: AsyncSession = Depends(get_db),
 ):
     return await resume_run(db, ctx, run_id, payload)
+
+
+@mp.post("/content/runs/{run_id}/retry")
+async def mp_retry_run(
+    run_id: str,
+    payload: MpRunRetryPayload,
+    ctx: MpContext = Depends(get_mp_context),
+    db: AsyncSession = Depends(get_db),
+):
+    return await retry_run(db, ctx, run_id, payload)
 
 
 @mp.get("/content/tasks/{task_id}/artifact")
