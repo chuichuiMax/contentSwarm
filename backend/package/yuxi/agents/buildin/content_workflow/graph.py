@@ -26,6 +26,7 @@ from yuxi.content.generation import SKILL_VERSIONS
 from yuxi.content.execution_trace import build_execution_preview
 from yuxi.content.infrastructure.postgres.decision_snapshot_repository import PostgresDecisionSnapshotRepository
 from yuxi.content.model.contracts import StrategySnapshotV1
+from yuxi.content.model.raw_reference import is_raw_reference
 from yuxi.content.model.formulas.selector import (
     FormulaCandidateDefinition,
     FormulaCandidatePool,
@@ -395,6 +396,15 @@ class ContentWorkflowAgent(BaseAgent):
                     message=("内容校验发现系统配置或审核契约错误，已停止执行；不会交给语义 Agent 猜测修复"),
                     kind="conflict",
                 )
+            if reason_code and is_raw_reference(state.get("production_pack") or {}):
+                details = "；".join(
+                    c["message"] for c in validation_report.get("checks", []) if c.get("level") == "error"
+                )
+                raise ContentApplicationError(
+                    code="raw_reference_validation_failed",
+                    message=f"{details or revision_reason_label(reason_code)}；已保留生成原稿，不自动重写",
+                    kind="conflict",
+                )
             decision = RevisionRouteController().decide(
                 definition=definition or {},
                 reason_code=reason_code,
@@ -673,7 +683,7 @@ class ContentWorkflowAgent(BaseAgent):
                     message=f"最终审批前仍有阻断报告: {', '.join(invalid_reports)}",
                     kind="conflict",
                 )
-            if any(
+            if not is_raw_reference(state.get("production_pack") or {}) and any(
                 "quote_block" in (material.get("variable_codes") or [])
                 for material in (state.get("production_pack") or {}).get("materials") or []
             ):

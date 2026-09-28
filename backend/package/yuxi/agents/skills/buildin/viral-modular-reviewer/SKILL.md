@@ -9,7 +9,7 @@ description: 按照创作时冻结的同一模块规则快照审核爆款仿写�
 
 提交结果前，读取 `runtime_config_snapshot.required_review_codes`。`checks` 必须把其中每个 code 恰好输出一次，不得遗漏或改名。`NATURAL_EXPRESSION` 允许 `passed`、`warning` 或 `blocked`，其余必检项仍只允许 `passed` 或 `blocked`。顶层 `status` 与最严重检查项一致：存在阻断为 `blocked`，否则存在建议为 `warning`，其余为 `passed`；建议不要求回修。
 
-存在 `generation_slots` 时，按槽位的目标位置、来源变量和验收条件复核正文；阻断项应引用对应槽位的 `review_codes`，不能只因物料存在就判定正文通过。
+存在 `generation_slots` 时，核对本篇要求和事实来源；阻断项应引用对应槽位的 `review_codes`，不能只因物料存在就判定正文通过。若冻结的 `runtime_rules.viral-body-author.writing_mode=reference_rewrite`，正文段序、逐段任务和公式填句不是验收条件，不得据此要求套回公式；历史其他模式仍按其冻结规则审核。
 
 存在 `locked_content_context` 时，先服从其中的程序组装结论：`composition_status=composed` 且 `validation_status=passed` 表示 `paragraph_id=locked_quote_block` 已由服务端从已确认物料逐字插入，并已通过 Hash、重复、长度和合规校验。该段不是模型创作内容，其正常出现不得判为模型重复报价、改写报价、擅自计算或结构冲突；只审核锁定块之外的创作文字是否再次复述金额、扩大范围或把标准单价写成无条件成交价。`title_price`、`title_price_label` 和 `quote_type` 是同一生产包的已确认字段，不得重新计算或推翻它们。
 
@@ -20,7 +20,7 @@ description: 按照创作时冻结的同一模块规则快照审核爆款仿写�
   - 槽位：读取 `strategy_snapshot.title_formula.source_content.slot_schema`，每个对象是必填槽位，同槽变量与词库按 one-of；不能因标题自然或主题一致就放行缺槽标题。旧公式无槽位才用 `variable_schema`。仅公式含 `persona_fact` 才审核身份/年限，没有时不得将正文人设追加为标题门禁。人设的水电、泥瓦技能不能证明本次拆除对象是水电或泥瓦。
   - `title.lexicon_usage` 只登记实际使用项，不能把“只登记未使用词条”判为通过；同槽未采用项不算遗漏。允许知识库规定的展示替换。`title.beneficial_result`、`title.instruction_value` 等表达词本身不等于业务结果或数字承诺，不得要求额外 Evidence；但业务事实与数字必须有据。只检查上述可定位的问题，不因个人偏好追加标题标准。
 
-- `CREATION_TYPE_ALIGNMENT`、`COMPOSITION_ALIGNMENT`：唯一爆款蓝图的创作类型和组成层次得到执行，但没有复制参考事实或原句。
+- `CREATION_TYPE_ALIGNMENT`、`COMPOSITION_ALIGNMENT`：内容符合本篇类型。`reference_rewrite` 模式结合完整参考原文判断口吻、内容推进和衔接是否自然，允许为本篇资料调整或省略参考段落；不因与正文公式或蓝图段序不一致而阻断，不要求恢复“解释报价—补优势—总结”。其他模式按冻结蓝图审核。不能复制参考事实或把客户经历冒充本篇事实。
 - `BODY_VALUE`：正文至少有一种明确阅读价值，且核心卖点得到兑现。
 - 正文词库按意思转述，`draft.lexicon_usage` 中的原词仅记录参考来源；不得因原词未出现要求补回。结合全文判断表达是否亲切、真诚、口吻一致，避免口号和营销话术；相关表达应服务于本篇内容，与主题无关或缺少依据的部分允许省略。词库不是事实证据，不得借转述新增规范达标、资质、效果或服务承诺；用户明确要求词、禁用词和真实报价仍按原规则检查。
 - `NATURAL_EXPRESSION`：以句子通顺、意思清楚、说话人一致为标准。个别句子轻微书面化、不够口语化、略显模板腔或热词略生硬，只给 `warning` 并注明原句与优化建议；例如“目前资料里记录的技能是工长、水电、泥瓦”可建议改为“我做过工长、水电、泥瓦”，不能仅凭这一句阻断。仅当表达严重妨碍理解，或整篇持续以系统/资料审核者口吻分析作者、明显违背创作者身份时才 `blocked`，必须指出具体原文及影响。“首先、其次、综上、值得注意的是、通过以上内容、下面来说、接下来看看”等正常衔接词不因出现而扣判；模板词命中本身也不是语义阻断证据。轻微表达建议统一归入本项，不得换用人设、结构或排版代码将同一轻微问题升级阻断；真实身份矛盾、无据事实及公式缺项仍按对应规则审核。

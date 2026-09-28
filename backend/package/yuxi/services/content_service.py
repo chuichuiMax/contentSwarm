@@ -1476,6 +1476,20 @@ async def save_content_brief(
     task.selected_image_item_id = requested_image_item_id
     task.selected_poster_template_id = requested_poster_template_id
     runtime_snapshot = dict(task.runtime_config_snapshot_json or {})
+    original_request = compiled.get("original_user_request") or raw_user_request
+    try:
+        original_json = json.loads(original_request)
+    except (ValueError, TypeError):
+        original_json = None
+    previous_quote = runtime_snapshot.get("trusted_external_material_snapshot") or {}
+    if not (
+        runtime_snapshot.get("raw_business_json")
+        and previous_quote.get("sanitized_user_request") == raw_user_request
+        and quote_case is None
+    ):
+        runtime_snapshot["raw_business_json"] = (
+            original_json if isinstance(original_json, dict) else brief.model_dump(mode="json", exclude_unset=True)
+        )
     trusted_snapshot_key = "trusted_external_material_snapshot"
     if quote_case is not None:
         trusted_snapshot_key = quote_case["trusted_snapshot_key"]

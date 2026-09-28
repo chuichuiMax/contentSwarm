@@ -126,9 +126,7 @@ def test_compile_single_user_request_discards_stale_legacy_form_values():
     assert missing == []
     assert compiled["user_request"] == "最新需求：只生成一篇杭州小户型收纳改造笔记"
     assert compiled["form_values"] == {"user_request": "最新需求：只生成一篇杭州小户型收纳改造笔记"}
-    assert compiled["business_variables"] == {
-        "user_request": "最新需求：只生成一篇杭州小户型收纳改造笔记"
-    }
+    assert compiled["business_variables"] == {"user_request": "最新需求：只生成一篇杭州小户型收纳改造笔记"}
     assert compiled["brand"] == {}
     assert compiled["audience"] == []
 
@@ -252,6 +250,7 @@ async def test_content_studio_quote_snapshot_survives_reload_and_clears_after_ed
         compile_now=False,
     )
 
+    assert task.runtime_config_snapshot_json["raw_business_json"] == json.loads(raw_request)
     trusted = task.runtime_config_snapshot_json["trusted_external_material_snapshot"]
     sanitized = task.brief_json["user_request"]
     assert trusted["quote_block"]["original_content"] == "拆除：1000元；水电：2400元"
@@ -265,6 +264,7 @@ async def test_content_studio_quote_snapshot_survives_reload_and_clears_after_ed
         compile_now=False,
     )
 
+    assert task.runtime_config_snapshot_json["raw_business_json"] == json.loads(raw_request)
     assert task.runtime_config_snapshot_json["trusted_external_material_snapshot"] == trusted
     assert task.brief_json["business_variables"]["product"] == "三室二厅"
 
@@ -276,6 +276,7 @@ async def test_content_studio_quote_snapshot_survives_reload_and_clears_after_ed
         compile_now=False,
     )
 
+    assert task.runtime_config_snapshot_json["raw_business_json"] == {"user_request": "改成普通装修避坑内容"}
     assert "trusted_external_material_snapshot" not in task.runtime_config_snapshot_json
     assert task.brief_json["user_request"] == "改成普通装修避坑内容"
 
@@ -313,16 +314,25 @@ def test_pro_brief_requires_real_task_channel_even_if_form_claims_one():
     assert missing == [{"field": "channel_profile_version_id", "label": "发布渠道"}]
 
 
-@pytest.mark.parametrize("payload", [
-    {"user_request": ""}, {"user_request": "   "},
-    {"form_values": {"user_request": ""}}, {"form_values": {"user_request": "  "}},
-])
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"user_request": ""},
+        {"user_request": "   "},
+        {"form_values": {"user_request": ""}},
+        {"form_values": {"user_request": "  "}},
+    ],
+)
 def test_empty_single_input_only_requests_visible_content_requirement(payload):
     task = SimpleNamespace(id="ct_empty", content_goal="acquire", mode="pro")
-    template = SimpleNamespace(slug="decoration", quick_form_schema=[], pro_form_schema=[
-        {"key": "brand_name", "label": "品牌", "required": True},
-        {"key": "project_type", "label": "户型", "required": True},
-    ])
+    template = SimpleNamespace(
+        slug="decoration",
+        quick_form_schema=[],
+        pro_form_schema=[
+            {"key": "brand_name", "label": "品牌", "required": True},
+            {"key": "project_type", "label": "户型", "required": True},
+        ],
+    )
     _, missing = compile_content_brief(task=task, template=template, brief=ContentBriefPayload(**payload))
     assert missing == [{"field": "user_request", "label": "内容需求"}]
 

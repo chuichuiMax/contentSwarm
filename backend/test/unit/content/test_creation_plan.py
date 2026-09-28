@@ -513,7 +513,7 @@ async def test_same_input_builds_same_plan_hash_without_joint_strategy_agent(mon
         status="ready",
         source_hash="a" * 64,
         preparation_skill_hash="skill-v2",
-        source_json={"locator": "article:1"},
+        source_json={"locator": "article:1", "title": "参考标题", "body": "参考正文原文。\n报价后也有完整收尾。"},
         prepared_json={
             "schema_version": 2,
             "reference_card": reference()["reference_card"],
@@ -530,6 +530,8 @@ async def test_same_input_builds_same_plan_hash_without_joint_strategy_agent(mon
 
     results = [await build_creation_plan(db=db, state=state(), node_run_id=f"node-{index}") for index in range(20)]
     first = results[0]
+    assert first["strategy_snapshot"]["reference_snapshot"]["title"] == asset.source_json["title"]
+    assert first["strategy_snapshot"]["reference_snapshot"]["body"] == asset.source_json["body"]
 
     assert {result["strategy_snapshot"]["snapshot_hash"] for result in results} == {
         first["strategy_snapshot"]["snapshot_hash"]
@@ -559,7 +561,7 @@ async def test_changed_business_input_changes_plan_hash(monkeypatch):
         status="ready",
         source_hash="a" * 64,
         preparation_skill_hash="skill-v2",
-        source_json={"locator": "article:1"},
+        source_json={"locator": "article:1", "title": "参考标题", "body": "参考正文原文。\n报价后也有完整收尾。"},
         prepared_json={
             "schema_version": 2,
             "reference_card": reference()["reference_card"],

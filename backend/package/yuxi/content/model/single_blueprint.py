@@ -144,7 +144,8 @@ def project_input(payload: dict, *, review: bool = False) -> dict:
                 fact["unit"] = None
                 # 接口 skills 可能包含身份，保留原始字段来源但不把角色称为工序。
                 fact["value"]["roles"] = [s for s in structured.get("skills", []) if s in {"工长", "项目经理", "监理"}]
-                fact["value"].pop("skills", None)
+                if policy.get("writing_mode") != "direct_reference":
+                    fact["value"].pop("skills", None)
             if fact["variables"] == ["capability_description"]:
                 fact["value"] = {
                     "skills": [s for s in structured.get("skills", []) if s not in {"工长", "项目经理", "监理"}],
@@ -259,6 +260,18 @@ def project_input(payload: dict, *, review: bool = False) -> dict:
         result["body_limits"]["max_chars"] = quote_body_limits(pack, quote["rendered_content"])[
             "creative_body_max_chars"
         ]
+    if policy.get("writing_mode") == "direct_reference":
+        result["facts"] = [
+            {k: fact[k] for k in ("id", "variables", "value", "unit", "allowed_usage")} for fact in facts
+        ]
+        result["reference"] = {k: result["reference"][k] for k in ("id", "title", "body")}
+        result["reference"]["blocks"] = {}
+        result["topics"] = {"max_count": pack["channel_profile"].get("topic_constraints", {}).get("max_count", 10)}
+        result["writing_requirements"]["tags"] = brief.get("business_variables", {}).get("content_tags", [])
+        for key in ("requirements", "narrative_policy", "layout"):
+            result.pop(key, None)
+        for key in ("forbidden_direct_cta_examples", "unsupported_promise_examples"):
+            result["platform_rules"].pop(key, None)
     # 原文锚点属于唯一参考的表达证据，不能进入 facts。
     if review:
         draft = deepcopy(payload["content_draft"]["blueprint_content"])

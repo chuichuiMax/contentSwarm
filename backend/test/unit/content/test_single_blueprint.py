@@ -59,6 +59,8 @@ def payload():
             slot_mapping={"location": ["evidence_bundle.items.0.value"]},
         ),
     )
+    # Existing assertions exercise historical frozen policy.
+    pack["content_rule_bundle"]["single_blueprint"].pop("writing_mode", None)
     return dict(production_pack=pack, evidence_bundle={"items": [{"id": "location"}]}, content_brief={})
 
 
@@ -859,3 +861,83 @@ def test_full_repair_accepts_identical_title_without_authorizing_a_title_change(
     patch["title"]["text"] = "北京另外一篇标题"
     with pytest.raises(ValueError, match="不允许修改 title"):
         validate_and_assemble(patch, payload, patch=True)
+
+
+def test_direct_reference_preserves_data_without_formula_or_blueprint_rules(payload, result):
+    payload["production_pack"]["content_rule_bundle"]["single_blueprint"]["writing_mode"] = "direct_reference"
+    payload["production_pack"]["reference_snapshot"].update(title="参考标题", body="参考完整正文")
+    payload["content_brief"]["business_variables"] = {"content_tags": ["旧房局改"]}
+    view = project_input(payload)
+    assert view["reference"] == {"id": None, "title": "参考标题", "body": "参考完整正文", "blocks": {}}
+    assert view["title_requirements"] == {}
+    assert view["writing_requirements"]["tags"] == ["旧房局改"]
+    assert "candidates" not in view["topics"]
+    assert not {"requirements", "narrative_policy", "layout"} & view.keys()
+    assert "forbidden_direct_cta_examples" not in view["platform_rules"]
+    assert view["facts"] and view["quote"]["context"]
+    result["title"] = {"text": "拆除工费明细", "facts": []}
+    for block in result["blocks"]:
+        block["blueprint_refs"] = []
+    result["omissions"] = []
+    assembled = validate_and_assemble(result, payload)
+    assert any(b["kind"] == "quote_ref" for b in assembled["draft"]["blueprint_content"]["blocks"])
+    result["blocks"][1]["facts"] = ["F999"]
+    with pytest.raises(ValueError, match="未知或未授权事实"):
+        validate_and_assemble(result, payload)
+
+
+def test_direct_reference_does_not_require_topic_quota_or_cta_template():
+    from yuxi.content.validators import validate_modular_content
+
+    bundle = build_modular_rule_bundle({}, single_blueprint=True)
+    checks = validate_modular_content(
+        title="北京拆除工费",
+        body="老房想怎么改，咱们慢慢聊。",
+        topics=["北京装修", "旧房局改"],
+        draft={},
+        brief={},
+        evidence_bundle={"items": []},
+        rule_bundle=bundle,
+    )
+    assert not checks
+    assert not bundle["topic_candidates"]
+    checks = validate_modular_content(
+        title="北京拆除工费",
+        body="咱们慢慢聊。",
+        topics=["北京装修", "北京装修"],
+        draft={},
+        brief={},
+        evidence_bundle={"items": []},
+        rule_bundle=bundle,
+    )
+    assert any(c["code"] == "TOPIC_DUPLICATED" for c in checks)
+
+
+def test_direct_reference_tool_schema_omits_planning_and_empty_enum(payload):
+    from types import SimpleNamespace
+    from yuxi.content.model.contracts.content_nodes import (
+        ContentNodeResultCollector,
+        ContractDomainContext,
+        build_content_result_tool,
+    )
+
+    payload["production_pack"]["content_rule_bundle"]["single_blueprint"]["writing_mode"] = "direct_reference"
+    collector = ContentNodeResultCollector(
+        contract_name="SingleBlueprintResultV1",
+        domain_context=ContractDomainContext(single_blueprint_input=payload),
+        runtime_context=SimpleNamespace(),
+    )
+    schema = build_content_result_tool(collector).args_schema
+    assert "writing_design" not in schema["properties"]
+    refs = schema["$defs"]["BlueprintBlockV1"]["properties"]["blueprint_refs"]
+    assert refs["maxItems"] == 0
+    assert "enum" not in refs["items"]
+
+
+def test_direct_reference_keeps_interface_skills_without_internal_source_metadata(payload):
+    payload["production_pack"]["content_rule_bundle"]["single_blueprint"]["writing_mode"] = "direct_reference"
+    payload["content_brief"]["persona"] = {"structured": {"skills": ["工长", "水电", "泥瓦"]}}
+    view = project_input(payload)
+    persona = next(f for f in view["facts"] if "persona_fact" in f["variables"])
+    assert persona["value"]["skills"] == ["工长", "水电", "泥瓦"]
+    assert all("source" not in f and "source_type" not in f for f in view["facts"])

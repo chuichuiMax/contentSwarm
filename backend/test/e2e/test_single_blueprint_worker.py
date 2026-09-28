@@ -32,7 +32,6 @@ async def test_default_factory_worker_replaces_forbidden_words():
 
 
 async def _run_body_via_worker(template_id, content_type, filename):
-    semantic_review_enabled = template_id == "industry-decoration-v3"
     case_dir, uid = os.getenv("BUILTIN_CONTENT_CASE_DIR"), os.getenv("RULE_EDITOR_TEST_UID")
     if not case_dir or not uid:
         pytest.skip("需配置本地真实服务测试用户与报价案例目录")
@@ -48,6 +47,11 @@ async def _run_body_via_worker(template_id, content_type, filename):
             bootstrap = await client.get("/api/content/bootstrap")
             bootstrap.raise_for_status()
             template = next(t for t in bootstrap.json()["industry_templates"] if t["id"] == template_id)
+            from yuxi.storage.postgres.models_content import ContentWorkflowVersion
+
+            async with pg_manager.AsyncSession() as db:
+                workflow = await db.get(ContentWorkflowVersion, template["default_workflow_version_id"])
+                semantic_review_enabled = workflow.definition_json.get("semantic_review_enabled", True)
             response = await client.post(
                 "/api/content/tasks",
                 json={

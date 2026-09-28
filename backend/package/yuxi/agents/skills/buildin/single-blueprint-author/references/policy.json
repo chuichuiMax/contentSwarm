@@ -1,5 +1,6 @@
 {
-  "version": "1.9.3",
+  "version": "3.0.0",
+  "writing_mode": "raw_reference_text",
   "forbidden_knowledge_base": "封禁词库",
   "title_styles": {"CT02": "local_labor_standard"},
   "allow_price_anchor": true,

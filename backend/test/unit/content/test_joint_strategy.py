@@ -207,7 +207,7 @@ async def test_locked_prepared_reference_passes_existing_evidence_contract(monke
         status="ready",
         source_hash="b" * 64,
         preparation_skill_hash="skill-version",
-        source_json={"locator": "record:1"},
+        source_json=source().model_dump(mode="json"),
         prepared_json=prepared(source()),
     )
     monkeypatch.setattr(joint_strategy, "require_asset", AsyncMock(return_value=asset))
@@ -216,6 +216,8 @@ async def test_locked_prepared_reference_passes_existing_evidence_contract(monke
     db = SimpleNamespace(execute=AsyncMock(return_value=SimpleNamespace(scalar_one=lambda: SimpleNamespace(uid="u"))))
     state = {**inputs, "uid": "u", "strategy_catalog": inputs["strategy_candidates"], "joint_strategy_decision": result}
     state.update(await joint_strategy.lock_joint_strategy(db=db, state=state, node_run_id="node"))
+    assert state["strategy_snapshot"]["reference_snapshot"]["title"] == source().title
+    assert state["strategy_snapshot"]["reference_snapshot"]["body"] == source().body
     merged = await V3DeterministicNodeHandler._merge_research_evidence(db=db, state=state, node_run_id="node")
     reference = merged["evidence_collection"]["evidence_items"][0]
     assert reference["allowed_usage"] == ["style_reference"]

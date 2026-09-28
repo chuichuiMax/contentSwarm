@@ -196,6 +196,9 @@ def build_modular_rule_bundle(content_brief: dict[str, Any], *, single_blueprint
         }
         snapshot["runtime_rules"]["viral-layout-expression"] = snapshot["single_blueprint"].get("layout", {})
         snapshot["active_rule_ids"] = []
+        if snapshot["single_blueprint"].get("writing_mode") in {"direct_reference", "raw_reference_text"}:
+            snapshot["runtime_rules"]["viral-topic-author"] = {"must_use_candidate_pool": False}
+            snapshot["topic_candidates"] = []
     canonical = json.dumps(snapshot, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return {**snapshot, "bundle_hash": hashlib.sha256(canonical.encode()).hexdigest()}
 

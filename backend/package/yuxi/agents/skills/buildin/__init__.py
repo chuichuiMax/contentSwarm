@@ -21,10 +21,10 @@ _SKILLS_ROOT = Path(__file__).resolve().parent
 BUILTIN_SKILLS: list[BuiltinSkillSpec] = [
     BuiltinSkillSpec(
         slug="single-blueprint-author",
-        display_name="单蓝图创作",
-        version="1.9.3",
+        display_name="爆款原文仿写",
+        version="3.0.0",
         source_dir=_SKILLS_ROOT / "single-blueprint-author",
-        description="依选中蓝图与本篇事实组织内容",
+        description="把真实资料代入爆款原文，亲切真诚地仿写",
     ),
     BuiltinSkillSpec(
         slug="single-blueprint-reviewer",
@@ -240,7 +240,7 @@ BUILTIN_SKILLS: list[BuiltinSkillSpec] = [
     BuiltinSkillSpec(
         slug="viral-author-core",
         display_name="爆款仿写编排",
-        version="1.3.0",
+        version="1.4.0",
         source_dir=_SKILLS_ROOT / "viral-author-core",
         description="编排单次爆款仿写生成，并执行事实、策略和输出合并检查。",
     ),
@@ -253,10 +253,10 @@ BUILTIN_SKILLS: list[BuiltinSkillSpec] = [
     ),
     BuiltinSkillSpec(
         slug="viral-body-author",
-        display_name="爆款正文创作",
-        version="1.2.0",
+        display_name="爆款正文仿写",
+        version="2.0.0",
         source_dir=_SKILLS_ROOT / "viral-body-author",
-        description="按锁定正文公式和爆款结构蓝图生成有价值的装修正文。",
+        description="参考爆款完整原文，代入本篇资料，换一种亲切真诚、无营销感的表达自然仿写正文。",
     ),
     BuiltinSkillSpec(
         slug="viral-persona-author",
@@ -300,7 +300,7 @@ BUILTIN_SKILLS: list[BuiltinSkillSpec] = [
     BuiltinSkillSpec(
         slug="viral-modular-reviewer",
         display_name="模块化爆款审核",
-        version="1.4.0",
+        version="1.5.0",
         source_dir=_SKILLS_ROOT / "viral-modular-reviewer",
         description="按照创作时冻结的模块规则快照审核完整爆款仿写。",
     ),

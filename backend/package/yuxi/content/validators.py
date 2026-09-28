@@ -133,6 +133,13 @@ def evidence_number_tokens(evidence_bundle: dict[str, Any]) -> list[str]:
         if isinstance(value, (int, float)) and not isinstance(value, bool) and unit:
             scalar = str(int(value)) if isinstance(value, float) and value.is_integer() else str(value)
             tokens.add(_canonical_number_token(f"{scalar}{unit}"))
+        if "quote_block" in (item.get("variable_codes") or []) and isinstance(value, dict):
+            # 中文报价常省略人民币单位（1000/项），补写“元”不构成新数字。
+            for amount in re.findall(
+                r"(?<![\d.])(\d+(?:\.\d+)?)\s*/\s*(?:㎡|平米|平方米|平|项|个|间|套|米)",
+                value.get("original_content", ""),
+            ):
+                tokens.add(_canonical_number_token(f"{amount}元"))
         if item.get("source_type") not in {None, "manual_input"}:
             continue
         if value is None:
@@ -272,7 +279,11 @@ def validate_modular_content(
     topic_rules = rules.get("viral-topic-author") or {}
     required_topic_count = int(topic_rules.get("topic_count") or 10)
     normalized_topics = [str(topic).strip().lstrip("#").strip() for topic in topics]
-    if len(topics) != required_topic_count:
+    direct_reference = (rule_bundle.get("single_blueprint") or {}).get("writing_mode") in {
+        "direct_reference",
+        "raw_reference_text",
+    }
+    if not direct_reference and len(topics) != required_topic_count:
         checks.append(
             {
                 "code": "TOPIC_COUNT_MISMATCH",
@@ -323,7 +334,7 @@ def validate_modular_content(
         )
     direct_cta_patterns = list(platform_rules.get("direct_cta_patterns") or [])
     direct_cta_patterns.extend((r"把.{0,8}(?:户型|项目).{0,4}发", r"(?:评论|私信|留言).{0,10}(?:户型|项目|告诉|联系)"))
-    matched_cta = [pattern for pattern in direct_cta_patterns if re.search(pattern, body)]
+    matched_cta = [] if direct_reference else [pattern for pattern in direct_cta_patterns if re.search(pattern, body)]
     if matched_cta:
         checks.append(
             {

@@ -272,7 +272,29 @@ class AgentDelegationService:
                 for module in frozen_modules
                 if module["slug"] in request.required_skills
             ]
+        from yuxi.content.model.raw_reference import is_raw_reference
+
+        plain_text = request.node_run.node_id == "generate_content" and is_raw_reference(
+            request.input_payload.get("production_pack") or {}
+        )
+        context._content_plain_text = plain_text
+        if plain_text:
+            context._content_max_model_calls = 1
+            context.model_retry_times = 0
+            author = next(m for m in frozen_modules if m["slug"] == "single-blueprint-author")
+            context._content_applied_skill_instructions = {
+                author["slug"]: {
+                    "mode": "verbatim_user_instruction",
+                    "version": author["version"],
+                    "content_hash": author["content_hash"],
+                    "applied_hash": hashlib.sha256(author["instructions"].encode()).hexdigest(),
+                    "instruction_chars": len(author["instructions"]),
+                }
+            }
         runtime_snapshot = build_runtime_config_snapshot(agent=agent, context=context, request=request)
+        if plain_text:
+            runtime_snapshot.update(tools=[], mcps=[], knowledges=[], output_contract="PlainArticleTextV1")
+            runtime_snapshot["limits"]["max_model_calls"] = 1
         visible_payload = get_input_contract_model(request.input_contract).model_validate(request.input_payload)
         node_input_payload = {
             "task_id": request.task_id,
@@ -285,11 +307,15 @@ class AgentDelegationService:
             "runtime_config_snapshot": runtime_snapshot,
             "node_responsibility": request.prompt,
             "prohibited_actions": list(request.prohibited_actions),
-            "output_json_schema": get_contract_model(request.output_contract).model_json_schema(),
+            "output_json_schema": {} if plain_text else get_contract_model(request.output_contract).model_json_schema(),
         }
         node_input = ContentAgentNodeInputV2.model_validate(node_input_payload)
         model_view = None
-        if request.domain_context.single_blueprint_input:
+        if plain_text:
+            from yuxi.content.model.raw_reference import project_input
+
+            model_view = project_input(request.domain_context.single_blueprint_input)
+        elif request.domain_context.single_blueprint_input:
             from yuxi.content.model.single_blueprint import project_input
 
             model_view = project_input(
@@ -317,11 +343,13 @@ class AgentDelegationService:
                 request.governance_values["locked_versions"],
             )
             model_view = project_strategy_input(node_input.payload, channel_profile=channel, persona_profile=persona)
-        safe_view = project_locked_quote_safe_input(model_view or node_input.payload)
+        safe_view = None if plain_text else project_locked_quote_safe_input(model_view or node_input.payload)
         if safe_view is not None:
             model_view = safe_view
         if request.domain_context.single_blueprint_input:
-            runtime_snapshot["model_input_contract"] = "SingleBlueprintPromptV1"
+            runtime_snapshot["model_input_contract"] = (
+                "RawReferenceTextPromptV1" if plain_text else "SingleBlueprintPromptV1"
+            )
         if model_view is not None:
             canonical_view = json.dumps(model_view, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
             runtime_snapshot["model_input_hash"] = hashlib.sha256(canonical_view.encode()).hexdigest()
@@ -342,7 +370,7 @@ class AgentDelegationService:
                 ).encode()
             ).hexdigest()
             node_input = node_input.model_copy(update={"runtime_config_snapshot": runtime_snapshot})
-        collector = ContentNodeResultCollector(
+        collector = None if plain_text else ContentNodeResultCollector(
             contract_name=request.output_contract,
             domain_context=request.domain_context,
             runtime_context=context,
@@ -403,15 +431,23 @@ class AgentDelegationService:
 
         try:
             graph = await backend.get_graph(context=context)
-            await self._invoke_graph(graph, context, request, node_input)
+            response = await self._invoke_graph(graph, context, request, node_input)
             activated = set(getattr(context, "_activated_required_skills", []) or [])
-            if not activated_scope.issubset(activated):
+            if not plain_text and not activated_scope.issubset(activated):
                 raise ContentApplicationError(
                     "required_skill_not_activated",
                     "Agent 结束时仍有必需 Skill 未激活",
                     "invalid",
                 )
-            output = collector.finalize()
+            if plain_text:
+                from yuxi.content.model.raw_reference import assemble_article
+
+                message = response["messages"][-1]
+                if message.type != "ai" or message.tool_calls:
+                    raise ValueError("直接仿写必须返回全文文本")
+                output = assemble_article(message.text, request.input_payload["production_pack"])
+            else:
+                output = collector.finalize()
         except asyncio.CancelledError:
             await self._record_node_failure(request.node_run, child_run.id, "cancelled", "", "内容父 Run 已取消")
             await self._mark_terminal(child_run.id, "cancelled", "cancelled", "内容父 Run 已取消")
@@ -556,7 +592,9 @@ class AgentDelegationService:
         node_input: ContentAgentNodeInputV2 | None = None,
     ) -> dict[str, Any]:
         prompt = request.prompt
-        if node_input is not None:
+        if getattr(context, "_content_plain_text", False):
+            prompt = json.dumps(node_input.payload, ensure_ascii=False, separators=(",", ":"))
+        elif node_input is not None:
             prompt = json.dumps(
                 node_input.model_dump(
                     mode="json",
