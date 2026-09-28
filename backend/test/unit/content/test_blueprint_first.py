@@ -85,6 +85,47 @@ def test_blueprint_workflow_adds_no_extra_model_call_and_preserves_legacy():
 
 
 @pytest.mark.asyncio
+async def test_bootstrap_marks_single_blueprint_as_auto_direction_entry(monkeypatch):
+    from yuxi.content.v3.modular_rules import SINGLE_BLUEPRINT_WORKFLOW_ID
+    from yuxi.services import content_service
+
+    published = SimpleNamespace(id="rules-v1")
+    repo = SimpleNamespace(
+        get_published_rule_version=AsyncMock(return_value=published),
+        get_rule_bundle=AsyncMock(return_value={"content_types": [], "combination_rules": []}),
+        list_templates=AsyncMock(
+            return_value=[
+                {
+                    "id": "industry-decoration-v3",
+                    "slug": "decoration",
+                    "default_workflow_version_id": SINGLE_BLUEPRINT_WORKFLOW_ID,
+                }
+            ]
+        ),
+        list_industry_packs=AsyncMock(return_value=[]),
+        list_channel_profiles=AsyncMock(return_value=[]),
+        list_personas=AsyncMock(return_value=[]),
+    )
+    monkeypatch.setattr(content_service, "ContentRepository", lambda db: repo)
+    monkeypatch.setattr(content_service, "list_variables", AsyncMock(return_value={"variables": []}))
+    monkeypatch.setattr(content_service, "list_content_types", AsyncMock(return_value={"content_types": []}))
+    monkeypatch.setattr(content_service, "list_enabled_target_audience_names", AsyncMock(return_value=[]))
+    monkeypatch.setattr(content_service, "list_enabled_resident_population_names", AsyncMock(return_value=[]))
+    monkeypatch.setattr(content_service, "list_enabled_process_type_names", AsyncMock(return_value=[]))
+    monkeypatch.setattr(content_service, "list_enabled_process_names_by_type", AsyncMock(return_value={}))
+    monkeypatch.setattr(content_service, "list_business_variables", AsyncMock(return_value={"business_variables": []}))
+    monkeypatch.setattr(
+        "yuxi.content.model.strategy.load_selection_policy",
+        lambda: {"industry_modes": {"decoration": "direction_scoped"}, "default_mode": "scored"},
+    )
+
+    bootstrap = await content_service.get_content_bootstrap(SimpleNamespace(), SimpleNamespace())
+    template = bootstrap["industry_templates"][0]
+    assert template["blueprint_first"] is True
+    assert template["strategy_mode"] == "direction_scoped"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("uploaded_only", [False, True])
 async def test_retrieval_uses_fact_values_and_returns_bounded_blueprint_cards(monkeypatch, uploaded_only):
     from yuxi.content.control.workflow import joint_strategy

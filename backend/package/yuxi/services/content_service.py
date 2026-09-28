@@ -981,10 +981,12 @@ async def get_content_bootstrap(db: AsyncSession, user: User) -> dict[str, Any]:
             PLATFORM_WORKFLOW_STANDARDIZED_FACTORY_ID,
         )
 
+        # single-blueprint 与 standardized-factory 同属自动选方向入口，前端不得再强制一级内容方向。
         template["blueprint_first"] = template["default_workflow_version_id"] in {
             *BLUEPRINT_FIRST_WORKFLOW_IDS,
             PLATFORM_WORKFLOW_DETERMINISTIC_PLAN_ID,
             PLATFORM_WORKFLOW_STANDARDIZED_FACTORY_ID,
+            *SINGLE_BLUEPRINT_WORKFLOW_IDS,
         }
     return {
         "industry_templates": templates,

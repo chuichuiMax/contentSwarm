@@ -2132,7 +2132,9 @@ const ensureCreationTask = async () => {
   }
   const task = await store.createTask({
     ...creation,
-    content_type_code: studioContentTypeCode.value || creation.content_type_code,
+    content_type_code: needsContentDirection.value
+      ? studioContentTypeCode.value || creation.content_type_code
+      : undefined,
     creation_mode: 'viral_rewrite'
   })
   await router.replace(`/content/tasks/${task.id}`)

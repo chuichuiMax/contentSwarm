@@ -10,7 +10,7 @@ import httpx
 import pytest
 from patchright.async_api import async_playwright, expect
 
-from yuxi.content.v3.joint_workflow import PLATFORM_WORKFLOW_STANDARDIZED_FACTORY_ID
+from yuxi.content.v3.modular_rules import SINGLE_BLUEPRINT_WORKFLOW_ID
 from yuxi.storage.postgres.manager import pg_manager
 from yuxi.storage.postgres.models_business import Department, User
 from yuxi.storage.postgres.models_content import ContentTask
@@ -58,7 +58,7 @@ async def test_deployed_templates_create_blueprint_first_tasks():
             assert templates[0]["slug"] == "decoration"
             for template in templates:
                 assert template["blueprint_first"], template["id"]
-                assert template["default_workflow_version_id"] == PLATFORM_WORKFLOW_STANDARDIZED_FACTORY_ID
+                assert template["default_workflow_version_id"] == SINGLE_BLUEPRINT_WORKFLOW_ID
                 response = await client.post(
                     "/api/content/tasks",
                     json={
@@ -72,7 +72,7 @@ async def test_deployed_templates_create_blueprint_first_tasks():
                 response.raise_for_status()
                 task = response.json()["task"]
                 try:
-                    assert task["workflow_version_id"] == PLATFORM_WORKFLOW_STANDARDIZED_FACTORY_ID
+                    assert task["workflow_version_id"] == SINGLE_BLUEPRINT_WORKFLOW_ID
                     rejected = await client.post(
                         "/api/content/tasks",
                         json={"industry_template_id": template["id"], "creation_mode": "original"},
