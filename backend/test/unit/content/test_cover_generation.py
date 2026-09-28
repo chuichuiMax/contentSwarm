@@ -7,14 +7,16 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
+import yuxi.content_cover.image2_settings as image2_settings
+import yuxi.content_cover.renderer as content_cover_renderer
+import yuxi.services.content_cover_worker as content_cover_worker
+import yuxi.services.xiaohongshu_service as xiaohongshu_service
 from fastapi import HTTPException
 from PIL import Image, ImageDraw
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-
+from yuxi.content.schemas import XiaohongshuDistributionCreate
 from yuxi.content_cover.image2_client import Image2Client, Image2Config, Image2Error, image2_is_configured
-import yuxi.content_cover.renderer as content_cover_renderer
-import yuxi.content_cover.image2_settings as image2_settings
 from yuxi.content_cover.renderer import (
     apply_template_title,
     finalize_template_transfer,
@@ -30,26 +32,24 @@ from yuxi.content_cover.schemas import (
     Image2Submission,
     TemplateReplicatePlanCreate,
 )
-from yuxi.content_cover.templates import COVER_TEMPLATES
 from yuxi.content_cover.template_replication import (
-    apply_layout_overrides,
+    _wrap,
     analyze_template,
+    apply_layout_overrides,
     build_copy_plan,
     build_edit_mask,
     ensure_clean_source,
     evaluate_quality,
     render_template_replication,
-    _wrap,
 )
-from yuxi.content.schemas import XiaohongshuDistributionCreate
+from yuxi.content_cover.templates import COVER_TEMPLATES
 from yuxi.repositories.content_cover_repository import ContentCoverRepository
 from yuxi.services.content_cover_service import (
     _linked_content_title,
     _normalize_upload,
     _template_texts,
+    create_cover_generate_job,
 )
-import yuxi.services.content_cover_worker as content_cover_worker
-import yuxi.services.xiaohongshu_service as xiaohongshu_service
 from yuxi.storage.postgres.models_content import ContentCoverJob
 
 
@@ -62,9 +62,14 @@ def _image(color: str, size: tuple[int, int] = (320, 240)) -> bytes:
 def test_hycanvas_output_does_not_add_generic_title_overlay():
     hycanvas_job = SimpleNamespace(mode="hycanvas", request_json={"title": "89㎡收纳逆袭"})
     generated_job = SimpleNamespace(mode="generate", request_json={"title": "89㎡收纳逆袭"})
+    image2_copy_job = SimpleNamespace(
+        mode="image_to_image",
+        request_json={"title": "89㎡收纳逆袭", "render_copy_with_image2": True},
+    )
 
     assert content_cover_worker._output_title_overlay(hycanvas_job) == ""
     assert content_cover_worker._output_title_overlay(generated_job) == "89㎡收纳逆袭"
+    assert content_cover_worker._output_title_overlay(image2_copy_job) == ""
 
 
 def _template_analysis_fixture():
@@ -457,6 +462,81 @@ def test_generation_title_is_limited_to_sixty_characters():
             prompt="生成封面",
             idempotency_key="request-1234",
         )
+
+
+def test_image2_copy_mode_normalizes_tags_and_requires_single_image_mode():
+    payload = CoverGenerateCreate(
+        mode="image_to_image",
+        source_asset_ids=["source-1"],
+        title="鸿扬家装-高端家装品牌",
+        subtitle="290 平的装修细节分析",
+        tags=[" 鸿扬家装报价 "],
+        render_copy_with_image2=True,
+        prompt="在装修实景图上添加指定文字",
+        idempotency_key="request-1234",
+    )
+
+    assert payload.tags == ["鸿扬家装报价"]
+
+    with pytest.raises(ValidationError):
+        CoverGenerateCreate(
+            mode="text_to_image",
+            render_copy_with_image2=True,
+            prompt="生成带文字的封面",
+            idempotency_key="request-5678",
+        )
+
+
+@pytest.mark.asyncio
+async def test_image2_copy_mode_sends_exact_copy_and_keeps_numbers(monkeypatch: pytest.MonkeyPatch):
+    captured = {}
+    source = SimpleNamespace(role="library_image")
+
+    class FakeRepository:
+        def __init__(self, _db):
+            pass
+
+        async def get_assets_for_user(self, *_args, **_kwargs):
+            return [source]
+
+    async def fake_resolve_image2_config(*_args, **_kwargs):
+        return SimpleNamespace(model="gpt-image-2")
+
+    async def fake_content_prompt(*_args, **_kwargs):
+        return "只设计一种适合当前底图的排版", None, ""
+
+    async def fake_create_job(_db, _user, **kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(), False
+
+    service_globals = create_cover_generate_job.__globals__
+    monkeypatch.setitem(service_globals, "ContentCoverRepository", FakeRepository)
+    monkeypatch.setitem(service_globals, "resolve_image2_config", fake_resolve_image2_config)
+    monkeypatch.setitem(service_globals, "_content_prompt", fake_content_prompt)
+    monkeypatch.setitem(service_globals, "_create_job", fake_create_job)
+    monkeypatch.setitem(service_globals, "serialize_job", lambda _job: {})
+
+    await create_cover_generate_job(
+        object(),
+        SimpleNamespace(uid="alice"),
+        CoverGenerateCreate(
+            mode="image_to_image",
+            source_asset_ids=["source-1"],
+            title="鸿扬家装-高端家装品牌",
+            subtitle="290 平的装修细节分析",
+            tags=["鸿扬家装报价"],
+            render_copy_with_image2=True,
+            prompt="只设计一种适合当前底图的排版",
+            idempotency_key="request-1234",
+        ),
+    )
+
+    request = captured["request"]
+    assert "标题：鸿扬家装-高端家装品牌" in request["prompt"]
+    assert "副标题：290 平的装修细节分析" in request["prompt"]
+    assert "标签：鸿扬家装报价" in request["prompt"]
+    assert "不得改写、遗漏、增加或改变顺序" in request["prompt"]
+    assert "数字" not in request["negative_prompt"]
 
 
 @pytest.mark.parametrize(

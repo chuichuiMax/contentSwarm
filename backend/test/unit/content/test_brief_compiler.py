@@ -711,7 +711,7 @@ def test_structured_persona_case_preserves_identity_without_inventing_pain(conte
     assert "pain" not in values and "result" not in values
     if content_type in {"CT06", "CT07"}:
         assert values["process"] == [tag for tag in tags if tag != "工艺展示"]
-        assert values["craft_role"] == ["水电", "泥瓦"]
+        assert values["craft_role"] == ["工长"]
         assert values["case_background"] == "长沙金茂府"
         assert "craft_count" not in values and "craft_duration" not in values
         assert ("inspection" in values) is (content_type == "CT07")

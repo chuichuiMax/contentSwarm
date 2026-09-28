@@ -883,7 +883,9 @@ class ContentDraftResultV1(StrictContract):
     topics: list[str]
     paragraph_evidence: list[ParagraphEvidenceV1]
     body_formula_code: str
-    lexicon_usage: list[LexiconUsageV1] = Field(default_factory=list)
+    lexicon_usage: list[LexiconUsageV1] = Field(
+        default_factory=list, description="正文选定的原始参考词条，记录来源；正文可自然转述，无需逐字出现"
+    )
 
 
 class GeneratedTitleV1(StrictContract):
@@ -1462,33 +1464,22 @@ def _validate_formula_lexicon_usage(result: GeneratedContentResultV1, context: C
 
     body_codes = {item.code for item in result.draft.lexicon_usage}
     invalid_body_terms: list[str] = []
-    missing_body_terms: list[str] = []
     for usage in result.draft.lexicon_usage:
         allowed_terms = context.allowed_body_lexicon_terms.get(usage.code)
         if allowed_terms is not None:
             invalid_body_terms.extend(
                 f"{usage.code}:{term}" for term in sorted(set(usage.selected_terms) - set(allowed_terms))
             )
-        missing_body_terms.extend(
-            term
-            for term in usage.selected_terms
-            if not contains_frozen_term(result.draft.body, term, context.forbidden_replacements)
+    # 正文词条是参考来源，不是原文命中记录；语气与语义由创作及审核 Skill 处理。
+    if invalid_body_terms:
+        allowed = "；".join(
+            f"{code}={','.join(sorted(terms))}" for code, terms in sorted(context.allowed_body_lexicon_terms.items())
         )
-    if invalid_body_terms or missing_body_terms:
-        messages = []
-        if invalid_body_terms:
-            allowed = "；".join(
-                f"{code}={','.join(sorted(terms))}"
-                for code, terms in sorted(context.allowed_body_lexicon_terms.items())
-            )
-            messages.append("候选外词条 " + "、".join(invalid_body_terms) + f"；可用候选：{allowed}")
-        if missing_body_terms:
-            messages.append("正文未逐字使用 " + "、".join(missing_body_terms))
         raise ContractDomainValidationError(
-            "body_lexicon_term_invalid" if invalid_body_terms else "body_lexicon_term_unused",
-            "draft.lexicon_usage" if invalid_body_terms else "draft.body",
-            "；".join(messages),
-            correction_paths=("draft.lexicon_usage", "draft.body"),
+            "body_lexicon_term_invalid",
+            "draft.lexicon_usage",
+            "候选外词条 " + "、".join(invalid_body_terms) + f"；可用候选：{allowed}",
+            correction_paths=("draft.lexicon_usage",),
         )
     if context.allowed_body_lexicon_codes:
         unexpected = body_codes - context.allowed_body_lexicon_codes

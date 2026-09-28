@@ -1,12 +1,21 @@
 ---
 name: viral-title-author
-description: 按锁定公式和真实证据生成装修小红书标题，控制单一卖点与自然句式。
+description: 按真实事实和参考标题的吸引方式创作完整、自然、由正文兑现的装修标题。
 ---
 
 # 爆款标题创作
 
-只负责标题规则；公式代码、词库调用和 Evidence ID 必须沿用锁定值。
+只负责标题；公式代码和 Evidence ID 沿用锁定值。
 
+- 读取 `strategy_snapshot.title_formula.source_content.slot_schema`（标准流程位于 `production_pack`）。每个对象是必填槽位；同槽变量与词库只选一个有据表达，旧公式无槽位时才按 `variable_schema`。
+- 先确定正文真正要告诉读者的判断或价值，再学习唯一参考 `reference_blueprint.title_pattern/title_slot_sequence` 的吸引方式；用本篇事实写出完整关系。公式约束信息覆盖，不要求把槽位名词依次拼接。`reference_examples` 只提供节奏，不提供本篇事实。
+- `persona_fact` 槽位可用已核验身份或年限表达；无该槽位不强塞身份。`craft_role` 中的作者身份可作说话人，如“工长聊拆除”；人设的水电、泥瓦技能不证明本篇施工对象是水电或泥瓦。
+- `formula_lexicon_bundle.selection.title` 是可选的冻结词条，非全部必写。按语义选用，禁止按字数或排序固定选第一项。情绪必须有对象和正文理由：“劝退、后悔、避雷”不能无缘无故贴在工艺后；没有负面依据就用贴合正文的中性提醒等候选。
+- 反例“水电拆除，劝退”：工种与施工对象被混淆，且未交代劝退什么。应从正文提取具体判断或建议，写清对象与动作，不用三个词代替完整含义。
+- 标题只突出一个主卖点，写明具体判断、建议或问题，前两段兑现其含义。“聊拆除，听劝”只报话题和情绪，没有说明听什么劝；必须写出建议的动作/对象，或明确要解决的问题，不能把核心信息全部藏进正文。先满足事实槽位，再删重复或公式外元素，按 `channel_profile.title_constraints` 控制字数，不为变短牺牲语义。
+- 价格只用本次已确认口径，不把单价当成交价、业主原报价当工长报价，不补数字。
+- `title.lexicon_usage` 只登记标题中实际出现的冻结词条，候选必须逐字使用；系统回填元数据，不得虚报未用词。
+- 标题回修按阻断意见重写完整含义，保留无关正文和话题；不得只换情绪词继续拼接。`repair_constraints` 已锁定标题时原样返回。
 - 逐项读取 `strategy_snapshot.title_formula.source_content.slot_schema`（标准流程位于 `production_pack`）。每个对象是必填槽位；同一对象内的变量与词库只选一个有据表达，“面积/房型”等斜杠不是两项都写。旧公式无槽位时才按 `variable_schema` 填充。
 - 读取 `strategy_snapshot.title_formula.reference_examples` 学习槽位顺序、连接方式、节奏和标点，然后全部替换为本次冻结事实；示例不提供城市、面积、户型、价格、结果或身份事实，禁止照抄示例内容。
 - `persona_fact` 槽位可用已核验身份或年限表达；公式没有该槽位时，不得因正文人设物料而强塞身份。

@@ -18,7 +18,6 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.datastructures import Headers
-
 from yuxi.content_cover import COVER_PROCESSING_VERSION, COVER_SIZES, COVER_TEMPLATES, COVER_THEMES
 from yuxi.content_cover.image2_client import Image2Error
 from yuxi.content_cover.image2_settings import (
@@ -54,8 +53,8 @@ from yuxi.content_cover.schemas import (
 )
 from yuxi.content_cover.template_replication import (
     TemplateReplicationError,
-    apply_layout_overrides,
     analyze_template,
+    apply_layout_overrides,
     build_copy_plan,
     build_render_plan,
     ensure_clean_source,
@@ -1846,6 +1845,7 @@ async def create_cover_generate_job(db: AsyncSession, user: User, payload: Cover
         allow_empty=template_replicate,
     )
     title = payload.title.strip() or linked_title[:60]
+    image2_copy = payload.render_copy_with_image2
     if style_reference:
         template_texts = {
             "title": title,
@@ -1902,6 +1902,22 @@ async def create_cover_generate_job(db: AsyncSession, user: User, payload: Cover
             "不存在的卡片或装饰。参考图1的底图内容、手写字、表格、商品和人物必须保持清晰。"
             "系统会在生成后按内容资产需要精确替换主标题，因此不要自行扩写新口号或新段落。"
         )
+    elif image2_copy:
+        copy_lines = []
+        if title:
+            copy_lines.append(f"标题：{title}")
+        if payload.subtitle.strip():
+            copy_lines.append(f"副标题：{payload.subtitle.strip()}")
+        if payload.tags:
+            copy_lines.append(f"标签：{'、'.join(payload.tags)}")
+        copy_clause = "\n".join(copy_lines)
+        output_guidance = (
+            "以参考原图作为完整背景，只添加文字及必要的局部明暗调整；保留空间结构、家具、材质、"
+            "灯光、色彩、拍摄视角和画面比例，不重新生成室内场景。输出单张完整、不透明的 1080×1440 封面图。"
+            "画面中只允许出现以下文案，必须逐字准确、完整、清晰可读，不得改写、遗漏、增加或改变顺序：\n"
+            f"{copy_clause}\n"
+            "不得添加虚构 Logo、水印或额外装饰文字。"
+        )
     else:
         output_guidance = (
             "输出完整的封面视觉底图，左上区域预留干净、低细节的标题安全区。"
@@ -1910,7 +1926,9 @@ async def create_cover_generate_job(db: AsyncSession, user: User, payload: Cover
         )
     prompt = f"{mode_guidance[payload.mode]}\n{output_guidance}\n\n{prompt}"
     default_negative_prompt = (
-        "乱码文字、错误汉字、随机字母、数字、水印、平台 Logo、伪造品牌标识、低清晰度、主体变形、过度锐化、杂乱背景"
+        "错别字、乱码、漏字、多余文案、水印、平台 Logo、伪造品牌标识、低清晰度、主体变形、过度锐化、杂乱背景"
+        if image2_copy
+        else "乱码文字、错误汉字、随机字母、数字、水印、平台 Logo、伪造品牌标识、低清晰度、主体变形、过度锐化、杂乱背景"
     )
     if template_replicate:
         default_negative_prompt += (

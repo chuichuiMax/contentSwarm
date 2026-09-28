@@ -1569,10 +1569,7 @@ def select_formula_lexicon_terms(
     *,
     optional_title_codes: frozenset[str] = frozenset(),
 ) -> dict[str, Any]:
-    """在冻结生产包前为每个公式词库确定唯一词条。
-
-    优先短词可降低平台标题字数压力；同长时按字典序确保可重放。
-    """
+    """标题冻结候选集合供作者按语义选择；正文沿用确定性词条选择。"""
 
     selected: dict[str, dict[str, list[str]]] = {"title": {}, "body": {}}
     missing: list[str] = []
@@ -1587,12 +1584,12 @@ def select_formula_lexicon_terms(
                     continue
                 missing.append(f"{scope}:{code}")
                 continue
-            selected[scope][code] = [terms[0]]
+            selected[scope][code] = terms if scope == "title" else [terms[0]]
     if missing:
         raise ValueError("公式必选词库没有可冻结词条：" + "、".join(missing))
     payload = {
         "schema_version": 1,
-        "policy": "shortest_then_lexicographic_v1",
+        "policy": "title_candidates_body_shortest_v2",
         "title": selected["title"],
         "body": selected["body"],
     }
@@ -1856,12 +1853,15 @@ def compile_generation_slots(
                 "TITLE_REQUIRED_FACT_MISSING",
                 "TITLE_FACT_UNSUPPORTED",
             ),
-            instruction=title_instruction,
+            instruction=(
+                "先写出正文支持的具体判断、建议或问题，再覆盖锁定公式的事实槽位；"
+                "同槽变量或词库任选一个有据来源，标题词条按语义选择。"
+            ),
             acceptance=(
-                "标题使用已绑定事实",
-                "标题与正文保持同一主题",
+                "标题给出具体判断、建议或问题，仅工种/工艺加情绪不算语义完整，正负情绪同样处理",
+                "具体建议与正文对应即可，不要求标题解释完整原因，也不把正文深度或人设问题归入标题",
+                "标题使用已绑定事实，不把作者技能拼成本次施工对象",
                 "不新增数字或绝对化承诺",
-                *locked_title_lines,
             ),
         )
     if body_codes or body_formula.get("structure_schema"):
@@ -1876,8 +1876,16 @@ def compile_generation_slots(
                 "BODY_VALUE",
                 "LAYOUT_READABILITY",
             ),
-            instruction="按锁定正文公式和组成蓝图展开正文，每个层级都用对应事实或动作兑现，不照抄参考原文。",
-            acceptance=("创作类型和层级组合一致", "正文提供明确阅读价值", "段落便于扫读"),
+            instruction=(
+                "按锁定正文公式和组成蓝图展开正文，每个层级都用对应事实或动作兑现，不照抄参考原文。"
+                "正文词条只作表达参考，结合真实资料换成符合全文口吻的亲切、真诚说法，不堆词或写营销口号。"
+            ),
+            acceptance=(
+                "创作类型和层级组合一致",
+                "正文提供明确阅读价值",
+                "段落便于扫读",
+                "允许按意思转述正文参考词，不要求原词出现；无据或无关部分可省略，不新增事实或承诺",
+            ),
         )
     if "persona_fact" in persona_codes:
         add(

@@ -16,7 +16,7 @@ description: 编排装修行业小红书爆款仿写，在一次调用中合并�
 - 渠道、人设、规则读取包内 `channel_profile`、`persona_profile`、`content_rule_bundle`。
 - 按 `generation_slots` 的位置、来源、指令和验收写作，不能遗漏优势对应顾虑或 Emoji 语义位置。
 - `material_quality_report.status` 不是 `passed`、必需绑定缺失或 Hash 不一致时不得创作。
-- `formula_lexicon_bundle.selection` 是冻结的唯一词库选择；逐字使用词条，不得改选。系统回填 `lexicon_usage`，模型只写文字。
+- `formula_lexicon_bundle.selection.title` 是标题候选集合，按语义选用；`selection.body` 是正文表达参考，按全文口吻转述。系统回填 `lexicon_usage`：标题登记实际用词，正文登记参考来源，不要求原词出现。
 - 按 `creative_opening_instruction` 安排人设位置。
 - `repair_constraints` 优先：标题、大纲、话题原样返回。`persona_paragraphs_only` 仅改 `editable_paragraph_numbers`（从 1 计数），段落数量不变，其余文字与顺序保留；迁移身份时删重复句并移动对应 Emoji。旧 `persona_edges_only` 仅改首尾，中段按 `immutable_middle_paragraphs` 原样复制。`emoji_only` 仅改 Emoji 及相邻空格。
 
