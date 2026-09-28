@@ -320,6 +320,63 @@ def test_global_image2_config_normalizes_values():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("has_saved_setting", [True, False])
+async def test_saved_image2_settings_do_not_inherit_environment_provider_edit_config(monkeypatch, has_saved_setting):
+    for key, value in {
+        "IMAGE2_BASE_URL": "https://api.siliconflow.cn/v1",
+        "IMAGE2_API_KEY": "environment-secret",
+        "IMAGE2_MODEL": "Qwen/Qwen-Image",
+        "IMAGE2_EDIT_MODEL": "Qwen/Qwen-Image-Edit-2509",
+        "IMAGE2_EDIT_REQUEST_FORMAT": "siliconflow_json",
+        "IMAGE2_EDIT_PATH": "/images/generations",
+        "IMAGE2_SUBMIT_PATH": "/legacy/generations",
+        "IMAGE2_STATUS_PATH": "/legacy/generations/{task_id}",
+    }.items():
+        monkeypatch.setenv(key, value)
+
+    async def get_setting(_repo, owner_uid):
+        assert owner_uid == "alice"
+        return (
+            SimpleNamespace(base_url="https://relay.example.com/v1", api_key="saved-secret", model="gpt-image-2")
+            if has_saved_setting
+            else None
+        )
+
+    monkeypatch.setattr(ContentCoverRepository, "get_image2_setting", get_setting)
+    config = await image2_settings.resolve_image2_config(object(), owner_uid="alice")
+    captured = {}
+
+    def handler(request):
+        captured.update(url=str(request.url), content_type=request.headers["content-type"], body=request.content)
+        return httpx.Response(200, json={"data": [{"b64_json": base64.b64encode(_image("white")).decode()}]})
+
+    async with Image2Client(config, transport=httpx.MockTransport(handler)) as client:
+        result = await client.submit(
+            Image2Request(
+                mode="image_to_image",
+                prompt="生成封面",
+                size="1080x1440",
+                source_images=[Image2Input(data=_image("white"), content_type="image/png", file_name="source.png")],
+            )
+        )
+
+    assert result.status == "completed"
+    if has_saved_setting:
+        assert captured["url"] == "https://relay.example.com/v1/images/edits"
+        assert captured["content_type"].startswith("multipart/form-data;")
+        assert b'name="model"\r\n\r\ngpt-image-2\r\n' in captured["body"]
+        assert b"Qwen" not in captured["body"]
+        assert config.submit_path == "/images/generations"
+        assert config.status_path == "/images/generations/{task_id}"
+    else:
+        assert captured["url"] == "https://api.siliconflow.cn/v1/images/generations"
+        assert captured["content_type"] == "application/json"
+        assert json.loads(captured["body"])["model"] == "Qwen/Qwen-Image-Edit-2509"
+        assert config.submit_path == "/legacy/generations"
+        assert config.status_path == "/legacy/generations/{task_id}"
+
+
+@pytest.mark.asyncio
 async def test_global_image2_config_preserves_saved_key_and_never_returns_it(
     monkeypatch: pytest.MonkeyPatch,
 ):

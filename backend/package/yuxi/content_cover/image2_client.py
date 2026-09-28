@@ -44,7 +44,18 @@ class Image2Config:
     edit_request_format: str = "openai_multipart"
 
     @classmethod
-    def from_values(cls, *, base_url: str, api_key: str, model: str) -> Image2Config:
+    def from_values(
+        cls,
+        *,
+        base_url: str,
+        api_key: str,
+        model: str,
+        submit_path: str = "/images/generations",
+        edit_path: str = "/images/edits",
+        status_path: str = "/images/generations/{task_id}",
+        edit_model: str | None = None,
+        edit_request_format: str = "openai_multipart",
+    ) -> Image2Config:
         base_url = base_url.strip().rstrip("/")
         api_key = api_key.strip()
         model = model.strip()
@@ -57,9 +68,9 @@ class Image2Config:
             parsed.port
         except ValueError as exc:
             raise Image2Error("IMAGE2_CONFIG_INVALID", "image2 Base URL 端口无效") from exc
-        submit_path = (os.getenv("IMAGE2_SUBMIT_PATH") or "/images/generations").strip()
-        edit_path = (os.getenv("IMAGE2_EDIT_PATH") or "/images/edits").strip()
-        status_path = (os.getenv("IMAGE2_STATUS_PATH") or "/images/generations/{task_id}").strip()
+        submit_path = submit_path.strip()
+        edit_path = edit_path.strip()
+        status_path = status_path.strip()
         if not submit_path or not edit_path or not status_path:
             raise Image2Error("IMAGE2_CONFIG_INVALID", "image2 接口路径不能为空")
         if any(urlparse(path).scheme or urlparse(path).netloc for path in (submit_path, edit_path, status_path)):
@@ -99,8 +110,8 @@ class Image2Config:
                     "IMAGE2_CONFIG_INVALID",
                     "IMAGE2_TRUSTED_OUTPUT_ORIGINS 端口无效",
                 ) from exc
-        edit_model = (os.getenv("IMAGE2_EDIT_MODEL") or "").strip() or None
-        edit_request_format = (os.getenv("IMAGE2_EDIT_REQUEST_FORMAT") or "openai_multipart").strip()
+        edit_model = (edit_model or "").strip() or None
+        edit_request_format = edit_request_format.strip()
         if edit_request_format not in {"openai_multipart", "siliconflow_json"}:
             raise Image2Error(
                 "IMAGE2_CONFIG_INVALID",
@@ -128,6 +139,11 @@ class Image2Config:
             base_url=os.getenv("IMAGE2_BASE_URL") or "",
             api_key=os.getenv("IMAGE2_API_KEY") or "",
             model=os.getenv("IMAGE2_MODEL") or "",
+            submit_path=os.getenv("IMAGE2_SUBMIT_PATH") or "/images/generations",
+            edit_path=os.getenv("IMAGE2_EDIT_PATH") or "/images/edits",
+            status_path=os.getenv("IMAGE2_STATUS_PATH") or "/images/generations/{task_id}",
+            edit_model=os.getenv("IMAGE2_EDIT_MODEL"),
+            edit_request_format=os.getenv("IMAGE2_EDIT_REQUEST_FORMAT") or "openai_multipart",
         )
 
 
