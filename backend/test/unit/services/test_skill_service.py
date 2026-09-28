@@ -912,6 +912,7 @@ async def test_update_skill_dependencies(monkeypatch: pytest.MonkeyPatch):
 @pytest.mark.asyncio
 async def test_init_builtin_skills_create_missing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(svc.sys_config, "save_dir", str(tmp_path))
+    monkeypatch.setenv("YUXI_DEV_SKILL_LINK", "false")
 
     source_dir = tmp_path / "builtin-skills" / "reporter"
     source_dir.mkdir(parents=True, exist_ok=True)
@@ -943,6 +944,9 @@ async def test_init_builtin_skills_create_missing(tmp_path: Path, monkeypatch: p
         def __init__(self, _db):
             pass
 
+        async def list_by_slugs(self, slugs: list[str]):
+            return []
+
         async def get_by_slug(self, slug: str):
             assert slug == "reporter"
             return None
@@ -973,6 +977,7 @@ async def test_init_builtin_skills_updates_existing_record_and_preserves_disable
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
     monkeypatch.setattr(svc.sys_config, "save_dir", str(tmp_path))
+    monkeypatch.setenv("YUXI_DEV_SKILL_LINK", "false")
 
     source_dir = tmp_path / "builtin-skills" / "reporter"
     source_dir.mkdir(parents=True, exist_ok=True)
@@ -1024,6 +1029,9 @@ async def test_init_builtin_skills_updates_existing_record_and_preserves_disable
     class FakeRepo:
         def __init__(self, _db):
             pass
+
+        async def list_by_slugs(self, slugs: list[str]):
+            return [existing_item]
 
         async def get_by_slug(self, slug: str):
             assert slug == "reporter"
@@ -1094,8 +1102,166 @@ async def test_init_builtin_skills_updates_existing_record_and_preserves_disable
 
 
 @pytest.mark.asyncio
+async def test_init_builtin_skills_skips_copy_when_sync_meta_matches(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setattr(svc.sys_config, "save_dir", str(tmp_path))
+    monkeypatch.setenv("YUXI_DEV_SKILL_LINK", "false")
+
+    source_dir = tmp_path / "builtin-skills" / "reporter"
+    source_dir.mkdir(parents=True, exist_ok=True)
+    (source_dir / "SKILL.md").write_text(
+        "---\nname: reporter\ndescription: SQL report\n---\n# SQL Reporter\n",
+        encoding="utf-8",
+    )
+    (source_dir / "prompt.md").write_text("frozen", encoding="utf-8")
+
+    target_dir = tmp_path / "skills" / "reporter"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    (target_dir / "SKILL.md").write_text(
+        "---\nname: reporter\ndescription: SQL report\n---\n# SQL Reporter\n",
+        encoding="utf-8",
+    )
+    (target_dir / "prompt.md").write_text("frozen", encoding="utf-8")
+    content_hash = "hash-synced"
+    source_fingerprint = svc._compute_dir_fingerprint(source_dir)
+    svc._write_builtin_sync_meta(
+        target_dir, content_hash=content_hash, source_fingerprint=source_fingerprint
+    )
+
+    monkeypatch.setattr(
+        svc,
+        "get_builtin_skill_specs",
+        lambda: [
+            SimpleNamespace(
+                slug="reporter",
+                source_dir=source_dir,
+                description="SQL report",
+                version="1.0.0",
+                tool_dependencies=(),
+                mcp_dependencies=(),
+                skill_dependencies=(),
+            )
+        ],
+    )
+
+    existing_item = Skill(
+        slug="reporter",
+        name="reporter",
+        description="SQL report",
+        dir_path="skills/reporter",
+        source_type="builtin",
+        tool_dependencies=[],
+        mcp_dependencies=[],
+        skill_dependencies=[],
+        share_config=svc.BUILTIN_SKILL_SHARE_CONFIG.copy(),
+        enabled=True,
+        version="1.0.0",
+        content_hash=content_hash,
+        created_by="system",
+        updated_by="system",
+    )
+
+    class FakeRepo:
+        def __init__(self, _db):
+            pass
+
+        async def list_by_slugs(self, slugs: list[str]):
+            return [existing_item]
+
+        async def get_by_slug(self, slug: str):
+            return existing_item
+
+        async def update_metadata(self, *args, **kwargs):
+            raise AssertionError("unchanged builtin skill should not update metadata")
+
+        async def update_dependencies(self, *args, **kwargs):
+            raise AssertionError("unchanged builtin skill should not update dependencies")
+
+        async def update_builtin_install(self, *args, **kwargs):
+            raise AssertionError("unchanged builtin skill should not reinstall")
+
+    replace_calls: list[tuple[Path, Path]] = []
+
+    def fake_replace(target: Path, source: Path) -> None:
+        replace_calls.append((target, source))
+
+    monkeypatch.setattr(svc, "SkillRepository", FakeRepo)
+    monkeypatch.setattr(svc, "_replace_skill_target", fake_replace)
+    monkeypatch.setattr(svc, "_compute_dir_hash", lambda _path: (_ for _ in ()).throw(AssertionError("hash")))
+
+    items = await svc.init_builtin_skills(None)
+
+    assert items == [existing_item]
+    assert replace_calls == []
+    assert (target_dir / "prompt.md").read_text(encoding="utf-8") == "frozen"
+
+
+@pytest.mark.asyncio
+async def test_init_builtin_skills_uses_dev_symlink_without_hashing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setattr(svc.sys_config, "save_dir", str(tmp_path))
+    monkeypatch.setenv("YUXI_DEV_SKILL_LINK", "true")
+
+    source_dir = tmp_path / "builtin-skills" / "reporter"
+    source_dir.mkdir(parents=True, exist_ok=True)
+    (source_dir / "SKILL.md").write_text(
+        "---\nname: reporter\ndescription: SQL report\n---\n# SQL Reporter\n",
+        encoding="utf-8",
+    )
+    (source_dir / "prompt.md").write_text("live", encoding="utf-8")
+
+    monkeypatch.setattr(
+        svc,
+        "get_builtin_skill_specs",
+        lambda: [
+            SimpleNamespace(
+                slug="reporter",
+                source_dir=source_dir,
+                description="SQL report",
+                version="1.2.0",
+                tool_dependencies=(),
+                mcp_dependencies=(),
+                skill_dependencies=(),
+            )
+        ],
+    )
+
+    class FakeRepo:
+        created: dict | None = None
+
+        def __init__(self, _db):
+            pass
+
+        async def list_by_slugs(self, slugs: list[str]):
+            return []
+
+        async def get_by_slug(self, slug: str):
+            return None
+
+        async def create(self, **kwargs):
+            self.__class__.created = kwargs
+            return Skill(**kwargs, updated_by=kwargs["created_by"])
+
+    monkeypatch.setattr(svc, "SkillRepository", FakeRepo)
+    monkeypatch.setattr(svc, "_compute_dir_hash", lambda _path: (_ for _ in ()).throw(AssertionError("hash")))
+    monkeypatch.setattr(svc, "_replace_skill_target", lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("copy")))
+
+    items = await svc.init_builtin_skills(None)
+    target = tmp_path / "skills" / "reporter"
+
+    assert len(items) == 1
+    assert target.is_symlink()
+    assert target.resolve() == source_dir.resolve()
+    assert (target / "prompt.md").read_text(encoding="utf-8") == "live"
+    assert FakeRepo.created["content_hash"] == "devlink:reporter:1.2.0"
+
+
+@pytest.mark.asyncio
 async def test_init_builtin_skills_promotes_existing_non_builtin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(svc.sys_config, "save_dir", str(tmp_path))
+    monkeypatch.setenv("YUXI_DEV_SKILL_LINK", "false")
 
     source_dir = tmp_path / "builtin" / "reporter"
     source_dir.mkdir(parents=True, exist_ok=True)
@@ -1107,7 +1273,7 @@ async def test_init_builtin_skills_promotes_existing_non_builtin(tmp_path: Path,
     monkeypatch.setattr(
         svc,
         "list_builtin_skill_specs",
-        lambda: [
+        lambda **_kwargs: [
             {
                 "slug": "reporter",
                 "name": "reporter",
@@ -1125,6 +1291,11 @@ async def test_init_builtin_skills_promotes_existing_non_builtin(tmp_path: Path,
     class FakeRepo:
         def __init__(self, _db):
             pass
+
+        async def list_by_slugs(self, slugs: list[str]):
+            return [
+                Skill(slug=slugs[0], name=slugs[0], description="uploaded", dir_path=f"skills/{slugs[0]}", source_type="upload")
+            ]
 
         async def get_by_slug(self, slug: str):
             return Skill(slug=slug, name=slug, description="uploaded", dir_path=f"skills/{slug}", source_type="upload")

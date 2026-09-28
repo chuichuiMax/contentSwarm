@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import os
 import re
 import shutil
 import tempfile
@@ -338,6 +339,80 @@ def _compute_dir_hash(source_dir: Path) -> str:
                 hasher.update(chunk)
         hasher.update(b"\0")
     return hasher.hexdigest()
+
+
+_BUILTIN_SYNC_META_NAME = ".yuxi_builtin_sync.json"
+
+
+def _dev_skill_link_enabled() -> bool:
+    return os.environ.get("YUXI_DEV_SKILL_LINK", "").lower() in {"1", "true"}
+
+
+def _ensure_dev_skill_link(target_dir: Path, source_dir: Path) -> None:
+    source_dir = source_dir.resolve()
+    if target_dir.is_symlink():
+        try:
+            if target_dir.resolve() == source_dir:
+                return
+        except OSError:
+            pass
+        target_dir.unlink()
+    elif target_dir.exists():
+        if target_dir.is_dir():
+            shutil.rmtree(target_dir)
+        else:
+            target_dir.unlink()
+    target_dir.parent.mkdir(parents=True, exist_ok=True)
+    target_dir.symlink_to(source_dir, target_is_directory=True)
+
+
+def _compute_dir_fingerprint(source_dir: Path) -> str:
+    """基于路径/大小/mtime 的轻量指纹，用于判断源目录是否相对上次同步未变。"""
+
+    hasher = hashlib.sha256()
+    file_paths = sorted(
+        path
+        for path in source_dir.rglob("*")
+        if path.is_file() and path.name != _BUILTIN_SYNC_META_NAME
+    )
+    for file_path in file_paths:
+        relative_path = file_path.relative_to(source_dir).as_posix()
+        stat = file_path.stat()
+        hasher.update(relative_path.encode("utf-8"))
+        hasher.update(b"\0")
+        hasher.update(f"{stat.st_size}:{stat.st_mtime_ns}".encode())
+        hasher.update(b"\0")
+    return hasher.hexdigest()
+
+
+def _read_builtin_sync_meta(target_dir: Path) -> dict[str, str] | None:
+    meta_path = target_dir / _BUILTIN_SYNC_META_NAME
+    if not meta_path.is_file():
+        return None
+    try:
+        payload = json.loads(meta_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    content_hash = str(payload.get("content_hash") or "").strip()
+    source_fingerprint = str(payload.get("source_fingerprint") or "").strip()
+    if not content_hash or not source_fingerprint:
+        return None
+    return {"content_hash": content_hash, "source_fingerprint": source_fingerprint}
+
+
+def _write_builtin_sync_meta(target_dir: Path, *, content_hash: str, source_fingerprint: str) -> None:
+    target_dir.mkdir(parents=True, exist_ok=True)
+    meta_path = target_dir / _BUILTIN_SYNC_META_NAME
+    meta_path.write_text(
+        json.dumps(
+            {"content_hash": content_hash, "source_fingerprint": source_fingerprint},
+            ensure_ascii=False,
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
 
 
 def _replace_skill_target(target_dir: Path, source_dir: Path) -> None:
@@ -1238,7 +1313,7 @@ async def update_skill_enabled(db: AsyncSession, *, slug: str, enabled: bool, op
     return await SkillRepository(db).update_enabled(item, enabled=enabled, updated_by=operator.uid)
 
 
-def list_builtin_skill_specs() -> list[dict[str, Any]]:
+def list_builtin_skill_specs(*, include_content_hash: bool = True) -> list[dict[str, Any]]:
     specs: list[dict[str, Any]] = []
     for raw_spec in get_builtin_skill_specs():
         slug = str(getattr(raw_spec, "slug", "")).strip()
@@ -1274,7 +1349,7 @@ def list_builtin_skill_specs() -> list[dict[str, Any]]:
                 "tool_dependencies": configured_tools or normalize_string_list(meta.get("tool_dependencies")),
                 "mcp_dependencies": configured_mcps or normalize_string_list(meta.get("mcp_dependencies")),
                 "skill_dependencies": configured_skills or normalize_string_list(meta.get("skill_dependencies")),
-                "content_hash": _compute_dir_hash(source_dir),
+                "content_hash": _compute_dir_hash(source_dir) if include_content_hash else "",
                 "source_dir": source_dir,
             }
         )
@@ -1285,12 +1360,64 @@ def list_builtin_skill_specs() -> list[dict[str, Any]]:
 async def init_builtin_skills(db: AsyncSession, *, created_by: str = "system") -> list[Skill]:
     repo = SkillRepository(db)
     synced_items: list[Skill] = []
+    dev_link = _dev_skill_link_enabled()
+    specs = list_builtin_skill_specs(include_content_hash=False)
+    existing_by_slug = {
+        item.slug: item for item in await repo.list_by_slugs([spec["slug"] for spec in specs])
+    }
+    if dev_link:
+        await asyncio.gather(
+            *[
+                asyncio.to_thread(
+                    _ensure_dev_skill_link,
+                    get_skills_root_dir() / spec["slug"],
+                    Path(spec["source_dir"]),
+                )
+                for spec in specs
+            ]
+        )
 
-    for spec in list_builtin_skill_specs():
+    for spec in specs:
         slug = spec["slug"]
-        existing = await repo.get_by_slug(slug)
+        existing = existing_by_slug.get(slug)
+        source_dir = Path(spec["source_dir"])
         target_dir = get_skills_root_dir() / slug
-        _replace_skill_target(target_dir, Path(spec["source_dir"]))
+
+        if dev_link:
+            content_hash = f"devlink:{slug}:{spec['version']}"
+            copied = False
+        else:
+            target_ready = (target_dir / "SKILL.md").is_file()
+            source_fingerprint = await asyncio.to_thread(_compute_dir_fingerprint, source_dir)
+            sync_meta = _read_builtin_sync_meta(target_dir) if target_ready else None
+
+            if (
+                existing
+                and existing.source_type == "builtin"
+                and existing.content_hash
+                and sync_meta
+                and sync_meta["source_fingerprint"] == source_fingerprint
+                and sync_meta["content_hash"] == existing.content_hash
+            ):
+                content_hash = existing.content_hash
+                copied = False
+            else:
+                content_hash = await asyncio.to_thread(_compute_dir_hash, source_dir)
+                copied = not (
+                    target_ready
+                    and sync_meta
+                    and sync_meta["content_hash"] == content_hash
+                    and existing
+                    and existing.content_hash == content_hash
+                )
+                if copied:
+                    await asyncio.to_thread(_replace_skill_target, target_dir, source_dir)
+                await asyncio.to_thread(
+                    _write_builtin_sync_meta,
+                    target_dir,
+                    content_hash=content_hash,
+                    source_fingerprint=source_fingerprint,
+                )
 
         if existing:
             if existing.name != spec["name"] or existing.description != spec["description"]:
@@ -1312,32 +1439,40 @@ async def init_builtin_skills(db: AsyncSession, *, created_by: str = "system") -
                     skill_dependencies=spec["skill_dependencies"],
                     updated_by=created_by,
                 )
+            if (
+                not copied
+                and existing.content_hash == content_hash
+                and existing.version == spec["version"]
+                and existing.source_type == "builtin"
+            ):
+                synced_items.append(existing)
+                continue
             synced_items.append(
                 await repo.update_builtin_install(
                     existing,
                     version=spec["version"],
-                    content_hash=spec["content_hash"],
+                    content_hash=content_hash,
                     updated_by=created_by,
                 )
             )
             continue
 
-        synced_items.append(
-            await repo.create(
-                slug=slug,
-                name=spec["name"],
-                description=spec["description"],
-                source_type="builtin",
-                tool_dependencies=spec["tool_dependencies"],
-                mcp_dependencies=spec["mcp_dependencies"],
-                skill_dependencies=spec["skill_dependencies"],
-                dir_path=_build_builtin_skill_dir_path(slug),
-                share_config=BUILTIN_SKILL_SHARE_CONFIG.copy(),
-                enabled=True,
-                version=spec["version"],
-                content_hash=spec["content_hash"],
-                created_by=created_by or BUILTIN_SKILL_OPERATOR,
-            )
+        created = await repo.create(
+            slug=slug,
+            name=spec["name"],
+            description=spec["description"],
+            source_type="builtin",
+            tool_dependencies=spec["tool_dependencies"],
+            mcp_dependencies=spec["mcp_dependencies"],
+            skill_dependencies=spec["skill_dependencies"],
+            dir_path=_build_builtin_skill_dir_path(slug),
+            share_config=BUILTIN_SKILL_SHARE_CONFIG.copy(),
+            enabled=True,
+            version=spec["version"],
+            content_hash=content_hash,
+            created_by=created_by or BUILTIN_SKILL_OPERATOR,
         )
+        existing_by_slug[slug] = created
+        synced_items.append(created)
 
     return synced_items

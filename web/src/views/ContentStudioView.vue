@@ -2219,7 +2219,6 @@ watch(
   },
   { deep: true }
 )
-watch([selectedImageItemId, selectedHyCanvasTemplateId, photoComposition], scheduleBriefSave, {
 watch([selectedImageItemId, selectedHyCanvasTemplateId, photoComposition, coverTemplateTab], scheduleBriefSave, {
   deep: true
 })
@@ -3087,14 +3086,6 @@ const returnToContentCreation = async () => {
                       </small>
                     </div>
                   </div>
-                </div>
-              </a-spin>
-            </section>
-          </fieldset>
-                  <a-empty
-                    v-else-if="coverTemplateTab === 'featured' && !featuredCoverTemplates.length"
-                    description="暂无精选封面，请先在 HyCanvas 精选封面专区上传"
-                  />
                 </div>
               </a-spin>
             </section>
