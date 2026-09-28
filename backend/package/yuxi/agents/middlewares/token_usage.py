@@ -188,6 +188,22 @@ class TokenUsageMiddleware(AgentMiddleware[TokenUsageState]):
     ) -> ExtendedModelResponse:
         response = await handler(request)
         snapshot = self._build_snapshot(request, response)
+        context = getattr(request.runtime, "context", None)
+        if getattr(context, "_content_node_id", None):
+            from yuxi.services.run_queue_service import append_content_runtime_event
+
+            await append_content_runtime_event(
+                context,
+                "content.model.usage",
+                {
+                    "call_number": getattr(context, "_content_model_calls", None),
+                    "model_usage": snapshot["model_usage"],
+                    "estimated_input_tokens": snapshot["llm_input_tokens"],
+                    "estimated_system_tokens": snapshot["system_tokens"],
+                    "estimated_tools_tokens": snapshot["tools_tokens"],
+                    "counter": snapshot["counter"],
+                },
+            )
         self._enforce_content_token_budget(request, snapshot)
         return ExtendedModelResponse(
             model_response=response,

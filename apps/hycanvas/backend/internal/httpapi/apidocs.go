@@ -101,6 +101,9 @@ curl -sS -X POST "$HYCANVAS/api/v1/designs/$ID/links" \
 <pre><code>curl -sS "$HYCANVAS/api/v1/templates/categories"
 # =&gt; { "categories": [{ "id": "...", "name": "内容报价" }] }
 
+curl -sS "$HYCANVAS/api/v1/templates/categories/CATEGORY_ID/templates"
+# =&gt; { "templates": [{ "id": "...", "isHandwrittenQuoteTemplate": 0 }] }
+
 curl -sS "$HYCANVAS/api/v1/templates/categories/templates?categoryIds=CATEGORY_ID_1,CATEGORY_ID_2"
 # =&gt; { "categories": [{ "id": "...", "name": "内容报价", "templates": [...] }] }</code></pre>
 

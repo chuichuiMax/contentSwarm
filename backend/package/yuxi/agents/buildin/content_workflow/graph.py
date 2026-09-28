@@ -125,10 +125,11 @@ class ContentWorkflowAgent(BaseAgent):
             incoming[target] += 1
             outgoing[source] += 1
         revision_targets = {
-            "semantic_review": "semantic_review",
             "human_content_approval": "human_content_approval",
             **{route["to"]: route["to"] for route in definition.get("revision_routes") or []},
         }
+        if "semantic_review" in nodes:
+            revision_targets["semantic_review"] = "semantic_review"
         if "compose_locked_quote_block" in nodes:
             revision_targets["compose_locked_quote_block"] = "compose_locked_quote_block"
         for node_id, node in nodes.items():
@@ -658,12 +659,12 @@ class ContentWorkflowAgent(BaseAgent):
         if interrupt_type == "content_approval":
             validation_report = state.get("validation_report") or {}
             review_report = state.get("review_report") or {}
+            reports = [("deterministic", validation_report)]
+            if getattr(self, "_workflow_definition", {}).get("semantic_review_enabled", True):
+                reports.append(("semantic", review_report))
             invalid_reports = [
                 name
-                for name, report in (
-                    ("deterministic", validation_report),
-                    ("semantic", review_report),
-                )
+                for name, report in reports
                 if report.get("status") not in {"passed", "warning"} or _report_is_blocked(report)
             ]
             if invalid_reports:
@@ -846,6 +847,8 @@ class ContentWorkflowAgent(BaseAgent):
     async def _save_artifact(self, state: ContentWorkflowState) -> dict[str, Any]:
         draft = state["content_draft"]
         review = state.get("review_report") or state.get("validation_report") or {"status": "passed", "checks": []}
+        if not getattr(self, "_workflow_definition", {}).get("semantic_review_enabled", True):
+            review = {**review, "review_mode": "deterministic_only", "semantic_review_status": "not_run"}
         approval_rejected = (state.get("approval_result") or {}).get("status") == "rejected"
         artifact_status = "blocked" if review["status"] == "blocked" or approval_rejected else "reviewed"
         strategy_snapshot = state.get("strategy_snapshot") or {}

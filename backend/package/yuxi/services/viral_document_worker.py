@@ -16,7 +16,13 @@ from yuxi.repositories.agent_repository import AgentRepository
 from yuxi.repositories.agent_run_repository import AgentRunRepository
 from yuxi.repositories.viral_asset_repository import ViralAssetRepository
 from yuxi.services.agent_runtime_service import resolve_agent_runtime_context
-from yuxi.services.content_viral_assets import accessible_asset_kbs, enqueue_asset, file_version, preparation_skill_hash
+from yuxi.services.content_viral_assets import (
+    accessible_asset_kbs,
+    asset_has_approved_review,
+    enqueue_asset,
+    file_version,
+    preparation_skill_hash,
+)
 from yuxi.services.viral_document_service import detection_skill_hash, read_reference_document
 from yuxi.storage.postgres.manager import pg_manager
 from yuxi.storage.postgres.models_business import User
@@ -33,6 +39,24 @@ async def assert_current_document(db, job, user):
     content, _ = await read_reference_document(file)
     if hashlib.sha256(content.encode()).hexdigest() != job.source_hash:
         raise ValueError("解析原文已变化，请重新准备")
+
+
+def restore_reidentified_asset(asset):
+    if asset.status != "invalidated":
+        return
+    prepared = asset.prepared_json or {}
+    review_action = (prepared.get("review") or {}).get("action")
+    if asset_has_approved_review(asset):
+        asset.status, asset.error_message = "ready", None
+    elif review_action == "disable":
+        return
+    elif prepared:
+        asset.status = "needs_review"
+        if review_action not in {"reject", "correct"}:
+            asset.error_message = "；".join(prepared.get("issues") or []) or "等待运营审核"
+    else:
+        asset.status, asset.error_message = "pending", None
+        asset.attempt += 1
 
 
 async def process_viral_document(_ctx, job_id, attempt):
@@ -135,10 +159,7 @@ async def process_viral_document(_ctx, job_id, attempt):
                     source, skill_hash=preparation_skill_hash(), uid=str(user.uid)
                 )
                 # 同一原文重识别时复用已核验结果，只恢复刚被集合替换失效的同版本资产。
-                if asset.status == "invalidated":
-                    asset.status = "ready" if (asset.prepared_json or {}).get("status") == "prepared" else "pending"
-                    if asset.status == "pending":
-                        asset.attempt += 1
+                restore_reidentified_asset(asset)
                 assets.append(asset)
             job.result_json = {**result.model_dump(), "asset_ids": [asset.id for asset in assets]}
             job.status = "needs_review" if result.issues else "completed"

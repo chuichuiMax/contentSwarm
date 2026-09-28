@@ -9,7 +9,8 @@ fi
 
 # The dump is generated with INSERT statements. Existing rows are cleared so
 # the imported snapshot exactly matches the exported rule configuration.
-docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U "${POSTGRES_USER:-postgres}" "${POSTGRES_DB:-yuxi}" <<'SQL'
+docker compose exec -T postgres sh -lc \
+  'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL'
 BEGIN;
 TRUNCATE TABLE
   content_replacement_rules,
@@ -38,5 +39,6 @@ RESTART IDENTITY CASCADE;
 COMMIT;
 SQL
 
-cat "$input_file" | docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U "${POSTGRES_USER:-postgres}" "${POSTGRES_DB:-yuxi}"
+docker compose exec -T postgres sh -lc \
+  'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"' < "$input_file"
 echo "Imported content rules from $input_file"

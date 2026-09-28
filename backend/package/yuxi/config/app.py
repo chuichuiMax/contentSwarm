@@ -41,6 +41,10 @@ class Config(BaseModel):
         description="内容审查LLM模型",
     )
 
+    dangjia_callback_base_url: str = Field(default="", description="当家内容生成结果回调地址")
+    dangjia_callback_api_key: str = Field(default="", description="当家内容生成结果回调 API Key")
+    dangjia_media_public_base_url: str = Field(default="", description="当家最终封面公开地址")
+
     default_agent_id: str = Field(default="ChatbotAgent", description="默认智能体ID")
 
     sandbox_provider: str = Field(default="provisioner", description="沙箱提供者")
@@ -87,6 +91,15 @@ class Config(BaseModel):
             logger.error(f"Failed to load config from {self._config_file}: {e}")
 
     def _handle_environment(self) -> None:
+        env_config = {
+            "dangjia_callback_base_url": "DANGJIA_CALLBACK_BASE_URL",
+            "dangjia_callback_api_key": "DANGJIA_CALLBACK_API_KEY",
+            "dangjia_media_public_base_url": "DANGJIA_MEDIA_PUBLIC_BASE_URL",
+        }
+        for field_name, env_name in env_config.items():
+            if field_name not in self._user_modified_fields:
+                setattr(self, field_name, (os.getenv(env_name) or getattr(self, field_name) or "").strip())
+
         self.sandbox_provider = (os.getenv("SANDBOX_PROVIDER") or self.sandbox_provider or "provisioner").strip()
         self.sandbox_provisioner_url = (
             os.getenv("SANDBOX_PROVISIONER_URL") or self.sandbox_provisioner_url or "http://sandbox-provisioner:8002"
@@ -136,6 +149,8 @@ class Config(BaseModel):
 
     def dump_config(self) -> dict[str, Any]:
         config_dict = self.model_dump()
+        config_dict["dangjia_callback_api_key_configured"] = bool(self.dangjia_callback_api_key.strip())
+        config_dict["dangjia_callback_api_key"] = ""
         fields_info = {}
         for field_name, field_info in Config.model_fields.items():
             if field_info.exclude:
@@ -150,6 +165,30 @@ class Config(BaseModel):
             }
         config_dict["_config_items"] = fields_info
         return config_dict
+
+    def resolve_dangjia_callback_settings(self) -> dict[str, str]:
+        """读取当家回调运行时配置，使 API 保存的配置可以被 Worker 立即使用。"""
+
+        field_env_names = {
+            "dangjia_callback_base_url": "DANGJIA_CALLBACK_BASE_URL",
+            "dangjia_callback_api_key": "DANGJIA_CALLBACK_API_KEY",
+            "dangjia_media_public_base_url": "DANGJIA_MEDIA_PUBLIC_BASE_URL",
+        }
+        persisted: dict[str, Any] = {}
+        if self._config_file and self._config_file.exists():
+            try:
+                with open(self._config_file, "rb") as f:
+                    persisted = tomli.load(f)
+            except Exception as exc:
+                logger.error(f"Failed to reload Dangjia callback config from {self._config_file}: {exc}")
+
+        resolved = {}
+        for field_name, env_name in field_env_names.items():
+            value = persisted.get(field_name)
+            if value is None:
+                value = os.getenv(env_name) or ""
+            resolved[field_name] = str(value).strip()
+        return resolved
 
     def update(self, other: dict[str, Any]) -> None:
         for key, value in other.items():

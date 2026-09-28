@@ -179,6 +179,7 @@ export function SaveAsTemplateDialog({
   const [category, setCategory] = useState(zoneTag ?? "");
   const [collectionId, setCollectionId] = useState("");
   const [visibility, setVisibility] = useState<TemplateVisibility>("workspace");
+  const [isHandwrittenQuoteTemplate, setIsHandwrittenQuoteTemplate] = useState(false);
   const [busy, setBusy] = useState(false);
   const doc = useEditor((s) => s.doc);
   const availableTextNodes = useMemo(() => textNodes(doc), [doc]);
@@ -246,6 +247,7 @@ export function SaveAsTemplateDialog({
         visibility,
         collectionId: selectedCollectionId,
         fillableFields: preparedFields.length > 0 ? preparedFields : undefined,
+        isHandwrittenQuoteTemplate,
         thumbnail: createDesignThumbnail(file),
       });
       useEditor.getState().setDocMeta({ brandEditableFields: preparedFields });
@@ -287,6 +289,15 @@ export function SaveAsTemplateDialog({
           />
         </label>
         <TemplateCollectionPicker workspaceId={workspaceId} value={collectionId} onChange={(id) => setCollectionId(id)} />
+        <label className="flex cursor-pointer items-center gap-2.5 rounded-xl border border-neutral-200 px-3 py-2 text-sm text-neutral-700">
+          <input
+            type="checkbox"
+            checked={isHandwrittenQuoteTemplate}
+            onChange={(event) => setIsHandwrittenQuoteTemplate(event.target.checked)}
+            className="accent-brand-600"
+          />
+          <span className="font-medium">手写报价模板</span>
+        </label>
         <fieldset className="flex flex-col gap-1.5">
           <span className="text-sm font-medium text-neutral-700">{tr("editor.who_can_use_it")}</span>
           <div className="flex flex-col gap-1.5">

@@ -89,6 +89,7 @@ describe("Xiaohongshu template drafts", () => {
     );
 
     fireEvent.click(screen.getByRole("button", { name: "选择分类" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "手写报价模板" }));
     fireEvent.click(screen.getByRole("button", { name: "保存模板" }));
 
     await waitFor(() => expect(mocks.saveAsTemplate).toHaveBeenCalledWith(expect.objectContaining({
@@ -97,6 +98,7 @@ describe("Xiaohongshu template drafts", () => {
       workspaceId: "workspace-1",
       category: "小红书",
       tags: ["小红书"],
+      isHandwrittenQuoteTemplate: true,
       fillableFields: [
         expect.objectContaining({
           nodeId: "title-1",

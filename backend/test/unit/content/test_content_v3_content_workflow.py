@@ -1032,7 +1032,8 @@ def test_semantic_review_is_bound_to_the_exact_final_draft_hash():
 
 
 @pytest.mark.asyncio
-async def test_save_artifact_allows_content_version_without_cover(monkeypatch):
+@pytest.mark.parametrize("review_enabled", [True, False])
+async def test_save_artifact_allows_content_version_without_cover(monkeypatch, review_enabled):
     task = SimpleNamespace(id="task-1", tenant_id=None, rule_version_id="rules-v3")
     saved = {}
 
@@ -1086,7 +1087,9 @@ async def test_save_artifact_allows_content_version_without_cover(monkeypatch):
         fake_session_context,
     )
 
-    result = await ContentWorkflowAgent()._save_artifact(
+    agent = ContentWorkflowAgent()
+    agent._workflow_definition = {"semantic_review_enabled": review_enabled}
+    result = await agent._save_artifact(
         {
             "task_id": task.id,
             "uid": "user-1",
@@ -1103,7 +1106,8 @@ async def test_save_artifact_allows_content_version_without_cover(monkeypatch):
             },
             "strategy_snapshot": {"snapshot_hash": "s" * 64, "title_formula": {}, "body_formula": {}},
             "evidence_bundle": {"bundle_hash": "e" * 64, "items": []},
-            "review_report": {"status": "passed", "checks": []},
+            "review_report": {"status": "passed", "checks": []} if review_enabled else None,
+            "validation_report": {"status": "passed", "checks": []},
             "approval_result": {"status": "approved", "reviewer_uid": "user-1"},
             "runtime_config_snapshot": {},
         }
@@ -1111,6 +1115,9 @@ async def test_save_artifact_allows_content_version_without_cover(monkeypatch):
 
     assert result["artifact_version"]["cover_asset_id"] is None
     assert saved["artifact"].cover_asset_id is None
+    if not review_enabled:
+        assert saved["artifact"].review_snapshot["review_mode"] == "deterministic_only"
+        assert saved["artifact"].review_snapshot["semantic_review_status"] == "not_run"
     assert saved["artifact"].evidence_usage_snapshot == {
         "version": 1,
         "items": [

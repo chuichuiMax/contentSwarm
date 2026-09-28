@@ -118,6 +118,11 @@ async def test_expression_knowledge_separates_advantage_evidence_from_style_refe
     assert "表达语气库" in queries[1]
     assert "具象表达" in queries[2]
 
+    state["runtime_config_snapshot"]["content_rule_bundle"] = {"single_blueprint": {"version": "1.0.0"}}
+    candidate = await deterministic_node.load_expression_knowledge(state)
+    assert candidate["evidence_items"] == []
+    assert len(candidate["expression_guidance"]["sources"]) == 3
+
 
 @pytest.mark.unit
 @pytest.mark.asyncio

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
@@ -63,12 +64,36 @@ func (r *publicCatalogRows) Next() bool {
 		return false
 	}
 	r.read = true
-	return r.collectionQuery
+	return true
 }
 func (r *publicCatalogRows) Scan(dest ...any) error {
-	*(dest[0].(*string)) = "category-1"
-	*(dest[1].(*string)) = "workspace-1"
-	*(dest[2].(*string)) = "内容报价"
+	if r.collectionQuery {
+		*(dest[0].(*string)) = "category-1"
+		*(dest[1].(*string)) = "workspace-1"
+		*(dest[2].(*string)) = "内容报价"
+		return nil
+	}
+	workspaceID := "workspace-1"
+	category := "报价"
+	collectionID := "category-1"
+	now := time.Date(2026, time.September, 23, 0, 0, 0, 0, time.UTC)
+	*(dest[0].(*string)) = "template-1"
+	*(dest[1].(*string)) = "owner-1"
+	*(dest[2].(**string)) = nil
+	*(dest[3].(**string)) = &workspaceID
+	*(dest[4].(*string)) = "手写报价"
+	*(dest[5].(**string)) = &category
+	*(dest[6].(*[]string)) = []string{"报价"}
+	*(dest[7].(*json.RawMessage)) = json.RawMessage(`{"pages":[{"width":1080,"height":1440,"children":[]}]}`)
+	*(dest[8].(**string)) = nil
+	*(dest[9].(*string)) = "PUBLIC"
+	*(dest[10].(**string)) = &collectionID
+	*(dest[11].(*json.RawMessage)) = json.RawMessage(`{"palette":[],"typography":[]}`)
+	*(dest[12].(*bool)) = true
+	*(dest[13].(*json.RawMessage)) = json.RawMessage(`[]`)
+	*(dest[14].(*json.RawMessage)) = json.RawMessage(`[]`)
+	*(dest[15].(*time.Time)) = now
+	*(dest[16].(*time.Time)) = now
 	return nil
 }
 
@@ -213,7 +238,7 @@ func TestTemplatesByCategoryArePublicAndNeedNoAPIKey(t *testing.T) {
 	if err := json.NewDecoder(recorder.Body).Decode(&response); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if response.Templates == nil || len(response.Templates) != 0 {
+	if len(response.Templates) != 1 || response.Templates[0].IsHandwrittenQuoteTemplate != 1 {
 		t.Fatalf("response = %+v", response)
 	}
 }

@@ -17,9 +17,11 @@ from yuxi.content.model.materials import (
     build_material_manifest,
     create_production_order,
 )
+from yuxi.content.model.materials import build_material_manifest, create_production_order
+from yuxi.content.v3.modular_rules import SINGLE_BLUEPRINT_WORKFLOW_IDS
 from yuxi.content.v3.body_calling import get_decoration_body_calling, get_decoration_body_calling_source
-from yuxi.content.v3.formula_lexicons import get_formula_lexicon_requirements
 from yuxi.content.v3.foreman_composition import lock_evidence_composition
+from yuxi.content.v3.formula_lexicons import get_formula_lexicon_requirements
 from yuxi.services.content_viral_assets import check_asset_source, preparation_skill_hash, require_asset
 from yuxi.services.run_queue_service import append_run_stream_event
 from yuxi.storage.postgres.models_business import User
@@ -179,7 +181,7 @@ def build_fact_index(content_brief: dict[str, Any], evidence_bundle: dict[str, A
 
 
 def _resolve_rule_and_formulas(
-    catalog: dict[str, Any], fact_index: dict[str, Any]
+    catalog: dict[str, Any], fact_index: dict[str, Any], *, single_blueprint: bool = False
 ) -> tuple[dict[str, Any], dict[str, Any] | None, dict[str, Any] | None, list[dict[str, Any]], list[str]]:
     direction = str(catalog.get("direction_code") or "")
     if not direction:
@@ -222,10 +224,12 @@ def _resolve_rule_and_formulas(
     # 生产订单先锁定规则声明的默认公式（候选第一项），资料缺失只能补料，不能静默换公式。
     title = choose_locked("title_formulas", title_codes)
     body = choose_locked("content_formulas", body_codes)
-    required = set(rule.get("required_variable_codes") or [])
-    required.update(variable for method in methods for variable in method.get("variable_schema") or [])
-    if body is not None:
-        required.update(body.get("required_variables") or [])
+    required = set()
+    if not single_blueprint:
+        required.update(rule.get("required_variable_codes") or [])
+        required.update(variable for method in methods for variable in method.get("variable_schema") or [])
+        if body is not None:
+            required.update(body.get("required_variables") or [])
     missing = required - available
     if title is not None:
         missing.update(_missing_title_formula_variables(title, available))
@@ -240,7 +244,7 @@ def _resolve_rule_and_formulas(
             body_formula_code=body["code"],
         )
         try:
-            manifest = build_material_manifest(catalog=catalog, order=order)
+            manifest = build_material_manifest(catalog=catalog, order=order, single_blueprint=single_blueprint)
         except ValueError as exc:
             raise ContentApplicationError("CONTENT_PLAN_CONFIGURATION_INVALID", str(exc), "conflict") from exc
         # derived 物料由后续程序计算，不能要求事实抽取 Agent 提交。
@@ -261,9 +265,16 @@ def _resolve_rule_and_formulas(
 
 
 def compile_production_order_and_manifest(
-    *, task_id: str, catalog: dict[str, Any], fact_index: dict[str, Any]
+    *,
+    task_id: str,
+    catalog: dict[str, Any],
+    fact_index: dict[str, Any],
+    runtime_config_snapshot: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    rule, title, body, methods, _missing = _resolve_rule_and_formulas(catalog, fact_index)
+    single_blueprint = bool(((runtime_config_snapshot or {}).get("content_rule_bundle") or {}).get("single_blueprint"))
+    rule, title, body, methods, _missing = _resolve_rule_and_formulas(
+        catalog, fact_index, single_blueprint=single_blueprint
+    )
     if title is None or body is None:
         raise ContentApplicationError(
             "CONTENT_PLAN_CONFIGURATION_INVALID",
@@ -282,6 +293,13 @@ def compile_production_order_and_manifest(
         manifest = _relax_budget_quote_manifest(
             build_material_manifest(catalog=catalog, order=order), fact_index
         )
+        manifest = build_material_manifest(
+            catalog=catalog,
+            order=order,
+            single_blueprint=bool(
+                ((runtime_config_snapshot or {}).get("content_rule_bundle") or {}).get("single_blueprint")
+            ),
+        )
     except ValueError as exc:
         raise ContentApplicationError("CONTENT_PLAN_CONFIGURATION_INVALID", str(exc), "conflict") from exc
     return order.model_dump(mode="json"), manifest.model_dump(mode="json")
@@ -296,6 +314,7 @@ def map_reference_slots(
     mapping: dict[str, list[str]] = {}
     missing_required: list[str] = []
     mapped_required = 0
+    field_coverage = 0.0
     for slot in card.get("required_slots") or []:
         codes = list(slot.get("variable_codes") or [])
         source_key = "evidence_paths" if slot.get("evidence_required", True) else "paths"
@@ -311,6 +330,7 @@ def map_reference_slots(
         matched = len(available) == len(codes) if slot.get("match_mode", "all") == "all" else bool(available)
         slot_key = str(slot.get("slot_key") or "")
         if matched and slot_key:
+            field_coverage += len(available) / max(len(codes), 1)
             mapping[slot_key] = list(
                 dict.fromkeys(path for _code, resolved in resolved_codes for path in facts[resolved][source_key])
             )
@@ -328,6 +348,8 @@ def map_reference_slots(
         "mapped_required_count": mapped_required,
         "mapped_count": len(mapping),
         "omitted_required_slots": missing_required,
+        "field_coverage": field_coverage,
+        "support_status": "unassessed",
     }
 
 
@@ -375,6 +397,9 @@ def rank_reference_candidates(
         ranked.append({**candidate, **mapped, "context_match_count": context_match_count(card)})
     ranked.sort(
         key=lambda item: (
+            -item["field_coverage"]
+            if (runtime_config_snapshot.get("content_rule_bundle") or {}).get("single_blueprint")
+            else 0,
             -item["mapped_required_count"],
             -item["mapped_count"],
             -int(item.get("retrieval_score") or 0),
@@ -394,8 +419,11 @@ def analyze_plan_gaps(
     runtime_config_snapshot: dict[str, Any],
 ) -> dict[str, Any]:
     fact_index = build_fact_index(content_brief, evidence_bundle)
-    rule, title, body, methods, missing = _resolve_rule_and_formulas(catalog, fact_index)
-    required_evidence = set(rule.get("required_evidence_types") or [])
+    single_blueprint = bool((runtime_config_snapshot.get("content_rule_bundle") or {}).get("single_blueprint"))
+    rule, title, body, methods, missing = _resolve_rule_and_formulas(
+        catalog, fact_index, single_blueprint=single_blueprint
+    )
+    required_evidence = set() if single_blueprint else set(rule.get("required_evidence_types") or [])
     available_evidence = {
         str(item.get("evidence_type") or item.get("type") or item.get("source_type") or "")
         for item in evidence_bundle.get("items") or []
@@ -479,7 +507,7 @@ async def prepare_creation_plan_inputs(*, db, state: dict[str, Any], node_run_id
         (rule.get("source_metadata") or {}).get("formula_selection_policy") == "evidence_composition_v1"
         and not (rule.get("source_metadata") or {}).get("locked_composition")
         for rule in catalog.get("source_rules") or []
-    )
+    ) and not bool((state["runtime_config_snapshot"].get("content_rule_bundle") or {}).get("single_blueprint"))
     if selection_pending:
         # 新组合先摘录候选事实，再按实际摘录结果选式。候选缺失不等于必需物料缺失。
         candidate_codes = set()
@@ -503,6 +531,7 @@ async def prepare_creation_plan_inputs(*, db, state: dict[str, Any], node_run_id
         task_id=state["task_id"],
         catalog=catalog,
         fact_index=fact_index,
+        runtime_config_snapshot=state["runtime_config_snapshot"],
     )
     return {**result, "production_order": order, "material_manifest": manifest, "creation_plan_gap_analysis": gap}
 
@@ -551,10 +580,16 @@ async def preview_creation_plan(*, db, user, task_id: str) -> dict[str, Any]:
     if not runtime.get("content_rule_bundle"):
         from yuxi.content.v3.modular_rules import build_modular_rule_bundle
 
-        runtime["content_rule_bundle"] = build_modular_rule_bundle(task.brief_json)
+        runtime["content_rule_bundle"] = build_modular_rule_bundle(
+            task.brief_json,
+            single_blueprint=task.workflow_version_id in SINGLE_BLUEPRINT_WORKFLOW_IDS,
+        )
     fact_index = build_fact_index(task.brief_json, evidence_bundle)
     catalog = lock_evidence_composition(catalog, fact_index, seed=task_id)
-    rule, title, body, methods, _missing = _resolve_rule_and_formulas(catalog, fact_index)
+    single_blueprint = bool((runtime.get("content_rule_bundle") or {}).get("single_blueprint"))
+    rule, title, body, methods, _missing = _resolve_rule_and_formulas(
+        catalog, fact_index, single_blueprint=single_blueprint
+    )
     gaps = analyze_plan_gaps(
         catalog=catalog,
         references=references,
@@ -573,6 +608,7 @@ async def preview_creation_plan(*, db, user, task_id: str) -> dict[str, Any]:
         task_id=task_id,
         catalog=catalog,
         fact_index=fact_index,
+        runtime_config_snapshot=runtime,
     )
     extractable_from_request = bool(str(task.brief_json.get("user_request") or "").strip())
     extraction_can_complete_formulas = False
@@ -582,7 +618,9 @@ async def preview_creation_plan(*, db, user, task_id: str) -> dict[str, Any]:
         projected_values.update({code: "待从用户原文抽取" for code in gaps["missing_variable_codes"]})
         projected_brief["form_values"] = projected_values
         projected_index = build_fact_index(projected_brief, evidence_bundle)
-        _, projected_title, projected_body, _, _ = _resolve_rule_and_formulas(catalog, projected_index)
+        _, projected_title, projected_body, _, _ = _resolve_rule_and_formulas(
+            catalog, projected_index, single_blueprint=single_blueprint
+        )
         extraction_can_complete_formulas = projected_title is not None and projected_body is not None
     has_type_compatible_reference = any(
         (item.get("reference_card") or {}).get("schema_version") == 2
@@ -731,6 +769,7 @@ async def merge_extracted_creation_facts(*, db, state: dict[str, Any], node_run_
             task_id=state["task_id"],
             catalog=catalog,
             fact_index=fact_index,
+            runtime_config_snapshot=state["runtime_config_snapshot"],
         )
         selection_updates = {
             "strategy_catalog": catalog,
@@ -777,7 +816,12 @@ async def _build_creation_plan(*, db, state: dict[str, Any]) -> dict[str, Any]:
             "以下业务字段存在冲突值：" + "、".join(fact_index["conflicting_variable_codes"]),
             "invalid",
         )
-    rule, title, body, methods, missing = _resolve_rule_and_formulas(catalog, fact_index)
+    single_blueprint = bool(
+        (state.get("runtime_config_snapshot", {}).get("content_rule_bundle") or {}).get("single_blueprint")
+    )
+    rule, title, body, methods, missing = _resolve_rule_and_formulas(
+        catalog, fact_index, single_blueprint=single_blueprint
+    )
     if missing:
         code = (
             "CONTENT_PLAN_PRICE_RECOVERY_REQUIRED" if set(missing) <= _PRICE_VARIABLES else "CONTENT_PLAN_INPUT_MISSING"
@@ -833,7 +877,10 @@ async def _build_creation_plan(*, db, state: dict[str, Any]) -> dict[str, Any]:
 
     method_codes = [item["code"] for item in methods]
     production_order, material_manifest = compile_production_order_and_manifest(
-        task_id=state["task_id"], catalog=catalog, fact_index=fact_index
+        task_id=state["task_id"],
+        catalog=catalog,
+        fact_index=fact_index,
+        runtime_config_snapshot=state["runtime_config_snapshot"],
     )
     existing_order = state.get("production_order")
     if existing_order and existing_order.get("order_hash") != production_order["order_hash"]:
@@ -890,7 +937,7 @@ async def _build_creation_plan(*, db, state: dict[str, Any]) -> dict[str, Any]:
             f"按创作类型 {direction} 命中唯一组合规则 {rule.get('id') or rule.get('code')}",
             f"按规则选式策略锁定标题公式 {title['code']}，备料后不更换公式",
             f"锁定正文公式 {body['code']} 与手法 {','.join(method_codes)}",
-            f"按槽位覆盖、检索相关度和资产 ID 稳定排序选择 {asset.id}",
+            f"按候选字段覆盖、检索相关度和资产 ID 稳定排序选择 {asset.id}；字段匹配不代表陈述已有事实支撑",
         ],
     }
     reference_snapshot = {
@@ -901,6 +948,7 @@ async def _build_creation_plan(*, db, state: dict[str, Any]) -> dict[str, Any]:
         "locator": asset.source_json["locator"],
         "source_hash": asset.source_hash,
         "preparation_skill_hash": asset.preparation_skill_hash,
+        **({"title": asset.source_json["title"], "body": asset.source_json["body"]} if single_blueprint else {}),
         "reference_card": card,
         "reference_blueprint": asset.prepared_json["reference_blueprint"],
         "slot_mapping": selected["slot_mapping"],

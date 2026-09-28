@@ -86,6 +86,52 @@
       </template>
     </template>
 
+    <template v-if="userStore.isSuperAdmin">
+      <div class="section-title">当家回调配置</div>
+      <div class="settings-panel dangjia-settings-panel">
+        <p class="section-description">
+          配置当家内容生成完成后的通知地址与最终封面公开地址。保存后立即生效，环境变量作为未配置时的兜底。
+        </p>
+        <div class="setting-row">
+          <div class="setting-label">
+            {{ items?.dangjia_callback_base_url?.des || '当家内容生成结果回调地址' }}
+          </div>
+          <a-input
+            v-model:value="dangjiaForm.callbackBaseUrl"
+            placeholder="例如：http://test-mgr.example.com:8005"
+          />
+        </div>
+        <div class="setting-row">
+          <div class="setting-label">
+            {{ items?.dangjia_callback_api_key?.des || '当家内容生成结果回调 API Key' }}
+          </div>
+          <a-input-password
+            v-model:value="dangjiaForm.callbackApiKey"
+            :placeholder="
+              configStore.config?.dangjia_callback_api_key_configured
+                ? '已配置；留空表示保持不变'
+                : '请输入回调 API Key'
+            "
+            autocomplete="new-password"
+          />
+        </div>
+        <div class="setting-row">
+          <div class="setting-label">
+            {{ items?.dangjia_media_public_base_url?.des || '当家最终封面公开地址' }}
+          </div>
+          <a-input
+            v-model:value="dangjiaForm.mediaPublicBaseUrl"
+            placeholder="例如：https://content.example.com/api/dangjia/content/media"
+          />
+        </div>
+        <div class="settings-actions">
+          <a-button type="primary" :loading="dangjiaSaving" @click="saveDangjiaSettings">
+            保存当家配置
+          </a-button>
+        </div>
+      </div>
+    </template>
+
     <!-- 服务链接部分 -->
     <div v-if="userStore.isAdmin" class="section-title">服务链接</div>
     <div v-if="userStore.isAdmin">
@@ -158,7 +204,8 @@
 </template>
 
 <script setup>
-import { computed, h } from 'vue'
+import { computed, h, reactive, ref, watch } from 'vue'
+import { message } from 'ant-design-vue'
 import { useConfigStore } from '@/stores/config'
 import { useUserStore } from '@/stores/user'
 import { Globe } from 'lucide-vue-next'
@@ -169,6 +216,25 @@ import RerankModelSelector from '@/components/RerankModelSelector.vue'
 const configStore = useConfigStore()
 const userStore = useUserStore()
 const items = computed(() => configStore.config?._config_items || {})
+const dangjiaSaving = ref(false)
+const dangjiaForm = reactive({
+  callbackBaseUrl: '',
+  callbackApiKey: '',
+  mediaPublicBaseUrl: ''
+})
+
+watch(
+  () => [
+    configStore.config?.dangjia_callback_base_url,
+    configStore.config?.dangjia_media_public_base_url
+  ],
+  ([callbackBaseUrl, mediaPublicBaseUrl]) => {
+    dangjiaForm.callbackBaseUrl = callbackBaseUrl || ''
+    dangjiaForm.mediaPublicBaseUrl = mediaPublicBaseUrl || ''
+    dangjiaForm.callbackApiKey = ''
+  },
+  { immediate: true }
+)
 
 const handleChange = (key, e) => {
   configStore.setConfigValue(key, e)
@@ -189,6 +255,44 @@ const handleFastModelSelect = (spec) => {
 const handleContentGuardModelSelect = (spec) => {
   if (typeof spec === 'string' && spec) {
     configStore.setConfigValue('content_guard_llm_model', spec)
+  }
+}
+
+const isHttpUrl = (value) => {
+  try {
+    return ['http:', 'https:'].includes(new URL(value).protocol)
+  } catch {
+    return false
+  }
+}
+
+const saveDangjiaSettings = async () => {
+  const callbackBaseUrl = dangjiaForm.callbackBaseUrl.trim()
+  const callbackApiKey = dangjiaForm.callbackApiKey.trim()
+  const mediaPublicBaseUrl = dangjiaForm.mediaPublicBaseUrl.trim()
+  if (!isHttpUrl(callbackBaseUrl) || !isHttpUrl(mediaPublicBaseUrl)) {
+    message.warning('请输入有效的 HTTP 或 HTTPS 地址')
+    return
+  }
+  if (!callbackApiKey && !configStore.config?.dangjia_callback_api_key_configured) {
+    message.warning('请输入回调 API Key')
+    return
+  }
+
+  dangjiaSaving.value = true
+  try {
+    const values = {
+      dangjia_callback_base_url: callbackBaseUrl,
+      dangjia_media_public_base_url: mediaPublicBaseUrl
+    }
+    if (callbackApiKey) values.dangjia_callback_api_key = callbackApiKey
+    await configStore.setConfigValues(values)
+    dangjiaForm.callbackApiKey = ''
+    message.success('当家回调配置已保存')
+  } catch (error) {
+    message.error(error.message || '当家回调配置保存失败')
+  } finally {
+    dangjiaSaving.value = false
   }
 }
 
@@ -217,6 +321,17 @@ const openLink = (url) => {
     display: flex;
     flex-direction: column;
     gap: 16px;
+  }
+
+  .dangjia-settings-panel {
+    .section-description {
+      margin-bottom: 2px;
+    }
+  }
+
+  .settings-actions {
+    display: flex;
+    justify-content: flex-end;
   }
 
   .setting-row {

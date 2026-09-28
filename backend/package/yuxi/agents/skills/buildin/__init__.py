@@ -20,6 +20,20 @@ _SKILLS_ROOT = Path(__file__).resolve().parent
 
 BUILTIN_SKILLS: list[BuiltinSkillSpec] = [
     BuiltinSkillSpec(
+        slug="single-blueprint-author",
+        display_name="单蓝图创作",
+        version="1.9.3",
+        source_dir=_SKILLS_ROOT / "single-blueprint-author",
+        description="依选中蓝图与本篇事实组织内容",
+    ),
+    BuiltinSkillSpec(
+        slug="single-blueprint-reviewer",
+        display_name="单蓝图审核",
+        version="1.7.0",
+        source_dir=_SKILLS_ROOT / "single-blueprint-reviewer",
+        description="核验蓝图采用与事实边界",
+    ),
+    BuiltinSkillSpec(
         slug="content-fact-extractor",
         display_name="创作事实抽取",
         version="1.0.0",

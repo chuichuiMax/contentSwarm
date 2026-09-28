@@ -189,7 +189,7 @@
       },
       "Template": {
         "type": "object",
-        "required": ["id", "title", "previewUrls", "pageCount"],
+        "required": ["id", "title", "previewUrls", "pageCount", "isHandwrittenQuoteTemplate"],
         "properties": {
           "id": { "type": "string" },
           "title": { "type": "string" },
@@ -199,6 +199,7 @@
           "categories": { "type": "array", "items": { "type": "string" } },
           "tags": { "type": "array", "items": { "type": "string" } },
           "fillableFields": { "type": "array", "items": {} },
+          "isHandwrittenQuoteTemplate": { "type": "integer", "enum": [0, 1], "description": "Whether this is a handwritten quote template: 0 means no, 1 means yes." },
           "createdAt": { "type": "string" },
           "updatedAt": { "type": "string" }
         }
@@ -616,6 +617,43 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/templates/categories/{id}/templates": {
+      "get": {
+        "summary": "List templates in one category",
+        "description": "Public endpoint; no authentication, API key, or workspace id is required. Each template returns isHandwrittenQuoteTemplate as 0 or 1.",
+        "security": [],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Templates assigned to the category.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["templates"],
+                  "properties": {
+                    "templates": {
+                      "type": "array",
+                      "items": { "$ref": "#/components/schemas/Template" }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Category was not found."
           }
         }
       }

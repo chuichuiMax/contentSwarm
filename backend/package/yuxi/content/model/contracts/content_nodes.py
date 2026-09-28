@@ -898,6 +898,43 @@ class GeneratedContentResultV1(StrictContract):
     draft: ContentDraftResultV1
 
 
+class BlueprintTitleV1(StrictContract):
+    text: str = Field(min_length=1)
+    facts: list[str] = Field(description="仅引用允许 title 的本篇 F 编号")
+
+
+class BlueprintBlockV1(StrictContract):
+    id: str = Field(min_length=1, description="文本块用互不重复的 b1、b2 等；报价引用由程序统一标识为 quote_block")
+    kind: Literal["text", "quote_ref"]
+    text: str = Field(description="text 块填写正文；quote_ref 必须为空字符串，由程序填入报价")
+    facts: list[str] = Field(description="文本块仅引用允许 body 的本篇 F 编号；报价引用的事实由程序绑定，可留空")
+    blueprint_refs: list[str] = Field(description="本块实际采用的 R 编号；报价引用也可对应报价结构 R 编号")
+
+
+class BlueprintOmissionV1(StrictContract):
+    ref: str
+    reason: str = Field(min_length=1)
+
+
+class SingleBlueprintResultV1(StrictContract):
+    writing_design: str | None = Field(
+        default=None,
+        description="本篇具体构思：迁移参考中哪一处吸引人的表达或事件，本篇贯穿的疑问/人物意图/对象是什么，资料怎样推动关注变化。不要写栏目顺序，不展示在正文。",
+    )
+    title: BlueprintTitleV1
+    topics: list[str]
+    blocks: list[BlueprintBlockV1] = Field(min_length=1)
+    omissions: list[BlueprintOmissionV1]
+
+
+class SingleBlueprintPatchV1(StrictContract):
+    writing_design: str | None = Field(default=None, description="重组正文时更新本篇构思；仅修标题或话题时可为空")
+    title: BlueprintTitleV1 | None
+    topics: list[str] | None
+    blocks: list[BlueprintBlockV1]
+    omissions: list[BlueprintOmissionV1] | None
+
+
 class PreservedFactCheckV1(StrictContract):
     evidence_id: str
     preserved: bool
@@ -1028,6 +1065,8 @@ CONTRACT_REGISTRY: dict[str, type[StrictContract]] = {
         OutlineResultV1,
         ContentDraftResultV1,
         GeneratedContentResultV1,
+        SingleBlueprintResultV1,
+        SingleBlueprintPatchV1,
         PersonaPolishResultV1,
         ContentReviewResultV1,
         StandardizedContentReviewResultV1,
@@ -1069,6 +1108,7 @@ def _extract_supported_numbers(value: Any) -> set[str]:
 
 @dataclass(frozen=True, slots=True)
 class ContractDomainContext:
+    single_blueprint_input: dict[str, Any] = field(default_factory=dict)
     require_emoji_review: bool = False
     require_persona_review: bool = False
     require_composition_review: bool = False
@@ -1471,6 +1511,11 @@ def _validate_numbers(text: str, context: ContractDomainContext, field_path: str
     factual_text = re.sub(r"(?m)^\s*\d{1,2}[.、）)]\s*", "", factual_text)
     numbers = set(re.findall(r"(?<![A-Za-z])\d+(?:\.\d+)?", factual_text))
     allowed = context.allowed_numbers_by_usage.get(usage, context.allowed_numbers)
+    if usage == "title" and context.single_blueprint_input:
+        from yuxi.content.model.single_blueprint import title_publication_year
+
+        if year := title_publication_year(context.single_blueprint_input["production_pack"]):
+            allowed = {*allowed, year}
     unknown = sorted(numbers - set(allowed))
     if unknown:
         raise ContractDomainValidationError(
@@ -2069,11 +2114,15 @@ def validate_content_node_result(
                     "必须逐项审核表情、人设和冻结规则并记录结果: " + ", ".join(sorted(missing)),
                 )
             for index, item in enumerate(result.checks):
-                if item.code in required and item.status == "warning" and item.code != "NATURAL_EXPRESSION":
+                if (
+                    item.code in required
+                    and item.status == "warning"
+                    and item.code not in {"NATURAL_EXPRESSION", "WRITING_QUALITY"}
+                ):
                     raise ContractDomainValidationError(
                         "emoji_review_status",
                         f"checks.{index}.status",
-                        "除 NATURAL_EXPRESSION 外，必选审核项必须明确 passed 或 blocked，不以 warning 放行",
+                        "事实及其他必选项必须明确 passed 或 blocked；表达质量可报告轻微 warning",
                     )
                 if item.code in required and item.status == "blocked" and (not item.suggestion or not item.location):
                     raise ContractDomainValidationError(
@@ -2423,9 +2472,26 @@ class ContentNodeResultCollector:
                 self.domain_context,
             )
             self.result = validated.model_dump(mode="json")
+            if self.contract_name in {"SingleBlueprintResultV1", "SingleBlueprintPatchV1"}:
+                from yuxi.content.model.single_blueprint import validate_and_assemble
+
+                try:
+                    self.result = validate_and_assemble(
+                        self.result,
+                        self.domain_context.single_blueprint_input,
+                        patch=self.contract_name == "SingleBlueprintPatchV1",
+                    )
+                except ValueError as exc:
+                    raise ContractDomainValidationError("blueprint_contract_invalid", "content", str(exc)) from exc
+                _validate_numbers(self.result["title"]["text"], self.domain_context, "title.text", "title")
+                _validate_numbers(self.result["draft"]["body"], self.domain_context, "draft.body", "body")
             self.submission_count += 1
         except Exception as exc:
             failure_payload = {**event_payload, "error_type": type(exc).__name__}
+            if self.contract_name in {"SingleBlueprintResultV1", "SingleBlueprintPatchV1"}:
+                failure_payload["candidate_payload"] = json.loads(
+                    json.dumps(candidate_payload, default=lambda item: item.model_dump(mode="json"))
+                )
             if isinstance(exc, ContractDomainValidationError):
                 self.failed_payload = deepcopy(candidate_payload)
                 self.correction_paths = exc.correction_paths
@@ -2464,12 +2530,41 @@ def build_content_result_tool(collector: ContentNodeResultCollector) -> Structur
             return await collector.submit(**payload)
         except ContractDomainValidationError as exc:
             raise ToolException(f"结果未通过业务校验，请修正后重新提交：{exc}") from exc
+        except ValidationError as exc:
+            raise ToolException(validation_error_message(exc)) from exc
 
     def validation_error_message(exc: ValidationError) -> str:
         first = exc.errors()[0] if exc.errors() else {}
         field_path = ".".join(str(item) for item in first.get("loc") or [])
         message = str(first.get("msg") or "结果结构不符合契约")
         return f"结果未通过结构校验，请修正后重新提交：{field_path} {message}".strip()
+
+    args_schema = get_contract_model(collector.contract_name)
+    if collector.contract_name in {"SingleBlueprintResultV1", "SingleBlueprintPatchV1"}:
+        from yuxi.content.model.single_blueprint import project_input
+
+        view = project_input({**collector.domain_context.single_blueprint_input, "content_draft": None})
+        args_schema = args_schema.model_json_schema()
+        for definition, usage in (("BlueprintTitleV1", "title"), ("BlueprintBlockV1", "body")):
+            args_schema["$defs"][definition]["properties"]["facts"]["items"]["enum"] = [
+                fact["id"] for fact in view["facts"] if usage in fact["allowed_usage"]
+            ]
+        refs = list(view["reference"]["blocks"])
+        args_schema["$defs"]["BlueprintBlockV1"]["properties"]["blueprint_refs"]["items"]["enum"] = refs
+        args_schema["$defs"]["BlueprintOmissionV1"]["properties"]["ref"]["enum"] = refs
+
+    elif (
+        collector.domain_context.single_blueprint_input
+        and collector.contract_name == "StandardizedContentReviewResultV1"
+    ):
+        args_schema = args_schema.model_json_schema()
+        draft = collector.domain_context.single_blueprint_input["content_draft"]["blueprint_content"]
+        args_schema["$defs"]["StandardizedReviewCheckV1"]["properties"]["location"]["enum"] = [
+            "title",
+            "topics",
+            "content",
+            *[block["id"] for block in draft["blocks"] if block["kind"] == "text"],
+        ]
 
     return StructuredTool.from_function(
         coroutine=submit_content_node_result,
@@ -2478,7 +2573,7 @@ def build_content_result_tool(collector: ContentNodeResultCollector) -> Structur
             f"仅用于提交当前节点的 {collector.contract_name} 结果。只接受一次有效结果；"
             "校验失败时必须根据工具提示修正后重新提交。"
         ),
-        args_schema=get_contract_model(collector.contract_name),
+        args_schema=args_schema,
         infer_schema=False,
         handle_tool_error=True,
         handle_validation_error=validation_error_message,

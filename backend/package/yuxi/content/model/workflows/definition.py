@@ -14,6 +14,8 @@ V3_HUMAN_GATE_IDS = {
 }
 KNOWLEDGE_POLICIES = {"none", "agent_scope", "frozen_evidence_only"}
 DEFAULT_CONTRACTS = {
+    "SingleBlueprintResultV1",
+    "SingleBlueprintPatchV1",
     "ContentAgentNodeInputV1",
     "ContentAgentNodeInputV2",
     "AnalyzeContentValueInputV1",
@@ -118,6 +120,9 @@ class WorkflowDefinitionPolicy:
             "modular_viral_author_v1",
         }
         standardized_factory = definition.get("selection_policy") == "standardized_factory_v1"
+        semantic_review_enabled = definition.get("semantic_review_enabled", True)
+        if not semantic_review_enabled and (not standardized_factory or "semantic_review" in node_by_id):
+            raise ValueError("停用语义审核的标准化工作流不得保留审核节点")
         deterministic_plan = definition.get("selection_policy") in {
             "deterministic_creation_plan_v1",
             "standardized_factory_v1",
@@ -129,6 +134,7 @@ class WorkflowDefinitionPolicy:
             price_recovery=bool(definition.get("price_recovery")),
             deterministic_plan=deterministic_plan,
             standardized_factory=standardized_factory,
+            semantic_review_enabled=semantic_review_enabled,
         )
         cls._validate_v3_control_flow(
             edges,
@@ -136,6 +142,7 @@ class WorkflowDefinitionPolicy:
             price_recovery=bool(definition.get("price_recovery")),
             deterministic_plan=deterministic_plan,
             standardized_factory=standardized_factory,
+            semantic_review_enabled=semantic_review_enabled,
         )
         cls._validate_revision_routes(definition.get("revision_routes") or [], node_by_id)
         cls._validate_runtime_limits(definition)
@@ -171,6 +178,7 @@ class WorkflowDefinitionPolicy:
         price_recovery: bool = False,
         deterministic_plan: bool = False,
         standardized_factory: bool = False,
+        semantic_review_enabled: bool = True,
     ) -> None:
         expected = (
             33
@@ -183,6 +191,8 @@ class WorkflowDefinitionPolicy:
             if joint
             else 26
         )
+        if not semantic_review_enabled:
+            expected -= 1
         if len(node_by_id) != expected:
             raise ValueError(f"内容与封面工作流必须声明 {expected} 个节点")
         if joint:
@@ -260,6 +270,7 @@ class WorkflowDefinitionPolicy:
         price_recovery: bool = False,
         deterministic_plan: bool = False,
         standardized_factory: bool = False,
+        semantic_review_enabled: bool = True,
     ) -> None:
         edge_set = {tuple(edge) for edge in edges}
         required = {
@@ -353,6 +364,10 @@ class WorkflowDefinitionPolicy:
                 "lock_creation_strategy",
             ]
             required.update(zip(chain, chain[1:]))
+        if not semantic_review_enabled:
+            required.discard(("semantic_review", "revise_if_needed"))
+            required.discard(("validate_composed_content", "semantic_review"))
+            required.add(("validate_composed_content", "human_content_approval"))
         if standardized_factory and ("freeze_evidence_bundle", "generate_content") in edge_set:
             raise ValueError("标准化生产工作流不得绕过物料质量门直接生成内容")
         if not required <= edge_set:

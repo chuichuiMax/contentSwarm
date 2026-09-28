@@ -377,7 +377,7 @@ class FrozenProductionPackV1(MaterialContract):
         if payload.get("expression_policy") is None:
             payload.pop("expression_policy", None)
         # 槽位契约从当前版本开始写入；历史生产包没有该字段时继续按旧 Hash 验证。
-        if not self.generation_slots:
+        if not self.generation_slots and not self.content_rule_bundle.get("single_blueprint"):
             payload.pop("generation_slots", None)
         if _canonical_hash(payload) != self.production_pack_hash:
             raise ValueError("冻结生产包 Hash 不一致")
@@ -417,7 +417,9 @@ def create_production_order(
     return ProductionOrderV1.model_validate({**payload, "order_hash": _canonical_hash(payload)})
 
 
-def build_material_manifest(*, catalog: dict[str, Any], order: ProductionOrderV1) -> MaterialRequirementManifestV1:
+def build_material_manifest(
+    *, catalog: dict[str, Any], order: ProductionOrderV1, single_blueprint: bool = False
+) -> MaterialRequirementManifestV1:
     if order.rule_version_id != catalog.get("rule_version_id") or order.content_type_code != catalog.get(
         "direction_code"
     ):
@@ -443,7 +445,20 @@ def build_material_manifest(*, catalog: dict[str, Any], order: ProductionOrderV1
         raise ValueError("生产订单引用了不存在或已停用的公式/手法")
 
     definitions = {item.get("code"): item for item in catalog.get("variables") or []}
-    required_codes = set(rule.get("required_variable_codes") or [])
+    required_codes = set() if single_blueprint else set(rule.get("required_variable_codes") or [])
+    if single_blueprint and catalog.get("industry_slug") == "decoration":
+        type_requirements = {
+            "CT01": ("persona_fact",),
+            "CT02": ("quote_block", "quote_type"),
+            "CT03": ("quote_block", "quote_type", "quantity"),
+            "CT04": ("quote_block", "quote_type"),
+            "CT05": ("quote_block", "quote_type"),
+            "CT06": ("process",),
+            "CT07": ("process",),
+        }
+        required_codes.update(
+            code for code in type_requirements.get(order.content_type_code, ()) if code in definitions
+        )
     title_slots = (title.get("source_content") or {}).get("slot_schema") or []
     title_alternative_groups: dict[str, set[str]] = {}
     if title_slots:
@@ -462,22 +477,31 @@ def build_material_manifest(*, catalog: dict[str, Any], order: ProductionOrderV1
     # code such as T01 with another schema.
     if catalog.get("industry_slug") == "decoration":
         required_codes.update(_TITLE_FORMULA_FACT_REQUIREMENTS.get(order.title_formula_code, ()))
-        required_codes.update(_BODY_FORMULA_FACT_REQUIREMENTS.get(order.body_formula_code, ()))
-    required_codes.update(body.get("required_variables") or [])
-    for code in order.creation_method_codes:
-        required_codes.update(method_by_code[code].get("variable_schema") or [])
+        if not single_blueprint:
+            required_codes.update(_BODY_FORMULA_FACT_REQUIREMENTS.get(order.body_formula_code, ()))
+    if not single_blueprint:
+        required_codes.update(body.get("required_variables") or [])
+        for code in order.creation_method_codes:
+            required_codes.update(method_by_code[code].get("variable_schema") or [])
 
     # 工长内容的人设不是生成后的润色项，而是进入生产线前必须准备好的事实。
     # persona_fact 锁定“我是谁/凭什么可信”；process 或优势事实锁定“我怎么做事”。
     # 仅对行业包实际发布的变量生效，避免把通用测试包或其他行业强行扩展。
     persona_alternative_groups: dict[str, set[str]] = {}
-    if catalog.get("industry_slug") == "decoration" and "persona_fact" in definitions:
+    if not single_blueprint and catalog.get("industry_slug") == "decoration" and "persona_fact" in definitions:
         required_codes.add("persona_fact")
         for code in ("process", "advantages", "advantage"):
             if code in definitions:
                 persona_alternative_groups.setdefault(code, set()).add("persona:value")
 
     material_codes = required_codes | set(title_alternative_groups) | set(persona_alternative_groups)
+    if single_blueprint:
+        # 必需项决定能否开工；其他已发布写作变量仍须经过同一来源、用途和审核门禁。
+        material_codes.update(
+            code
+            for code, definition in definitions.items()
+            if set(definition.get("allowed_usages") or []) & {"title", "body"}
+        )
     unknown = sorted(material_codes - set(definitions))
     if unknown:
         raise ValueError("生产物料清单引用未发布变量：" + "、".join(unknown))
@@ -544,7 +568,7 @@ def build_material_manifest(*, catalog: dict[str, Any], order: ProductionOrderV1
                 "fallback_policy": "block",
             }
         )
-    if (body.get("output_schema") or {}).get("deterministic_calculation_required") is True:
+    if not single_blueprint and (body.get("output_schema") or {}).get("deterministic_calculation_required") is True:
         requirements.append(
             {
                 "requirement_id": "derived:calculated_total",
@@ -562,7 +586,7 @@ def build_material_manifest(*, catalog: dict[str, Any], order: ProductionOrderV1
             }
         )
     locked_quote_block = (body.get("output_schema") or {}).get("locked_quote_block_required") is True
-    if order.body_formula_code == "FRB08" and not locked_quote_block:
+    if not single_blueprint and order.body_formula_code == "FRB08" and not locked_quote_block:
         requirements.append(
             {
                 "requirement_id": "formula:trade_breakdown",
@@ -579,7 +603,7 @@ def build_material_manifest(*, catalog: dict[str, Any], order: ProductionOrderV1
                 "fallback_policy": "block",
             }
         )
-    if order.body_formula_code == "FRB09" and not locked_quote_block:
+    if not single_blueprint and order.body_formula_code == "FRB09" and not locked_quote_block:
         requirements.append(
             {
                 "requirement_id": "formula:labor_aux_breakdown",
@@ -966,7 +990,7 @@ def standardize_evidence_materials(
                             "source_id": str(item.get("source_id") or item_id),
                             "source_version": str(item.get("source_version") or "unknown"),
                             "source_hash": str(item.get("source_hash") or _canonical_hash(item.get("value"))),
-                            "locator": metadata.get("locator"),
+                            "locator": metadata.get("locator") or metadata.get("source_path"),
                         },
                         "governance": {
                             "review_status": "approved",
@@ -2043,6 +2067,9 @@ def freeze_production_pack(
         if str(entry.get("code") or "").strip()
     }
     optional_title_codes = frozenset(title_lexicon_codes - set(required_title_lexicon_codes(title_formula)))
+    if content_rule_bundle.get("single_blueprint"):
+        constraints = deepcopy(constraints)
+        constraints["body"] = {}
     selection = select_formula_lexicon_terms(
         constraints,
         optional_title_codes=optional_title_codes,
@@ -2075,6 +2102,19 @@ def freeze_production_pack(
         content_rule_bundle=content_rule_bundle,
         formula_lexicon_bundle=frozen_formula_lexicon_bundle,
     )
+    if content_rule_bundle.get("single_blueprint"):
+        generation_slots = ()
+        expression_policy = {
+            **expression_policy,
+            "minimum_semantic_categories": 0,
+            "required_categories": [],
+            "placement_rule": "",
+            "policy_version": "blueprint-expression-v1",
+            **content_rule_bundle["single_blueprint"].get("expression", {}),
+        }
+        expression_policy["policy_hash"] = _canonical_hash(
+            {k: v for k, v in expression_policy.items() if k != "policy_hash"}
+        )
     payload = {
         "schema_version": 1,
         "task_id": task_id,

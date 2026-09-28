@@ -23,6 +23,7 @@ from yuxi.services.run_queue_service import get_arq_pool
 from yuxi.storage.postgres.models_content import (
     ContentRuleVersion,
     ContentViralArticleVersion,
+    ContentViralFileJob,
     VariableDefinition,
 )
 from yuxi.storage.postgres.models_knowledge import KnowledgeBase, KnowledgeFile
@@ -52,6 +53,12 @@ async def published_variable_codes(db) -> set[str]:
 def reference_card_variable_codes(prepared_json: dict) -> set[str]:
     card = (prepared_json or {}).get("reference_card") or {}
     return {str(code) for slot in card.get("required_slots") or [] for code in slot.get("variable_codes") or [] if code}
+
+
+def asset_has_approved_review(asset: ContentViralArticleVersion) -> bool:
+    prepared = asset.prepared_json or {}
+    review_action = (prepared.get("review") or {}).get("action")
+    return prepared.get("status") == "prepared" and review_action in {"approve", "enable"}
 
 
 async def accessible_asset_kbs(user) -> list[str]:
@@ -177,6 +184,9 @@ async def search_ready_viral_assets(
     allowed_variable_codes = await published_variable_codes(db)
     result = []
     for rank, row in enumerate(rows):
+        if not asset_has_approved_review(row):
+            row.status, row.error_message = "needs_review", "等待运营审核"
+            continue
         if not await check_asset_source(db, row):
             row.status, row.error_message = "invalidated", "原文已更新，请重新准备"
             continue
@@ -331,6 +341,8 @@ async def list_viral_assets(db, user, *, industry_slug=None, ready_only=False, l
             asset.status, asset.error_message = "invalidated", "参考卡契约已升级，请重新准备"
         elif asset.status == "ready" and reference_card_variable_codes(asset.prepared_json) - allowed_variable_codes:
             asset.status, asset.error_message = "invalidated", "参考槽位引用的变量已停用，请重新准备"
+        elif asset.status == "ready" and not asset_has_approved_review(asset):
+            asset.status, asset.error_message = "needs_review", "等待运营审核"
     await db.commit()
     return {"items": [asset_dict(asset) for asset in assets if not ready_only or asset.status == "ready"]}
 
@@ -476,3 +488,27 @@ async def reprepare_viral_assets(db, user, asset_ids: list[str]):
         if asset.status == "pending":
             await enqueue_asset(db, asset)
     return {"items": [asset_dict(asset) for asset in queued]}
+
+
+async def delete_viral_asset(db, user, asset_id: str):
+    asset = await require_asset(db, user, asset_id, for_update=True)
+    if asset.status == "running":
+        raise HTTPException(409, "资产正在准备中，请稍后再删除")
+    if asset.status == "ready":
+        raise HTTPException(409, "已发布资产不能删除")
+    if asset.status not in {"pending", "failed", "needs_review"}:
+        raise HTTPException(409, "只有等待准备、准备失败或待处理资产可以删除")
+
+    jobs = list(
+        (await db.execute(select(ContentViralFileJob).where(ContentViralFileJob.file_id == asset.file_id))).scalars()
+    )
+    for job in jobs:
+        result = dict(job.result_json or {})
+        asset_ids = list(result.get("asset_ids") or [])
+        if asset_id in asset_ids:
+            result["asset_ids"] = [item for item in asset_ids if item != asset_id]
+            job.result_json = result
+
+    await db.delete(asset)
+    await db.commit()
+    return {"success": True, "id": asset_id}

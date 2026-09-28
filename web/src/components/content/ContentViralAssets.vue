@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onMounted, onUnmounted, reactive, ref, toRaw } from 'vue'
 import { message } from 'ant-design-vue'
-import { RefreshCw, Plus, RotateCcw } from 'lucide-vue-next'
+import { RefreshCw, Plus, RotateCcw, Trash2 } from 'lucide-vue-next'
 import { contentApi } from '@/apis/content_api'
 import { databaseApi } from '@/apis/knowledge_api'
 import { useUserStore } from '@/stores/user'
@@ -170,6 +170,17 @@ async function retry(item) {
     await refresh()
   } catch (error) {
     message.error(error.message || '重试失败')
+  }
+}
+async function remove(item) {
+  try {
+    await contentApi.deleteViralAsset(item.id)
+    if (detail.value?.id === item.id) detail.value = null
+    selectedRowKeys.value = selectedRowKeys.value.filter((id) => id !== item.id)
+    message.success('爆款资产已删除')
+    await refresh()
+  } catch (error) {
+    message.error(error.message || '删除爆款资产失败')
   }
 }
 async function review(item, action, reason = '') {
@@ -353,7 +364,17 @@ onUnmounted(() => {
             type="link"
             @click="retry(record)"
             >重试准备</a-button
-          ></template
+          ><a-popconfirm
+            v-if="
+              userStore.isAdmin && ['pending', 'failed', 'needs_review'].includes(record.status)
+            "
+            title="确认删除这条爆款资产？知识库原文件不会被删除。"
+            ok-text="删除"
+            cancel-text="取消"
+            @confirm="remove(record)"
+          >
+            <a-button type="link" danger><Trash2 :size="14" />删除</a-button>
+          </a-popconfirm></template
         ></a-table-column
       >
     </a-table>

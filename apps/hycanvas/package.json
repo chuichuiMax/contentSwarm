@@ -10,6 +10,8 @@
   ],
   "scripts": {
     "gen:theme": "node scripts/gen-theme.mjs",
+    "gen:system-cover-templates": "node scripts/build-system-cover-templates.mjs",
+    "gen:system-cover-templates:check": "node scripts/build-system-cover-templates.mjs --check",
     "i18n:extract": "node scripts/i18n-extract.mjs frontend/src/components frontend/src/pages frontend/src/lib frontend/src/store",
     "i18n:coverage": "node scripts/i18n-coverage.mjs",
     "gen:theme:check": "node scripts/gen-theme.mjs --check",

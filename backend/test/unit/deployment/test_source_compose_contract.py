@@ -5,10 +5,25 @@ import yaml
 
 ROOT = Path(__file__).parents[4]
 COMPOSE_FILE = ROOT / "docker-compose.source.yml"
+PROD_COMPOSE_FILE = ROOT / "docker-compose.prod.yml"
+NGINX_DEFAULT_CONF = ROOT / "docker/nginx/default.conf"
 
 
 def load_compose() -> dict:
     return yaml.safe_load(COMPOSE_FILE.read_text(encoding="utf-8"))
+
+
+def test_runtime_services_receive_minio_credentials():
+    expected = {
+        "MINIO_ACCESS_KEY": "${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY must be set}",
+        "MINIO_SECRET_KEY": "${MINIO_SECRET_KEY:?MINIO_SECRET_KEY must be set}",
+    }
+
+    for compose_file in (COMPOSE_FILE, PROD_COMPOSE_FILE):
+        compose = yaml.safe_load(compose_file.read_text(encoding="utf-8"))
+        for service_name in ("api", "worker"):
+            environment = compose["services"][service_name]["environment"]
+            assert expected.items() <= environment.items(), f"{compose_file.name}:{service_name}"
 
 
 def test_business_services_use_prebuilt_images_without_compose_builds():
@@ -79,7 +94,7 @@ def test_external_config_and_data_roots_are_used():
     compose = load_compose()
 
     for name in ("api", "worker", "xhs-browser-gateway", "mineru-api"):
-        assert compose["services"][name]["env_file"] == ["${CONFIG_ROOT:?CONFIG_ROOT must be set}/.env.prod"]
+        assert compose["services"][name]["env_file"] == ["${CONFIG_ROOT:?CONFIG_ROOT must be set}/.env.config"]
 
     data_services = ("api", "worker", "xhs-browser-gateway", "sandbox-provisioner", "hycanvas-db", "hycanvas-app")
     data_services += ("graph", "etcd", "minio", "milvus", "postgres", "redis", "paddlex")
@@ -116,3 +131,9 @@ def test_source_deployment_docs_cover_operational_workflows():
         "docker compose",
     ):
         assert required in content
+
+
+def test_nginx_accepts_30_mb_request_bodies():
+    content = NGINX_DEFAULT_CONF.read_text(encoding="utf-8")
+
+    assert "client_max_body_size 30M;" in content

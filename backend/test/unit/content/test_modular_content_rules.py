@@ -227,7 +227,7 @@ def test_other_required_dimensions_still_reject_warning(code):
     }
     context = ContractDomainContext(required_modular_review_codes=frozenset({code}))
 
-    with pytest.raises(ContractDomainValidationError, match="不以 warning 放行"):
+    with pytest.raises(ContractDomainValidationError, match="事实及其他必选项必须明确 passed 或 blocked"):
         validate_content_node_result("ContentReviewResultV1", payload, context)
 
 

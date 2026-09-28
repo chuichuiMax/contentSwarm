@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-import os
 from typing import Literal
 
 import httpx
 
 # 先加载接入契约，保持与现有当家服务一致的 content 包初始化顺序。
 from yuxi.services.dangjia_service import EXTERNAL_SOURCE
+
+from yuxi import config
 from yuxi.repositories.content_cover_repository import ContentCoverRepository
 from yuxi.repositories.content_repository import ContentRepository
 from yuxi.storage.minio.client import get_minio_client
@@ -120,8 +121,9 @@ async def notify_dangjia_content_result(
             form_values = (task.brief_json or {}).get("form_values") or {}
             if form_values.get("external_source") != EXTERNAL_SOURCE:
                 return
-            base_url = os.getenv("DANGJIA_CALLBACK_BASE_URL", "").strip()
-            api_key = os.getenv("DANGJIA_CALLBACK_API_KEY", "").strip()
+            callback_settings = config.resolve_dangjia_callback_settings()
+            base_url = callback_settings["dangjia_callback_base_url"]
+            api_key = callback_settings["dangjia_callback_api_key"]
             if not base_url or not api_key:
                 failure_reason = "callback_config_missing"
                 raise RuntimeError("Dangjia callback configuration is missing")
@@ -160,7 +162,7 @@ async def notify_dangjia_content_result(
                 task_status=task.status,
             )
         else:
-            media_base_url = os.getenv("DANGJIA_MEDIA_PUBLIC_BASE_URL", "").strip()
+            media_base_url = callback_settings["dangjia_media_public_base_url"]
             if not media_base_url:
                 failure_reason = "media_base_url_missing"
                 raise RuntimeError("Dangjia media public base URL is missing")
