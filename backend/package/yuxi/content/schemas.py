@@ -43,6 +43,7 @@ class ContentTaskBatchDelete(BaseModel):
 class ContentVisualMaterialSelection(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    cover_mode: Literal["builtin", "ai"] | None = None
     photo_composition: PhotoComposition | None = None
     image_item_id: str | None = Field(default=None, min_length=1, max_length=64)
     poster_template_id: str | None = Field(default=None, min_length=1, max_length=64)

@@ -144,7 +144,7 @@ class LockedBlockPromptV1(StrictContract):
 
 
 class GenerationProductionPackViewV1(StrictContract):
-    """冻结生产包的模型安全视图；不含原文、来源 Hash 和审计冻结标识。"""
+    """冻结生产包的写作视图；保留参考原文，锁定报价原文由程序组装。"""
 
     schema_version: Literal[1] = 1
     production_order: dict[str, Any]
@@ -564,6 +564,7 @@ class SemanticReviewInputV1(StrictContract):
 class PlanVisualsInputV1(StrictContract):
     selected_title: dict[str, Any] = Field(min_length=1)
     content_draft: dict[str, Any] = Field(min_length=1)
+    body_writing_mode: str | None = None
     strategy_snapshot: StrategySnapshotV1 | StrategySnapshotV2
     evidence_bundle: dict[str, Any] = Field(min_length=1)
     media_evidence_items: list[dict[str, Any]]
@@ -607,6 +608,7 @@ class SubmitCoverJobInputV1(StrictContract):
 class VisualReviewInputV1(StrictContract):
     selected_title: dict[str, Any] = Field(min_length=1)
     content_draft: dict[str, Any] = Field(min_length=1)
+    body_writing_mode: str | None = None
     visual_plan: dict[str, Any] = Field(min_length=1)
     cover_job: dict[str, Any] = Field(min_length=1)
     cover_assets: list[dict[str, Any]] = Field(min_length=1)
@@ -1129,6 +1131,7 @@ class ContractDomainContext:
     body_formula_pool: frozenset[str] = frozenset()
     locked_title_formula_code: str | None = None
     locked_body_formula_code: str | None = None
+    body_writing_mode: str | None = None
     locked_body_formula_sections: tuple[str, ...] = ()
     locked_body_calling_section_ids: tuple[str, ...] = ()
     allowed_body_variant_keys: frozenset[str] = frozenset()
@@ -1389,6 +1392,9 @@ def _validate_outline_calling_contract(
     *,
     field_prefix: str = "",
 ) -> None:
+    if context.body_writing_mode == "reference_rewrite":
+        return
+
     def field_path(name: str) -> str:
         return f"{field_prefix}.{name}" if field_prefix else name
 
@@ -2562,8 +2568,15 @@ def build_content_result_tool(collector: ContentNodeResultCollector) -> Structur
                 fact["id"] for fact in view["facts"] if usage in fact["allowed_usage"]
             ]
         refs = list(view["reference"]["blocks"])
-        args_schema["$defs"]["BlueprintBlockV1"]["properties"]["blueprint_refs"]["items"]["enum"] = refs
-        args_schema["$defs"]["BlueprintOmissionV1"]["properties"]["ref"]["enum"] = refs
+        if refs:
+            args_schema["$defs"]["BlueprintBlockV1"]["properties"]["blueprint_refs"]["items"]["enum"] = refs
+            args_schema["$defs"]["BlueprintOmissionV1"]["properties"]["ref"]["enum"] = refs
+        else:
+            args_schema["$defs"]["BlueprintBlockV1"]["properties"]["blueprint_refs"].update(
+                maxItems=0, description="留空；本次直接参考原文，无需蓝图对照"
+            )
+            args_schema["properties"]["omissions"]["maxItems"] = 0
+            args_schema["properties"].pop("writing_design", None)
 
     elif (
         collector.domain_context.single_blueprint_input

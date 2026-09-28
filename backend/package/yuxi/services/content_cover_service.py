@@ -1596,6 +1596,7 @@ async def _content_prompt(
     prompt: str,
     *,
     allow_empty: bool = False,
+    include_content_context: bool = True,
 ) -> tuple[str, ContentArtifact | None, str]:
     artifact = await _resolve_artifact(db, user, task_id)
     sections = [prompt.strip()] if prompt.strip() else []
@@ -1603,14 +1604,14 @@ async def _content_prompt(
     if task_id:
         task = await ContentRepository(db).get_task_for_user(task_id, user)
         linked_title = _linked_content_title(artifact, task)
-        if task and artifact:
+        if include_content_context and task and artifact:
             sections.append(
                 "根据以下内容资产生成小红书风格封面：\n"
                 f"标题：{linked_title}\n"
                 f"正文摘要：{artifact.body.strip()[:1500]}\n"
                 f"话题：{'、'.join(artifact.topics or [])}"
             )
-        elif task:
+        elif include_content_context and task:
             sections.append(f"根据内容任务《{linked_title}》生成小红书风格封面。")
     if not sections:
         if not allow_empty:
@@ -1843,6 +1844,7 @@ async def create_cover_generate_job(db: AsyncSession, user: User, payload: Cover
         payload.content_task_id,
         payload.prompt,
         allow_empty=template_replicate,
+        include_content_context=not payload.render_copy_with_image2,
     )
     title = payload.title.strip() or linked_title[:60]
     image2_copy = payload.render_copy_with_image2

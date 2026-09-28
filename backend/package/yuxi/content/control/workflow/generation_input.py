@@ -36,8 +36,10 @@ def _project_frozen_writing_context(projected: dict) -> None:
     strategy.pop("snapshot_hash", None)
     strategy.pop("planner_version", None)
     strategy.pop("input_snapshot_hash", None)
-    # 参考蓝图与选择依据已经冻结在 style_reference Evidence 中。
-    strategy.pop("reference_snapshot", None)
+    # 原文用于仿写和审核，不混入事实 Evidence；仅蓝图副本可以去重。
+    reference = strategy.pop("reference_snapshot", None) or {}
+    if reference.get("body"):
+        strategy["reference_snapshot"] = {key: reference[key] for key in ("id", "title", "body") if key in reference}
     body_formula = strategy["body_formula"]
     # 锁定快照为了审计在三个位置保存同一方向蓝图；模型只需顶层一份。
     if strategy.get("direction_blueprint") is not None:
@@ -160,6 +162,9 @@ def project_locked_quote_safe_input(payload: dict) -> dict | None:
 
 
 def _redact_composed_locked_quote(projected: dict) -> None:
+    # 原文仿写保留模型报价排版，不经过程序锁定块合成。
+    if projected.get("body_writing_mode") == "raw_reference_text":
+        return
     quote_items = [
         item
         for item in (projected.get("evidence_bundle") or {}).get("items") or []

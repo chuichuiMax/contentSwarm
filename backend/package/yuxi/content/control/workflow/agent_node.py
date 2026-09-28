@@ -424,6 +424,9 @@ class AgentNodeHandler:
                 max_chars = constraints.get("maxChars")
                 if isinstance(max_chars, int) and max_chars > 0:
                     limits[role] = min(limits.get(role, max_chars), max_chars)
+            if visual_material.get("cover_mode") == "ai":
+                limits["title"] = min(limits.get("title", 60), 60)
+                limits["subtitle"] = min(limits.get("subtitle", 120), 120)
             locked_values["visual_text_max_chars"] = limits
             locked_values["allowed_visual_template_fields"] = allowed_template_fields
             locked_values["decorative_visual_template_fields"] = decorative_template_fields
@@ -508,6 +511,11 @@ class AgentNodeHandler:
                             lexicon_terms[scope][code] = terms
             domain_context = replace(
                 domain_context,
+                body_writing_mode=(
+                    ((production_pack.get("content_rule_bundle") or {}).get("runtime_rules") or {})
+                    .get("viral-body-author", {})
+                    .get("writing_mode")
+                ),
                 allowed_title_lexicon_terms=lexicon_terms["title"],
                 allowed_body_lexicon_terms=lexicon_terms["body"],
                 locked_title_lexicon_terms=locked_lexicon_terms["title"],
@@ -538,6 +546,7 @@ class AgentNodeHandler:
                 "production_pack": state["production_pack"],
                 "evidence_bundle": evidence_bundle,
                 "content_brief": state["content_brief"],
+                "raw_business_json": (state.get("runtime_config_snapshot") or {}).get("raw_business_json"),
                 "required_review_codes": list(required_review_codes(state)),
             }
             domain_context = replace(domain_context, single_blueprint_input=blueprint_input)

@@ -309,7 +309,7 @@ def test_content_builtin_skills_use_chinese_display_names_and_stable_slugs():
         "viral-content-reviewer": "爆款仿写审核",
         "viral-author-core": "爆款仿写编排",
         "viral-title-author": "爆款标题创作",
-        "viral-body-author": "爆款正文创作",
+        "viral-body-author": "爆款正文仿写",
         "viral-persona-author": "人设表达",
         "viral-natural-expression": "自然口语与去机械化",
         "viral-layout-expression": "小红书格式化表达",

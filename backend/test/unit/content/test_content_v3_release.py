@@ -206,7 +206,15 @@ async def test_v34_brief_compiles_without_visual_material(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_v37_brief_rejects_hycanvas_template_without_image(monkeypatch):
+@pytest.mark.parametrize(
+    "visual_material",
+    [
+        {"hycanvas_template_id": "xiaohongshu-home-renovation"},
+        {"cover_mode": "ai"},
+    ],
+    ids=["builtin-template", "ai-cover"],
+)
+async def test_v37_brief_rejects_cover_mode_without_image(monkeypatch, visual_material):
     task = SimpleNamespace(
         id="task-v34-template-only",
         workflow_version_id=PLATFORM_WORKFLOW_V3_ID,
@@ -255,13 +263,89 @@ async def test_v37_brief_rejects_hycanvas_template_without_image(monkeypatch):
             task.id,
             ContentBriefPayload(
                 form_values={"brand_name": "测试品牌"},
-                visual_material={"hycanvas_template_id": "xiaohongshu-home-renovation"},
+                visual_material=visual_material,
             ),
             compile_now=True,
         )
 
     assert exc_info.value.status_code == 422
     assert exc_info.value.detail["error"]["code"] == "CONTENT_IMAGE_MATERIAL_REQUIRED"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("visual_material", "expected_code"),
+    [
+        (
+            {
+                "cover_mode": "ai",
+                "image_item_id": "image-1",
+                "hycanvas_template_id": "xiaohongshu-home-renovation",
+            },
+            "CONTENT_AI_COVER_TEMPLATE_CONFLICT",
+        ),
+        (
+            {
+                "cover_mode": "ai",
+                "image_item_id": "image-1",
+                "photo_composition": {
+                    "layout_id": "grid-2",
+                    "slots": [
+                        {"image_item_id": "image-1"},
+                        {"image_item_id": "image-2"},
+                    ],
+                },
+            },
+            "CONTENT_AI_COVER_COMPOSITION_UNSUPPORTED",
+        ),
+    ],
+    ids=["template-overlay", "photo-composition"],
+)
+async def test_v37_ai_cover_rejects_template_or_composition(monkeypatch, visual_material, expected_code):
+    task = SimpleNamespace(
+        id="task-v34-ai-cover-conflict",
+        workflow_version_id=PLATFORM_WORKFLOW_V3_ID,
+        industry_template_version_id="industry-decoration-v3",
+        current_stage="brief",
+        selected_image_item_id=None,
+        selected_poster_template_id=None,
+        runtime_config_snapshot_json={"schema_version": 3, "creation_mode": "viral_rewrite"},
+        strategy_json={},
+        brief_json={},
+    )
+
+    class FakeRepo:
+        def __init__(self, db):
+            del db
+
+        async def get_task_for_user(self, task_id, user, for_update=False):
+            del user, for_update
+            return task if task_id == task.id else None
+
+        async def get_template(self, template_id):
+            return SimpleNamespace(id=template_id)
+
+    monkeypatch.setattr(content_service, "ContentRepository", FakeRepo)
+    monkeypatch.setattr(
+        content_service,
+        "compile_content_brief",
+        lambda **kwargs: ({"form_values": kwargs["brief"].form_values}, []),
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await content_service.save_content_brief(
+            SimpleNamespace(),
+            SimpleNamespace(uid="user-1"),
+            task.id,
+            ContentBriefPayload(
+                form_values={"brand_name": "测试品牌"},
+                visual_material=visual_material,
+            ),
+            compile_now=True,
+        )
+
+    assert exc_info.value.status_code == 422
+    assert exc_info.value.detail["error"]["code"] == expected_code
 
 
 @pytest.mark.asyncio

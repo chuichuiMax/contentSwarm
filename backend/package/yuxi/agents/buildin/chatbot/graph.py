@@ -119,6 +119,21 @@ class ChatbotAgent(BaseAgent):
 
         # 使用 create_agent 创建智能体
         model_spec = resolve_chat_model_spec(context.model)
+        if getattr(context, "_content_plain_text", False):
+            return create_agent(
+                model=load_chat_model(
+                    fully_specified_name=model_spec,
+                    reasoning_effort=context.reasoning_effort,
+                    max_retries=0,
+                    streaming=True,
+                ),
+                tools=[],
+                system_prompt=None,
+                middleware=[ModelCallTimeoutMiddleware(context.model_call_timeout_seconds), TokenUsageMiddleware()],
+                state_schema=ChatBotState,
+                context_schema=self.context_schema,
+                checkpointer=await self._get_checkpointer(),
+            )
         tools = await resolve_configured_runtime_tools(context)
         result_collector = getattr(context, "_content_node_result_collector", None)
         if result_collector is not None:

@@ -13,6 +13,7 @@ from sqlalchemy import select
 
 from yuxi.agents.toolkits.registry import tool
 from yuxi.content.execution_trace import build_execution_preview
+from yuxi.content_cover.ai_cover_prompt import AI_COVER_PROMPT
 from yuxi.content_cover.schemas import CoverComposeCreate, CoverGenerateCreate, PosterGenerateCreate
 from yuxi.content.validators import normalize_manual_evidence, validate_content
 from yuxi.repositories.content_repository import ContentRepository
@@ -636,6 +637,34 @@ async def create_content_cover_job(
                     "visual_plan_hash": plan_hash,
                     "workflow_resume": workflow_resume,
                 },
+            )
+        elif visual_material.get("cover_mode") == "ai":
+            if not locked_image_asset_id:
+                raise ValueError("AI 封面创作需要一张图库背景图")
+            if len(text) < 3 or any(not str(value).strip() for value in text[:3]):
+                raise ValueError("AI 封面需要封面 Agent 提供标题、副标题和标签")
+            result = await create_cover_generate_job(
+                db,
+                user,
+                CoverGenerateCreate(
+                    mode="image_to_image",
+                    content_task_id=task_id,
+                    source_asset_ids=[locked_image_asset_id],
+                    title=text[0],
+                    subtitle=text[1],
+                    tags=[str(value).strip() for value in text[2:] if str(value).strip()],
+                    render_copy_with_image2=True,
+                    prompt=AI_COVER_PROMPT,
+                    size="1080x1440",
+                    n=1,
+                    parameters={
+                        "quality": "high",
+                        "output_format": "png",
+                        "visual_plan_hash": plan_hash,
+                        "workflow_resume": workflow_resume,
+                    },
+                    idempotency_key=idempotency_key,
+                ),
             )
         elif featured_cover_template_id:
             from yuxi.services.content_cover_service import (

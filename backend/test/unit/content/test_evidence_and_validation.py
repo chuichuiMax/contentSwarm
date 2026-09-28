@@ -205,3 +205,18 @@ def test_persona_numeric_fields_supply_only_their_declared_units():
     assert unsupported_number_tokens("5万元报价，10天完工", evidence) == ["10天", "5万元"]
     evidence["items"][0]["source_type"] = "knowledge_base"
     assert unsupported_number_tokens("做工长5年", evidence) == ["5年"]
+
+
+def test_quote_currency_shorthand_allows_yuan_without_allowing_new_amounts_or_units():
+    evidence = {
+        "items": [
+            {
+                "variable_codes": ["quote_block"],
+                "source_type": "business_record",
+                "value": {"original_content": "拆卫生间（4㎡内）：1000/项；拆地砖：18/㎡；拆厨房（5㎡内）：1400/项"},
+            }
+        ]
+    }
+    assert unsupported_number_tokens("拆卫生间1000元/项，拆地砖18元/㎡，拆厨房1400元/项", evidence) == []
+    assert unsupported_number_tokens("拆卫生间1100元/项，18天", evidence) == ["1100元", "18天"]
+    assert "4元" not in evidence_number_tokens(evidence)

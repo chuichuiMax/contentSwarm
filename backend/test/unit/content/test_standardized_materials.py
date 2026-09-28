@@ -1210,7 +1210,12 @@ def test_frozen_production_pack_hash_is_stable_and_covers_materials():
         },
         "evidence_bundle": {"id": "bundle-1", "version": 2, "status": "frozen", "bundle_hash": "e" * 64},
         "formula_lexicon_bundle": {"bundle_hash": "l" * 64},
-        "reference_snapshot": {"id": "asset-1", "source_hash": "r" * 64},
+        "reference_snapshot": {
+            "id": "asset-1",
+            "source_hash": "r" * 64,
+            "title": "参考文章标题",
+            "body": "参考开头。\n✔ 原文中的报价仅供写法参考\n这是完整的报价后叙述和结尾。",
+        },
         "expression_guidance": None,
         "writing_request": "写一篇水电报价内容",
         "channel_profile": {"code": "xiaohongshu"},
@@ -1253,6 +1258,7 @@ def test_frozen_production_pack_hash_is_stable_and_covers_materials():
         }
     )
     assert set(model_view) == {"production_pack", "lexicon_constraints"}
+    assert model_view["production_pack"]["reference_snapshot"] == inputs["reference_snapshot"]
     assert model_view["lexicon_constraints"] == {
         "schema_version": 2,
         "title": {},

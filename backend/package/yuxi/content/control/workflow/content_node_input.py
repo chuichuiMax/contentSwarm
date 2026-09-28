@@ -35,6 +35,11 @@ class ContentNodeInputAssembler:
             )
         raw_payload = {field: state[field] for field in required_fields}
         raw_payload.update({field: state.get(field) for field in optional_fields})
+        if contract_name in {"PlanVisualsInputV1", "VisualReviewInputV1"}:
+            production_pack = state.get("production_pack") or {}
+            raw_payload["body_writing_mode"] = (
+                production_pack.get("content_rule_bundle", {}).get("single_blueprint") or {}
+            ).get("writing_mode")
         if contract_name == "SemanticReviewInputV1":
             production_pack = state.get("production_pack") or {}
             material_values = {

@@ -99,7 +99,7 @@ def test_modular_persona_rules_require_three_layer_opening_and_relevant_advantag
     assert rules["version"] == "1.1.0"
     assert rules["runtime_rules"]["opening_layers"] == ["identity", "value", "evidence"]
     assert rules["runtime_rules"]["relevant_advantage_count"] == {"min": 2, "max": 3}
-    assert reviewer.version == "1.4.0"
+    assert reviewer.version == "1.5.0"
     assert "少于 2 项、超过 3 项、机械罗列、不相关或无 Evidence 时阻断" in review_instructions
     assert "不能因标题自然或主题一致就放行缺槽标题" in review_instructions
     assert "不能把“只登记未使用词条”判为通过" in review_instructions

@@ -208,7 +208,12 @@ def test_review_projection_preserves_final_draft_and_reference_facts():
         "strategy_snapshot": {
             "snapshot_hash": "a" * 64,
             "decision": {"reason": "审计留存"},
-            "reference_snapshot": {"reference_blueprint": blueprint},
+            "reference_snapshot": {
+                "id": "reference-1",
+                "title": "参考标题",
+                "body": "参考报价99万元。\n参考原文完整结尾。",
+                "reference_blueprint": blueprint,
+            },
             "direction_blueprint": {"layer_sequence": ["证据"]},
             "body_formula": {"code": "FRB08", "body_calling": {"sections": [{"id": "price"}]}},
         },
@@ -272,6 +277,12 @@ def test_review_projection_preserves_final_draft_and_reference_facts():
     assert view["content_brief"]["form_values"] == {"quote_type": "项目硬装预算"}
     assert view["evidence_bundle"]["items"][0]["value"] == "预算18万元"
     assert view["evidence_bundle"]["items"][1]["metadata"]["reference_blueprint"] == blueprint
+    assert view["strategy_snapshot"]["reference_snapshot"] == {
+        "id": "reference-1",
+        "title": "参考标题",
+        "body": "参考报价99万元。\n参考原文完整结尾。",
+    }
+    assert "99万元" not in str(view["evidence_bundle"])
     assert "snapshot_hash" not in view["strategy_snapshot"]
     assert "candidate_comparison" not in view["evidence_bundle"]["items"][1]["metadata"]["selection_basis"]
     assert view["runtime_config_snapshot"]["content_rule_bundle"]["bundle_hash"] == "rules"

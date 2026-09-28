@@ -11,6 +11,7 @@ from typing import Any
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from yuxi.content.model.raw_reference import is_raw_reference
 from yuxi.content.control.errors import ContentApplicationError
 from yuxi.content.control.evidence import EvidenceApplicationService
 from yuxi.content.control.strategy.recommend_v3 import StrategyPreviewActor
@@ -207,6 +208,9 @@ def _required_title_fact_options(
 ) -> dict[str, tuple[str, ...]]:
     """返回可逐字校验的标题槽位；同一槽位内的变量和词库按 one-of 解释。"""
 
+    policy = ((production_pack or {}).get("content_rule_bundle") or {}).get("single_blueprint") or {}
+    if policy.get("writing_mode") in {"direct_reference", "raw_reference_text"}:
+        return {}
     variables = brief_variable_map(brief)
     for material in (production_pack or {}).get("materials") or []:
         value = (material.get("payload") or {}).get("value")
@@ -1016,7 +1020,7 @@ class V3DeterministicNodeHandler:
         creative_hash = hashlib.sha256(
             json.dumps(creative_draft, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
         ).hexdigest()
-        if locked_quote is None:
+        if locked_quote is None or is_raw_reference(production_pack):
             return {
                 "creative_content_draft": creative_draft,
                 "content_draft": creative_draft,
@@ -1097,7 +1101,7 @@ class V3DeterministicNodeHandler:
             locked_quote = extract_locked_quote_block(production_pack)
         except ValueError as exc:
             raise ContentApplicationError("LOCKED_QUOTE_BLOCK_INTEGRITY_FAILED", str(exc), "invalid") from exc
-        if locked_quote is None:
+        if locked_quote is None or is_raw_reference(production_pack):
             return {"composed_content_validation_report": {"status": "not_applicable", "checks": []}}
         draft = state.get("content_draft") or {}
         body = str(draft.get("body") or "")
@@ -2464,8 +2468,14 @@ class V3DeterministicNodeHandler:
             body=draft.get("body", ""),
             topics=draft.get("topics") or [],
             channel_profile=channel_profile,
-            policies=[] if blueprint else policies,
+            policies=[] if blueprint or is_raw_reference(state.get("production_pack") or {}) else policies,
         )
+        if is_raw_reference(state.get("production_pack") or {}):
+            # 直接仿写保留模型全文；渠道容量提示留给发布前处理，不自动改写。
+            for check in result["checks"]:
+                if check["code"].startswith("CHANNEL_"):
+                    check["level"] = "warning"
+            result["status"] = "warning" if result["checks"] else "passed"
         for adapted in block_results:
             result["checks"].extend(adapted["checks"])
             result["replacement_diffs"].extend(adapted["replacement_diffs"])
@@ -2550,6 +2560,29 @@ class V3DeterministicNodeHandler:
                 "body_formula_code": ((state.get("strategy_snapshot") or {}).get("body_formula") or {}).get("code"),
             },
         )
+        if is_raw_reference(production_pack):
+            report["checks"].extend((state.get("channel_result") or {}).get("checks") or [])
+            platform = production_pack["content_rule_bundle"]["runtime_rules"]["viral-platform-expression"]
+            combined = "\n".join([(state.get("selected_title") or {}).get("text", ""), body, *draft.get("topics", [])])
+            for term in (platform.get("forbidden_lexicon") or {}).get("alternatives", {}):
+                if term in combined:
+                    report["checks"].append(
+                        {
+                            "code": "CONTENT_FORBIDDEN_TERM",
+                            "level": "error",
+                            "location": "content",
+                            "message": f"封禁词替换后仍有残留：{term}",
+                            "evidence_ids": [],
+                        }
+                    )
+            report["status"] = (
+                "blocked"
+                if any(c["level"] == "error" for c in report["checks"])
+                else "warning"
+                if report["checks"]
+                else "passed"
+            )
+            return {"validation_report": report}
         locked_quote = extract_locked_quote_block(production_pack) if production_pack else None
         body_minimum = (production_pack.get("content_rule_bundle", {}).get("single_blueprint") or {}).get(
             "creative_min_chars", 200

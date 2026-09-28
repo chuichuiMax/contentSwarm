@@ -503,6 +503,7 @@ async def test_image2_copy_mode_sends_exact_copy_and_keeps_numbers(monkeypatch: 
         return SimpleNamespace(model="gpt-image-2")
 
     async def fake_content_prompt(*_args, **_kwargs):
+        captured["content_prompt_kwargs"] = _kwargs
         return "只设计一种适合当前底图的排版", None, ""
 
     async def fake_create_job(_db, _user, **kwargs):
@@ -537,6 +538,7 @@ async def test_image2_copy_mode_sends_exact_copy_and_keeps_numbers(monkeypatch: 
     assert "标签：鸿扬家装报价" in request["prompt"]
     assert "不得改写、遗漏、增加或改变顺序" in request["prompt"]
     assert "数字" not in request["negative_prompt"]
+    assert captured["content_prompt_kwargs"]["include_content_context"] is False
 
 
 @pytest.mark.parametrize(

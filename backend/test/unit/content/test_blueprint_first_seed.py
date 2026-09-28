@@ -17,9 +17,10 @@ from yuxi.content.v3.joint_workflow import (
     WORKFLOW_MODULAR_AUTHOR,
     WORKFLOW_VIRAL_AUTHOR,
     WORKFLOW_STANDARDIZED_FACTORY,
+    WORKFLOW_SINGLE_BLUEPRINT,
 )
 from yuxi.content.v3.seed import PLATFORM_RULE_V3_ID, _activate_v3_seed_data
-from yuxi.content.v3.modular_rules import STANDARDIZED_FACTORY_WORKFLOW_V1_ID
+from yuxi.content.v3.modular_rules import SINGLE_BLUEPRINT_WORKFLOW_ID, STANDARDIZED_FACTORY_WORKFLOW_V1_ID
 from yuxi.content.v3.workflow import PLATFORM_WORKFLOW_V3_ID
 from yuxi.storage.postgres.models_content import (
     ContentRuleVersion,
@@ -67,6 +68,12 @@ class SeedDatabase:
                 definition_hash=workflow_definition_hash(WORKFLOW_STANDARDIZED_FACTORY),
             ),
         }
+        self.rows[ContentWorkflowVersion, SINGLE_BLUEPRINT_WORKFLOW_ID] = SimpleNamespace(
+            status="draft",
+            published_at=None,
+            definition_json=deepcopy(WORKFLOW_SINGLE_BLUEPRINT),
+            definition_hash=workflow_definition_hash(WORKFLOW_SINGLE_BLUEPRINT),
+        )
         if previous_id:
             for slug in INDUSTRY_CONFIG:
                 self.rows[IndustryTemplateVersion, f"industry-{slug}-v3"] = SimpleNamespace(
@@ -91,15 +98,15 @@ class SeedDatabase:
 @pytest.mark.parametrize(
     ("previous_id", "created_by", "expected_id"),
     [
-        (None, "system", PLATFORM_WORKFLOW_STANDARDIZED_FACTORY_ID),
-        (PLATFORM_WORKFLOW_V3_ID, "system", PLATFORM_WORKFLOW_STANDARDIZED_FACTORY_ID),
-        (PLATFORM_WORKFLOW_PRICE_RECOVERY_ID, "system", PLATFORM_WORKFLOW_STANDARDIZED_FACTORY_ID),
-        (PLATFORM_WORKFLOW_VIRAL_AUTHOR_ID, "system", PLATFORM_WORKFLOW_STANDARDIZED_FACTORY_ID),
-        (PLATFORM_WORKFLOW_MODULAR_AUTHOR_ID, "system", PLATFORM_WORKFLOW_STANDARDIZED_FACTORY_ID),
-        (PLATFORM_WORKFLOW_EXPRESSION_GUIDANCE_ID, "system", PLATFORM_WORKFLOW_STANDARDIZED_FACTORY_ID),
-        (PLATFORM_WORKFLOW_DETERMINISTIC_PLAN_ID, "system", PLATFORM_WORKFLOW_STANDARDIZED_FACTORY_ID),
-        (STANDARDIZED_FACTORY_WORKFLOW_V1_ID, "system", PLATFORM_WORKFLOW_STANDARDIZED_FACTORY_ID),
-        (PLATFORM_WORKFLOW_STANDARDIZED_FACTORY_ID, "system", PLATFORM_WORKFLOW_STANDARDIZED_FACTORY_ID),
+        (None, "system", SINGLE_BLUEPRINT_WORKFLOW_ID),
+        (PLATFORM_WORKFLOW_V3_ID, "system", SINGLE_BLUEPRINT_WORKFLOW_ID),
+        (PLATFORM_WORKFLOW_PRICE_RECOVERY_ID, "system", SINGLE_BLUEPRINT_WORKFLOW_ID),
+        (PLATFORM_WORKFLOW_VIRAL_AUTHOR_ID, "system", SINGLE_BLUEPRINT_WORKFLOW_ID),
+        (PLATFORM_WORKFLOW_MODULAR_AUTHOR_ID, "system", SINGLE_BLUEPRINT_WORKFLOW_ID),
+        (PLATFORM_WORKFLOW_EXPRESSION_GUIDANCE_ID, "system", SINGLE_BLUEPRINT_WORKFLOW_ID),
+        (PLATFORM_WORKFLOW_DETERMINISTIC_PLAN_ID, "system", SINGLE_BLUEPRINT_WORKFLOW_ID),
+        (STANDARDIZED_FACTORY_WORKFLOW_V1_ID, "system", SINGLE_BLUEPRINT_WORKFLOW_ID),
+        (PLATFORM_WORKFLOW_STANDARDIZED_FACTORY_ID, "system", SINGLE_BLUEPRINT_WORKFLOW_ID),
         ("content-workflow-blueprint-first-v1", "system", "content-workflow-blueprint-first-v1"),
         ("custom-workflow", "system", "custom-workflow"),
         (PLATFORM_WORKFLOW_V3_ID, "admin", PLATFORM_WORKFLOW_V3_ID),

@@ -192,40 +192,6 @@ const hycanvasFields = reactive({})
 const hycanvasCreating = ref(false)
 const hycanvasDesign = ref(null)
 const hycanvasImageFile = ref(null)
-const coverImage2Test = reactive({
-  title: '鸿扬家装-高端家装品牌',
-  subtitle: '290 平的装修细节分析',
-  tags: ['鸿扬家装报价'],
-  prompt: `请在我上传的装修实景图上添加文字，生成一张高端家装内容封面。
-
-【封面文字】
-标题：鸿扬家装-高端家装品牌
-副标题：290 平的装修细节分析
-标签：鸿扬家装报价
-
-所有文字必须准确、完整，不得改写、遗漏或增加其他文案。可以换行，但不能改变文字顺序。
-
-【排版设计】
-本次只设计一种排版，并只输出一张完整封面。请从左对齐、右对齐、居中、上下分区、错位排列、大数字视觉重点等不同构图思路中，随机选择一种适合当前底图的方向。不要每次都套用相同的位置、字号比例或标签样式。
-
-先分析当前图片的留白、主体、明暗和空间透视，再决定文字的位置与层级。标题、副标题和标签需要有明确的大小区别；也可以突出副标题中的“290”，但“290 平的装修细节分析”必须完整可读。排版应有设计感，同时避免遮挡关键家具、灯具和装修细节。
-
-【字体与颜色】
-使用简洁、现代、有品质感的中文字体。根据文字所在区域选择颜色：浅色背景使用深炭灰或深咖色，深色背景使用暖白色。字号根据图片尺寸、文字长度和留白灵活调整，确保缩小到手机封面尺寸后仍清晰可读。背景较复杂时，可以加入轻微的局部渐变增强对比，不使用厚重遮罩或明显描边。
-
-【底图保护】
-仅添加文字及必要的局部明暗调整。保留原图的空间结构、家具、材质、灯光、色彩、拍摄视角和画面比例，不重新生成室内场景，不添加虚构 Logo、水印或额外装饰。
-
-最终输出：一张排版完整、文字准确的封面图片，不输出多方案拼图。`
-})
-const coverImage2TestState = reactive({
-  submitting: false,
-  status: '',
-  progress: 0,
-  error: '',
-  jobId: ''
-})
-const coverImage2TestResultUrl = ref('')
 const studioPageElement = ref(null)
 const followWorkflowOutput = ref(true)
 const accumulatedWorkflowNarrative = ref([])
@@ -245,23 +211,7 @@ let selectedImagePreviewGeneration = 0
 let hycanvasCompositePreviewGeneration = 0
 let posterPreviewGeneration = 0
 let hycanvasTemplateLoadGeneration = 0
-let coverImage2TestGeneration = 0
 let posterTemplateSignature = ''
-
-const coverImage2TestStatusLabel = computed(() => {
-  const labels = {
-    queued: '等待执行',
-    running: '正在处理',
-    submitting: '正在提交 image2',
-    polling: 'image2 正在生成',
-    downloading: '正在获取结果',
-    saving: '正在保存',
-    succeeded: '生成完成',
-    failed: '生成失败',
-    cancelled: '任务已取消'
-  }
-  return labels[coverImage2TestState.status] || coverImage2TestState.status
-})
 
 const materialGalleryMap = computed(
   () => new Map(materialGalleries.value.map((item) => [item.id, item]))
@@ -288,17 +238,6 @@ const activeMaterialGalleryPath = computed(() =>
 const selectedImageGallery = computed(
   () => materialGalleryMap.value.get(selectedImageGalleryId.value) || null
 )
-const selectedImageAssetId = computed(() => {
-  const selectedItem =
-    selectedImageSummary.value?.id === selectedImageItemId.value
-      ? selectedImageSummary.value
-      : galleryImages.value.find((item) => item.id === selectedImageItemId.value)
-  if (selectedItem?.asset_id) return selectedItem.asset_id
-  const savedMaterial = store.task?.brief?.visual_material || {}
-  return savedMaterial.image_item_id === selectedImageItemId.value
-    ? savedMaterial.image_asset_id || ''
-    : ''
-})
 const selectedImageRootGalleryId = computed(
   () => selectedImageGallery.value?.parent_id || selectedImageGallery.value?.id || ''
 )
@@ -321,20 +260,7 @@ const availableContentTestCases = computed(() => {
 const builtinCoverTemplates = computed(() =>
   hycanvasTemplates.value.filter((item) => item.zone !== 'featured')
 )
-const featuredCoverTemplates = computed(() =>
-  hycanvasTemplates.value.filter((item) => item.zone === 'featured')
-)
 const featuredTemplateSelected = computed(() => selectedHyCanvasTemplate.value?.zone === 'featured')
-// 精选封面不参与实例化叠加:右侧面板直接展示参考图(模板自身渲染图),
-// 内置封面保持「封面原图+模板」合成预览。
-const templatePreviewPanelUrl = computed(() =>
-  featuredTemplateSelected.value
-    ? hycanvasTemplateUrls.value[selectedHyCanvasTemplateId.value] || ''
-    : hycanvasCompositePreviewUrl.value
-)
-const templatePreviewPanelLabel = computed(() =>
-  featuredTemplateSelected.value ? '参考图' : '模板叠加效果'
-)
 const hasViralReference = computed(() => hasSelectedViralReference(store.artifact))
 const usesDeterministicPlan = computed(() =>
   [
@@ -543,12 +469,12 @@ const loadHyCanvasTemplates = async () => {
       ])
     )
     const savedVisual = store.task?.brief?.visual_material || {}
+    coverTemplateTab.value =
+      savedVisual.cover_mode === 'ai' || savedVisual.featured_cover_template_id ? 'ai' : 'builtin'
     selectedHyCanvasTemplateId.value =
-      savedVisual.hycanvas_template_id ||
-      savedVisual.featured_cover_template_id ||
-      store.artifact?.hycanvas_design_snapshot?.template_id ||
-      ''
-    coverTemplateTab.value = savedVisual.featured_cover_template_id ? 'featured' : 'builtin'
+      coverTemplateTab.value === 'builtin'
+        ? savedVisual.hycanvas_template_id || store.artifact?.hycanvas_design_snapshot?.template_id || ''
+        : ''
     initializeHyCanvasFields()
   } catch (error) {
     if (error?.response?.data?.detail?.code !== 'hycanvas_not_configured') {
@@ -1333,10 +1259,11 @@ const initializeVisualSelection = () => {
   selectedImageItemId.value = store.task?.selected_image_item_id || saved.image_item_id || ''
   selectedPosterTemplateId.value =
     store.task?.selected_poster_template_id || saved.poster_template_id || ''
+  coverTemplateTab.value =
+    saved.cover_mode === 'ai' || saved.featured_cover_template_id ? 'ai' : 'builtin'
   selectedHyCanvasTemplateId.value =
-    saved.hycanvas_template_id || saved.featured_cover_template_id || ''
-  coverTemplateTab.value = saved.featured_cover_template_id ? 'featured' : 'builtin'
-  photoComposition.value = saved.photo_composition || null
+    coverTemplateTab.value === 'builtin' ? saved.hycanvas_template_id || '' : ''
+  photoComposition.value = coverTemplateTab.value === 'builtin' ? saved.photo_composition || null : null
 }
 
 const loadGalleryImages = async () => {
@@ -2057,6 +1984,11 @@ watch(
 )
 
 watch(selectedHyCanvasTemplateId, initializeHyCanvasFields)
+watch(coverTemplateTab, (mode) => {
+  if (mode !== 'ai') return
+  selectedHyCanvasTemplateId.value = ''
+  photoComposition.value = null
+})
 watch(directionOptions, (options) => {
   if (!options.some((item) => item.code === creation.content_type_code))
     creation.content_type_code = undefined
@@ -2228,90 +2160,6 @@ const openCreationOcr = async () => {
   if (briefLocked.value || (await saveCreationDraft())) ocrModalOpen.value = true
 }
 
-const runCoverImage2Test = async () => {
-  if (!selectedImageItemId.value) {
-    message.warning('请先在上方选择一张图库背景图')
-    return
-  }
-  if (!selectedImageAssetId.value) {
-    message.warning('背景图素材信息尚未加载完成，请稍后重试')
-    return
-  }
-  const title = coverImage2Test.title.trim()
-  const subtitle = coverImage2Test.subtitle.trim()
-  const tags = coverImage2Test.tags.map((item) => String(item).trim()).filter(Boolean)
-  const prompt = coverImage2Test.prompt.trim()
-  if (!title || !subtitle || !tags.length || !prompt) {
-    message.warning('请完整填写测试提示词、标题、副标题和标签')
-    return
-  }
-
-  const generation = ++coverImage2TestGeneration
-  coverImage2TestState.submitting = true
-  coverImage2TestState.status = 'queued'
-  coverImage2TestState.progress = 0
-  coverImage2TestState.error = ''
-  coverImage2TestState.jobId = ''
-  if (coverImage2TestResultUrl.value) {
-    URL.revokeObjectURL(coverImage2TestResultUrl.value)
-    coverImage2TestResultUrl.value = ''
-  }
-
-  try {
-    const requestId =
-      typeof crypto !== 'undefined' && crypto.randomUUID
-        ? crypto.randomUUID()
-        : `cover-test-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
-    const response = await contentApi.generateCover({
-      mode: 'image_to_image',
-      source_asset_ids: [selectedImageAssetId.value],
-      title,
-      subtitle,
-      tags,
-      render_copy_with_image2: true,
-      prompt,
-      size: '1080x1440',
-      n: 1,
-      parameters: { quality: 'high', output_format: 'png' },
-      idempotency_key: requestId
-    })
-    let job = response.job
-    coverImage2TestState.jobId = job.id
-    while (
-      generation === coverImage2TestGeneration &&
-      !['succeeded', 'failed', 'cancelled'].includes(job.status)
-    ) {
-      coverImage2TestState.status = job.status
-      coverImage2TestState.progress = job.progress || 0
-      await new Promise((resolve) => window.setTimeout(resolve, 1500))
-      job = (await contentApi.getCoverJob(job.id)).job
-    }
-    if (generation !== coverImage2TestGeneration) return
-    coverImage2TestState.status = job.status
-    coverImage2TestState.progress = job.progress || 0
-    if (job.status !== 'succeeded') {
-      throw new Error(job.error_message || 'image2 封面测试生成失败')
-    }
-    const resultAsset = job.result_assets?.[0]
-    if (!resultAsset?.id) throw new Error('image2 已完成，但没有返回封面图片')
-    const fileResponse = await contentApi.getCoverAssetFile(resultAsset.id)
-    const url = URL.createObjectURL(await fileResponse.blob())
-    if (generation !== coverImage2TestGeneration) {
-      URL.revokeObjectURL(url)
-      return
-    }
-    coverImage2TestResultUrl.value = url
-    message.success('image2 测试封面已生成')
-  } catch (error) {
-    if (generation !== coverImage2TestGeneration) return
-    coverImage2TestState.status = 'failed'
-    coverImage2TestState.error = error.message || 'image2 封面测试生成失败'
-    message.error(coverImage2TestState.error)
-  } finally {
-    if (generation === coverImage2TestGeneration) coverImage2TestState.submitting = false
-  }
-}
-
 const buildBrief = () => ({
   user_request: String(formValues.user_request || '').trim(),
   content_type_code: studioContentTypeCode.value || creation.content_type_code || undefined,
@@ -2335,17 +2183,15 @@ const buildBrief = () => ({
     mp_content_type_name: selectedStudioContentType.value?.name || ''
   },
   visual_material:
-    selectedImageItemId.value || selectedHyCanvasTemplateId.value
+    selectedImageItemId.value || selectedHyCanvasTemplateId.value || coverTemplateTab.value === 'ai'
       ? {
+          cover_mode: coverTemplateTab.value,
           image_item_id: selectedImageItemId.value || null,
           poster_template_id: null,
-          hycanvas_template_id: featuredTemplateSelected.value
-            ? null
-            : selectedHyCanvasTemplateId.value || null,
-          featured_cover_template_id: featuredTemplateSelected.value
-            ? selectedHyCanvasTemplateId.value
-            : null,
-          photo_composition: photoComposition.value
+          hycanvas_template_id:
+            coverTemplateTab.value === 'builtin' ? selectedHyCanvasTemplateId.value || null : null,
+          featured_cover_template_id: null,
+          photo_composition: coverTemplateTab.value === 'builtin' ? photoComposition.value : null
         }
       : null
 })
@@ -2374,6 +2220,7 @@ watch(
   { deep: true }
 )
 watch([selectedImageItemId, selectedHyCanvasTemplateId, photoComposition], scheduleBriefSave, {
+watch([selectedImageItemId, selectedHyCanvasTemplateId, photoComposition, coverTemplateTab], scheduleBriefSave, {
   deep: true
 })
 onBeforeUnmount(() => {
@@ -2396,7 +2243,6 @@ onBeforeUnmount(() => {
   hycanvasCompositePreviewGeneration += 1
   posterPreviewGeneration += 1
   hycanvasTemplateLoadGeneration += 1
-  coverImage2TestGeneration += 1
   if (coverUrl.value) URL.revokeObjectURL(coverUrl.value)
   Object.values(resultVersionCoverUrls.value).filter(Boolean).forEach(URL.revokeObjectURL)
   Object.values(resultGallerySourceUrls.value).filter(Boolean).forEach(URL.revokeObjectURL)
@@ -2405,7 +2251,6 @@ onBeforeUnmount(() => {
   revokePreviewUrls(materialImageUrls.value)
   if (selectedImagePreviewUrl.value) URL.revokeObjectURL(selectedImagePreviewUrl.value)
   if (hycanvasCompositePreviewUrl.value) URL.revokeObjectURL(hycanvasCompositePreviewUrl.value)
-  if (coverImage2TestResultUrl.value) URL.revokeObjectURL(coverImage2TestResultUrl.value)
   revokePreviewUrls(posterTemplateUrls.value)
   Object.values(hycanvasTemplateUrls.value).forEach((url) => {
     if (url?.startsWith('blob:')) URL.revokeObjectURL(url)
@@ -2456,8 +2301,12 @@ const submitCreation = async () => {
     message.warning('请填满图片组合的所有位置')
     return
   }
-  if (!selectedHyCanvasTemplateId.value) {
-    message.warning('请选择一个封面模板（内置封面或精选封面）')
+  if (!selectedImageItemId.value) {
+    message.warning('请选择一张图库图片作为封面原图')
+    return
+  }
+  if (coverTemplateTab.value === 'builtin' && !selectedHyCanvasTemplateId.value) {
+    message.warning('请选择一个内置封面模板')
     return
   }
   creationSubmitting.value = true
@@ -3086,13 +2935,18 @@ const returnToContentCreation = async () => {
                   </div>
                   <a-empty v-else description="素材库中还没有图库" />
                   <ContentPhotoComposition
+                    v-if="coverTemplateTab === 'builtin'"
                     v-model="photoComposition"
                     v-model:primary-image-id="selectedImageItemId"
                     :layouts="photoLayouts"
                     @select="selectCompositionImage"
                   />
                   <div v-if="selectedImageItemId" class="selected-gallery-image">
-                    <div class="selected-gallery-preview-grid" aria-label="封面预览">
+                    <div
+                      class="selected-gallery-preview-grid"
+                      :class="{ single: coverTemplateTab === 'ai' }"
+                      aria-label="封面预览"
+                    >
                       <div class="selected-gallery-preview-card">
                         <span class="selected-gallery-preview-media">
                           <LoaderCircle
@@ -3125,35 +2979,29 @@ const returnToContentCreation = async () => {
                         </span>
                         <strong>封面原图</strong>
                       </div>
-                      <div class="selected-gallery-preview-card">
+                      <div v-if="coverTemplateTab === 'builtin'" class="selected-gallery-preview-card">
                         <span class="selected-gallery-preview-media">
                           <LoaderCircle
-                            v-if="!featuredTemplateSelected && hycanvasCompositePreviewLoading"
+                            v-if="hycanvasCompositePreviewLoading"
                             class="spin"
                             :size="18"
                           />
                           <button
-                            v-else-if="templatePreviewPanelUrl"
+                            v-else-if="hycanvasCompositePreviewUrl"
                             type="button"
                             class="selected-gallery-preview-trigger"
-                            :aria-label="`放大查看${templatePreviewPanelLabel}`"
+                            aria-label="放大查看模板叠加效果"
                             @click="
                               openImagePreview(
-                                templatePreviewPanelUrl,
-                                templatePreviewPanelLabel,
-                                featuredTemplateSelected
-                                  ? `${selectedHyCanvasTemplate?.title || '精选封面'}参考图`
-                                  : `${selectedHyCanvasTemplate?.title || '模板'}合成效果`
+                                hycanvasCompositePreviewUrl,
+                                '模板叠加效果',
+                                `${selectedHyCanvasTemplate?.title || '模板'}合成效果`
                               )
                             "
                           >
                             <img
-                              :src="templatePreviewPanelUrl"
-                              :alt="
-                                featuredTemplateSelected
-                                  ? `${selectedHyCanvasTemplate?.title || '精选封面'}参考图`
-                                  : `${selectedHyCanvasTemplate?.title || '模板'}合成效果`
-                              "
+                              :src="hycanvasCompositePreviewUrl"
+                              :alt="`${selectedHyCanvasTemplate?.title || '模板'}合成效果`"
                             />
                             <span class="selected-gallery-preview-zoom" aria-hidden="true">
                               <ZoomIn :size="20" />
@@ -3161,11 +3009,8 @@ const returnToContentCreation = async () => {
                           </button>
                           <LayoutTemplate v-else :size="22" />
                         </span>
-                        <strong>{{ templatePreviewPanelLabel }}</strong>
-                        <small>{{
-                          selectedHyCanvasTemplate?.title ||
-                          (featuredTemplateSelected ? '选择参考图后显示' : '选择模板后生成')
-                        }}</small>
+                        <strong>模板叠加效果</strong>
+                        <small>{{ selectedHyCanvasTemplate?.title || '选择模板后生成' }}</small>
                       </div>
                     </div>
                     <div class="selected-gallery-actions">
@@ -3194,17 +3039,15 @@ const returnToContentCreation = async () => {
 
                 <div class="material-selector-block template-selector-block">
                   <div class="material-selector-title">
-                    <div><LayoutTemplate :size="18" /><strong>封面模板</strong></div>
+                    <div><LayoutTemplate :size="18" /><strong>封面方式</strong></div>
                     <a-radio-group v-model:value="coverTemplateTab" size="small">
                       <a-radio-button value="builtin">内置封面</a-radio-button>
-                      <a-radio-button value="featured">精选封面</a-radio-button>
+                      <a-radio-button value="ai">AI 封面</a-radio-button>
                     </a-radio-group>
                   </div>
-                  <div class="poster-choice-grid">
+                  <div v-if="coverTemplateTab === 'builtin'" class="poster-choice-grid">
                     <button
-                      v-for="item in coverTemplateTab === 'builtin'
-                        ? builtinCoverTemplates
-                        : featuredCoverTemplates"
+                      v-for="item in builtinCoverTemplates"
                       :key="item.id"
                       :ref="(element) => observeHyCanvasPreview(element, item.id)"
                       type="button"
@@ -3234,6 +3077,20 @@ const returnToContentCreation = async () => {
                     v-if="coverTemplateTab === 'builtin' && !builtinCoverTemplates.length"
                     description="HyCanvas 尚未配置或暂无内置封面模板"
                   />
+                  <div v-if="coverTemplateTab === 'ai'" class="ai-cover-mode-note">
+                    <span><WandSparkles :size="20" /></span>
+                    <div>
+                      <strong>使用 image2 智能生成</strong>
+                      <small>
+                        只使用上方选择的封面原图，不叠加模板；创作时由封面 Agent
+                        生成标题、副标题和标签，并自动完成排版。
+                      </small>
+                    </div>
+                  </div>
+                </div>
+              </a-spin>
+            </section>
+          </fieldset>
                   <a-empty
                     v-else-if="coverTemplateTab === 'featured' && !featuredCoverTemplates.length"
                     description="暂无精选封面，请先在 HyCanvas 精选封面专区上传"
@@ -5099,168 +4956,27 @@ const returnToContentCreation = async () => {
   margin-top: 18px;
   border-top: 1px solid var(--gray-150);
 }
-.cover-image2-test {
-  margin-top: 20px;
-  padding: 16px;
-  border: 1px solid var(--gray-150);
-  border-radius: 8px;
-  background: var(--gray-10);
-}
-.cover-image2-test-header,
-.cover-image2-test-header > div,
-.cover-image2-test-actions,
-.cover-image2-test-status {
+.ai-cover-mode-note {
   display: flex;
-  align-items: center;
-}
-.cover-image2-test-header {
-  justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 16px;
-}
-.cover-image2-test-header > div {
+  align-items: flex-start;
   gap: 10px;
-}
-.cover-image2-test-header strong,
-.cover-image2-test-header small {
-  display: block;
-}
-.cover-image2-test-header small {
-  margin-top: 2px;
-  color: var(--color-text-secondary);
-  font-size: 12px;
-}
-.cover-image2-test-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  border-radius: 6px;
-  color: var(--main-700);
-  background: var(--main-30);
-}
-.cover-image2-test-badge {
-  flex-shrink: 0;
-  padding: 3px 8px;
-  border-radius: 999px;
-  color: var(--color-warning-900);
-  background: var(--color-warning-50);
-  font-size: 12px;
-  font-weight: 500;
-}
-.cover-image2-test-layout {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 180px;
-  gap: 16px;
-}
-.cover-image2-test-form,
-.cover-image2-test-prompt,
-.cover-image2-test-copy-fields label {
-  display: flex;
-  flex-direction: column;
-}
-.cover-image2-test-form {
-  gap: 12px;
-  min-width: 0;
-}
-.cover-image2-test-copy-fields {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-}
-.cover-image2-test-copy-fields label,
-.cover-image2-test-prompt {
-  gap: 6px;
-}
-.cover-image2-test-copy-fields label > span,
-.cover-image2-test-prompt > span {
-  color: var(--color-text);
-  font-size: 13px;
-  font-weight: 600;
-}
-.cover-image2-test-copy-fields .cover-image2-test-tags {
-  grid-column: 1 / -1;
-}
-.cover-image2-test-actions {
-  justify-content: space-between;
-  gap: 12px;
-}
-.cover-image2-test-actions > div {
-  min-width: 0;
-}
-.cover-image2-test-actions strong,
-.cover-image2-test-actions span {
-  display: block;
-  font-size: 12px;
-}
-.cover-image2-test-actions span {
-  overflow: hidden;
-  color: var(--color-text-secondary);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.cover-image2-test-actions :deep(.ant-btn) {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-.cover-image2-test-status {
-  justify-content: space-between;
-  gap: 12px;
-  color: var(--color-info-700);
-  font-size: 12px;
-}
-.cover-image2-test-status.error {
-  color: var(--color-error-700);
-}
-.cover-image2-test-result,
-.cover-image2-test-empty {
-  aspect-ratio: 3 / 4;
-  min-height: 240px;
-  border: 1px solid var(--gray-150);
+  padding: 14px;
+  border: 1px solid var(--main-100);
   border-radius: 8px;
-  background: var(--gray-0);
-  overflow: hidden;
+  background: var(--main-10);
 }
-.cover-image2-test-result {
-  position: relative;
-  padding: 0;
-  cursor: pointer;
-}
-.cover-image2-test-result img {
-  width: 100%;
-  height: 100%;
-  display: block;
-  object-fit: cover;
-}
-.cover-image2-test-result span {
-  position: absolute;
-  right: 8px;
-  bottom: 8px;
+.ai-cover-mode-note > span {
   display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 5px 8px;
-  border-radius: 4px;
-  color: var(--gray-0);
-  background: color-mix(in srgb, var(--gray-1000) 78%, transparent);
-  font-size: 12px;
+  color: var(--main-700);
 }
-.cover-image2-test-empty {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  color: var(--color-text-tertiary);
+.ai-cover-mode-note strong,
+.ai-cover-mode-note small {
+  display: block;
 }
-.cover-image2-test-empty strong {
+.ai-cover-mode-note small {
+  margin-top: 3px;
   color: var(--color-text-secondary);
-  font-size: 13px;
-}
-.cover-image2-test-empty span {
-  font-size: 12px;
+  line-height: 1.6;
 }
 .material-selector-title {
   display: flex;
@@ -5399,6 +5115,9 @@ const returnToContentCreation = async () => {
   display: grid;
   grid-template-columns: repeat(2, 128px);
   gap: 12px;
+}
+.selected-gallery-preview-grid.single {
+  grid-template-columns: 128px;
 }
 .selected-gallery-preview-card {
   min-width: 0;
@@ -7071,18 +6790,6 @@ const returnToContentCreation = async () => {
       width: 100%;
       min-width: 0;
     }
-  }
-  .cover-image2-test-layout,
-  .cover-image2-test-copy-fields {
-    grid-template-columns: 1fr;
-  }
-  .cover-image2-test-copy-fields .cover-image2-test-tags {
-    grid-column: auto;
-  }
-  .cover-image2-test-result,
-  .cover-image2-test-empty {
-    width: 180px;
-    justify-self: center;
   }
   .creation-submit-bar {
     gap: 10px;

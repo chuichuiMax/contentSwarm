@@ -1,15 +1,18 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, inject, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
 import { Download, ImagePlus, RefreshCw, Settings, Sparkles, WandSparkles, X } from 'lucide-vue-next'
 import { contentApi } from '@/apis/content_api'
 import PosterBillboardPanel from '@/components/content/PosterBillboardPanel.vue'
 import { useCoverGenerationStore } from '@/stores/coverGeneration'
+import { useUserStore } from '@/stores/user'
 
 const route = useRoute()
 const router = useRouter()
 const store = useCoverGenerationStore()
+const userStore = useUserStore()
+const { openSettingsModal } = inject('settingsModal', {})
 const tab = ref('compose')
 const sourceAssets = ref([])
 const templateAsset = ref(null)
@@ -322,6 +325,10 @@ async function retryJob(job) {
 }
 
 function openImage2Config() {
+  if (userStore.isAdmin && openSettingsModal) {
+    openSettingsModal('base')
+    return
+  }
   image2ConfigForm.baseUrl = store.bootstrap?.image2?.base_url || ''
   image2ConfigForm.apiKey = ''
   image2ConfigForm.model = store.bootstrap?.image2?.model || 'gpt-image-2'
@@ -704,7 +711,7 @@ onBeforeUnmount(() => {
       @ok="saveImage2Config"
     >
       <div class="image2-config-modal">
-        <p>配置保存后对当前账号的所有封面 image2 任务持续生效，环境变量仅作为未配置时的回退。</p>
+        <p>管理员可在“基本设置”中统一维护此配置；当前账号配置会持续用于所有封面 image2 任务。</p>
         <label>
           <span>中转站 Base URL</span>
           <input v-model.trim="image2ConfigForm.baseUrl" type="url" maxlength="500" autocomplete="off" placeholder="例如：https://relay.example.com/v1" :disabled="!canManageImage2" />

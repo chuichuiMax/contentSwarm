@@ -140,6 +140,8 @@ def test_compile_user_request_keeps_content_type_and_business_variables():
     assert compiled["form_values"]["mp_content_type_name"] == "工艺施工展示"
     assert compiled["business_variables"]["目标人群"] == "刚需改善"
     assert compiled["business_variables"]["mp_content_type_id"] == "NRLX0001"
+    assert compiled["form_values"] == {"user_request": "最新需求：只生成一篇杭州小户型收纳改造笔记"}
+    assert compiled["business_variables"] == {"user_request": "最新需求：只生成一篇杭州小户型收纳改造笔记"}
     assert compiled["brand"] == {}
     assert compiled["audience"] == []
 
@@ -589,6 +591,7 @@ async def test_content_studio_quote_snapshot_survives_reload_and_clears_after_ed
         compile_now=False,
     )
 
+    assert task.runtime_config_snapshot_json["raw_business_json"] == json.loads(raw_request)
     trusted = task.runtime_config_snapshot_json["trusted_external_material_snapshot"]
     sanitized = task.brief_json["user_request"]
     assert trusted["quote_block"]["original_content"] == "拆除：1000元；水电：2400元"
@@ -602,6 +605,7 @@ async def test_content_studio_quote_snapshot_survives_reload_and_clears_after_ed
         compile_now=False,
     )
 
+    assert task.runtime_config_snapshot_json["raw_business_json"] == json.loads(raw_request)
     assert task.runtime_config_snapshot_json["trusted_external_material_snapshot"] == trusted
     assert task.brief_json["business_variables"]["product"] == "三室二厅"
 
@@ -613,6 +617,7 @@ async def test_content_studio_quote_snapshot_survives_reload_and_clears_after_ed
         compile_now=False,
     )
 
+    assert task.runtime_config_snapshot_json["raw_business_json"] == {"user_request": "改成普通装修避坑内容"}
     assert "trusted_external_material_snapshot" not in task.runtime_config_snapshot_json
     assert task.brief_json["user_request"] == "改成普通装修避坑内容"
 
