@@ -48,6 +48,47 @@ def test_missing_original_data_does_not_fall_back_to_compiled_facts(payload):
         project_input(payload)
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("title", "expected_status"),
+    [
+        ("长沙两卫生间翻新报价1.5万？我这边1.206万", "blocked"),
+        ("长沙两卫生间翻新怕超预算？人工报价1.206万", "passed"),
+    ],
+)
+async def test_reference_comparison_price_needs_its_own_business_evidence(payload, title, expected_status):
+    payload["production_pack"]["reference_snapshot"] = {
+        "title": "长沙厨房翻新报价两万？老杨3590搞定",
+        "body": "厨房翻新要预备两万块？看看这个案例。",
+    }
+    payload["raw_business_json"] = {"requirementType": {"titlePrice": "1.206w"}}
+    view = project_input(payload)
+    assert "数字事实（包括中文数字）只能来自原始业务 JSON" in view["仿写要求"]
+    assert "已有的金额、面积、数量、年限、单位及报价明细原样保留" in view["仿写要求"]
+    assert "没有对比价格时改用不含数字的预算疑问" in view["仿写要求"]
+    state = {
+        "production_pack": payload["production_pack"],
+        "selected_title": {"text": title},
+        "content_draft": {"body": "整套人工报价12060元，按实际项目核对范围。", "topics": []},
+        "content_brief": {},
+        "evidence_bundle": {"items": [{"value": "整套人工报价1.206w，合计12060元"}]},
+        "strategy_snapshot": {
+            "creation_methods": ["FRM03"],
+            **payload["production_pack"]["strategy_snapshot"],
+        },
+    }
+
+    result = await V3DeterministicNodeHandler._deterministic_validate(db=None, state=state, node_run_id="test")
+
+    report = result["validation_report"]
+    assert report["status"] == expected_status
+    if expected_status == "blocked":
+        assert [item["code"] for item in report["checks"]] == ["FACT_NUMBER_WITHOUT_SOURCE"]
+        assert "1.5" in report["checks"][0]["message"]
+    else:
+        assert report["checks"] == []
+
+
 def test_plain_text_is_not_rewritten_or_replaced_during_storage_mapping(payload):
     text = (
         "**北京旧房拆除明细**\n\n厨房住久了总有想改的地方🙂\n\n✔ 24墙拆除：40元/㎡"
