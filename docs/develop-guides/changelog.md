@@ -6,6 +6,8 @@
 
 ## v0.7.1 (current)
 
+- 内容创作页内置 Mock 案例同步当家请求结构：工地地址、面积和户型统一保存到 `requirementType.houseInfo`，报价标题价格保存到 `requirementType.prices[0].titlePrice`；同时修复一条日常工作案例的 JSON 数组语法错误。
+
 - 当家内容任务接口更新请求结构：房屋地址、面积和户型统一从 `requirementType.houseInfo` 读取，施工报价的确认标题价格改从唯一报价项 `requirementType.prices[0].titlePrice` 读取；可信报价快照和证据来源路径同步更新，其余模板 ID、面积内容及图片 URL 规则保持不变。
 
 - HyCanvas 模板分类支持修改名称：工作区成员可在模板页分类标签右侧打开编辑弹窗，保存后原分类 ID、已归类模板和当前筛选状态保持不变；空名称和无权限修改会被服务端拒绝，公开分类接口同步返回新名称。
