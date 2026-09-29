@@ -52,7 +52,7 @@ from yuxi.services.content_cover_service import (
     create_cover_generate_job,
     ensure_hycanvas_reference_asset,
 )
-from yuxi.storage.postgres.models_content import ContentCoverJob
+from yuxi.storage.postgres.models_content import ContentCoverAsset, ContentCoverJob
 
 
 def _image(color: str, size: tuple[int, int] = (320, 240)) -> bytes:
@@ -1681,6 +1681,50 @@ async def test_asset_reference_is_active_until_job_reaches_terminal_status():
         job.status = "succeeded"
         await db.commit()
         assert await ContentCoverRepository(db).asset_is_in_active_job("source-1", "alice") is False
+
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_template_reference_cache_queries_json_metadata_without_astext():
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as connection:
+        await connection.run_sync(ContentCoverAsset.__table__.create)
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    def asset(asset_id: str, role: str, metadata: dict[str, str]) -> ContentCoverAsset:
+        return ContentCoverAsset(
+            id=asset_id,
+            owner_uid="alice",
+            tenant_id=None,
+            content_task_id=None,
+            role=role,
+            original_file_name=f"{asset_id}.png",
+            content_type="image/png",
+            file_size=10,
+            image_width=1080,
+            image_height=1440,
+            sha256=asset_id.ljust(64, "0"),
+            bucket_name="material-library",
+            object_name=f"references/{asset_id}.png",
+            metadata_json=metadata,
+        )
+
+    async with session_factory() as db:
+        db.add_all(
+            [
+                asset("featured-1", "template", {"featured_template_id": "featured-template-1"}),
+                asset("handwritten-1", "source", {"hycanvas_template_id": "handwritten-template-1"}),
+            ]
+        )
+        await db.commit()
+        repo = ContentCoverRepository(db)
+
+        featured = await repo.find_featured_reference_asset("alice", "featured-template-1")
+        handwritten = await repo.find_hycanvas_reference_asset("alice", "handwritten-template-1")
+
+        assert featured is not None and featured.id == "featured-1"
+        assert handwritten is not None and handwritten.id == "handwritten-1"
 
     await engine.dispose()
 

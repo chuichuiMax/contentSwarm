@@ -88,7 +88,7 @@ class ContentCoverRepository:
                         ContentCoverAsset.owner_uid == owner_uid,
                         ContentCoverAsset.role == "template",
                         ContentCoverAsset.deleted_at.is_(None),
-                        ContentCoverAsset.metadata_json["featured_template_id"].astext == featured_template_id,
+                        ContentCoverAsset.metadata_json["featured_template_id"].as_string() == featured_template_id,
                     )
                 )
             )
@@ -106,7 +106,7 @@ class ContentCoverRepository:
                         ContentCoverAsset.owner_uid == owner_uid,
                         ContentCoverAsset.role == "source",
                         ContentCoverAsset.deleted_at.is_(None),
-                        ContentCoverAsset.metadata_json["hycanvas_template_id"].astext == hycanvas_template_id,
+                        ContentCoverAsset.metadata_json["hycanvas_template_id"].as_string() == hycanvas_template_id,
                     )
                 )
             )
