@@ -3,10 +3,9 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
+import yuxi.services.content_service as content_service
 from fastapi import HTTPException
 from pydantic import ValidationError
-
-import yuxi.services.content_service as content_service
 from yuxi.agents.middlewares.skills import SkillsMiddleware
 from yuxi.agents.middlewares.token_usage import TokenUsageMiddleware
 from yuxi.content.catalog import CONTENT_TYPES
@@ -250,12 +249,27 @@ async def test_v37_brief_rejects_cover_mode_without_image(monkeypatch, visual_ma
         async def commit(self):
             return None
 
+    class FakeHyCanvasClient:
+        @classmethod
+        def from_env(cls):
+            return cls()
+
+        async def get_xiaohongshu_template(self, template_id):
+            return {
+                "id": template_id,
+                "title": "普通内置封面",
+                "zone": "builtin",
+                "fillable_fields": [],
+                "is_handwritten_quote_template": False,
+            }
+
     monkeypatch.setattr(content_service, "ContentRepository", FakeRepo)
     monkeypatch.setattr(
         content_service,
         "compile_content_brief",
         lambda **kwargs: ({"form_values": kwargs["brief"].form_values}, []),
     )
+    monkeypatch.setattr("yuxi.services.hycanvas_service.HyCanvasClient", FakeHyCanvasClient)
     with pytest.raises(HTTPException) as exc_info:
         await content_service.save_content_brief(
             FakeDB(),
@@ -270,6 +284,114 @@ async def test_v37_brief_rejects_cover_mode_without_image(monkeypatch, visual_ma
 
     assert exc_info.value.status_code == 422
     assert exc_info.value.detail["error"]["code"] == "CONTENT_IMAGE_MATERIAL_REQUIRED"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("trusted_quote_snapshot", "user_request"),
+    [
+        (
+            {
+                "sanitized_user_request": "已确认施工报价",
+                "quote_format": "单价面积",
+                "title_price": {"label": "整套人工合计", "display_text": "1.206w"},
+                "quote_block": {"original_content": "拆除：2000元；整套人工合计：12060元"},
+            },
+            "已确认施工报价",
+        ),
+        (
+            {
+                "source": "dangjia",
+                "quote_format": "单价面积",
+                "title_price": {"label": "整套人工合计", "display_text": "1.206w"},
+                "quote_block": {"original_content": "拆除：2000元；整套人工合计：12060元"},
+            },
+            "",
+        ),
+    ],
+)
+async def test_handwritten_quote_template_compiles_without_cover_image(
+    monkeypatch, trusted_quote_snapshot, user_request
+):
+    task = SimpleNamespace(
+        id="task-handwritten-cover",
+        content_type_code="project_quote",
+        workflow_version_id=PLATFORM_WORKFLOW_V3_ID,
+        industry_template_version_id="industry-decoration-v3",
+        current_stage="brief",
+        selected_image_item_id=None,
+        selected_poster_template_id=None,
+        runtime_config_snapshot_json={
+            "schema_version": 3,
+            "creation_mode": "viral_rewrite",
+            "trusted_external_material_snapshot": trusted_quote_snapshot,
+        },
+        strategy_json={},
+        brief_json={},
+        updated_by=None,
+        updated_at=None,
+        status="draft",
+        to_dict=lambda: {"id": task.id, "runtime_config_snapshot": task.runtime_config_snapshot_json},
+    )
+
+    class FakeRepo:
+        def __init__(self, db):
+            del db
+
+        async def get_task_for_user(self, task_id, user, for_update=False):
+            del user, for_update
+            return task if task_id == task.id else None
+
+        async def get_template(self, template_id):
+            return SimpleNamespace(id=template_id)
+
+        async def track(self, *args, **kwargs):
+            del args, kwargs
+
+    class FakeHyCanvasClient:
+        @classmethod
+        def from_env(cls):
+            return cls()
+
+        async def get_xiaohongshu_template(self, template_id):
+            return {
+                "id": template_id,
+                "title": "手写报价模板",
+                "zone": "builtin",
+                "fillable_fields": [],
+                "is_handwritten_quote_template": True,
+            }
+
+    class FakeDB:
+        async def commit(self):
+            return None
+
+    monkeypatch.setattr(content_service, "ContentRepository", FakeRepo)
+    monkeypatch.setattr(
+        content_service,
+        "compile_content_brief",
+        lambda **kwargs: ({"form_values": kwargs["brief"].form_values}, []),
+    )
+    monkeypatch.setattr(content_service, "normalize_manual_evidence", lambda task_id, compiled: {"items": []})
+    monkeypatch.setattr("yuxi.services.hycanvas_service.HyCanvasClient", FakeHyCanvasClient)
+
+    result = await content_service.save_content_brief(
+        FakeDB(),
+        SimpleNamespace(uid="user-1"),
+        task.id,
+        ContentBriefPayload(
+            user_request=user_request,
+            form_values={"brand_name": "测试品牌"},
+            visual_material={"hycanvas_template_id": "xiaohongshu-handwritten-quote"},
+        ),
+        compile_now=True,
+    )
+
+    visual = task.runtime_config_snapshot_json["visual_material"]
+    assert result["compiled"] is True
+    assert visual.get("image_asset_id") is None
+    assert visual["hycanvas_template_id"] == "xiaohongshu-handwritten-quote"
+    assert visual["is_handwritten_quote_template"] is True
 
 
 @pytest.mark.asyncio

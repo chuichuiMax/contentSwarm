@@ -58,6 +58,36 @@ def _cover_template_zone(tags: list[str]) -> str | None:
     return None
 
 
+def _normalize_cover_template(item: dict) -> dict | None:
+    zone = _cover_template_zone(item.get("tags") or [])
+    if zone is None:
+        return None
+    fillable_fields = item.get("fillableFields") or []
+    format_ = item.get("format") or {}
+    width = float(format_.get("width") or 0)
+    height = float(format_.get("height") or 0)
+    if height <= 0 or abs(width / height - 0.75) > 0.02:
+        return None
+    preview_urls = []
+    for preview_url in item.get("previewUrls") or []:
+        if preview_url.startswith("/template-previews/"):
+            preview_urls.append(f"/hycanvas-template-previews/{preview_url.removeprefix('/template-previews/')}")
+        else:
+            preview_urls.append(preview_url)
+    if not preview_urls:
+        template_id = quote(item["id"], safe="")
+        preview_urls = [f"/api/content/covers/hycanvas/templates/{template_id}/render.png"]
+    return {
+        "id": item["id"],
+        "title": item["title"],
+        "zone": zone,
+        "format": format_,
+        "fillable_fields": fillable_fields,
+        "preview_urls": preview_urls,
+        "is_handwritten_quote_template": bool(item.get("isHandwrittenQuoteTemplate")),
+    }
+
+
 class HyCanvasClient:
     def __init__(
         self,
@@ -77,9 +107,7 @@ class HyCanvasClient:
     @classmethod
     def from_env(cls) -> HyCanvasClient:
         base_url = (os.getenv("HYCANVAS_BASE_URL") or "").strip()
-        public_url = (
-            os.getenv("HYCANVAS_DEV_PUBLIC_URL") or os.getenv("HYCANVAS_PUBLIC_URL") or base_url
-        ).strip()
+        public_url = (os.getenv("HYCANVAS_DEV_PUBLIC_URL") or os.getenv("HYCANVAS_PUBLIC_URL") or base_url).strip()
         api_key = (os.getenv("HYCANVAS_API_KEY") or "").strip()
         workspace_id = (os.getenv("HYCANVAS_WORKSPACE_ID") or "").strip()
         if not all((base_url, public_url, api_key, workspace_id)):
@@ -102,34 +130,9 @@ class HyCanvasClient:
         data.sort(key=lambda item: _PRIORITY_COVER_TEMPLATE_TAG not in (item.get("tags") or []))
         templates = []
         for item in data:
-            zone = _cover_template_zone(item.get("tags") or [])
-            if zone is None:
-                continue
-            fillable_fields = item.get("fillableFields") or []
-            format_ = item.get("format") or {}
-            width = float(format_.get("width") or 0)
-            height = float(format_.get("height") or 0)
-            if height <= 0 or abs(width / height - 0.75) > 0.02:
-                continue
-            preview_urls = []
-            for preview_url in item.get("previewUrls") or []:
-                if preview_url.startswith("/template-previews/"):
-                    preview_urls.append(f"/hycanvas-template-previews/{preview_url.removeprefix('/template-previews/')}")
-                else:
-                    preview_urls.append(preview_url)
-            if not preview_urls:
-                template_id = quote(item["id"], safe="")
-                preview_urls = [f"/api/content/covers/hycanvas/templates/{template_id}/render.png"]
-            templates.append(
-                {
-                    "id": item["id"],
-                    "title": item["title"],
-                    "zone": zone,
-                    "format": format_,
-                    "fillable_fields": fillable_fields,
-                    "preview_urls": preview_urls,
-                }
-            )
+            template = _normalize_cover_template(item)
+            if template is not None:
+                templates.append(template)
         return {"configured": True, "templates": templates, "total": len(templates)}
 
     async def fetch_template_preview(self, template_id: str) -> tuple[bytes, str]:
@@ -137,6 +140,15 @@ class HyCanvasClient:
             return await self.render_template_png(template_id)
         response = await self._send("GET", f"/template-previews/{quote(template_id, safe='')}-p0.png")
         return response.content, response.headers.get("content-type", "image/png")
+
+    async def get_xiaohongshu_template(self, template_id: str) -> dict | None:
+        try:
+            item = await self._request("GET", f"/api/v1/templates/{quote(template_id, safe='')}")
+        except HTTPException as exc:
+            if isinstance(exc.detail, dict) and exc.detail.get("upstream_status") == 404:
+                return None
+            raise
+        return _normalize_cover_template(item)
 
     async def create_design(
         self,

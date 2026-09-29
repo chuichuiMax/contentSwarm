@@ -174,6 +174,19 @@
           />
           <span class="setting-help">API Key 保存后不会在页面或接口中回显。</span>
         </div>
+        <div class="setting-row">
+          <div class="setting-label">最大并发数</div>
+          <a-input-number
+            v-model:value="image2Form.maxConcurrent"
+            :min="1"
+            :max="10"
+            :precision="0"
+            style="width: 100%"
+          />
+          <span class="setting-help">
+            当前账号在单个 Worker 中同时执行的 AI 封面任务数，范围 1–10；超过限制的任务自动排队。
+          </span>
+        </div>
         <div v-if="image2State?.capabilities?.message" class="image2-capability-message">
           {{ image2State.capabilities.message }}
         </div>
@@ -295,7 +308,8 @@ const image2Testing = ref(false)
 const image2Form = reactive({
   baseUrl: '',
   apiKey: '',
-  model: 'gpt-image-2'
+  model: 'gpt-image-2',
+  maxConcurrent: 1
 })
 const image2State = computed(() => coverGenerationStore.bootstrap?.image2 || null)
 const image2VerificationStatus = computed(() => image2State.value?.verification_status || 'unverified')
@@ -383,6 +397,7 @@ const syncImage2Form = () => {
   image2Form.baseUrl = image2State.value?.base_url || ''
   image2Form.apiKey = ''
   image2Form.model = image2State.value?.model || 'gpt-image-2'
+  image2Form.maxConcurrent = image2State.value?.max_concurrent || 1
 }
 
 const loadImage2Settings = async () => {
@@ -402,6 +417,7 @@ const validateImage2Form = () => {
   const baseUrl = image2Form.baseUrl.trim()
   const apiKey = image2Form.apiKey.trim()
   const model = image2Form.model.trim()
+  const maxConcurrent = Number(image2Form.maxConcurrent)
   if (!isHttpUrl(baseUrl)) {
     message.warning('请输入有效的 image2 HTTP 或 HTTPS 地址')
     return null
@@ -414,7 +430,11 @@ const validateImage2Form = () => {
     message.warning('首次配置请填写 API Key')
     return null
   }
-  return { base_url: baseUrl, api_key: apiKey || null, model }
+  if (!Number.isInteger(maxConcurrent) || maxConcurrent < 1 || maxConcurrent > 10) {
+    message.warning('image2 最大并发数必须是 1 到 10 之间的整数')
+    return null
+  }
+  return { base_url: baseUrl, api_key: apiKey || null, model, max_concurrent: maxConcurrent }
 }
 
 const saveImage2Settings = async () => {

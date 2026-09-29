@@ -10,7 +10,8 @@ from typing import Any
 from PIL import Image, ImageOps, UnidentifiedImageError
 from yuxi.content_cover import COVER_PROCESSING_VERSION
 from yuxi.content_cover.editor_renderer import CoverEditorRenderError, render_editor_scene
-from yuxi.content_cover.image2_client import Image2Client, Image2Error
+from yuxi.content_cover.image2_client import Image2Client, Image2Config, Image2Error
+from yuxi.content_cover.image2_concurrency import image2_concurrency_limiter
 from yuxi.content_cover.image2_settings import resolve_image2_config
 from yuxi.content_cover.poster_billboard import (
     PosterBillboardError,
@@ -58,8 +59,6 @@ COVER_BUCKET = os.getenv("CONTENT_COVER_BUCKET", "content-covers")
 POLL_INTERVAL_SECONDS = max(0.5, float(os.getenv("IMAGE2_POLL_INTERVAL_SECONDS", "2")))
 TEMPLATE_REPLICATION_V2_ENABLED = os.getenv("CONTENT_COVER_TEMPLATE_REPLICATION_V2", "true").strip().lower() == "true"
 POLL_TIMEOUT_SECONDS = max(30.0, float(os.getenv("IMAGE2_POLL_TIMEOUT_SECONDS", "900")))
-IMAGE2_MAX_CONCURRENT = max(1, int(os.getenv("IMAGE2_MAX_CONCURRENT", "1")))
-IMAGE2_SEMAPHORE = asyncio.Semaphore(IMAGE2_MAX_CONCURRENT)
 MAX_OUTPUT_BYTES = 30 * 1024 * 1024
 MAX_OUTPUT_PIXELS = 40_000_000
 
@@ -142,6 +141,7 @@ def _output_title_overlay(job: ContentCoverJob) -> str:
         job.mode in {"hycanvas", "poster_billboard", "editor_render"}
         or request.get("template_replicate")
         or request.get("render_copy_with_image2")
+        or request.get("render_prompt_text")
     ):
         return ""
     return str(request.get("title") or "").strip()
@@ -611,7 +611,7 @@ async def _finalize_style_reference(
     return await render_and_check(clean_image, reference_analysis, copy_plan, clean_image, "reference_layout")
 
 
-async def _run_image2(job: ContentCoverJob) -> list[bytes]:
+async def _run_image2(job: ContentCoverJob, image2_config: Image2Config | None = None) -> list[bytes]:
     sources, template, mask = await _load_job_assets(job)
     request_data = job.request_json or {}
     await _check_cancelled(job.id)
@@ -752,7 +752,7 @@ async def _run_image2(job: ContentCoverJob) -> list[bytes]:
         provider_task_ids.append(job.provider_task_id)
     outputs: list[bytes] = []
     deadline = asyncio.get_running_loop().time() + POLL_TIMEOUT_SECONDS
-    image2_config = await _load_image2_config(job.owner_uid)
+    image2_config = image2_config or await _load_image2_config(job.owner_uid)
     async with Image2Client(image2_config) as client:
         for index in range(requested_count):
             await _check_cancelled(job.id)
@@ -851,7 +851,7 @@ async def _run_image2(job: ContentCoverJob) -> list[bytes]:
     return outputs
 
 
-async def _run_poster_billboard(job: ContentCoverJob) -> list[bytes]:
+async def _run_poster_billboard(job: ContentCoverJob, image2_config: Image2Config | None = None) -> list[bytes]:
     request = job.request_json or {}
     snapshot = dict(request.get("poster_template_snapshot") or {})
     product_asset_id = str(request.get("product_asset_id") or "")
@@ -927,7 +927,7 @@ async def _run_poster_billboard(job: ContentCoverJob) -> list[bytes]:
     outputs: list[bytes] = []
     quality_reports: list[dict[str, Any]] = []
     deadline = asyncio.get_running_loop().time() + POLL_TIMEOUT_SECONDS
-    image2_config = await _load_image2_config(job.owner_uid)
+    image2_config = image2_config or await _load_image2_config(job.owner_uid)
     async with Image2Client(image2_config) as client:
         for index in range(requested_count):
             await _check_cancelled(job.id)
@@ -1021,13 +1021,15 @@ async def process_content_cover_job(ctx: dict, job_id: str) -> None:
             outputs = await _run_editor_render(job)
         elif job.mode == "poster_billboard":
             if (job.request_json or {}).get("enhance_with_image2"):
-                async with IMAGE2_SEMAPHORE:
-                    outputs = await _run_poster_billboard(job)
+                image2_config = await _load_image2_config(job.owner_uid)
+                async with image2_concurrency_limiter.slot(job.owner_uid, image2_config.max_concurrent):
+                    outputs = await _run_poster_billboard(job, image2_config)
             else:
                 outputs = await _run_poster_billboard(job)
         else:
-            async with IMAGE2_SEMAPHORE:
-                outputs = await _run_image2(job)
+            image2_config = await _load_image2_config(job.owner_uid)
+            async with image2_concurrency_limiter.slot(job.owner_uid, image2_config.max_concurrent):
+                outputs = await _run_image2(job, image2_config)
         await _check_cancelled(job_id)
         await _set_job(job_id, status="saving", progress=92)
         await _check_cancelled(job_id)

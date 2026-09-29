@@ -4,14 +4,13 @@ from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
 import pytest
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-
 import yuxi.agents.toolkits.content.tools as content_tools
 import yuxi.content.control.workflow.agent_node as agent_node_module
 from yuxi.content.control.visual_template_fields import (
     compile_cover_narrative_fields,
     missing_required_template_fields,
 )
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from yuxi.content.control.workflow.agent_node import AgentNodeHandler, AgentNodeResultMapper
 from yuxi.content.control.workflow.external_wait import ExternalWaitNodeHandler
 from yuxi.content_cover.ai_cover_prompt import AI_COVER_PROMPT
@@ -467,6 +466,92 @@ async def test_cover_tool_uses_resolved_hycanvas_title(monkeypatch, visual_text,
     assert captured[0]["template_id"] == "template-1"
     assert captured[0]["image_field_label"] == "主图"
     assert captured[0]["parameters"]["workflow_resume"]["parent_run_id"] == "run-parent"
+
+
+@pytest.mark.asyncio
+async def test_cover_tool_routes_handwritten_quote_template_to_image_to_image(monkeypatch):
+    visual_plan = {
+        **_visual_plan(),
+        "source_asset_ids": [],
+        "plan_hash": "a" * 64,
+    }
+    context = SimpleNamespace(
+        uid="user-1",
+        _content_node_output_contract="CoverJobSubmissionResultV1",
+        _content_node_result_collector=SimpleNamespace(
+            domain_context=SimpleNamespace(
+                visual_plan_hash="a" * 64,
+                allowed_asset_ids=frozenset(),
+            )
+        ),
+        _content_node_input=SimpleNamespace(task_id="task-1", parent_run_id="run-parent"),
+        _content_node_governance={
+            "locked_values": {"visual_plan_hash": "a" * 64, "visual_plan": visual_plan, "state_version": 7}
+        },
+    )
+
+    class FakeDB:
+        async def execute(self, query):
+            del query
+            return SimpleNamespace(scalar_one_or_none=lambda: SimpleNamespace(uid="user-1"))
+
+    @asynccontextmanager
+    async def fake_session():
+        yield FakeDB()
+
+    async def fake_get_task_for_user(repo, task_id, user):
+        del repo, task_id, user
+        return SimpleNamespace(
+            runtime_config_snapshot_json={
+                "visual_material": {
+                    "hycanvas_template_id": "xiaohongshu-handwritten-quote",
+                    "is_handwritten_quote_template": True,
+                },
+                "trusted_external_material_snapshot": {
+                    "quote_format": "单价面积",
+                    "title_price": {"label": "整套人工合计", "display_text": "1.206w"},
+                    "quote_block": {"original_content": "拆除卫生间：2000元；水电改造：2400元；整套人工合计：12060元"},
+                },
+            }
+        )
+
+    captured = []
+
+    async def fake_generate(db, user, payload):
+        del db, user
+        captured.append(payload)
+        return {"job": {"id": "handwritten-job-1", "mode": "image_to_image"}, "deduplicated": False}
+
+    async def fake_reference_asset(db, user, template_id):
+        del db, user
+        assert template_id == "xiaohongshu-handwritten-quote"
+        return SimpleNamespace(id="handwritten-reference-1")
+
+    async def fake_event(*args, **kwargs):
+        del args, kwargs
+
+    monkeypatch.setattr(content_tools.pg_manager, "get_async_session_context", fake_session)
+    monkeypatch.setattr(content_tools.ContentRepository, "get_task_for_user", fake_get_task_for_user)
+    monkeypatch.setattr(content_tools, "create_cover_generate_job", fake_generate)
+    monkeypatch.setattr(
+        "yuxi.services.content_cover_service.ensure_hycanvas_reference_asset",
+        fake_reference_asset,
+    )
+    monkeypatch.setattr(content_tools, "_emit_content_tool_event", fake_event)
+
+    result = await content_tools.create_content_cover_job.coroutine(
+        task_id="task-1", runtime=SimpleNamespace(context=context)
+    )
+
+    payload = captured[0]
+    assert result["cover_job_id"] == "handwritten-job-1"
+    assert payload.mode == "image_to_image"
+    assert payload.source_asset_ids == ["handwritten-reference-1"]
+    assert payload.render_prompt_text is True
+    assert "拆除卫生间：2000元" in payload.prompt
+    assert "展示价格“1.206w”" in payload.prompt
+    assert "整套人工合计：12060元" not in payload.prompt
+    assert payload.parameters["handwritten_quote_template_id"] == "xiaohongshu-handwritten-quote"
 
 
 @pytest.mark.asyncio

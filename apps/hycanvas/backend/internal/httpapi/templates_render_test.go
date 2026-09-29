@@ -97,6 +97,13 @@ func (r *publicCatalogRows) Scan(dest ...any) error {
 	return nil
 }
 
+func TestTemplateMetadataAPIKeyRouteRequiresReadScope(t *testing.T) {
+	route, designID, ok := matchAPIKeyRoute(http.MethodGet, "/api/v1/templates/template-id")
+	if !ok || route.scope != apikeys.ScopeRead || designID != "" {
+		t.Fatalf("template metadata route mismatch: ok=%v scope=%q designID=%q", ok, route.scope, designID)
+	}
+}
+
 func TestRenderTemplatePreviewCreatesScaledPNG(t *testing.T) {
 	file := map[string]any{
 		"pages": []any{map[string]any{

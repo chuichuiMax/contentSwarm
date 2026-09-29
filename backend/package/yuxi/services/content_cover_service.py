@@ -640,6 +640,33 @@ async def ensure_featured_reference_asset(db: AsyncSession, user: User, featured
     return asset
 
 
+async def ensure_hycanvas_reference_asset(db: AsyncSession, user: User, template_id: str) -> ContentCoverAsset:
+    """把 HyCanvas 模板渲染为 image2 可读取的唯一参考图，并按模板内容复用缓存。"""
+    from yuxi.services.hycanvas_service import HyCanvasClient
+
+    repo = ContentCoverRepository(db)
+    png, content_type = await HyCanvasClient.from_env().render_template_png(template_id)
+    sha = hashlib.sha256(png).hexdigest()
+    existing = await repo.find_hycanvas_reference_asset(_owner_uid(user), template_id)
+    if existing is not None and existing.sha256 == sha:
+        return existing
+    upload = UploadFile(
+        file=io.BytesIO(png),
+        filename=f"hycanvas-reference-{template_id[:8]}.png",
+        headers=Headers({"content-type": content_type}),
+    )
+    created = await create_cover_asset(db, user, upload, role="source", content_task_id=None)
+    asset = await repo.get_asset_for_user(created["asset"]["id"], _owner_uid(user))
+    if asset is None:
+        raise _error(500, "COVER_ASSET_SAVE_FAILED", "手写报价模板参考图保存失败")
+    await repo.update_asset_metadata(
+        asset,
+        {**(asset.metadata_json or {}), "hycanvas_template_id": template_id},
+    )
+    await db.commit()
+    return asset
+
+
 async def compose_visual_material_background(
     db: AsyncSession,
     user: User,
@@ -1844,10 +1871,11 @@ async def create_cover_generate_job(db: AsyncSession, user: User, payload: Cover
         payload.content_task_id,
         payload.prompt,
         allow_empty=template_replicate,
-        include_content_context=not payload.render_copy_with_image2,
+        include_content_context=not (payload.render_copy_with_image2 or payload.render_prompt_text),
     )
     title = payload.title.strip() or linked_title[:60]
     image2_copy = payload.render_copy_with_image2
+    prompt_text = payload.render_prompt_text
     if style_reference:
         template_texts = {
             "title": title,
@@ -1874,6 +1902,12 @@ async def create_cover_generate_job(db: AsyncSession, user: User, payload: Cover
         "multi_reference": "综合所有参考图；保留原图主体，借鉴模板的布局与视觉语言，但不要照搬其中的文字或品牌元素。",
         "mask": "只优化蒙版指定区域，未指定区域保持原图结构与主体一致。",
     }
+    if prompt_text:
+        mode_guidance["image_to_image"] = (
+            "以唯一参考图作为手写报价模板例图，继承其构图、拍摄角度、信息层级和真实手写质感；"
+            "纸张、背景、字迹与强调色可按提示词指定的候选方案做协调变化，但每张图只能采用一套统一方案；"
+            "清除例图中的原报价文字和数字，完整替换为提示词指定的新报价。"
+        )
     if style_reference:
         mode_guidance["multi_reference"] = (
             "自由创作模式。参考图1是封面背景底图，必须完整保留其主体、场景与关键细节并铺满画布；"
@@ -1904,6 +1938,12 @@ async def create_cover_generate_job(db: AsyncSession, user: User, payload: Cover
             "不存在的卡片或装饰。参考图1的底图内容、手写字、表格、商品和人物必须保持清晰。"
             "系统会在生成后按内容资产需要精确替换主标题，因此不要自行扩写新口号或新段落。"
         )
+    elif prompt_text:
+        output_guidance = (
+            "输出单张完整、不透明的 1080×1440 图片。严格逐字绘制提示词中声明的全部文字，"
+            "不得改写、遗漏、重复、增加或重新计算任何数字、单位和金额；除提示词明确声明的文字外，"
+            "不得生成其他文字、数字、字母、水印或 Logo。"
+        )
     elif image2_copy:
         copy_lines = []
         if title:
@@ -1930,9 +1970,11 @@ async def create_cover_generate_job(db: AsyncSession, user: User, payload: Cover
     default_negative_prompt = (
         "错别字、乱码、漏字、多余文案、文字贴边、文字出血、文字裁切、标题贴顶、标签贴底、"
         "水印、平台 Logo、伪造品牌标识、低清晰度、主体变形、过度锐化、杂乱背景"
-        if image2_copy
+        if image2_copy or prompt_text
         else "乱码文字、错误汉字、随机字母、数字、水印、平台 Logo、伪造品牌标识、低清晰度、主体变形、过度锐化、杂乱背景"
     )
+    if prompt_text:
+        default_negative_prompt += "、错误数字、错误金额、擅自计算、擅自改写报价"
     if template_replicate:
         default_negative_prompt += (
             "、透明棋盘格、马赛克、模板旧底图残留、双重背景、画中画、原图缩小、"
@@ -2139,6 +2181,7 @@ async def update_image2_global_config(
             base_url=payload.base_url,
             api_key=payload.api_key,
             model=payload.model,
+            max_concurrent=payload.max_concurrent,
             owner_uid=_owner_uid(user),
         )
     except Image2Error as exc:
@@ -2157,6 +2200,7 @@ async def test_image2_global_config(
             base_url=payload.base_url,
             api_key=payload.api_key,
             model=payload.model,
+            max_concurrent=payload.max_concurrent,
             owner_uid=_owner_uid(user),
         )
     except Image2Error as exc:

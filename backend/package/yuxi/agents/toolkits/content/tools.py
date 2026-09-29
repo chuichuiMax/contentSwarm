@@ -14,6 +14,10 @@ from sqlalchemy import select
 from yuxi.agents.toolkits.registry import tool
 from yuxi.content.execution_trace import build_execution_preview
 from yuxi.content_cover.ai_cover_prompt import AI_COVER_PROMPT
+from yuxi.content_cover.handwritten_quote_prompt import (
+    HANDWRITTEN_QUOTE_NEGATIVE_PROMPT,
+    build_handwritten_quote_prompt,
+)
 from yuxi.content_cover.schemas import CoverComposeCreate, CoverGenerateCreate, PosterGenerateCreate
 from yuxi.content.validators import normalize_manual_evidence, validate_content
 from yuxi.repositories.content_repository import ContentRepository
@@ -136,7 +140,8 @@ async def get_strategy_candidates(task_id: str, runtime: ToolRuntime = None) -> 
         result = await PostgresStrategyPreviewRepository(db).load_candidates(
             task_id=task_id,
             actor=StrategyPreviewActor(
-                uid=uid, role=user.role,
+                uid=uid,
+                role=user.role,
                 tenant_id=str(user.department_id) if user.department_id is not None else None,
             ),
         )
@@ -175,8 +180,12 @@ async def search_viral_reference_cards(task_id: str, query: str, runtime: ToolRu
         managed = await resolve_agent_runtime_context(db=db, user=user, bound_agent_id="content-joint-strategy-agent")
         industry, _ = await PostgresStrategyPreviewRepository(db)._industry_context(task)
         items = await search_ready_viral_assets(
-            db, user, industry_slug=industry, query=query,
-            kb_ids=list(managed.knowledges or []), limit=policy["reference_candidate_limit"],
+            db,
+            user,
+            industry_slug=industry,
+            query=query,
+            kb_ids=list(managed.knowledges or []),
+            limit=policy["reference_candidate_limit"],
         )
         await db.commit()
         return {"items": items, "query": query}
@@ -191,15 +200,16 @@ async def read_viral_reference(asset_id: str, runtime: ToolRuntime = None) -> di
 
     runtime = _effective_runtime(runtime)
     async with pg_manager.get_async_session_context() as db:
-        user = (await db.execute(
-            select(User).where(User.uid == _runtime_uid(runtime), User.is_deleted == 0)
-        )).scalar_one()
+        user = (
+            await db.execute(select(User).where(User.uid == _runtime_uid(runtime), User.is_deleted == 0))
+        ).scalar_one()
         managed = await resolve_agent_runtime_context(db=db, user=user, bound_agent_id="content-joint-strategy-agent")
         asset = await require_asset(db, user, asset_id)
         if asset.kb_id not in (managed.knowledges or []):
             raise ValueError("资产不在当前 Agent 知识库范围内")
         if (
-            asset.status != "ready" or not await check_asset_source(db, asset)
+            asset.status != "ready"
+            or not await check_asset_source(db, asset)
             or asset.preparation_skill_hash != preparation_skill_hash()
         ):
             raise ValueError("参考资产已失效或尚未准备完成")
@@ -605,7 +615,37 @@ async def create_content_cover_job(
         hycanvas_template_id = visual_material.get("hycanvas_template_id")
         featured_cover_template_id = visual_material.get("featured_cover_template_id")
         poster_template_id = visual_material.get("poster_template_id")
-        if hycanvas_template_id:
+        if hycanvas_template_id and visual_material.get("is_handwritten_quote_template"):
+            quote_snapshot = (task.runtime_config_snapshot_json or {}).get("trusted_external_material_snapshot")
+            if not isinstance(quote_snapshot, dict):
+                raise ValueError("手写报价封面需要任务中已确认的结构化报价数据")
+            from yuxi.services.content_cover_service import ensure_hycanvas_reference_asset
+
+            reference_asset = await ensure_hycanvas_reference_asset(db, user, hycanvas_template_id)
+            result = await create_cover_generate_job(
+                db,
+                user,
+                CoverGenerateCreate(
+                    mode="image_to_image",
+                    content_task_id=task_id,
+                    source_asset_ids=[reference_asset.id],
+                    title="装修人工报价",
+                    render_prompt_text=True,
+                    prompt=build_handwritten_quote_prompt(quote_snapshot),
+                    negative_prompt=HANDWRITTEN_QUOTE_NEGATIVE_PROMPT,
+                    size="1080x1440",
+                    n=1,
+                    parameters={
+                        "quality": "high",
+                        "output_format": "png",
+                        "handwritten_quote_template_id": hycanvas_template_id,
+                        "visual_plan_hash": plan_hash,
+                        "workflow_resume": workflow_resume,
+                    },
+                    idempotency_key=idempotency_key,
+                ),
+            )
+        elif hycanvas_template_id:
             from yuxi.services.content_cover_service import create_hycanvas_cover_job
 
             fillable_fields = visual_material.get("hycanvas_fillable_fields") or []

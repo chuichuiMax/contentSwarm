@@ -471,6 +471,7 @@ class PostgresManager(metaclass=SingletonMeta):
                 "ADD COLUMN IF NOT EXISTS verification_status VARCHAR(32) NOT NULL DEFAULT 'unverified'"
             ),
             ("ALTER TABLE IF EXISTS content_cover_image2_settings ADD COLUMN IF NOT EXISTS verified_at TIMESTAMP"),
+            ("ALTER TABLE IF EXISTS content_cover_image2_settings ADD COLUMN IF NOT EXISTS max_concurrent INTEGER"),
             (
                 "ALTER TABLE IF EXISTS content_cover_poster_templates "
                 "DROP CONSTRAINT IF EXISTS uq_content_cover_poster_owner_checksum"

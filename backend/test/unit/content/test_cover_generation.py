@@ -50,8 +50,9 @@ from yuxi.services.content_cover_service import (
     _normalize_upload,
     _template_texts,
     create_cover_generate_job,
+    ensure_hycanvas_reference_asset,
 )
-from yuxi.storage.postgres.models_content import ContentCoverJob
+from yuxi.storage.postgres.models_content import ContentCoverAsset, ContentCoverJob
 
 
 def _image(color: str, size: tuple[int, int] = (320, 240)) -> bytes:
@@ -67,10 +68,15 @@ def test_hycanvas_output_does_not_add_generic_title_overlay():
         mode="image_to_image",
         request_json={"title": "89㎡收纳逆袭", "render_copy_with_image2": True},
     )
+    prompt_text_job = SimpleNamespace(
+        mode="image_to_image",
+        request_json={"title": "装修人工报价", "render_prompt_text": True},
+    )
 
     assert content_cover_worker._output_title_overlay(hycanvas_job) == ""
     assert content_cover_worker._output_title_overlay(generated_job) == "89㎡收纳逆袭"
     assert content_cover_worker._output_title_overlay(image2_copy_job) == ""
+    assert content_cover_worker._output_title_overlay(prompt_text_job) == ""
 
 
 def _template_analysis_fixture():
@@ -308,16 +314,42 @@ def test_image2_configuration_rejects_invalid_status_path(monkeypatch: pytest.Mo
     assert exc_info.value.code == "IMAGE2_CONFIG_INVALID"
 
 
+def test_image2_configuration_defaults_to_five_minute_request_timeout(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.delenv("IMAGE2_TIMEOUT_SECONDS", raising=False)
+    monkeypatch.delenv("IMAGE2_MAX_CONCURRENT", raising=False)
+
+    config = Image2Config.from_values(
+        base_url="https://relay.example.com/v1",
+        api_key="test-key",
+        model="image2-test",
+    )
+
+    assert config.timeout_seconds == 300
+    assert config.max_concurrent == 1
+
+
 def test_global_image2_config_normalizes_values():
     payload = Image2GlobalConfigUpdate(
         base_url=" https://relay.example.com/v1 ",
         api_key=" request-secret ",
         model=" gpt-image-2 ",
+        max_concurrent=5,
     )
 
     assert payload.base_url == "https://relay.example.com/v1"
     assert payload.api_key == "request-secret"
     assert payload.model == "gpt-image-2"
+    assert payload.max_concurrent == 5
+
+
+def test_global_image2_config_rejects_concurrency_above_worker_capacity():
+    with pytest.raises(ValidationError):
+        Image2GlobalConfigUpdate(
+            base_url="https://relay.example.com/v1",
+            api_key="request-secret",
+            model="gpt-image-2",
+            max_concurrent=11,
+        )
 
 
 @pytest.mark.asyncio
@@ -406,6 +438,7 @@ async def test_global_image2_config_preserves_saved_key_and_never_returns_it(
             setting.base_url = values["base_url"]
             setting.api_key = values["api_key"]
             setting.model = values["model"]
+            setting.max_concurrent = values["max_concurrent"]
             return setting
 
     monkeypatch.setattr(image2_settings, "ContentCoverRepository", FakeRepo)
@@ -415,14 +448,17 @@ async def test_global_image2_config_preserves_saved_key_and_never_returns_it(
         db,
         base_url="https://new-relay.example.com/v1",
         api_key=None,
+        max_concurrent=5,
         owner_uid="alice",
     )
     state = await image2_settings.get_image2_config_state(db, owner_uid="alice")
 
     assert captured["values"]["api_key"] == "saved-secret"
+    assert captured["values"]["max_concurrent"] == 5
     assert captured["committed"] is True
     assert state["base_url"] == "https://new-relay.example.com/v1"
     assert state["api_key_configured"] is True
+    assert state["max_concurrent"] == 5
     assert "api_key" not in state
 
 
@@ -605,6 +641,113 @@ async def test_image2_copy_mode_sends_exact_copy_and_keeps_numbers(monkeypatch: 
     assert "标题贴顶" in request["negative_prompt"]
     assert "标签贴底" in request["negative_prompt"]
     assert captured["content_prompt_kwargs"]["include_content_context"] is False
+
+
+@pytest.mark.asyncio
+async def test_prompt_text_mode_keeps_handwritten_quote_copy_in_image_to_image(monkeypatch: pytest.MonkeyPatch):
+    captured = {}
+
+    class FakeRepository:
+        def __init__(self, _db):
+            pass
+
+        async def get_assets_for_user(self, *_args, **_kwargs):
+            return [SimpleNamespace(id="reference-1", role="source")]
+
+    async def fake_resolve_image2_config(*_args, **_kwargs):
+        return SimpleNamespace(model="gpt-image-2")
+
+    async def fake_content_prompt(*_args, **_kwargs):
+        captured["content_prompt_kwargs"] = _kwargs
+        return "逐字书写：拆除卫生间 2000元；整套人工合计 1.206w", None, ""
+
+    async def fake_create_job(_db, _user, **kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(), False
+
+    service_globals = create_cover_generate_job.__globals__
+    monkeypatch.setitem(service_globals, "ContentCoverRepository", FakeRepository)
+    monkeypatch.setitem(service_globals, "resolve_image2_config", fake_resolve_image2_config)
+    monkeypatch.setitem(service_globals, "_content_prompt", fake_content_prompt)
+    monkeypatch.setitem(service_globals, "_create_job", fake_create_job)
+    monkeypatch.setitem(service_globals, "serialize_job", lambda _job: {})
+
+    await create_cover_generate_job(
+        object(),
+        SimpleNamespace(uid="alice"),
+        CoverGenerateCreate(
+            mode="image_to_image",
+            source_asset_ids=["reference-1"],
+            render_prompt_text=True,
+            prompt="逐字书写：拆除卫生间 2000元；整套人工合计 1.206w",
+            idempotency_key="request-handwritten",
+        ),
+    )
+
+    request = captured["request"]
+    assert "以唯一参考图作为手写报价模板例图" in request["prompt"]
+    assert "拆除卫生间 2000元" in request["prompt"]
+    assert "不得改写、遗漏、重复、增加或重新计算" in request["prompt"]
+    assert "错误数字" in request["negative_prompt"]
+    assert captured["content_prompt_kwargs"]["include_content_context"] is False
+
+
+@pytest.mark.asyncio
+async def test_hycanvas_handwritten_reference_is_saved_as_image_source(monkeypatch: pytest.MonkeyPatch):
+    import yuxi.services.hycanvas_service as hycanvas_service
+
+    captured = {}
+    asset = SimpleNamespace(id="reference-1", sha256="new-sha", metadata_json={})
+
+    class FakeRepository:
+        def __init__(self, _db):
+            pass
+
+        async def find_hycanvas_reference_asset(self, owner_uid, template_id):
+            assert owner_uid == "alice"
+            assert template_id == "template-1"
+            return None
+
+        async def get_asset_for_user(self, asset_id, owner_uid):
+            assert (asset_id, owner_uid) == ("reference-1", "alice")
+            return asset
+
+        async def update_asset_metadata(self, item, metadata):
+            item.metadata_json = metadata
+
+    class FakeClient:
+        async def render_template_png(self, template_id):
+            assert template_id == "template-1"
+            return _image("white"), "image/png"
+
+    async def fake_create_cover_asset(_db, _user, _upload, *, role, content_task_id):
+        captured.update(role=role, content_task_id=content_task_id)
+        return {"asset": {"id": "reference-1"}}
+
+    class FakeDB:
+        async def commit(self):
+            captured["committed"] = True
+
+    service_globals = ensure_hycanvas_reference_asset.__globals__
+    monkeypatch.setitem(service_globals, "ContentCoverRepository", FakeRepository)
+    monkeypatch.setitem(service_globals, "create_cover_asset", fake_create_cover_asset)
+    monkeypatch.setattr(hycanvas_service.HyCanvasClient, "from_env", classmethod(lambda cls: FakeClient()))
+
+    result = await ensure_hycanvas_reference_asset(FakeDB(), SimpleNamespace(uid="alice"), "template-1")
+
+    assert result is asset
+    assert captured == {"role": "source", "content_task_id": None, "committed": True}
+    assert asset.metadata_json["hycanvas_template_id"] == "template-1"
+
+
+def test_prompt_text_mode_rejects_text_to_image_without_reference():
+    with pytest.raises(ValidationError, match="提示词文字直出仅支持单图图生图"):
+        CoverGenerateCreate(
+            mode="text_to_image",
+            render_prompt_text=True,
+            prompt="手写报价",
+            idempotency_key="request-handwritten",
+        )
 
 
 @pytest.mark.parametrize(
@@ -930,7 +1073,7 @@ async def test_gpt_image_2_generation_payload_uses_supported_contract_only():
 
     assert result.status == "completed"
     assert captured["model"] == "gpt-image-2"
-    assert captured["size"] == "1024x1536"
+    assert captured["size"] == "1104x1472"
     assert "images" not in captured
     assert "image" not in captured
     assert "mask" not in captured
@@ -940,6 +1083,22 @@ async def test_gpt_image_2_generation_payload_uses_supported_contract_only():
     assert captured["output_format"] == "png"
     assert content_type == "image/png"
     assert raw.startswith(b"\x89PNG")
+
+
+def test_cover_output_resizes_provider_portrait_to_business_size_without_crop():
+    source = Image.new("RGB", (1104, 1472), "#123456")
+    output = io.BytesIO()
+    source.save(output, format="PNG")
+
+    normalized, width, height = content_cover_worker._normalize_output(
+        output.getvalue(),
+        target_size=(1080, 1440),
+    )
+
+    assert (width, height) == (1080, 1440)
+    with Image.open(io.BytesIO(normalized)) as result:
+        assert result.size == (1080, 1440)
+        assert result.getpixel((540, 720)) == (18, 52, 86)
 
 
 @pytest.mark.asyncio
@@ -1568,6 +1727,50 @@ async def test_asset_reference_is_active_until_job_reaches_terminal_status():
         job.status = "succeeded"
         await db.commit()
         assert await ContentCoverRepository(db).asset_is_in_active_job("source-1", "alice") is False
+
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_template_reference_cache_queries_json_metadata_without_astext():
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as connection:
+        await connection.run_sync(ContentCoverAsset.__table__.create)
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    def asset(asset_id: str, role: str, metadata: dict[str, str]) -> ContentCoverAsset:
+        return ContentCoverAsset(
+            id=asset_id,
+            owner_uid="alice",
+            tenant_id=None,
+            content_task_id=None,
+            role=role,
+            original_file_name=f"{asset_id}.png",
+            content_type="image/png",
+            file_size=10,
+            image_width=1080,
+            image_height=1440,
+            sha256=asset_id.ljust(64, "0"),
+            bucket_name="material-library",
+            object_name=f"references/{asset_id}.png",
+            metadata_json=metadata,
+        )
+
+    async with session_factory() as db:
+        db.add_all(
+            [
+                asset("featured-1", "template", {"featured_template_id": "featured-template-1"}),
+                asset("handwritten-1", "source", {"hycanvas_template_id": "handwritten-template-1"}),
+            ]
+        )
+        await db.commit()
+        repo = ContentCoverRepository(db)
+
+        featured = await repo.find_featured_reference_asset("alice", "featured-template-1")
+        handwritten = await repo.find_hycanvas_reference_asset("alice", "handwritten-template-1")
+
+        assert featured is not None and featured.id == "featured-1"
+        assert handwritten is not None and handwritten.id == "handwritten-1"
 
     await engine.dispose()
 

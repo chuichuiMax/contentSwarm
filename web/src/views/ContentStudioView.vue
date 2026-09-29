@@ -245,6 +245,9 @@ const selectedImageRootGalleryId = computed(
 const selectedHyCanvasTemplate = computed(
   () => hycanvasTemplates.value.find((item) => item.id === selectedHyCanvasTemplateId.value) || null
 )
+const selectedHandwrittenQuoteTemplate = computed(
+  () => selectedHyCanvasTemplate.value?.is_handwritten_quote_template === true
+)
 const currentContentType = computed(
   () => store.task?.content_type_code || creation.content_type_code
 )
@@ -2220,12 +2223,17 @@ const buildBrief = () => ({
     selectedImageItemId.value || selectedHyCanvasTemplateId.value || coverTemplateTab.value === 'ai'
       ? {
           cover_mode: coverTemplateTab.value,
-          image_item_id: selectedImageItemId.value || null,
+          image_item_id: selectedHandwrittenQuoteTemplate.value
+            ? null
+            : selectedImageItemId.value || null,
           poster_template_id: null,
           hycanvas_template_id:
             coverTemplateTab.value === 'builtin' ? selectedHyCanvasTemplateId.value || null : null,
           featured_cover_template_id: null,
-          photo_composition: coverTemplateTab.value === 'builtin' ? photoComposition.value : null
+          photo_composition:
+            coverTemplateTab.value === 'builtin' && !selectedHandwrittenQuoteTemplate.value
+              ? photoComposition.value
+              : null
         }
       : null
 })
@@ -2330,11 +2338,14 @@ const submitCreation = async () => {
     message.warning('请填写内容需求')
     return
   }
-  if (photoComposition.value?.slots.some((slot) => !slot.image_item_id)) {
+  if (
+    !selectedHandwrittenQuoteTemplate.value &&
+    photoComposition.value?.slots.some((slot) => !slot.image_item_id)
+  ) {
     message.warning('请填满图片组合的所有位置')
     return
   }
-  if (!selectedImageItemId.value) {
+  if (!selectedImageItemId.value && !selectedHandwrittenQuoteTemplate.value) {
     message.warning('请选择一张图库图片作为封面原图')
     return
   }

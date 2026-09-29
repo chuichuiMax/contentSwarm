@@ -45,6 +45,7 @@ class ContentCoverRepository:
         base_url: str,
         api_key: str,
         model: str,
+        max_concurrent: int,
         capabilities_json: dict[str, Any] | None = None,
         verification_status: str = "unverified",
         verified_at=None,
@@ -56,6 +57,7 @@ class ContentCoverRepository:
                 base_url=base_url,
                 api_key=api_key,
                 model=model,
+                max_concurrent=max_concurrent,
                 capabilities_json=capabilities_json or {},
                 verification_status=verification_status,
                 verified_at=verified_at,
@@ -65,6 +67,7 @@ class ContentCoverRepository:
             setting.base_url = base_url
             setting.api_key = api_key
             setting.model = model
+            setting.max_concurrent = max_concurrent
             setting.capabilities_json = capabilities_json or {}
             setting.verification_status = verification_status
             setting.verified_at = verified_at
@@ -88,7 +91,25 @@ class ContentCoverRepository:
                         ContentCoverAsset.owner_uid == owner_uid,
                         ContentCoverAsset.role == "template",
                         ContentCoverAsset.deleted_at.is_(None),
-                        ContentCoverAsset.metadata_json["featured_template_id"].astext == featured_template_id,
+                        ContentCoverAsset.metadata_json["featured_template_id"].as_string() == featured_template_id,
+                    )
+                )
+            )
+            .scalars()
+            .first()
+        )
+
+    async def find_hycanvas_reference_asset(
+        self, owner_uid: str, hycanvas_template_id: str
+    ) -> ContentCoverAsset | None:
+        return (
+            (
+                await self.db.execute(
+                    select(ContentCoverAsset).where(
+                        ContentCoverAsset.owner_uid == owner_uid,
+                        ContentCoverAsset.role == "source",
+                        ContentCoverAsset.deleted_at.is_(None),
+                        ContentCoverAsset.metadata_json["hycanvas_template_id"].as_string() == hycanvas_template_id,
                     )
                 )
             )

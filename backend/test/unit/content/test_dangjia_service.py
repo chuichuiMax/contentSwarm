@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
+
 import pytest
 from fastapi import HTTPException
 from pydantic import ValidationError
 
+import yuxi.services.dangjia_service as dangjia_service
 from yuxi.services.dangjia_service import (
     DangjiaContentCreate,
     _composition_layout_id,
@@ -13,6 +17,7 @@ from yuxi.services.dangjia_service import (
     build_dangjia_form_values,
     build_persona_description,
     build_trusted_quote_snapshot,
+    create_dangjia_content,
 )
 
 VALID_TEMPLATE_ID = "b585947e-8413-4dd5-a7b5-d1486ec81882"
@@ -227,3 +232,58 @@ def test_brief_rejects_invalid_template_id_format():
     with pytest.raises(HTTPException) as exc:
         build_dangjia_brief(payload, cover_item_id="mli_cover", ordered_item_ids=["mli_cover", "mli_b"])
     assert exc.value.detail["error"]["code"] == "DANGJIA_TEMPLATE_ID_INVALID"
+
+
+@pytest.mark.asyncio
+async def test_create_content_seeds_trusted_quote_before_brief_compilation(monkeypatch):
+    payload = make_payload(image_count=1, price_formats=("单价面积",))
+    task = SimpleNamespace(
+        runtime_config_snapshot_json={},
+        to_dict=lambda: {"id": "task-1", "brief": {}, "status": "draft"},
+    )
+    observed = {}
+
+    class FakeDB:
+        async def get(self, model, task_id):
+            del model
+            return task if task_id == "task-1" else None
+
+        async def flush(self):
+            return None
+
+        async def commit(self):
+            return None
+
+    async def fake_save_content_brief(db, user, task_id, brief, *, compile_now):
+        del db, user, task_id, brief, compile_now
+        observed["snapshot"] = task.runtime_config_snapshot_json["trusted_external_material_snapshot"]
+        return {"compiled": True}
+
+    monkeypatch.setattr(dangjia_service, "_find_task_by_serial", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        dangjia_service,
+        "_import_images",
+        AsyncMock(return_value={payload.images[0].objectUrl: "mli-1"}),
+    )
+    monkeypatch.setattr(dangjia_service, "_decoration_template", AsyncMock(return_value={"id": "template-1"}))
+    monkeypatch.setattr(
+        dangjia_service,
+        "create_content_task",
+        AsyncMock(return_value={"task": {"id": "task-1"}}),
+    )
+    monkeypatch.setattr(dangjia_service, "save_content_brief", fake_save_content_brief)
+    monkeypatch.setattr(
+        dangjia_service,
+        "create_content_run",
+        AsyncMock(return_value={"run_id": "run-1"}),
+    )
+    monkeypatch.setattr(
+        dangjia_service,
+        "get_content_task",
+        AsyncMock(return_value={"task": {"id": "task-1", "brief": {}, "status": "draft"}}),
+    )
+
+    await create_dangjia_content(FakeDB(), SimpleNamespace(uid="user-1"), payload)
+
+    assert observed["snapshot"]["source"] == "dangjia"
+    assert observed["snapshot"]["quote_block"]["original_content"] == "单价面积测试报价"

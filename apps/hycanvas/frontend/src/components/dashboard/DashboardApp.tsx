@@ -102,8 +102,8 @@ import { stageAiSources } from "@/lib/aiRequests";
 import { tr, trOr } from "@/lib/i18n";
 import { apiCodeMessage, userMessage } from "@/lib/errors";
 import { isContentSwarmManaged } from "@/lib/managedAuth";
-import { isTemplateInZone, templateZoneForFormat, templateZoneFromQuery, templateZoneLabelKey, type TemplateZone } from "@/lib/templateZones";
-import { uploadFeaturedCovers } from "@/lib/featuredCovers";
+import { isTemplateInZone, templateTagForZone, templateZoneForFormat, templateZoneFromQuery, templateZoneLabelKey, type TemplateZone } from "@/lib/templateZones";
+import { uploadImageTemplates } from "@/lib/featuredCovers";
 
 // Time-aware greeting for the dashboard hero band.
 function greetByHour(): string {
@@ -599,11 +599,24 @@ export function DashboardApp({ view }: { view: DashboardView }) {
 
   async function uploadCoverImages(files: FileList | null) {
     if (!files?.length || !activeWorkspaceId || coverProgress) return;
+    if (templateZone !== "featured" && !tplCollection) {
+      toast.error("请选择模板分类，或先在模板页面新建一个分类。");
+      return;
+    }
     const selected = [...files];
+    const zoneTag = templateTagForZone(templateZone);
     setCoverProgress({ done: 0, total: selected.length });
     try {
-      const { uploaded, failed } = await uploadFeaturedCovers(activeWorkspaceId, selected, (done, total) =>
-        setCoverProgress({ done, total }),
+      const { uploaded, failed } = await uploadImageTemplates(
+        activeWorkspaceId,
+        selected,
+        {
+          collectionId: templateZone === "featured" ? undefined : tplCollection ?? undefined,
+          category: zoneTag ?? "图片模板",
+          tags: zoneTag ? [zoneTag] : [],
+          visibility: templateZone === "featured" ? "public" : "workspace",
+        },
+        (done, total) => setCoverProgress({ done, total }),
       );
       if (uploaded > 0) setTplRefresh((n) => n + 1);
       if (failed > 0) toast.error(tr("dashboard.cover_upload_failed"));
@@ -1250,33 +1263,29 @@ export function DashboardApp({ view }: { view: DashboardView }) {
                 <Button variant="secondary" size="sm" onClick={() => setPptxTemplateOpen(true)} title={tr("dashboard.build_a_template_from_a_powerpoint_file")}>
                   <FileUp size={15} /> {tr("dashboard.template_from_powerpoint")}
                 </Button>
-                {templateZone === "featured" && (
-                  <>
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      disabled={coverProgress !== null}
-                      onClick={() => coverUploadRef.current?.click()}
-                      title={tr("dashboard.upload_cover_images")}
-                    >
-                      <Images size={15} />
-                      {coverProgress
-                        ? tr("dashboard.uploading_cover_images", { done: coverProgress.done, total: coverProgress.total })
-                        : tr("dashboard.upload_cover_images")}
-                    </Button>
-                    <input
-                      ref={coverUploadRef}
-                      type="file"
-                      accept="image/png,image/jpeg,image/webp"
-                      multiple
-                      hidden
-                      onChange={(e) => {
-                        void uploadCoverImages(e.target.files);
-                        e.target.value = "";
-                      }}
-                    />
-                  </>
-                )}
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  disabled={coverProgress !== null}
+                  onClick={() => coverUploadRef.current?.click()}
+                  title={tr("dashboard.upload_cover_images")}
+                >
+                  <Images size={15} />
+                  {coverProgress
+                    ? tr("dashboard.uploading_cover_images", { done: coverProgress.done, total: coverProgress.total })
+                    : tr("dashboard.upload_cover_images")}
+                </Button>
+                <input
+                  ref={coverUploadRef}
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp"
+                  multiple
+                  hidden
+                  onChange={(e) => {
+                    void uploadCoverImages(e.target.files);
+                    e.target.value = "";
+                  }}
+                />
                 <input
                   ref={importTemplateRef}
                   type="file"
