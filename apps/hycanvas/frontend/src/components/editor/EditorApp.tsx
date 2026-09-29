@@ -6,10 +6,10 @@ import { useCallback, useEffect, useRef, useState, type ComponentType } from "re
 import { useRouter } from "next/router";
 import { isAiBusy, requestAi, subscribeOpenProperties } from "@/lib/aiRequests";
 import type { Node as DesignNode } from "@hc/schema";
-import { ChevronLeft, Undo2, Redo2, Download, Play, MonitorPlay, Ruler, Grid3x3, Magnet, LayoutTemplate, History, Eye, Share2, MessageSquare, ShieldCheck, Activity, BarChart3, MoreHorizontal, Send, Globe, Printer, PanelRightClose, PanelRightOpen, Keyboard, Info, X, Accessibility, Maximize2, Minimize2, LayoutGrid, FileDown, Film, Table2 } from "lucide-react";
+import { ChevronLeft, Undo2, Redo2, Download, Play, MonitorPlay, Ruler, Grid3x3, Magnet, LayoutTemplate, History, Eye, Share2, MessageSquare, ShieldCheck, Activity, BarChart3, MoreHorizontal, Send, Globe, Printer, PanelRightClose, PanelRightOpen, Keyboard, Info, X, Accessibility, Maximize2, Minimize2, LayoutGrid, FileDown, Film, Table2, Images } from "lucide-react";
 import type { AccessMode } from "@hc/sdk";
 import { ApiError } from "@hc/sdk";
-import { oc } from "@/lib/sdk";
+import { oc, resolveAssetUrl } from "@/lib/sdk";
 import { downloadHycFile } from "@/lib/hycFile";
 import { deckToVideoFile } from "@/lib/video/deckToVideo";
 import { parseCsvMatrix } from "@/lib/csv";
@@ -845,6 +845,37 @@ export function EditorApp() {
   // Bulk data-merge into slides (doc 28): pick a CSV whose header row names
   // the {{tokens}} used on the CURRENT page; one new slide lands per row.
   const mergeCsvRef = useRef<HTMLInputElement>(null);
+  const imageTemplateRef = useRef<HTMLInputElement>(null);
+  const [imageTemplateImporting, setImageTemplateImporting] = useState(false);
+
+  async function importImageTemplate(list: FileList | null) {
+    const file = list?.[0];
+    if (!file || !workspaceId || imageTemplateImporting || accessMode !== "edit") return;
+    if (!["image/png", "image/jpeg", "image/webp"].includes(file.type)) {
+      toast.error(tr("editor.only_image_files_can_be_uploaded"));
+      return;
+    }
+    setImageTemplateImporting(true);
+    try {
+      const dataBase64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const result = typeof reader.result === "string" ? reader.result : "";
+          resolve(result.slice(result.indexOf(",") + 1));
+        };
+        reader.onerror = () => reject(reader.error);
+        reader.readAsDataURL(file);
+      });
+      const asset = await oc.uploadAsset(workspaceId, { filename: file.name, dataBase64 });
+      useEditor.getState().addPageBackgroundImage(resolveAssetUrl(asset.url));
+      toast.success(tr("editor.image_template_imported"));
+    } catch {
+      toast.error(tr("editor.couldnt_import_the_image_template"));
+    } finally {
+      setImageTemplateImporting(false);
+    }
+  }
+
   async function bulkMergeFromCsv(list: FileList | null) {
     const f = list?.[0];
     if (!f) return;
@@ -1039,6 +1070,17 @@ export function EditorApp() {
             overflow menu (they have no other entry point, so they must stay
             reachable). */}
         {!isVeryNarrow && <ViewToggles />}
+        {!isVeryNarrow && docKind === "design" && (
+          <IconButton
+            size="sm"
+            onClick={() => imageTemplateRef.current?.click()}
+            disabled={!workspaceId || imageTemplateImporting || accessMode !== "edit"}
+            aria-label={tr("editor.upload_image_template")}
+            title={tr("editor.upload_image_template")}
+          >
+            {imageTemplateImporting ? <Spinner className="text-sm" /> : <Images size={18} />}
+          </IconButton>
+        )}
         <div className="ms-auto flex shrink-0 items-center gap-1">
           {!isCompact && designId && <PresenceBar />}
           {designId && (
@@ -1116,6 +1158,9 @@ export function EditorApp() {
                     { icon: Ruler as TopIcon, label: tr("editor.rulers_guides"), onClick: () => useEditor.getState().toggleRulers() },
                     { icon: Grid3x3 as TopIcon, label: tr("editor.grid"), onClick: () => useEditor.getState().toggleGrid() },
                     { icon: Magnet as TopIcon, label: tr("editor.snapping"), onClick: () => useEditor.getState().toggleSnap() },
+                    ...(docKind === "design"
+                      ? [{ icon: Images as TopIcon, label: tr("editor.upload_image_template"), onClick: () => imageTemplateRef.current?.click(), disabled: !workspaceId || imageTemplateImporting || accessMode !== "edit" }]
+                      : []),
                   ]
                 : []),
               ...(docKind === "design" && pageCount > 1
@@ -1229,6 +1274,16 @@ export function EditorApp() {
         onChange={(e) => {
           void bulkMergeFromCsv(e.target.files);
           e.target.value = "";
+        }}
+      />
+      <input
+        ref={imageTemplateRef}
+        type="file"
+        accept="image/png,image/jpeg,image/webp"
+        hidden
+        onChange={(event) => {
+          void importImageTemplate(event.target.files);
+          event.target.value = "";
         }}
       />
       <SlideOverview open={overviewOpen} onClose={() => setOverviewOpen(false)} />
