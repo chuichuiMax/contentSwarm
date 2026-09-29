@@ -316,6 +316,7 @@ def test_image2_configuration_rejects_invalid_status_path(monkeypatch: pytest.Mo
 
 def test_image2_configuration_defaults_to_five_minute_request_timeout(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.delenv("IMAGE2_TIMEOUT_SECONDS", raising=False)
+    monkeypatch.delenv("IMAGE2_MAX_CONCURRENT", raising=False)
 
     config = Image2Config.from_values(
         base_url="https://relay.example.com/v1",
@@ -324,6 +325,7 @@ def test_image2_configuration_defaults_to_five_minute_request_timeout(monkeypatc
     )
 
     assert config.timeout_seconds == 300
+    assert config.max_concurrent == 1
 
 
 def test_global_image2_config_normalizes_values():
@@ -331,11 +333,23 @@ def test_global_image2_config_normalizes_values():
         base_url=" https://relay.example.com/v1 ",
         api_key=" request-secret ",
         model=" gpt-image-2 ",
+        max_concurrent=5,
     )
 
     assert payload.base_url == "https://relay.example.com/v1"
     assert payload.api_key == "request-secret"
     assert payload.model == "gpt-image-2"
+    assert payload.max_concurrent == 5
+
+
+def test_global_image2_config_rejects_concurrency_above_worker_capacity():
+    with pytest.raises(ValidationError):
+        Image2GlobalConfigUpdate(
+            base_url="https://relay.example.com/v1",
+            api_key="request-secret",
+            model="gpt-image-2",
+            max_concurrent=11,
+        )
 
 
 @pytest.mark.asyncio
@@ -424,6 +438,7 @@ async def test_global_image2_config_preserves_saved_key_and_never_returns_it(
             setting.base_url = values["base_url"]
             setting.api_key = values["api_key"]
             setting.model = values["model"]
+            setting.max_concurrent = values["max_concurrent"]
             return setting
 
     monkeypatch.setattr(image2_settings, "ContentCoverRepository", FakeRepo)
@@ -433,14 +448,17 @@ async def test_global_image2_config_preserves_saved_key_and_never_returns_it(
         db,
         base_url="https://new-relay.example.com/v1",
         api_key=None,
+        max_concurrent=5,
         owner_uid="alice",
     )
     state = await image2_settings.get_image2_config_state(db, owner_uid="alice")
 
     assert captured["values"]["api_key"] == "saved-secret"
+    assert captured["values"]["max_concurrent"] == 5
     assert captured["committed"] is True
     assert state["base_url"] == "https://new-relay.example.com/v1"
     assert state["api_key_configured"] is True
+    assert state["max_concurrent"] == 5
     assert "api_key" not in state
 
 
@@ -1055,7 +1073,7 @@ async def test_gpt_image_2_generation_payload_uses_supported_contract_only():
 
     assert result.status == "completed"
     assert captured["model"] == "gpt-image-2"
-    assert captured["size"] == "1024x1536"
+    assert captured["size"] == "1104x1472"
     assert "images" not in captured
     assert "image" not in captured
     assert "mask" not in captured
@@ -1065,6 +1083,22 @@ async def test_gpt_image_2_generation_payload_uses_supported_contract_only():
     assert captured["output_format"] == "png"
     assert content_type == "image/png"
     assert raw.startswith(b"\x89PNG")
+
+
+def test_cover_output_resizes_provider_portrait_to_business_size_without_crop():
+    source = Image.new("RGB", (1104, 1472), "#123456")
+    output = io.BytesIO()
+    source.save(output, format="PNG")
+
+    normalized, width, height = content_cover_worker._normalize_output(
+        output.getvalue(),
+        target_size=(1080, 1440),
+    )
+
+    assert (width, height) == (1080, 1440)
+    with Image.open(io.BytesIO(normalized)) as result:
+        assert result.size == (1080, 1440)
+        assert result.getpixel((540, 720)) == (18, 52, 86)
 
 
 @pytest.mark.asyncio

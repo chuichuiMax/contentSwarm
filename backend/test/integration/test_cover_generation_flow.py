@@ -80,12 +80,14 @@ async def test_image2_global_settings_persist_per_account_without_returning_key(
                 owner_uid=owner_a,
                 base_url="https://relay-a.example.com/v1",
                 api_key="secret-a",
+                max_concurrent=3,
             )
             await save_image2_config(
                 db,
                 owner_uid=owner_b,
                 base_url="https://relay-b.example.com/v1",
                 api_key="secret-b",
+                max_concurrent=5,
             )
             config_a = await resolve_image2_config(db, owner_uid=owner_a)
             config_b = await resolve_image2_config(db, owner_uid=owner_b)
@@ -99,8 +101,11 @@ async def test_image2_global_settings_persist_per_account_without_returning_key(
             "https://relay-b.example.com/v1",
             "secret-b",
         )
+        assert config_a.max_concurrent == 3
+        assert config_b.max_concurrent == 5
         assert state_a["source"] == "database"
         assert state_a["api_key_configured"] is True
+        assert state_a["max_concurrent"] == 3
         assert "api_key" not in state_a
     finally:
         async with pg_manager.get_async_session_context() as db:

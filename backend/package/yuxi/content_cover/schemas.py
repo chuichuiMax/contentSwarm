@@ -51,6 +51,7 @@ class Image2GlobalConfigUpdate(BaseModel):
     base_url: str = Field(min_length=8, max_length=500)
     api_key: str | None = Field(default=None, max_length=500)
     model: str = Field(default="gpt-image-2", min_length=1, max_length=255)
+    max_concurrent: int | None = Field(default=None, ge=1, le=10)
 
     @field_validator("base_url")
     @classmethod

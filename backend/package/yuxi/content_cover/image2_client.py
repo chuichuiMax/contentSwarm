@@ -38,6 +38,7 @@ class Image2Config:
     edit_path: str = "/images/edits"
     status_path: str = "/images/generations/{task_id}"
     timeout_seconds: float = 300
+    max_concurrent: int = 1
     send_response_format: bool = False
     trusted_output_origins: tuple[str, ...] = ()
     edit_model: str | None = None
@@ -55,6 +56,7 @@ class Image2Config:
         status_path: str = "/images/generations/{task_id}",
         edit_model: str | None = None,
         edit_request_format: str = "openai_multipart",
+        max_concurrent: int | None = None,
     ) -> Image2Config:
         base_url = base_url.strip().rstrip("/")
         api_key = api_key.strip()
@@ -83,6 +85,13 @@ class Image2Config:
             raise Image2Error("IMAGE2_CONFIG_INVALID", "IMAGE2_TIMEOUT_SECONDS 必须是数字") from exc
         if timeout_seconds <= 0:
             raise Image2Error("IMAGE2_CONFIG_INVALID", "IMAGE2_TIMEOUT_SECONDS 必须大于 0")
+        if max_concurrent is None:
+            try:
+                max_concurrent = int(os.getenv("IMAGE2_MAX_CONCURRENT", "1"))
+            except ValueError as exc:
+                raise Image2Error("IMAGE2_CONFIG_INVALID", "IMAGE2_MAX_CONCURRENT 必须是整数") from exc
+        if not 1 <= max_concurrent <= 10:
+            raise Image2Error("IMAGE2_CONFIG_INVALID", "image2 最大并发数必须在 1 到 10 之间")
         trusted_output_origins = tuple(
             item.strip().rstrip("/")
             for item in (os.getenv("IMAGE2_TRUSTED_OUTPUT_ORIGINS") or "").split(",")
@@ -127,6 +136,7 @@ class Image2Config:
             edit_path=edit_path,
             status_path=status_path,
             timeout_seconds=timeout_seconds,
+            max_concurrent=max_concurrent,
             send_response_format=os.getenv("IMAGE2_SEND_RESPONSE_FORMAT", "false").lower() in {"1", "true", "yes"},
             trusted_output_origins=trusted_output_origins,
             edit_model=edit_model,
@@ -198,7 +208,7 @@ class Image2Client:
         # 目标尺寸原样传给中转站；未知尺寸必须显式失败，禁止静默改成竖版。
         legacy_sizes = {
             "1080x1080": "1024x1024",
-            "1080x1440": "1024x1536",
+            "1080x1440": "1104x1472",
         }
         if size in legacy_sizes:
             return legacy_sizes[size]
@@ -206,6 +216,7 @@ class Image2Client:
             "1024x1024",
             "1024x1536",
             "1536x1024",
+            "1104x1472",
             "1152x1536",
             "1536x1152",
             "2048x2048",
@@ -456,8 +467,10 @@ class Image2Client:
                 payload = {
                     "model": self.config.edit_model,
                     "prompt": request.prompt,
-                    **{("image" if index == 1 else f"image{index}"): self._data_url(item)
-                       for index, item in enumerate(references, start=1)},
+                    **{
+                        ("image" if index == 1 else f"image{index}"): self._data_url(item)
+                        for index, item in enumerate(references, start=1)
+                    },
                 }
                 if request.negative_prompt:
                     payload["negative_prompt"] = request.negative_prompt

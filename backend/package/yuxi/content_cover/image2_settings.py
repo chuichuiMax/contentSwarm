@@ -20,6 +20,14 @@ def _effective_api_key(setting=None) -> str:
     return str((setting.api_key if setting else None) or os.getenv("IMAGE2_API_KEY") or "").strip()
 
 
+def _max_concurrent(setting=None) -> int:
+    saved = getattr(setting, "max_concurrent", None) if setting else None
+    try:
+        return int(saved if saved is not None else os.getenv("IMAGE2_MAX_CONCURRENT", "1"))
+    except (TypeError, ValueError):
+        return 1
+
+
 async def resolve_image2_config(db: AsyncSession, *, owner_uid: str) -> Image2Config:
     setting = await ContentCoverRepository(db).get_image2_setting(owner_uid)
     if setting:
@@ -27,6 +35,7 @@ async def resolve_image2_config(db: AsyncSession, *, owner_uid: str) -> Image2Co
             base_url=setting.base_url,
             api_key=setting.api_key,
             model=_model(setting),
+            max_concurrent=getattr(setting, "max_concurrent", None),
         )
     return Image2Config.from_env()
 
@@ -42,6 +51,7 @@ async def get_image2_config_state(db: AsyncSession, *, owner_uid: str) -> dict[s
             "base_url": setting.base_url if setting else None,
             "api_key_configured": bool(setting and setting.api_key),
             "model": _model(setting),
+            "max_concurrent": _max_concurrent(setting),
             "source": source,
             "can_manage": True,
             "quality": "high",
@@ -54,6 +64,7 @@ async def get_image2_config_state(db: AsyncSession, *, owner_uid: str) -> dict[s
         "base_url": config.base_url,
         "api_key_configured": bool(config.api_key),
         "model": config.model,
+        "max_concurrent": config.max_concurrent,
         "source": source,
         "can_manage": True,
         "quality": "high",
@@ -69,6 +80,7 @@ async def save_image2_config(
     base_url: str,
     api_key: str | None,
     model: str = IMAGE2_DEFAULT_MODEL,
+    max_concurrent: int | None = None,
     owner_uid: str,
 ) -> None:
     repo = ContentCoverRepository(db)
@@ -78,12 +90,14 @@ async def save_image2_config(
         base_url=base_url,
         api_key=effective_api_key,
         model=model,
+        max_concurrent=max_concurrent if max_concurrent is not None else getattr(setting, "max_concurrent", None),
     )
     await repo.upsert_image2_setting(
         owner_uid=owner_uid,
         base_url=validated.base_url,
         api_key=validated.api_key,
         model=validated.model,
+        max_concurrent=validated.max_concurrent,
         capabilities_json={},
         verification_status="unverified",
         verified_at=None,
@@ -97,13 +111,19 @@ async def verify_image2_config(
     base_url: str,
     api_key: str | None,
     model: str,
+    max_concurrent: int | None,
     owner_uid: str,
 ) -> dict[str, Any]:
     """Probe a draft config and persist only a successful, reachable profile."""
     repo = ContentCoverRepository(db)
     setting = await repo.get_image2_setting(owner_uid, for_update=True)
     effective_api_key = api_key or _effective_api_key(setting)
-    config = Image2Config.from_values(base_url=base_url, api_key=effective_api_key, model=model)
+    config = Image2Config.from_values(
+        base_url=base_url,
+        api_key=effective_api_key,
+        model=model,
+        max_concurrent=max_concurrent if max_concurrent is not None else getattr(setting, "max_concurrent", None),
+    )
     async with Image2Client(config) as client:
         profile = await client.probe_capabilities()
     values = profile.model_dump(mode="json")
@@ -113,6 +133,7 @@ async def verify_image2_config(
         base_url=config.base_url,
         api_key=config.api_key,
         model=config.model,
+        max_concurrent=config.max_concurrent,
         capabilities_json=values,
         verification_status="verified" if profile.model_discovered is not False else "warning",
         verified_at=verified_at,

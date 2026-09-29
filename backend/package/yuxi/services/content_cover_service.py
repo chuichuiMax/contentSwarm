@@ -2181,6 +2181,7 @@ async def update_image2_global_config(
             base_url=payload.base_url,
             api_key=payload.api_key,
             model=payload.model,
+            max_concurrent=payload.max_concurrent,
             owner_uid=_owner_uid(user),
         )
     except Image2Error as exc:
@@ -2199,6 +2200,7 @@ async def test_image2_global_config(
             base_url=payload.base_url,
             api_key=payload.api_key,
             model=payload.model,
+            max_concurrent=payload.max_concurrent,
             owner_uid=_owner_uid(user),
         )
     except Image2Error as exc:

@@ -1034,6 +1034,7 @@ class ContentCoverImage2Setting(Base):
     base_url = Column(String(500), nullable=False)
     api_key = Column(String(500), nullable=False)
     model = Column(String(255), nullable=False, default="gpt-image-2")
+    max_concurrent = Column(Integer, nullable=True)
     capabilities_json = Column(JSON, nullable=False, default=dict)
     verification_status = Column(String(32), nullable=False, default="unverified")
     verified_at = Column(DateTime, nullable=True)

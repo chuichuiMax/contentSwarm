@@ -47,6 +47,7 @@ async def test_cover_asset_upload_is_private_and_deletable(test_client, admin_he
         "base_url",
         "api_key_configured",
         "model",
+        "max_concurrent",
         "source",
         "can_manage",
         "quality",
