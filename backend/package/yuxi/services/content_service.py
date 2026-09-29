@@ -69,7 +69,7 @@ from yuxi.repositories.content_repository import ContentRepository
 from yuxi.repositories.material_library_repository import MaterialLibraryRepository
 from yuxi.services.run_queue_service import get_arq_pool, list_run_stream_events
 from yuxi.storage.postgres.models_business import AgentRun, User
-from yuxi.storage.postgres.models_content import ContentArtifactVersion, ContentTask
+from yuxi.storage.postgres.models_content import ContentArtifact, ContentArtifactVersion, ContentTask
 from yuxi.utils.datetime_utils import format_utc_datetime, utc_now_naive
 
 
@@ -1347,7 +1347,22 @@ async def list_content_tasks(
     items, total = await repo.list_tasks(
         user=user, page=page, page_size=page_size, status=status, generated_only=generated_only
     )
-    return {"items": [item.to_dict() for item in items], "total": total, "page": page, "page_size": page_size}
+    artifacts = {}
+    if items:
+        rows = await db.execute(
+            select(ContentArtifact.task_id, ContentArtifact.title, ContentArtifact.cover_asset_id).where(
+                ContentArtifact.task_id.in_([item.id for item in items])
+            )
+        )
+        artifacts = {task_id: (title, cover_asset_id) for task_id, title, cover_asset_id in rows}
+    results = []
+    for item in items:
+        result = item.to_dict()
+        title, cover_asset_id = artifacts.get(item.id, (None, None))
+        result["artifact_title"] = title
+        result["cover_asset_id"] = cover_asset_id
+        results.append(result)
+    return {"items": results, "total": total, "page": page, "page_size": page_size}
 
 
 async def get_content_task(db: AsyncSession, user: User, task_id: str) -> dict[str, Any]:
