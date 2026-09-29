@@ -1660,6 +1660,7 @@ watch(taskId, async (id, previousId) => {
   } catch (error) {
     message.error(error.message || '内容任务加载失败')
   }
+  if (route.name === 'ContentNew') void initializeCreationView()
 })
 
 watch(
@@ -2640,7 +2641,6 @@ const openVersions = async () => {
 
 const returnToContentCreation = async () => {
   await router.push({ name: 'ContentNew' })
-  await initializeCreationView()
 }
 </script>
 

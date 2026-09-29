@@ -1,7 +1,28 @@
-"""原文和原始业务数据直接写作；标题与正文的存储适配在模型返回后进行。"""
+﻿"""原文和原始业务数据直接写作；标题与正文的存储适配在模型返回后进行。"""
 
 import re
 from copy import deepcopy
+
+TOPIC_INSTRUCTION = (
+    "发布话题要求：根据本篇标题、正文和原始业务 JSON 生成恰好 10 个不重复、与内容相关的话题标签，"
+    "每个标签为 1～20 个字符，不含空格；不得编造地点、数字或服务承诺，不使用固定标签凑数。"
+    "在正文末尾另起一行，按 #标签 #标签 的格式输出全部标签，不把标签混入正文段落。"
+)
+
+
+def topic_validation_checks(topics: list[str]) -> list[dict]:
+    """原文仿写也必须满足当前发布接口的十个有效话题要求。"""
+    issues = []
+    if len(topics) != 10:
+        issues.append(("TOPIC_COUNT_MISMATCH", f"话题必须恰好 10 个，当前为 {len(topics)} 个"))
+    if len(topics) != len(set(topics)):
+        issues.append(("TOPIC_DUPLICATED", "话题存在重复项"))
+    if any(not 1 <= len(topic) <= 20 or re.search(r"[#\s]", topic) for topic in topics):
+        issues.append(("TOPIC_FORMAT_INVALID", "单个话题必须为 1～20 个字符，且不含空格或 #"))
+    return [
+        {"code": code, "level": "error", "location": "topics", "message": message, "evidence_ids": []}
+        for code, message in issues
+    ]
 
 
 def is_raw_reference(pack: dict) -> bool:
@@ -89,8 +110,8 @@ def project_input(payload: dict) -> dict:
     if reference_topics:
         original["话题"] = reference_topics
     return {
-        "仿写要求": author["instructions"],
-        "爆款原文": original,
+        "仿写要求": f"{author['instructions']}\n\n{TOPIC_INSTRUCTION}",
+        "爆款原文": {"标题": reference.get("title", ""), "正文": reference["body"]},
         "原始业务JSON": deepcopy(business),
         "审核规则": build_review_rules(payload),
     }

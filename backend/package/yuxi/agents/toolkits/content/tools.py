@@ -616,20 +616,25 @@ async def create_content_cover_job(
                 brief=task.brief_json or {},
             )
             image_field_label = None
+            template_title = ""
             for field in fillable_fields:
                 if not field.get("label"):
                     continue
                 label = str(field["label"])
                 if field.get("kind") == "image":
                     image_field_label = label
-                    continue
+                elif field.get("kind") == "text" and field.get("semanticRole") == "title" and not template_title:
+                    template_title = fields[str(field.get("key") or label)]
+            title = template_title or (text[0] if text else "")
+            if not title.strip():
+                raise ValueError("封面模板缺少主标题，请重新生成视觉方案")
             result = await create_hycanvas_cover_job(
                 db,
                 user,
                 content_task_id=task_id,
                 source_asset_id=locked_image_asset_id,
                 template_id=hycanvas_template_id,
-                title=text[0],
+                title=title,
                 fields=fields,
                 image_field_label=image_field_label,
                 idempotency_key=idempotency_key,

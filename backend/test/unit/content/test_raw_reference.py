@@ -11,6 +11,19 @@ from yuxi.content.model.raw_reference import assemble_article, project_input
 from yuxi.content.v3.modular_rules import build_modular_rule_bundle
 from yuxi.services.agent_delegation_service import AgentDelegationService
 
+TOPICS = [
+    "旧房装修",
+    "装修预算",
+    "施工明细",
+    "局部改造",
+    "装修经验",
+    "家装设计",
+    "厨房改造",
+    "装修材料",
+    "施工工艺",
+    "家居生活",
+]
+
 
 @pytest.fixture
 def payload():
@@ -38,6 +51,15 @@ def test_prompt_contains_exactly_original_reference_json_and_one_instruction(pay
     assert view["审核规则"]["话题标签"]
     assert view["审核规则"]["程序硬拦"].startswith("已关闭")
     assert "违禁词处理" in view["审核规则"]
+    author = next(
+        m
+        for m in payload["production_pack"]["content_rule_bundle"]["modules"]
+        if m["slug"] == "single-blueprint-author"
+    )
+    assert view["仿写要求"].startswith(author["instructions"])
+    assert "恰好 10 个" in view["仿写要求"]
+    assert "不重复" in view["仿写要求"]
+    assert "正文末尾" in view["仿写要求"]
     assert payload == original
     for token in ("facts", "blueprint_refs", "title_limits", "FRT07", "quote_ref"):
         assert token not in json.dumps(view, ensure_ascii=False)
@@ -49,6 +71,81 @@ def test_missing_original_data_does_not_fall_back_to_compiled_facts(payload):
     payload.pop("raw_business_json")
     with pytest.raises(ValueError, match="原始业务 JSON"):
         project_input(payload)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("title", "expected_status"),
+    [
+        ("长沙两卫生间翻新报价1.5万？我这边1.206万", "blocked"),
+        ("长沙两卫生间翻新怕超预算？人工报价1.206万", "passed"),
+    ],
+)
+async def test_reference_comparison_price_needs_its_own_business_evidence(payload, title, expected_status):
+    payload["production_pack"]["reference_snapshot"] = {
+        "title": "长沙厨房翻新报价两万？老杨3590搞定",
+        "body": "厨房翻新要预备两万块？看看这个案例。",
+    }
+    payload["raw_business_json"] = {"requirementType": {"prices": [{"content": "整套人工报价1.206w，合计12060元"}]}}
+    view = project_input(payload)
+    assert "数字事实（包括中文数字）只能来自原始业务 JSON" in view["仿写要求"]
+    assert "已有的金额、面积、数量、年限、单位及报价明细原样保留" in view["仿写要求"]
+    assert "没有对比价格时改用不含数字的预算疑问" in view["仿写要求"]
+    state = {
+        "production_pack": payload["production_pack"],
+        "selected_title": {"text": title},
+        "content_draft": {"body": "整套人工报价12060元，按实际项目核对范围。", "topics": TOPICS},
+        "content_brief": {},
+        "evidence_bundle": {"items": []},
+        "runtime_config_snapshot": {"raw_business_json": payload["raw_business_json"]},
+        "strategy_snapshot": {
+            "creation_methods": ["FRM03"],
+            **payload["production_pack"]["strategy_snapshot"],
+        },
+    }
+
+    result = await V3DeterministicNodeHandler._deterministic_validate(db=None, state=state, node_run_id="test")
+
+    report = result["validation_report"]
+    assert report["status"] == expected_status
+    if expected_status == "blocked":
+        assert [item["code"] for item in report["checks"]] == ["FACT_NUMBER_WITHOUT_SOURCE"]
+        assert "1.5" in report["checks"][0]["message"]
+    else:
+        assert report["checks"] == []
+
+
+@pytest.mark.asyncio
+async def test_raw_reference_quote_numbers_are_validated_against_original_business_json(payload):
+    quote = "、".join(
+        [
+            "水电12088元",
+            "拆除2121.6元",
+            "泥瓦2182元",
+            "木作3166.8元",
+            "防水3285.98元",
+            "人工50255元",
+            "安装5763元",
+            "油工6158元",
+            "其他9462.9元",
+        ]
+    )
+    state = {
+        "production_pack": payload["production_pack"],
+        "selected_title": {"text": "旧房施工报价明细"},
+        "content_draft": {"body": quote, "topics": TOPICS},
+        "content_brief": {},
+        "evidence_bundle": {"items": []},
+        "runtime_config_snapshot": {"raw_business_json": {"requirementType": {"prices": [{"content": quote}]}}},
+        "strategy_snapshot": {
+            "creation_methods": ["FRM03"],
+            **payload["production_pack"]["strategy_snapshot"],
+        },
+    }
+
+    result = await V3DeterministicNodeHandler._deterministic_validate(db=None, state=state, node_run_id="test")
+
+    assert result["validation_report"] == {"status": "passed", "checks": []}
 
 
 def test_plain_text_is_not_rewritten_or_replaced_during_storage_mapping(payload):
@@ -70,6 +167,52 @@ def test_inline_trailing_hashtags_are_extracted_as_topics(payload):
     result = assemble_article(text, payload["production_pack"])
     assert result["draft"]["body"] == "厨房想怎么改，咱们慢慢聊。"
     assert result["draft"]["topics"] == ["北京装修", "旧房局改"]
+
+
+@pytest.mark.parametrize("native_format", [False, True])
+def test_trailing_topics_are_extracted_without_changing_body(payload, native_format):
+    body = "报价明细保持原样：40元/㎡。\n\n正文里的 #施工记录 保留。"
+    suffix = " ".join(f"#{topic}[话题]#" if native_format else f"#{topic}" for topic in TOPICS)
+    text = f"原标题\n\n{body}\n\n话题标签：{suffix}"
+
+    result = assemble_article(text, payload["production_pack"])
+
+    assert result["title"]["text"] == "原标题"
+    assert result["draft"]["body"] == body
+    assert result["draft"]["topics"] == TOPICS
+    assert result["draft"]["raw_model_text"] == text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("topics", "code"),
+    [
+        ([], "TOPIC_COUNT_MISMATCH"),
+        (TOPICS[:9], "TOPIC_COUNT_MISMATCH"),
+        ([*TOPICS, "房屋装修"], "TOPIC_COUNT_MISMATCH"),
+        ([*TOPICS[:9], TOPICS[0]], "TOPIC_DUPLICATED"),
+        ([*TOPICS[:9], ""], "TOPIC_FORMAT_INVALID"),
+        ([*TOPICS[:9], "长" * 21], "TOPIC_FORMAT_INVALID"),
+        (TOPICS, None),
+    ],
+)
+async def test_raw_reference_requires_ten_unique_publishable_topics(payload, topics, code):
+    state = {
+        "production_pack": payload["production_pack"],
+        "selected_title": {"text": "旧房装修记录"},
+        "content_draft": {"body": "厨房想怎么改，咱们慢慢聊。", "topics": topics},
+        "content_brief": {},
+        "evidence_bundle": {"items": []},
+        "strategy_snapshot": {"creation_methods": ["FRM03"], **payload["production_pack"]["strategy_snapshot"]},
+    }
+    before = deepcopy(state)
+
+    result = await V3DeterministicNodeHandler._deterministic_validate(db=None, state=state, node_run_id="test")
+
+    assert state == before
+    report = result["validation_report"]
+    assert report["status"] == ("blocked" if code else "passed")
+    assert [item["code"] for item in report["checks"]] == ([code] if code else [])
 
 
 @pytest.mark.asyncio

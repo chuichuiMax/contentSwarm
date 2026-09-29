@@ -11,7 +11,7 @@ from typing import Any
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from yuxi.content.model.raw_reference import is_raw_reference
+from yuxi.content.model.raw_reference import is_raw_reference, topic_validation_checks
 from yuxi.content.control.errors import ContentApplicationError
 from yuxi.content.control.evidence import EvidenceApplicationService
 from yuxi.content.control.strategy.recommend_v3 import StrategyPreviewActor
@@ -62,7 +62,7 @@ from yuxi.content.v3.title_formula_slots import (
     title_formula_slot_schema,
 )
 from yuxi.content.validation import ComplianceEngine, validate_numeric_evidence_coverage
-from yuxi.content.validators import validate_content, validate_modular_content
+from yuxi.content.validators import merge_evidence, validate_content, validate_modular_content
 from yuxi.services.run_queue_service import append_run_stream_event
 from yuxi.storage.postgres.models_content import ContentFormula, ContentTask, CreationMethod, TitleFormula
 from yuxi.storage.postgres.models_knowledge import KnowledgeBase, KnowledgeChunk, KnowledgeFile
@@ -2603,12 +2603,32 @@ class V3DeterministicNodeHandler:
         from yuxi.content.model.single_blueprint import title_publication_year
 
         raw_business_json = (state.get("runtime_config_snapshot") or {}).get("raw_business_json")
+        evidence_bundle = state["evidence_bundle"]
+        if is_raw_reference(production_pack):
+            raw_business_json = (state.get("runtime_config_snapshot") or {}).get("raw_business_json")
+            if isinstance(raw_business_json, dict) and raw_business_json:
+                evidence_bundle = merge_evidence(
+                    evidence_bundle,
+                    [
+                        {
+                            "id": "ev_raw_business_json",
+                            "type": "business_fact",
+                            "key": "raw_business_json",
+                            "value": raw_business_json,
+                            "source_type": "manual_input",
+                            "source_id": "dangjia_request",
+                            "source_version": "raw-v1",
+                            "verified_status": "user_confirmed",
+                            "allowed_usage": ["title", "body"],
+                        }
+                    ],
+                )
         report = validate_content(
             title=(state.get("selected_title") or {}).get("text", ""),
             body=body,
             topics=draft.get("topics") or [],
             brief=state["content_brief"],
-            evidence_bundle=state["evidence_bundle"],
+            evidence_bundle=evidence_bundle,
             title_publication_year=title_publication_year(production_pack),
             strategy={
                 "methods": (state.get("strategy_snapshot") or {}).get("creation_methods"),
@@ -2636,6 +2656,29 @@ class V3DeterministicNodeHandler:
                     check["level"] = "warning"
             status = "warning" if checks else "passed"
             return {"validation_report": {"status": status, "checks": checks}}
+            report["checks"].extend((state.get("channel_result") or {}).get("checks") or [])
+            report["checks"].extend(topic_validation_checks(draft.get("topics") or []))
+            platform = production_pack["content_rule_bundle"]["runtime_rules"]["viral-platform-expression"]
+            combined = "\n".join([(state.get("selected_title") or {}).get("text", ""), body, *draft.get("topics", [])])
+            for term in (platform.get("forbidden_lexicon") or {}).get("alternatives", {}):
+                if term in combined:
+                    report["checks"].append(
+                        {
+                            "code": "CONTENT_FORBIDDEN_TERM",
+                            "level": "error",
+                            "location": "content",
+                            "message": f"封禁词替换后仍有残留：{term}",
+                            "evidence_ids": [],
+                        }
+                    )
+            report["status"] = (
+                "blocked"
+                if any(c["level"] == "error" for c in report["checks"])
+                else "warning"
+                if report["checks"]
+                else "passed"
+            )
+            return {"validation_report": report}
         locked_quote = extract_locked_quote_block(production_pack) if production_pack else None
         body_minimum = (production_pack.get("content_rule_bundle", {}).get("single_blueprint") or {}).get(
             "creative_min_chars", 200

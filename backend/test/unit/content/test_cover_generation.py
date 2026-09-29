@@ -16,6 +16,7 @@ from PIL import Image, ImageDraw
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from yuxi.content.schemas import XiaohongshuDistributionCreate
+from yuxi.content_cover.ai_cover_prompt import AI_COVER_PROMPT
 from yuxi.content_cover.image2_client import Image2Client, Image2Config, Image2Error, image2_is_configured
 from yuxi.content_cover.renderer import (
     apply_template_title,
@@ -320,6 +321,63 @@ def test_global_image2_config_normalizes_values():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("has_saved_setting", [True, False])
+async def test_saved_image2_settings_do_not_inherit_environment_provider_edit_config(monkeypatch, has_saved_setting):
+    for key, value in {
+        "IMAGE2_BASE_URL": "https://api.siliconflow.cn/v1",
+        "IMAGE2_API_KEY": "environment-secret",
+        "IMAGE2_MODEL": "Qwen/Qwen-Image",
+        "IMAGE2_EDIT_MODEL": "Qwen/Qwen-Image-Edit-2509",
+        "IMAGE2_EDIT_REQUEST_FORMAT": "siliconflow_json",
+        "IMAGE2_EDIT_PATH": "/images/generations",
+        "IMAGE2_SUBMIT_PATH": "/legacy/generations",
+        "IMAGE2_STATUS_PATH": "/legacy/generations/{task_id}",
+    }.items():
+        monkeypatch.setenv(key, value)
+
+    async def get_setting(_repo, owner_uid):
+        assert owner_uid == "alice"
+        return (
+            SimpleNamespace(base_url="https://relay.example.com/v1", api_key="saved-secret", model="gpt-image-2")
+            if has_saved_setting
+            else None
+        )
+
+    monkeypatch.setattr(ContentCoverRepository, "get_image2_setting", get_setting)
+    config = await image2_settings.resolve_image2_config(object(), owner_uid="alice")
+    captured = {}
+
+    def handler(request):
+        captured.update(url=str(request.url), content_type=request.headers["content-type"], body=request.content)
+        return httpx.Response(200, json={"data": [{"b64_json": base64.b64encode(_image("white")).decode()}]})
+
+    async with Image2Client(config, transport=httpx.MockTransport(handler)) as client:
+        result = await client.submit(
+            Image2Request(
+                mode="image_to_image",
+                prompt="生成封面",
+                size="1080x1440",
+                source_images=[Image2Input(data=_image("white"), content_type="image/png", file_name="source.png")],
+            )
+        )
+
+    assert result.status == "completed"
+    if has_saved_setting:
+        assert captured["url"] == "https://relay.example.com/v1/images/edits"
+        assert captured["content_type"].startswith("multipart/form-data;")
+        assert b'name="model"\r\n\r\ngpt-image-2\r\n' in captured["body"]
+        assert b"Qwen" not in captured["body"]
+        assert config.submit_path == "/images/generations"
+        assert config.status_path == "/images/generations/{task_id}"
+    else:
+        assert captured["url"] == "https://api.siliconflow.cn/v1/images/generations"
+        assert captured["content_type"] == "application/json"
+        assert json.loads(captured["body"])["model"] == "Qwen/Qwen-Image-Edit-2509"
+        assert config.submit_path == "/legacy/generations"
+        assert config.status_path == "/legacy/generations/{task_id}"
+
+
+@pytest.mark.asyncio
 async def test_global_image2_config_preserves_saved_key_and_never_returns_it(
     monkeypatch: pytest.MonkeyPatch,
 ):
@@ -487,6 +545,12 @@ def test_image2_copy_mode_normalizes_tags_and_requires_single_image_mode():
         )
 
 
+def test_ai_cover_prompt_reserves_top_and_bottom_exclusion_zones():
+    assert "上方 0%—12%" in AI_COVER_PROMPT
+    assert "下方 88%—100%" in AI_COVER_PROMPT
+    assert "禁止使用贴顶、贴底或出血式文字" in AI_COVER_PROMPT
+
+
 @pytest.mark.asyncio
 async def test_image2_copy_mode_sends_exact_copy_and_keeps_numbers(monkeypatch: pytest.MonkeyPatch):
     captured = {}
@@ -538,6 +602,8 @@ async def test_image2_copy_mode_sends_exact_copy_and_keeps_numbers(monkeypatch: 
     assert "标签：鸿扬家装报价" in request["prompt"]
     assert "不得改写、遗漏、增加或改变顺序" in request["prompt"]
     assert "数字" not in request["negative_prompt"]
+    assert "标题贴顶" in request["negative_prompt"]
+    assert "标签贴底" in request["negative_prompt"]
     assert captured["content_prompt_kwargs"]["include_content_context"] is False
 
 

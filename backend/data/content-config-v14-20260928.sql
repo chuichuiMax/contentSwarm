@@ -1763,6 +1763,63 @@ cvd_4ad5fc9c50834a8faebe30f2d82d62ae	content-rules-platform-v14	cost_explanation
 \unrestrict RMWioRTFvH20erTscMvreSyKKccSwu6Lrw25J2xuRFNdeSSfI1TgsaeHiAZcSid
 
 
+-- 规则版本由管理端发布时，其子记录使用环境内生成的 ID。同一历史版本在不同
+-- 环境中的 (version_id, code) 相同，但 id 可能不同。历史版本一经发布即不可变，
+-- 因此目标库已存在的规则版本只同步版本状态，不重复导入其明细；缺失版本（本次
+-- 主要为 v13/v14）仍按快照完整新增。先移除公式槽位，再移除对应公式，避免后续
+-- 自然键冲突，同时保留已有任务绑定的历史配置。
+CREATE TEMP TABLE existing_content_rule_version_ids ON COMMIT DROP AS
+SELECT snapshot.id
+FROM pg_temp.content_rule_versions AS snapshot
+JOIN public.content_rule_versions AS existing ON existing.id = snapshot.id;
+
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM pg_temp.content_rule_versions AS snapshot
+        JOIN public.content_rule_versions AS existing
+          ON existing.tenant_id IS NOT DISTINCT FROM snapshot.tenant_id
+         AND existing.version = snapshot.version
+        WHERE existing.id <> snapshot.id
+    ) THEN
+        RAISE EXCEPTION '目标库存在版本号相同但 ID 不同的内容规则版本，拒绝自动合并';
+    END IF;
+END
+$$;
+
+DELETE FROM pg_temp.content_formula_slot_bindings AS binding
+USING pg_temp.content_formula_patterns AS pattern,
+      existing_content_rule_version_ids AS existing
+WHERE binding.pattern_id = pattern.id
+  AND pattern.rule_version_id = existing.id;
+DELETE FROM pg_temp.content_body_formulas
+WHERE version_id IN (SELECT id FROM existing_content_rule_version_ids);
+DELETE FROM pg_temp.content_combination_rules
+WHERE version_id IN (SELECT id FROM existing_content_rule_version_ids);
+DELETE FROM pg_temp.content_creation_methods
+WHERE version_id IN (SELECT id FROM existing_content_rule_version_ids);
+DELETE FROM pg_temp.content_formula_patterns
+WHERE rule_version_id IN (SELECT id FROM existing_content_rule_version_ids);
+DELETE FROM pg_temp.content_title_formulas
+WHERE version_id IN (SELECT id FROM existing_content_rule_version_ids);
+DELETE FROM pg_temp.content_type_definitions
+WHERE version_id IN (SELECT id FROM existing_content_rule_version_ids);
+DELETE FROM pg_temp.content_variable_definitions
+WHERE rule_version_id IN (SELECT id FROM existing_content_rule_version_ids);
+
+-- 行业包、词库和合规策略也采用版本化子记录。已经存在的版本继续保留目标环境
+-- 的子记录 ID；快照只为缺失版本补齐映射、词条和替换规则。
+DELETE FROM pg_temp.content_industry_variable_mappings AS mapping
+USING public.content_industry_pack_versions AS existing
+WHERE mapping.industry_pack_version_id = existing.id;
+DELETE FROM pg_temp.content_lexicon_entries AS entry
+USING public.content_lexicon_versions AS existing
+WHERE entry.version_id = existing.id;
+DELETE FROM pg_temp.content_replacement_rules AS replacement
+USING public.content_compliance_policy_versions AS existing
+WHERE replacement.policy_version_id = existing.id;
+
 INSERT INTO public.content_rule_versions (id, tenant_id, version, status, changelog, created_by, created_at, published_at)
 SELECT id, tenant_id, version, status, changelog, created_by, created_at, published_at FROM pg_temp.content_rule_versions
 ON CONFLICT (id) DO UPDATE SET tenant_id = EXCLUDED.tenant_id, version = EXCLUDED.version, status = EXCLUDED.status, changelog = EXCLUDED.changelog, created_by = EXCLUDED.created_by, created_at = EXCLUDED.created_at, published_at = EXCLUDED.published_at;

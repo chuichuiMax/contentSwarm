@@ -1928,7 +1928,8 @@ async def create_cover_generate_job(db: AsyncSession, user: User, payload: Cover
         )
     prompt = f"{mode_guidance[payload.mode]}\n{output_guidance}\n\n{prompt}"
     default_negative_prompt = (
-        "错别字、乱码、漏字、多余文案、水印、平台 Logo、伪造品牌标识、低清晰度、主体变形、过度锐化、杂乱背景"
+        "错别字、乱码、漏字、多余文案、文字贴边、文字出血、文字裁切、标题贴顶、标签贴底、"
+        "水印、平台 Logo、伪造品牌标识、低清晰度、主体变形、过度锐化、杂乱背景"
         if image2_copy
         else "乱码文字、错误汉字、随机字母、数字、水印、平台 Logo、伪造品牌标识、低清晰度、主体变形、过度锐化、杂乱背景"
     )
