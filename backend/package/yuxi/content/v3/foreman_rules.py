@@ -11,17 +11,24 @@ from typing import Any
 CATALOG_PATH = Path(__file__).with_name("fixtures") / "foreman_rule_catalog_v1.json"
 DIRECTION_MATRIX_PATH = Path(__file__).with_name("fixtures") / "foreman_direction_matrix_v2.json"
 METHOD_CODES = {f"FRM{index:02d}" for index in range(1, 13)}
-TITLE_CODES = {f"FRT{index:02d}" for index in range(1, 20)} - {"FRT15", "FRT17", "FRT18", "FRT19"}
+TITLE_CODES = {f"FRT{index:02d}" for index in range(1, 23)} - {
+    "FRT13",
+    "FRT14",
+    "FRT15",
+    "FRT17",
+    "FRT18",
+    "FRT19",
+}
 BODY_CODES = {f"FRB{index:02d}" for index in range(1, 17)} - {"FRB12"}
 GROUP_CODES = {f"FRG{index:02d}" for index in range(1, 8)}
 DIRECTION_BINDINGS = {
-    "CT01": {"method": "FRM05", "body": "FRB05", "topic_type": "自我介绍", "content_group": "自我介绍"},
-    "CT02": {"method": "FRM06", "body": "FRB06", "topic_type": "价格营销", "content_group": "人工单价"},
+    "CT01": {"method": "FRM02", "body": "FRB02", "topic_type": "案例分享", "content_group": "案例"},
+    "CT02": {"method": "FRM01", "body": "FRB01", "topic_type": "价格营销", "content_group": "报价清单"},
     "CT03": {"method": "FRM07", "body": "FRB07", "topic_type": "价格营销", "content_group": "施工报价"},
     "CT04": {"method": "FRM08", "body": "FRB08", "topic_type": "价格营销", "content_group": "施工报价"},
     "CT05": {"method": "FRM09", "body": "FRB09", "topic_type": "价格营销", "content_group": "施工报价"},
     "CT06": {"method": "FRM11", "body": "FRB11", "topic_type": "工艺展示", "content_group": "工艺展示"},
-    "CT07": {"method": "FRM12", "body": "FRB11", "topic_type": "日常工作", "content_group": "日常工作"},
+    "CT07": {"method": "FRM05", "body": "FRB05", "topic_type": "人设自荐", "content_group": "自我介绍"},
 }
 
 
@@ -47,7 +54,9 @@ def load_foreman_rule_catalog(
     if {item.get("code") for item in payload.get("methods") or []} != METHOD_CODES:
         raise ForemanRuleValidationError("装修工长正文模式必须完整覆盖 FRM01～FRM12")
     if {item.get("code") for item in payload.get("title_formulas") or []} != TITLE_CODES:
-        raise ForemanRuleValidationError("装修工长标题公式必须完整覆盖 FRT01～FRT14 及 FRT16")
+        raise ForemanRuleValidationError(
+            "装修工长标题公式必须完整覆盖 FRT01～FRT12、FRT16 及 FRT20～FRT22（不含已删除的日常巡检标题）"
+        )
     if {item.get("code") for item in payload.get("content_formulas") or []} != BODY_CODES:
         raise ForemanRuleValidationError("装修工长正文公式必须完整覆盖 FRB01～FRB16（不含已删除的 FRB12）")
     groups = payload.get("combination_rules") or []
@@ -88,7 +97,7 @@ def load_foreman_rule_catalog(
             raise ForemanRuleValidationError(f"组合 {group.get('id')} 的标题公式引用无效")
         expected_bodies = (
             ["FRB11", "FRB13", "FRB14", "FRB15", "FRB16"]
-            if group["content_type_codes"][0] in {"CT06", "CT07"}
+            if group["content_type_codes"][0] == "CT06"
             else ["FRB" + methods[0][-2:]]
         )
         if group.get("body_formula_candidate_codes") != expected_bodies:
@@ -117,9 +126,13 @@ def load_foreman_rule_catalog(
         if by_layer["content_purpose"].get("allowed_groups") != [expected["content_group"]]:
             raise ForemanRuleValidationError(f"组合 {group.get('id')} 的内容词组不符合表格")
         if direction == "CT02" and "evidence" in layer_codes:
-            raise ForemanRuleValidationError("项目单价层级组合不得加入证据层")
-        if direction == "CT01" and group["title_formula_candidate_codes"] != ["FRT12"]:
-            raise ForemanRuleValidationError("自我介绍只能使用 FRT12 地域+身份+业务标题公式")
+            raise ForemanRuleValidationError("报价清单层级组合不强制独立证据层，费用以正文公式与已确认资料为准")
+        if direction == "CT01" and "FRT20" not in group["title_formula_candidate_codes"]:
+            raise ForemanRuleValidationError("案例分享必须包含 FRT20 风格情绪钩子+案例卖点标题公式")
+        if direction == "CT07" and "FRT12" not in group["title_formula_candidate_codes"]:
+            raise ForemanRuleValidationError("人设自荐必须包含 FRT12 地域+身份+业务标题公式")
+        if direction == "CT07" and "FRT22" not in group["title_formula_candidate_codes"]:
+            raise ForemanRuleValidationError("人设自荐必须包含 FRT22 痛点问题+专业主张标题公式")
         if direction not in {"CT03", "CT04", "CT05"} and "FRT06" in group["title_formula_candidate_codes"]:
             raise ForemanRuleValidationError("FRT06 含价格槽位，只能用于报价类型")
         if direction != "CT02" and layer_codes != [
@@ -218,7 +231,7 @@ def import_foreman_rules(bundle: dict[str, Any]) -> dict[str, Any]:
 
 
 def upgrade_intro_daily_rules(bundle: dict[str, Any]) -> dict[str, Any]:
-    """仅修正作者身份槽位与日常记录绑定，保留报价、案例及运营自定义配置。"""
+    """历史兼容：修正 FRT12 作者身份槽位；人设自荐绑定 FRM05/FRB05，不再绑日常工作。"""
     result = deepcopy(bundle)
     catalog = load_foreman_rule_catalog()
     title = next(item for item in result["title_formulas"] if item["code"] == "FRT12")
@@ -228,15 +241,16 @@ def upgrade_intro_daily_rules(bundle: dict[str, Any]) -> dict[str, Any]:
     )
     identity = next(slot for slot in slots if slot["code"] == "identity")
     identity["lexicon_codes"] = [code for code in identity.get("lexicon_codes", []) if code != "title.audience"]
-    title["compatible_methods"] = list(dict.fromkeys([*title.get("compatible_methods", []), "FRM10"]))
-    for section, code in (("methods", "FRM10"), ("content_formulas", "FRB10")):
+    title["compatible_methods"] = list(dict.fromkeys([*title.get("compatible_methods", []), "FRM05"]))
+    for section, code in (("methods", "FRM05"), ("content_formulas", "FRB05")):
         if not any(item["code"] == code for item in result[section]):
             result[section].append(deepcopy(next(item for item in catalog[section] if item["code"] == code)))
-    daily = next(item for item in result["combination_rules"] if item.get("content_type_codes") == ["CT07"])
-    daily["method_members"] = [{"method_code": "FRM10", "role": "primary", "order": 1}]
-    daily["body_formula_candidate_codes"] = ["FRB10"]
-    daily.setdefault("hard_conditions", {})["allowed_formula_pairs"] = [
-        [title_code, "FRB10"] for title_code in daily["title_formula_candidate_codes"]
+    persona = next(item for item in result["combination_rules"] if item.get("content_type_codes") == ["CT07"])
+    persona["method_members"] = [{"method_code": "FRM05", "role": "primary", "order": 1}]
+    persona["title_formula_candidate_codes"] = ["FRT22", "FRT12"]
+    persona["body_formula_candidate_codes"] = ["FRB05"]
+    persona.setdefault("hard_conditions", {})["allowed_formula_pairs"] = [
+        [title_code, "FRB05"] for title_code in persona["title_formula_candidate_codes"]
     ]
     return result
 
@@ -302,13 +316,15 @@ def upgrade_craft_daily_rules(bundle: dict[str, Any]) -> dict[str, Any]:
     result = deepcopy(bundle)
     catalog = load_foreman_rule_catalog()
     result["title_formulas"] = [
-        item for item in result["title_formulas"] if item["code"] not in {"FRT15", "FRT17", "FRT18", "FRT19"}
+        item
+        for item in result["title_formulas"]
+        if item["code"] not in {"FRT13", "FRT14", "FRT15", "FRT17", "FRT18", "FRT19"}
     ]
     result["content_formulas"] = [item for item in result["content_formulas"] if item["code"] != "FRB12"]
     for section, codes in (
-        ("methods", {"FRM11", "FRM12"}),
-        ("title_formulas", {f"FRT{i:02d}" for i in range(13, 20)}),
-        ("content_formulas", {f"FRB{i:02d}" for i in range(11, 17)}),
+        ("methods", {"FRM01", "FRM02", "FRM05", "FRM11", "FRM12"}),
+        ("title_formulas", {f"FRT{i:02d}" for i in range(13, 23)} | {"FRT01", "FRT05", "FRT07", "FRT08", "FRT09", "FRT12"}),
+        ("content_formulas", {f"FRB{i:02d}" for i in range(11, 17)} | {"FRB01", "FRB02", "FRB05"}),
     ):
         existing = {item["code"]: item for item in result[section]}
         for item in catalog[section]:
@@ -320,7 +336,7 @@ def upgrade_craft_daily_rules(bundle: dict[str, Any]) -> dict[str, Any]:
             else:
                 result[section].append(updated)
     for group in result["combination_rules"]:
-        if group.get("content_type_codes") not in (["CT06"], ["CT07"]):
+        if group.get("content_type_codes") not in (["CT06"], ["CT07"], ["CT01"], ["CT02"]):
             continue
         canonical = next(
             x for x in catalog["combination_rules"] if x["content_type_codes"] == group["content_type_codes"]

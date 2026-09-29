@@ -251,7 +251,54 @@ async def test_lock_decoration_visual_material_accepts_gallery_item(monkeypatch)
     )
     assert selection.image_item_id == "mli_1"
     assert selection.hycanvas_template_id == "xiaohongshu-home-renovation"
+    assert selection.cover_mode == "builtin"
     assert asset_id == "cca_1"
+
+
+@pytest.mark.asyncio
+async def test_lock_decoration_visual_material_accepts_ai_cover_without_template(monkeypatch):
+    class Item:
+        id = "mli_1"
+        asset_id = "cca_1"
+        owner_uid = "u1"
+        material_type = "image"
+        status = "enabled"
+
+    class Repo:
+        def __init__(self, db, *, include_shared=False):
+            self.include_shared = include_shared
+
+        async def get_item_for_user(self, item_id, owner_uid, for_update=False):
+            return Item()
+
+        async def item_is_selected_by_task(self, item_id, owner_uid, exclude_task_id=None):
+            return False
+
+    monkeypatch.setattr("yuxi.services.mp_service.MaterialLibraryRepository", Repo)
+    selection, asset_id = await _lock_decoration_visual_material(
+        None,
+        type("User", (), {"uid": "u1"})(),
+        image_item_id="mli_1",
+        cover_mode="ai",
+    )
+    assert selection.cover_mode == "ai"
+    assert selection.image_item_id == "mli_1"
+    assert selection.hycanvas_template_id is None
+    assert asset_id == "cca_1"
+
+
+@pytest.mark.asyncio
+async def test_lock_decoration_visual_material_rejects_ai_cover_with_template(monkeypatch):
+    with pytest.raises(HTTPException) as exc:
+        await _lock_decoration_visual_material(
+            None,
+            type("User", (), {"uid": "u1"})(),
+            image_item_id="mli_1",
+            cover_mode="ai",
+            hycanvas_template_id="xiaohongshu-home-renovation",
+        )
+    assert exc.value.status_code == 422
+    assert exc.value.detail["error"]["code"] == "MP_AI_COVER_TEMPLATE_CONFLICT"
 
 
 @pytest.mark.asyncio

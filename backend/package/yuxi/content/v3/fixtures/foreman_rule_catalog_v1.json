@@ -46,11 +46,11 @@
     },
     {
       "code": "FRM01",
-      "name": "价格营销型",
+      "name": "报价清单型",
       "method_type": "core",
       "industry_scope": ["decoration"],
-      "principle": "以真实价格或报价口径吸引注意，再解释费用构成、服务边界和工长价值。",
-      "suitable_scenes": ["施工报价", "半包报价", "毛坯房装修"],
+      "principle": "以预算或报价痛点吸引注意，再用费用标准、报价卡或问清单解释费用构成与服务边界。",
+      "suitable_scenes": ["装修报价清单", "设计费标准", "预算分配", "防增项"],
       "sentence_patterns": ["{location}{business}，这份{quote_type}先把钱花在哪讲清楚"],
       "tag_schema": {"business_mode": "A", "evidence": ["真实报价", "报价口径"]},
       "variable_schema": ["location", "product", "price"],
@@ -58,14 +58,14 @@
     },
     {
       "code": "FRM02",
-      "name": "案例故事型",
+      "name": "案例分享型",
       "method_type": "core",
       "industry_scope": ["decoration"],
-      "principle": "从真实业主问题和需求出发，用解决过程、施工证据与结果建立信任。",
-      "suitable_scenes": ["旧房改造", "老破小", "局部翻新", "典型案例", "日常工作"],
-      "sentence_patterns": ["这次{location}{house}，先解决的是{needs}"],
-      "tag_schema": {"business_mode": "B", "evidence": ["案例背景", "施工过程", "结果"]},
-      "variable_schema": ["location", "product", "pain", "process", "result"],
+      "principle": "从风格钩子和项目信息卡出发，用空间视觉、氛围质感与设计师身份建立案例可信度。",
+      "suitable_scenes": ["装修案例分享", "风格案例", "空间展示", "典型案例"],
+      "sentence_patterns": ["这套{style}案例，先看项目信息和空间怎么落地"],
+      "tag_schema": {"business_mode": "B", "evidence": ["项目信息", "空间视觉", "氛围质感"]},
+      "variable_schema": ["location", "product", "scene", "process", "result"],
       "risk_rules": ["不得虚构业主、需求、对话、过程或反馈", "计划中的结果不得写成已经完成"]
     },
     {
@@ -94,12 +94,12 @@
     },
     {
       "code": "FRM05",
-      "name": "工长自荐型",
+      "name": "人设自荐型",
       "method_type": "core",
       "industry_scope": ["decoration"],
-      "principle": "用真实身份、做事方式和可核验证据介绍工长，每篇只选择与当前用户顾虑相关的二至三项优势。",
-      "suitable_scenes": ["自我介绍", "本地获客", "服务边界", "日常工作"],
-      "sentence_patterns": ["我是{location}做{business}的{identity}"],
+      "principle": "用真实身份、专业建议清单和可核验证据介绍顾问，每篇只选择与当前用户顾虑相关的二至三项优势。",
+      "suitable_scenes": ["人设自荐", "顾问获客", "服务边界"],
+      "sentence_patterns": ["作为{location}的{identity}，装修前先把这几件事问清"],
       "tag_schema": {"business_mode": "E", "persona_layers": ["身份", "价值", "证据"]},
       "variable_schema": ["location", "persona_fact", "advantages"],
       "risk_rules": ["身份、经验和案例必须真实", "单篇最多使用三项相关优势", "不得自造质保、响应时效或服务承诺"]
@@ -155,30 +155,6 @@
   ],
   "title_formulas": [
     {
-      "code": "FRT13",
-      "name": "M｜地域+身份+开工/业务",
-      "industry_scope": ["decoration"],
-      "suitable_scenes": ["日常工作"],
-      "core_goal": "按本次事实兑现标题槽位，词库只提供表达。",
-      "reference_examples": ["上海设计师🔨开工大吉🏠感谢小红书业主信任"],
-      "source_content": {"slot_schema": [{"code": "location", "label": "地域", "variable_codes": ["location"], "lexicon_codes": []}, {"code": "identity", "label": "身份", "variable_codes": ["persona_fact"], "lexicon_codes": []}, {"code": "business", "label": "开工/业务", "variable_codes": ["kickoff", "product"], "lexicon_codes": []}], "business_family": "M"},
-      "variable_schema": ["location", "persona_fact", "kickoff", "product"],
-      "compatible_methods": ["FRM12"],
-      "risk_rules": ["只使用本次已确认资料，不借用示例中的数字、工期、结果或业主故事", "计划、做事原则和已完成事实必须区分", "标准或验收结论仅在有明确依据时使用，不把标签、图片地址当作证明", "工序数字和施工耗时只来自对应业务事实，禁止挪用年龄、资历、序列号和图片文件名"]
-    },
-    {
-      "code": "FRT14",
-      "name": "M｜地域+身份+工地巡检",
-      "industry_scope": ["decoration"],
-      "suitable_scenes": ["日常工作"],
-      "core_goal": "按本次事实兑现标题槽位，词库只提供表达。",
-      "reference_examples": ["天津装修｜工长巡检细节不能偷懒"],
-      "source_content": {"slot_schema": [{"code": "location", "label": "地域", "variable_codes": ["location"], "lexicon_codes": []}, {"code": "identity", "label": "身份", "variable_codes": ["persona_fact"], "lexicon_codes": []}, {"code": "inspection", "label": "工地巡检", "variable_codes": ["inspection"], "lexicon_codes": []}], "business_family": "M"},
-      "variable_schema": ["location", "persona_fact", "inspection"],
-      "compatible_methods": ["FRM12"],
-      "risk_rules": ["只使用本次已确认资料，不借用示例中的数字、工期、结果或业主故事", "计划、做事原则和已完成事实必须区分", "标准或验收结论仅在有明确依据时使用，不把标签、图片地址当作证明", "工序数字和施工耗时只来自对应业务事实，禁止挪用年龄、资历、序列号和图片文件名"]
-    },
-    {
       "code": "FRT16",
       "name": "N｜人群/工种+工艺+情绪",
       "industry_scope": ["decoration"],
@@ -189,6 +165,57 @@
       "variable_schema": ["craft_role", "process"],
       "compatible_methods": ["FRM11"],
       "risk_rules": ["只使用本次已确认资料，不借用示例中的数字、工期、结果或业主故事", "计划、做事原则和已完成事实必须区分", "标准或验收结论仅在有明确依据时使用，不把标签、图片地址当作证明", "工序数字和施工耗时只来自对应业务事实，禁止挪用年龄、资历、序列号和图片文件名"]
+    },
+    {
+      "code": "FRT20",
+      "name": "风格/情绪钩子+案例卖点",
+      "industry_scope": ["decoration"],
+      "suitable_scenes": ["装修案例分享", "风格案例", "空间展示"],
+      "core_goal": "用风格或情绪钩子点明案例卖点，让读者一眼识别为案例分享而非报价或自荐。",
+      "reference_examples": ["中式审美一旦认真起来，真的没有对手", "想要质美双绝，复古又年轻的家？我们太懂！", "超美法式复古风！直接美出新高度！"],
+      "source_content": {
+        "slot_schema": [
+          {"code": "style_or_emotion", "label": "风格/情绪钩子", "variable_codes": ["scene"], "lexicon_codes": ["title.oral_emotion", "title.positioning"]},
+          {"code": "case_claim", "label": "案例卖点", "variable_codes": ["result", "advantages", "advantage"], "lexicon_codes": ["title.positive_result", "title.beneficial_result"]}
+        ]
+      },
+      "variable_schema": ["scene"],
+      "compatible_methods": ["FRM02"],
+      "risk_rules": ["不得编造未提供的风格、面积或完工效果", "标题主卖点必须在正文项目信息或空间段兑现"]
+    },
+    {
+      "code": "FRT21",
+      "name": "预算痛点/问清清单",
+      "industry_scope": ["decoration"],
+      "suitable_scenes": ["装修报价清单", "预算分配", "防增项"],
+      "core_goal": "用预算痛点或问清清单标题识别报价清单内容，区别于单纯工价表或案例展示。",
+      "reference_examples": ["预算有限，装修先保住这3笔钱", "装修怕增项？报价单先看这几行", "100㎡装修多少钱？先问清这5件事"],
+      "source_content": {
+        "slot_schema": [
+          {"code": "budget_pain", "label": "预算痛点/问题", "variable_codes": ["pain", "product"], "lexicon_codes": ["title.pain", "title.question"]},
+          {"code": "checklist_value", "label": "问清清单/利益点", "variable_codes": ["advantages", "advantage", "process"], "lexicon_codes": ["title.advice", "title.instruction_value"]}
+        ]
+      },
+      "variable_schema": ["product"],
+      "compatible_methods": ["FRM01"],
+      "risk_rules": ["不得把预算写成结算价", "问清单条目必须能被正文费用或服务事实支撑"]
+    },
+    {
+      "code": "FRT22",
+      "name": "痛点问题+专业主张",
+      "industry_scope": ["decoration"],
+      "suitable_scenes": ["人设自荐", "顾问获客", "咨询引导"],
+      "core_goal": "用业主痛点或咨询问题带出顾问专业主张，识别为人设自荐而非案例叙事或报价单。",
+      "reference_examples": ["怕装修“买家秀”？这些细节要提前对齐✨", "房子好不好住，装修前先聊这5件事🏠", "装修公司怎么选？建议先去看一次工地🔍"],
+      "source_content": {
+        "slot_schema": [
+          {"code": "pain_or_question", "label": "痛点问题", "variable_codes": ["pain", "product"], "lexicon_codes": ["title.pain", "title.question"]},
+          {"code": "professional_claim", "label": "专业主张", "variable_codes": ["advantages", "advantage", "persona_fact"], "lexicon_codes": ["title.advice", "title.beneficial_result"]}
+        ]
+      },
+      "variable_schema": ["persona_fact"],
+      "compatible_methods": ["FRM05"],
+      "risk_rules": ["身份与主张必须来自真实人设资料", "不得展开某套房旧况到完工的案例故事冒充自荐"]
     },
     {
       "code": "FRT01",
@@ -280,7 +307,7 @@
         ]
       },
       "variable_schema": ["location", "product", "advantages"],
-      "compatible_methods": ["FRM01", "FRM03", "FRM04", "FRM07", "FRM08", "FRM09"],
+      "compatible_methods": ["FRM01", "FRM02", "FRM03", "FRM04", "FRM05", "FRM07", "FRM08", "FRM09"],
       "risk_rules": ["单标题只突出一个核心利益点", "利益点必须由当前证据支持"]
     },
     {
@@ -317,7 +344,7 @@
         ]
       },
       "variable_schema": ["location", "title_price"],
-      "compatible_methods": ["FRM06"],
+      "compatible_methods": ["FRM01", "FRM06"],
       "risk_rules": ["年份、标准和工价必须来自同一来源版本", "标准单价必须标注参考口径"]
     },
     {
@@ -335,7 +362,7 @@
         ]
       },
       "variable_schema": ["location", "product", "price"],
-      "compatible_methods": ["FRM04", "FRM06"],
+      "compatible_methods": ["FRM01", "FRM04", "FRM06"],
       "risk_rules": ["单价与项目名称、单位、包含范围必须完整对应", "工艺标准必须有核验资料"]
     },
     {
@@ -399,9 +426,9 @@
       "code": "FRT12",
       "name": "地域+身份+业务",
       "industry_scope": ["decoration"],
-      "suitable_scenes": ["工长自荐", "工艺展示", "日常工作"],
-      "core_goal": "以真实本地身份说明正在做的装修业务或现场工作。",
-      "reference_examples": ["坐标长沙，一个实在的装修工长自荐🙏"],
+      "suitable_scenes": ["人设自荐", "顾问获客", "本地身份说明"],
+      "core_goal": "以真实本地身份说明装修业务与服务范围，识别为人设自荐。",
+      "reference_examples": ["坐标长沙，一个实在的装修顾问自荐🙏", "湖南家装顾问｜帮你把装修前该问清的事先对齐"],
       "source_content": {
         "slot_schema": [
           {"code": "location", "label": "地域", "variable_codes": ["location"], "lexicon_codes": []},
@@ -410,7 +437,7 @@
         ]
       },
       "variable_schema": ["location", "persona_fact", "product"],
-      "compatible_methods": ["FRM02", "FRM04", "FRM05", "FRM10"],
+      "compatible_methods": ["FRM05", "FRM10"],
       "risk_rules": ["身份和业务必须来自真实资料", "标题主卖点必须在正文开头兑现"]
     }
   ],
@@ -506,31 +533,31 @@
     },
     {
       "code": "FRB01",
-      "name": "价格营销型",
+      "name": "报价清单型",
       "industry_scope": ["decoration"],
       "industry_aliases": {},
       "compatible_methods": ["FRM01"],
-      "suitable_scenes": ["施工报价", "半包报价", "毛坯房装修"],
-      "business_pains": ["报价不透明", "担心增项", "费用边界不清"],
-      "structure_schema": ["价格钩子", "案例信息", "真实报价", "费用解释", "相关人设优势（最多三项）", "已核验结果或做事原则", "具体行动引导"],
+      "suitable_scenes": ["装修报价清单", "设计费标准", "预算分配", "防增项问清单"],
+      "business_pains": ["报价不透明", "担心增项", "费用边界不清", "不知道钱先花在哪"],
+      "structure_schema": ["报价或预算痛点钩子", "费用标准/落地报价卡/问清清单", "费用解释或花钱优先级", "透明服务或品牌优势（最多三项）", "已核验结果或做事原则", "具体行动引导"],
       "reference_examples": [],
       "required_variables": ["product", "price", "quote_type"],
-      "output_schema": {"sections": 7, "cta_required": true, "max_persona_advantages": 3},
-      "risk_rules": ["报价类型、单位和包含范围必须清楚", "预算、报价、成交和结算不得混写", "没有真实结果时改写为做事原则"]
+      "output_schema": {"sections": 6, "cta_required": true, "max_persona_advantages": 3},
+      "risk_rules": ["报价类型、单位和包含范围必须清楚", "预算、报价、成交和结算不得混写", "不得展开某套房旧况到完工的案例故事冒充报价清单", "没有真实结果时改写为做事原则"]
     },
     {
       "code": "FRB02",
-      "name": "案例故事型",
+      "name": "案例分享型",
       "industry_scope": ["decoration"],
       "industry_aliases": {},
       "compatible_methods": ["FRM02"],
-      "suitable_scenes": ["旧房改造", "老破小", "局部翻新", "典型案例", "日常工作"],
-      "business_pains": ["居住问题复杂", "方案难落地", "不清楚施工过程"],
-      "structure_schema": ["真实业主问题或当日现场", "业主需求或现场任务", "工长身份", "解决方案", "有证据时说明报价", "施工过程", "已核验结果、反馈或当日进展", "具体行动引导"],
+      "suitable_scenes": ["装修案例分享", "风格案例", "空间展示", "典型案例"],
+      "business_pains": ["缺少真实感", "无法想象空间效果", "不清楚项目基本信息"],
+      "structure_schema": ["风格或空间钩子", "项目信息卡（小区/面积/布局/风格/施工）", "空间与视觉要点", "氛围与质感要点", "设计师身份与专长", "具体行动引导"],
       "reference_examples": [],
-      "required_variables": ["product", "pain", "process"],
-      "output_schema": {"sections": 8, "cta_required": true, "max_persona_advantages": 3},
-      "risk_rules": ["不得虚构业主故事和客户反馈", "图片只描述可见事实", "未完工项目只能写当前进展或计划"]
+      "required_variables": ["product", "scene"],
+      "output_schema": {"sections": 6, "cta_required": true, "max_persona_advantages": 3},
+      "risk_rules": ["不得虚构业主故事和客户反馈", "项目信息卡只写已确认字段", "图片只描述可见事实", "未完工项目只能写当前进展或计划"]
     },
     {
       "code": "FRB03",
@@ -562,17 +589,17 @@
     },
     {
       "code": "FRB05",
-      "name": "工长自荐型",
+      "name": "人设自荐型",
       "industry_scope": ["decoration"],
       "industry_aliases": {},
       "compatible_methods": ["FRM05"],
-      "suitable_scenes": ["自我介绍", "本地获客", "服务边界"],
-      "business_pains": ["不了解工长", "担心服务不透明", "缺少信任证据"],
-      "structure_schema": ["真实工长身份", "与当前用户顾虑相关的二至三项优势", "真实案例或做事证据", "已核验结果或服务边界", "具体行动引导"],
+      "suitable_scenes": ["人设自荐", "顾问获客", "服务边界"],
+      "business_pains": ["不了解顾问", "担心服务不透明", "装修前不知道先问什么"],
+      "structure_schema": ["用户痛点或咨询问题钩子", "顾问/作者真实身份", "专业建议清单（二至五项）", "品牌服务或做事优势（最多三项）", "服务边界或已核验证据", "具体行动引导"],
       "reference_examples": [],
       "required_variables": [],
-      "output_schema": {"sections": 5, "cta_required": true, "max_persona_advantages": 3},
-      "risk_rules": ["人设只改变表达不得改变事实", "不得拼接不同人物经历", "没有证据的资历、质保、付款方式和响应承诺不得出现"]
+      "output_schema": {"sections": 6, "cta_required": true, "max_persona_advantages": 3},
+      "risk_rules": ["人设只改变表达不得改变事实", "不得拼接不同人物经历", "不得展开某套房旧况到完工的案例故事冒充自荐", "没有证据的资历、质保、付款方式和响应承诺不得出现"]
     },
     {
       "code": "FRB06",

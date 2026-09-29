@@ -102,6 +102,9 @@ def test_formula_lexicon_requirements_cover_all_title_formulas_and_locked_body_f
     assert set(TITLE_FORMULA_LEXICON_CODES) == {
         *{f"T{index:02d}" for index in range(1, 8)},
         *{f"FRT{index:02d}" for index in range(1, 20)},
+        "FRT20",
+        "FRT21",
+        "FRT22",
     }
     requirements = get_formula_lexicon_requirements("T01", "C02")
     assert [item["filename"] for item in requirements["title"]] == [

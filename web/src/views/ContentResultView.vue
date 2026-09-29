@@ -146,6 +146,7 @@ onBeforeUnmount(() => {
           <span class="task-status" :class="task.status">
             {{ taskStatusLabels[task.status] || task.status }}
           </span>
+          <span class="header-task-code" :title="task.id">任务编码 {{ task.id }}</span>
           <a-button @click="router.push('/content/accounts')">
             <UserRoundCog :size="16" />账号管理
           </a-button>
@@ -172,6 +173,7 @@ onBeforeUnmount(() => {
             <span>{{ template?.name || '通用内容' }}</span>
             <span>v{{ artifact.current_version }}</span>
             <span>{{ formatDateTime(artifact.updated_at) }}</span>
+            <span class="task-code" :title="task.id">任务编码 {{ task.id }}</span>
           </div>
           <h1>{{ artifact.title }}</h1>
           <div v-if="artifact.topics?.length" class="topic-list">
@@ -474,6 +476,18 @@ onBeforeUnmount(() => {
   display: flex;
   flex-wrap: wrap;
   gap: 8px 16px;
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+}
+
+.task-code,
+.header-task-code {
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.header-task-code {
+  max-width: min(420px, 100%);
   color: var(--color-text-tertiary);
   font-size: 12px;
 }

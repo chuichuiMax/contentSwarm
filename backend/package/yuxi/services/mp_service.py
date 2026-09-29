@@ -268,6 +268,7 @@ class MpCompileBriefPayload(BaseModel):
     cover_asset_id: str | None = Field(default=None, max_length=64)
     cover_asset_ids: list[str] = Field(default_factory=list, max_length=3)
     cover_template_id: str | None = None
+    cover_mode: Literal["builtin", "ai"] | None = None
     hycanvas_template_id: str | None = None
     image_item_id: str | None = Field(default=None, max_length=64)
 
@@ -893,9 +894,15 @@ async def _lock_decoration_visual_material(
     image_item_id: str | None = None,
     cover_asset_id: str | None = None,
     hycanvas_template_id: str | None = None,
+    cover_mode: Literal["builtin", "ai"] | None = None,
 ) -> tuple[ContentVisualMaterialSelection, str]:
+    mode = cover_mode if cover_mode in {"builtin", "ai"} else "builtin"
     template_id = str(hycanvas_template_id or "").strip()
-    if not _HYCANVAS_TEMPLATE_ID.fullmatch(template_id):
+    if mode == "ai":
+        if template_id:
+            raise _mp_error(422, "MP_AI_COVER_TEMPLATE_CONFLICT", "AI 封面只使用图库原图，不能选择封面模板")
+        template_id = None
+    elif not _HYCANVAS_TEMPLATE_ID.fullmatch(template_id or ""):
         raise _mp_error(422, "MP_HYCANVAS_TEMPLATE_REQUIRED", "请选择小红书封面模板")
     repo = MaterialLibraryRepository(db, include_shared=True)
     owner_uid = str(user.uid)
@@ -912,7 +919,14 @@ async def _lock_decoration_visual_material(
         raise _mp_error(422, "MP_COVER_LIBRARY_ITEM_MISSING", "封面图不存在、已停用或不在当前账号图库中")
     if await repo.item_is_selected_by_task(item.id, owner_uid):
         raise _mp_error(409, "MP_COVER_IN_USE", "该图库图片已被其他内容任务使用")
-    return ContentVisualMaterialSelection(image_item_id=item.id, hycanvas_template_id=template_id), item.asset_id
+    return (
+        ContentVisualMaterialSelection(
+            cover_mode=mode,
+            image_item_id=item.id,
+            hycanvas_template_id=template_id,
+        ),
+        item.asset_id,
+    )
 
 
 async def get_form_schema(
@@ -1242,6 +1256,7 @@ async def compile_brief(db: AsyncSession, ctx: MpContext, payload: MpCompileBrie
             image_item_id=payload.image_item_id,
             cover_asset_id=payload.cover_asset_id,
             hycanvas_template_id=payload.hycanvas_template_id,
+            cover_mode=payload.cover_mode,
         )
     else:
         cover_asset_id = None

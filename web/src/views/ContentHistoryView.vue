@@ -144,6 +144,7 @@ onMounted(load)
               <a-checkbox :checked="selectedTaskIds.includes(record.id)" :aria-label="`选择 ${taskTitle(record)}`" @change="event => handleSelectionChange(event.target.checked ? [...selectedTaskIds, record.id] : selectedTaskIds.filter(id => id !== record.id))" />
               <button type="button" class="task-link" :aria-current="activeTaskId === record.id ? 'true' : undefined" @click="selectTask(record.id)">
                 <strong>{{ taskTitle(record) }}</strong>
+                <small class="task-code">任务编码 {{ record.id }}</small>
                 <small>{{ statusLabels[record.status] || record.status }} · {{ formatDateTime(record.updated_at) }}</small>
               </button>
               <div class="row-actions">
@@ -177,6 +178,7 @@ header :deep(.ant-btn), .history-card :deep(.ant-btn) { display: inline-flex; al
 .task-link strong { overflow-wrap: anywhere; line-height: 1.6; }
 .task-link:hover strong, .history-item.active strong { color: var(--main-700); }
 .task-link small { color: var(--color-text-tertiary); font-size: 11px; }
+.task-link .task-code { overflow-wrap: anywhere; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 .row-actions { grid-column: 2; display: flex; justify-content: flex-end; }
 .history-result { padding: 0; min-height: 0; }
 .history-empty { padding: 60px 20px; }

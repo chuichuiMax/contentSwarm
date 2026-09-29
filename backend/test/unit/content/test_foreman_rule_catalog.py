@@ -64,7 +64,12 @@ def test_foreman_catalog_keeps_case_modes_and_adds_daily_work_mode() -> None:
 
     groups = {item["content_type_codes"][0]: item for item in catalog["combination_rules"]}
     assert set(groups) == set(DIRECTION_BINDINGS)
-    assert groups["CT01"]["title_formula_candidate_codes"] == ["FRT12"]
+    assert groups["CT01"]["title_formula_candidate_codes"] == ["FRT20", "FRT05"]
+    assert groups["CT01"]["body_formula_candidate_codes"] == ["FRB02"]
+    assert groups["CT02"]["title_formula_candidate_codes"] == ["FRT21", "FRT01", "FRT05", "FRT07", "FRT08", "FRT09"]
+    assert groups["CT02"]["body_formula_candidate_codes"] == ["FRB01"]
+    assert groups["CT07"]["title_formula_candidate_codes"] == ["FRT22", "FRT12"]
+    assert groups["CT07"]["body_formula_candidate_codes"] == ["FRB05"]
     assert all(
         "FRT06" not in group["title_formula_candidate_codes"]
         for direction, group in groups.items()
@@ -75,7 +80,7 @@ def test_foreman_catalog_keeps_case_modes_and_adds_daily_work_mode() -> None:
         blueprint = group["source_metadata"]["composition_blueprint"]
         assert group["method_members"] == [{"method_code": expected["method"], "role": "primary", "order": 1}]
         assert group["body_formula_candidate_codes"] == (
-            ["FRB11", "FRB13", "FRB14", "FRB15", "FRB16"] if direction in {"CT06", "CT07"} else [expected["body"]]
+            ["FRB11", "FRB13", "FRB14", "FRB15", "FRB16"] if direction == "CT06" else [expected["body"]]
         )
         assert group["source_metadata"]["topic_type"] == expected["topic_type"]
         assert next(item for item in blueprint["phrase_composition"] if item["layer_code"] == "content_purpose")[
@@ -89,19 +94,19 @@ def test_foreman_catalog_keeps_case_modes_and_adds_daily_work_mode() -> None:
     }
     expected_phrase_rules = {
         "CT01": [
-            ("persona", "all", 1, None, []),
-            ("business", "random", 3, 5, []),
-            ("content_purpose", "fixed", 1, 1, ["自我介绍"]),
-            ("user_value", "random", 1, 2, ["案例", "工艺", "避坑", "方案", "预算"]),
+            ("persona", "random", 1, 2, []),
+            ("business", "random", 2, 4, []),
+            ("content_purpose", "fixed", 1, 1, ["案例"]),
+            ("user_value", "random", 1, 2, ["案例", "方案", "工艺"]),
             ("content_structure", "all", 1, None, []),
-            ("evidence", "random", 3, 3, []),
+            ("evidence", "available", 1, 2, ["工地照片", "工艺节点"]),
             ("conversion", "random", 2, 2, []),
         ],
         "CT02": [
-            ("persona", "random", 3, 5, []),
-            ("business", "random", 1, 1, []),
-            ("content_purpose", "fixed", 1, 1, ["人工单价"]),
-            ("user_value", "fixed", 1, 1, ["价格参考"]),
+            ("persona", "random", 2, 4, []),
+            ("business", "random", 1, 2, []),
+            ("content_purpose", "fixed", 1, 1, ["报价清单"]),
+            ("user_value", "random", 1, 1, ["价格参考", "预算"]),
             ("content_structure", "all", 1, None, []),
             ("conversion", "random", 2, 2, []),
         ],
@@ -126,12 +131,12 @@ def test_foreman_catalog_keeps_case_modes_and_adds_daily_work_mode() -> None:
         ("conversion", "random", 2, 2, []),
     ]
     expected_phrase_rules["CT07"] = [
-        ("persona", "random", 3, 5, []),
-        ("business", "random", 1, 1, []),
-        ("content_purpose", "fixed", 1, 1, ["日常工作"]),
-        ("user_value", "random", 1, 1, ["避坑", "工艺", "案例", "预算"]),
+        ("persona", "all", 1, None, []),
+        ("business", "random", 2, 4, []),
+        ("content_purpose", "fixed", 1, 1, ["自我介绍"]),
+        ("user_value", "random", 1, 2, ["避坑", "方案", "工艺", "预算"]),
         ("content_structure", "all", 1, None, []),
-        ("evidence", "available", 1, 2, ["工地照片", "工艺节点"]),
+        ("evidence", "available", 1, 2, []),
         ("conversion", "random", 2, 2, []),
     ]
     for direction, expected in expected_phrase_rules.items():
@@ -238,7 +243,7 @@ def test_auto_direction_candidates_keep_each_foreman_blueprint_isolated() -> Non
 
     assert [item["code"] for item in candidates["direction_options"]] == [f"CT{index:02d}" for index in range(1, 8)]
     assert {item["code"]: item["body_formula_codes"] for item in candidates["direction_options"]} == {
-        code: (["FRB11", "FRB13", "FRB14", "FRB15", "FRB16"] if code in {"CT06", "CT07"} else [binding["body"]])
+        code: (["FRB11", "FRB13", "FRB14", "FRB15", "FRB16"] if code == "CT06" else [binding["body"]])
         for code, binding in DIRECTION_BINDINGS.items()
     }
     assert all(item["direction_blueprint"] for item in candidates["direction_options"])
@@ -273,73 +278,59 @@ def test_non_decoration_candidates_keep_legacy_catalog() -> None:
     assert {item["code"] for item in candidates["content_formulas"]} == {"C01"}
 
 
-def test_daily_work_requires_process_without_case_pain_or_completed_result():
+def test_persona_self_recommend_allows_identity_without_case_pain_or_quote():
     from yuxi.content.control.workflow.creation_plan import _resolve_rule_and_formulas, build_fact_index
 
     bundle = import_foreman_rules(_source_bundle())
     catalog = build_strategy_candidates(
         bundle, industry_slug="decoration", direction_code="CT07", rule_version_id="rules-test"
     )
-    daily = next(x for x in catalog["source_rules"] if x["content_type_codes"] == ["CT07"])
-    daily["method_members"] = [{"method_code": "FRM10", "role": "primary", "order": 1}]
-    daily["title_formula_candidate_codes"] = ["FRT12"]
-    daily["body_formula_candidate_codes"] = ["FRB10"]
     catalog["title_formulas"] = bundle["title_formulas"]
     catalog["content_formulas"] = bundle["content_formulas"]
     fact_index = build_fact_index(
         {
             "form_values": {
                 "location": "长沙市",
-                "product": "水电",
-                "persona_fact": "工长，五年经验",
-                "process": ["工地巡检"],
-                "advantages": ["自有工人"],
+                "product": "定制化家装咨询",
+                "persona_fact": "家装顾问，专注落地沟通",
+                "advantages": ["设计施工主辅材一站式衔接", "开工前对齐尺寸材质与节点"],
             }
         },
         {"items": []},
     )
     rule, title, body, methods, missing = _resolve_rule_and_formulas(catalog, fact_index)
     assert missing == []
-    assert title["code"] == "FRT12"
-    assert body["code"] == "FRB10"
-    assert [item["code"] for item in methods] == ["FRM10"]
+    assert title["code"] in {"FRT22", "FRT12"}
+    assert body["code"] == "FRB05"
+    assert [item["code"] for item in methods] == ["FRM05"]
+    assert rule["content_type_codes"] == ["CT07"]
     order = create_production_order(
-        task_id="daily",
+        task_id="persona",
         catalog=catalog,
         group_id=rule["id"],
-        creation_method_codes=["FRM10"],
-        title_formula_code="FRT12",
-        body_formula_code="FRB10",
+        creation_method_codes=["FRM05"],
+        title_formula_code=title["code"],
+        body_formula_code="FRB05",
     )
     required = {
         item.variable_code
         for item in build_material_manifest(catalog=catalog, order=order).requirements
         if item.required
     }
-    assert "process" in required
-    assert not required & {"pain", "result"}
-    fact_index["available_variable_codes"].remove("process")
-    assert "process" in _resolve_rule_and_formulas(catalog, fact_index)[-1]
-    cases = next(item for item in bundle["methods"] if item["code"] == "FRM02")
-    case_body = next(item for item in bundle["content_formulas"] if item["code"] == "FRB02")
-    assert {"pain", "result"} <= set(cases["variable_schema"])
-    assert "pain" in case_body["required_variables"]
+    assert not required & {"pain", "result", "quote_type"}
 
 
 def test_intro_daily_upgrade_preserves_cases_quotes_and_custom_rules():
     from yuxi.content.v3.foreman_rules import upgrade_intro_daily_rules
 
     before = import_foreman_rules(_source_bundle())
-    before["methods"] = [item for item in before["methods"] if item["code"] != "FRM10"]
-    before["content_formulas"] = [item for item in before["content_formulas"] if item["code"] != "FRB10"]
     title = next(item for item in before["title_formulas"] if item["code"] == "FRT12")
     title["source_content"]["slot_schema"][1]["lexicon_codes"] = ["title.audience"]
-    title["compatible_methods"].remove("FRM10")
-    daily = next(item for item in before["combination_rules"] if item["content_type_codes"] == ["CT07"])
-    daily["title_formula_candidate_codes"] = ["FRT12"]
-    daily["method_members"][0]["method_code"] = "FRM02"
-    daily["body_formula_candidate_codes"] = ["FRB02"]
-    daily["hard_conditions"]["allowed_formula_pairs"] = [["FRT12", "FRB02"]]
+    persona = next(item for item in before["combination_rules"] if item["content_type_codes"] == ["CT07"])
+    persona["title_formula_candidate_codes"] = ["FRT12"]
+    persona["method_members"][0]["method_code"] = "FRM02"
+    persona["body_formula_candidate_codes"] = ["FRB02"]
+    persona["hard_conditions"]["allowed_formula_pairs"] = [["FRT12", "FRB02"]]
     before["methods"][0]["principle"] = "保留运营自定义原则"
     original = deepcopy(before)
 
@@ -347,11 +338,14 @@ def test_intro_daily_upgrade_preserves_cases_quotes_and_custom_rules():
 
     assert before == original
     assert upgrade_intro_daily_rules(after) == after
-    for section, changed in (("methods", "FRM10"), ("title_formulas", "FRT12"), ("content_formulas", "FRB10")):
-        assert [item for item in after[section] if item["code"] != changed] == [
-            item for item in before[section] if item["code"] != changed
-        ]
+    fixed = next(item for item in after["combination_rules"] if item["content_type_codes"] == ["CT07"])
+    assert fixed["method_members"] == [{"method_code": "FRM05", "role": "primary", "order": 1}]
+    assert fixed["title_formula_candidate_codes"] == ["FRT22", "FRT12"]
+    assert fixed["body_formula_candidate_codes"] == ["FRB05"]
     assert [item for item in after["combination_rules"] if item["content_type_codes"] != ["CT07"]] == [
         item for item in before["combination_rules"] if item["content_type_codes"] != ["CT07"]
     ]
+    assert next(item for item in after["title_formulas"] if item["code"] == "FRT12")["source_content"]["slot_schema"][
+        1
+    ]["lexicon_codes"] == []
     assert validate_rule_bundle_for_publish(after)["errors"] == []

@@ -27,13 +27,13 @@ from yuxi.utils.auth_utils import AuthUtils
 
 
 EXPECTED_FORMULAS = {
-    "CT01": ("FRT12", "FRB05"),
-    "CT02": ("FRT07", "FRB06"),
+    "CT01": ("FRT20", "FRB02"),
+    "CT02": ("FRT21", "FRB01"),
     "CT03": ("FRT01", "FRB07"),
     "CT04": ("FRT01", "FRB08"),
     "CT05": ("FRT01", "FRB09"),
     "CT06": ("FRT16", None),
-    "CT07": ("FRT14", None),
+    "CT07": ("FRT22", "FRB05"),
 }
 
 QUOTE_CASES = {

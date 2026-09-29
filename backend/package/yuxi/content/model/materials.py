@@ -448,13 +448,13 @@ def build_material_manifest(
     required_codes = set() if single_blueprint else set(rule.get("required_variable_codes") or [])
     if single_blueprint and catalog.get("industry_slug") == "decoration":
         type_requirements = {
-            "CT01": ("persona_fact",),
-            "CT02": ("quote_block", "quote_type"),
+            "CT01": ("scene", "product"),
+            "CT02": ("price", "quote_type"),
             "CT03": ("quote_block", "quote_type", "quantity"),
             "CT04": ("quote_block", "quote_type"),
             "CT05": ("quote_block", "quote_type"),
             "CT06": ("process",),
-            "CT07": ("process",),
+            "CT07": ("persona_fact",),
         }
         required_codes.update(
             code for code in type_requirements.get(order.content_type_code, ()) if code in definitions
