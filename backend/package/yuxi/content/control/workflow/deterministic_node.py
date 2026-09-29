@@ -2514,6 +2514,61 @@ class V3DeterministicNodeHandler:
                         or "viral-platform-expression.v1",
                     }
                 )
+        if is_raw_reference(state.get("production_pack") or {}):
+            from yuxi.content.generation import ai_replace_forbidden_terms
+            from yuxi.content.model.forbidden_words import residual_forbidden_terms
+
+            alternatives = dict((platform_rules.get("forbidden_lexicon") or {}).get("alternatives") or {})
+            if not alternatives:
+                alternatives = {term: [value] for term, value in replacements.items() if value}
+            for term in (state.get("content_brief") or {}).get("forbidden_terms") or []:
+                if term:
+                    alternatives.setdefault(str(term), [])
+            combined = "\n".join([result["title"], result["body"], *result["topics"]])
+            residual = residual_forbidden_terms(combined, alternatives)
+            if residual:
+                before = {
+                    "title": result["title"],
+                    "body": result["body"],
+                    "topics": list(result["topics"]),
+                }
+                try:
+                    fixed = await ai_replace_forbidden_terms(
+                        model_spec=state.get("model_spec"),
+                        title=result["title"],
+                        body=result["body"],
+                        topics=list(result["topics"]),
+                        residual_terms=residual,
+                        alternatives={term: list(alternatives.get(term) or []) for term in residual},
+                    )
+                    result["title"] = fixed["title"]
+                    result["body"] = fixed["body"]
+                    fixed_topics = [str(item).strip().lstrip("#").strip() for item in (fixed.get("topics") or []) if str(item).strip()]
+                    result["topics"] = fixed_topics or list(before["topics"])
+                    result["replacement_diffs"].append(
+                        {
+                            "location": "content",
+                            "before": before,
+                            "after": {
+                                "title": result["title"],
+                                "body": result["body"],
+                                "topics": list(result["topics"]),
+                            },
+                            "rule_id": "ai_forbidden_replace",
+                            "residual_terms": residual,
+                        }
+                    )
+                except Exception as exc:
+                    result["checks"].append(
+                        {
+                            "code": "FORBIDDEN_AI_REPLACE_FAILED",
+                            "level": "warning",
+                            "location": "content",
+                            "message": f"封禁词 AI 替换失败，已保留原稿：{exc}",
+                            "evidence_ids": [],
+                        }
+                    )
+                    result["status"] = "warning"
         if blueprint:
             blueprint["title"]["text"] = result["title"]
             blueprint["topics"] = result["topics"]
@@ -2547,6 +2602,7 @@ class V3DeterministicNodeHandler:
         from yuxi.content.model.forbidden_words import contains_frozen_term
         from yuxi.content.model.single_blueprint import title_publication_year
 
+        raw_business_json = (state.get("runtime_config_snapshot") or {}).get("raw_business_json")
         report = validate_content(
             title=(state.get("selected_title") or {}).get("text", ""),
             body=body,
@@ -2559,30 +2615,27 @@ class V3DeterministicNodeHandler:
                 "title_formula_code": ((state.get("strategy_snapshot") or {}).get("title_formula") or {}).get("code"),
                 "body_formula_code": ((state.get("strategy_snapshot") or {}).get("body_formula") or {}).get("code"),
             },
+            # 原文仿写以传入资料为权威（业务 JSON + 爆款原文），不再对照证据包规则。
+            number_authority=(
+                {
+                    "business": raw_business_json if isinstance(raw_business_json, dict) else {},
+                    "reference": {
+                        "title": (production_pack.get("reference_snapshot") or {}).get("title") or "",
+                        "body": (production_pack.get("reference_snapshot") or {}).get("body") or "",
+                    },
+                }
+                if is_raw_reference(production_pack)
+                else None
+            ),
         )
         if is_raw_reference(production_pack):
-            report["checks"].extend((state.get("channel_result") or {}).get("checks") or [])
-            platform = production_pack["content_rule_bundle"]["runtime_rules"]["viral-platform-expression"]
-            combined = "\n".join([(state.get("selected_title") or {}).get("text", ""), body, *draft.get("topics", [])])
-            for term in (platform.get("forbidden_lexicon") or {}).get("alternatives", {}):
-                if term in combined:
-                    report["checks"].append(
-                        {
-                            "code": "CONTENT_FORBIDDEN_TERM",
-                            "level": "error",
-                            "location": "content",
-                            "message": f"封禁词替换后仍有残留：{term}",
-                            "evidence_ids": [],
-                        }
-                    )
-            report["status"] = (
-                "blocked"
-                if any(c["level"] == "error" for c in report["checks"])
-                else "warning"
-                if report["checks"]
-                else "passed"
-            )
-            return {"validation_report": report}
+            # 原文仿写：程序硬拦全部放开；渠道容量与其它提示仅保留 warning。
+            checks = list((state.get("channel_result") or {}).get("checks") or [])
+            for check in checks:
+                if check.get("level") == "error":
+                    check["level"] = "warning"
+            status = "warning" if checks else "passed"
+            return {"validation_report": {"status": status, "checks": checks}}
         locked_quote = extract_locked_quote_block(production_pack) if production_pack else None
         body_minimum = (production_pack.get("content_rule_bundle", {}).get("single_blueprint") or {}).get(
             "creative_min_chars", 200

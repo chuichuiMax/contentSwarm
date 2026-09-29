@@ -541,15 +541,47 @@ class AgentNodeHandler:
         if content_rule_bundle.get("single_blueprint") and node["id"] in {"generate_content", "semantic_review"}:
             from yuxi.content.v3.modular_rules import required_review_codes
 
+            raw_business_json = (state.get("runtime_config_snapshot") or {}).get("raw_business_json")
             blueprint_input = {
                 **assembly.payload,
                 "production_pack": state["production_pack"],
                 "evidence_bundle": evidence_bundle,
                 "content_brief": state["content_brief"],
-                "raw_business_json": (state.get("runtime_config_snapshot") or {}).get("raw_business_json"),
+                "raw_business_json": raw_business_json,
                 "required_review_codes": list(required_review_codes(state)),
             }
             domain_context = replace(domain_context, single_blueprint_input=blueprint_input)
+            from yuxi.content.model.raw_reference import is_raw_reference
+
+            if is_raw_reference(state["production_pack"]) and raw_business_json is not None:
+                from yuxi.content.validators import evidence_number_tokens, number_authority_bundle
+
+                reference = state["production_pack"].get("reference_snapshot") or {}
+                authority = number_authority_bundle(
+                    {
+                        "business": raw_business_json if isinstance(raw_business_json, dict) else {},
+                        "reference": {
+                            "title": reference.get("title") or "",
+                            "body": reference.get("body") or "",
+                        },
+                    }
+                )
+                json_numbers = {
+                    match
+                    for token in evidence_number_tokens(authority)
+                    for match in re.findall(r"\d+(?:\.\d+)?", token)
+                }
+                json_numbers.update(re.findall(r"(?<![A-Za-z])\d+(?:\.\d+)?", json.dumps(raw_business_json, ensure_ascii=False)))
+                json_numbers.update(re.findall(r"(?<![A-Za-z])\d+(?:\.\d+)?", str(reference.get("title") or "")))
+                json_numbers.update(re.findall(r"(?<![A-Za-z])\d+(?:\.\d+)?", str(reference.get("body") or "")))
+                domain_context = replace(
+                    domain_context,
+                    allowed_numbers=frozenset(domain_context.allowed_numbers | json_numbers),
+                    allowed_numbers_by_usage={
+                        key: frozenset(vals | json_numbers)
+                        for key, vals in domain_context.allowed_numbers_by_usage.items()
+                    },
+                )
             if content_rule_bundle["single_blueprint"].get("review_codes"):
                 domain_context = replace(
                     domain_context,

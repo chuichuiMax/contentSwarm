@@ -173,3 +173,42 @@ async def refine_generated_content(
     if not isinstance(payload, dict):
         raise ValueError("内容成品修改必须返回 JSON 对象")
     return ContentArtifactAIEditOutput.model_validate(payload).model_dump()
+
+
+async def ai_replace_forbidden_terms(
+    *,
+    model_spec: str | None,
+    title: str,
+    body: str,
+    topics: list[str],
+    residual_terms: list[str],
+    alternatives: dict[str, list[str]],
+) -> dict[str, Any]:
+    """对机械替换后仍残留的封禁词，由模型按常用表达自然改写。"""
+
+    resolved_model = resolve_chat_model_spec(model_spec)
+    model = load_chat_model(fully_specified_name=resolved_model, temperature=0.2)
+    response = await model.ainvoke(
+        [
+            SystemMessage(
+                content=(
+                    "你是内容合规改写助手。只替换指定的平台封禁问题词，保持原意、口吻和排版。"
+                    "不得改动任何数字、计价单位、项目参数、身份资质与报价范围。"
+                    "优先使用给定的常用表达；若无可用表达则改为自然同义说法。"
+                    "只输出 JSON 对象，字段只能是 title、body、topics。"
+                )
+            ),
+            HumanMessage(
+                content=(
+                    f"需替换的问题词={json.dumps(residual_terms, ensure_ascii=False)}\n"
+                    f"常用表达={json.dumps(alternatives, ensure_ascii=False)}\n"
+                    f"当前成品={json.dumps({'title': title, 'body': body, 'topics': topics}, ensure_ascii=False)}"
+                )
+            ),
+        ]
+    )
+    payload = _parse_json(_response_text(response))
+    if not isinstance(payload, dict):
+        raise ValueError("封禁词 AI 替换必须返回 JSON 对象")
+    return ContentArtifactAIEditOutput.model_validate(payload).model_dump()
+

@@ -31,12 +31,15 @@ def payload():
 def test_prompt_contains_exactly_original_reference_json_and_one_instruction(payload):
     original = deepcopy(payload)
     view = project_input(payload)
-    assert set(view) == {"仿写要求", "爆款原文", "原始业务JSON"}
+    assert set(view) == {"仿写要求", "爆款原文", "原始业务JSON", "审核规则"}
     assert view["原始业务JSON"] == payload["raw_business_json"]
     assert view["爆款原文"] == {"标题": "原文标题", "正文": "原文正文🙂"}
-    assert view["仿写要求"].count("。") == 1
+    assert "话题" in view["仿写要求"] or "话题标签" in view["审核规则"]
+    assert view["审核规则"]["话题标签"]
+    assert view["审核规则"]["程序硬拦"].startswith("已关闭")
+    assert "违禁词处理" in view["审核规则"]
     assert payload == original
-    for token in ("facts", "blueprint_refs", "forbidden_replacements", "title_limits", "FRT07", "quote_ref"):
+    for token in ("facts", "blueprint_refs", "title_limits", "FRT07", "quote_ref"):
         assert token not in json.dumps(view, ensure_ascii=False)
     view["原始业务JSON"]["persona"]["tone"] = "changed"
     assert payload == original
@@ -60,6 +63,13 @@ def test_plain_text_is_not_rewritten_or_replaced_during_storage_mapping(payload)
     assert result["draft"]["raw_model_text"] == text
     assert result["draft"]["paragraph_evidence"] == []
     assert "blueprint_content" not in result["draft"]
+
+
+def test_inline_trailing_hashtags_are_extracted_as_topics(payload):
+    text = "北京拆除费用\n\n厨房想怎么改，咱们慢慢聊。 #北京装修 #旧房局改"
+    result = assemble_article(text, payload["production_pack"])
+    assert result["draft"]["body"] == "厨房想怎么改，咱们慢慢聊。"
+    assert result["draft"]["topics"] == ["北京装修", "旧房局改"]
 
 
 @pytest.mark.asyncio
@@ -135,13 +145,85 @@ async def test_plain_draft_keeps_long_title_as_warning_without_rewriting(payload
 
 
 @pytest.mark.asyncio
-async def test_raw_reference_factual_error_stops_instead_of_requesting_another_draft(payload):
+async def test_raw_reference_skips_evidence_path_number_and_high_risk_rules(payload):
+    state = {
+        "production_pack": payload["production_pack"],
+        "content_brief": {},
+        "evidence_bundle": {"items": []},
+        "runtime_config_snapshot": {"raw_business_json": payload["raw_business_json"]},
+        "selected_title": {"text": "北京拆除费用"},
+        "content_draft": {
+            "body": "邻居都说这是小区第一，另收999元也关注这4个细节，✔ 24墙拆除：40元/㎡",
+            "topics": [],
+        },
+        "channel_result": {"checks": []},
+    }
+    report = (await V3DeterministicNodeHandler._deterministic_validate(db=None, state=state, node_run_id="test"))[
+        "validation_report"
+    ]
+    assert not any(c["code"] == "FACT_NUMBER_WITHOUT_SOURCE" for c in report["checks"])
+    assert not any(c["code"] == "CONTENT_HIGH_RISK_CLAIM" for c in report["checks"])
+
+
+@pytest.mark.asyncio
+async def test_raw_reference_allows_numbers_from_frozen_viral_original(payload):
+    pack = payload["production_pack"]
+    pack["reference_snapshot"] = {
+        "title": "转角加固要盯紧",
+        "body": "装完后要关注这4个细节，别只看表面漂亮。",
+    }
+    state = {
+        "production_pack": pack,
+        "content_brief": {},
+        "evidence_bundle": {"items": []},
+        "runtime_config_snapshot": {"raw_business_json": payload["raw_business_json"]},
+        "selected_title": {"text": "北京拆除费用"},
+        "content_draft": {
+            "body": "装完后也关注这4个细节，✔ 24墙拆除：40元/㎡",
+            "topics": [],
+        },
+        "channel_result": {"checks": []},
+    }
+    report = (await V3DeterministicNodeHandler._deterministic_validate(db=None, state=state, node_run_id="test"))[
+        "validation_report"
+    ]
+    assert not any(c["code"] == "FACT_NUMBER_WITHOUT_SOURCE" for c in report["checks"])
+    assert not any(c["code"] == "CONTENT_HIGH_RISK_CLAIM" for c in report["checks"])
+
+
+@pytest.mark.asyncio
+async def test_raw_reference_skips_evidence_path_high_risk_claim_rules(payload):
+    state = {
+        "production_pack": payload["production_pack"],
+        "content_brief": {},
+        "evidence_bundle": {"items": []},
+        "runtime_config_snapshot": {"raw_business_json": payload["raw_business_json"]},
+        "selected_title": {"text": "北京拆除费用"},
+        "content_draft": {
+            "body": "邻居都说这是小区第一，✔ 24墙拆除：40元/㎡",
+            "topics": [],
+        },
+        "channel_result": {"checks": []},
+    }
+    report = (await V3DeterministicNodeHandler._deterministic_validate(db=None, state=state, node_run_id="test"))[
+        "validation_report"
+    ]
+    assert not any(c["code"] == "CONTENT_HIGH_RISK_CLAIM" for c in report["checks"])
+
+
+@pytest.mark.asyncio
+async def test_raw_reference_validation_no_longer_blocks_on_legacy_fact_errors(payload):
     from yuxi.agents.buildin.content_workflow.graph import ContentWorkflowAgent
-    from yuxi.content.control.errors import ContentApplicationError
     from yuxi.content.v3.joint_workflow import WORKFLOW_SINGLE_BLUEPRINT
 
     state = {
         "production_pack": payload["production_pack"],
+        "content_brief": {},
+        "evidence_bundle": {"items": []},
+        "runtime_config_snapshot": {"raw_business_json": payload["raw_business_json"]},
+        "selected_title": {"text": "北京拆除费用"},
+        "content_draft": {"body": "另收999元也说这是小区第一", "topics": []},
+        "channel_result": {"checks": []},
         "current_node": "deterministic_validate",
         "validation_report": {
             "status": "blocked",
@@ -154,12 +236,45 @@ async def test_raw_reference_factual_error_stops_instead_of_requesting_another_d
             ],
         },
     }
-    with pytest.raises(ContentApplicationError, match="不自动重写"):
-        await ContentWorkflowAgent()._execute_node(
-            {"id": "revise_if_needed", "type": "revision_router"},
-            state,
-            WORKFLOW_SINGLE_BLUEPRINT,
-        )
+    result = await ContentWorkflowAgent()._execute_node(
+        {"id": "revise_if_needed", "type": "revision_router"},
+        state,
+        WORKFLOW_SINGLE_BLUEPRINT,
+    )
+    assert result["revision_status"] == "continue"
+    assert result["validation_report"]["status"] in {"passed", "warning"}
+    assert not any(c.get("level") == "error" for c in result["validation_report"].get("checks") or [])
+
+
+@pytest.mark.asyncio
+async def test_raw_reference_asks_ai_to_replace_residual_forbidden_words(payload, monkeypatch):
+    pack = payload["production_pack"]
+    pack["content_rule_bundle"]["runtime_rules"]["viral-platform-expression"] = {
+        "forbidden_replacements": {},
+        "forbidden_lexicon": {"alternatives": {"私信": ["评论区聊聊"]}, "snapshot_hash": "x"},
+    }
+    called = {}
+
+    async def fake_ai(**kwargs):
+        called.update(kwargs)
+        return {"title": "北京拆除费用", "body": "有想法评论区聊聊。", "topics": []}
+
+    monkeypatch.setattr(
+        "yuxi.content.generation.ai_replace_forbidden_terms",
+        fake_ai,
+    )
+    state = {
+        "production_pack": pack,
+        "model_spec": "test:model",
+        "content_brief": {},
+        "selected_title": {"text": "北京拆除费用"},
+        "creative_content_draft": {"body": "有想法私信我。", "topics": []},
+        "content_draft": {"body": "有想法私信我。", "topics": []},
+        "channel_profile": {},
+    }
+    update = await V3DeterministicNodeHandler._adapt_to_channel(db=None, state=state, node_run_id="test")
+    assert called["residual_terms"] == ["私信"]
+    assert update["content_draft"]["body"] == "有想法评论区聊聊。"
 
 
 @pytest.mark.asyncio

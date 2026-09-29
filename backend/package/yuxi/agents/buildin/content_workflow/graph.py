@@ -361,6 +361,35 @@ class ContentWorkflowAgent(BaseAgent):
             title_validation_report = state.get("title_validation_report") or {}
             validation_report = state.get("validation_report") or {}
             review_report = state.get("review_report") or {}
+            # 原文仿写在定点回修前按当前规则重跑确定性核验，避免规则修复后仍卡在旧报告。
+            if (
+                previous_node == "deterministic_validate"
+                and is_raw_reference(state.get("production_pack") or {})
+                and _report_is_blocked(validation_report)
+                and "content_brief" in state
+                and "evidence_bundle" in state
+            ):
+                from yuxi.content.control.workflow.deterministic_node import V3DeterministicNodeHandler
+
+                refreshed = await V3DeterministicNodeHandler._deterministic_validate(
+                    db=None,
+                    state=state,
+                    node_run_id="raw-reference-revalidate",
+                )
+                validation_report = refreshed["validation_report"]
+                if not _report_is_blocked(validation_report):
+                    node_ids = {item.get("id") for item in (definition or {}).get("nodes") or []}
+                    return {
+                        "validation_report": validation_report,
+                        "revision_reason_code": None,
+                        "revision_target": (
+                            "compose_locked_quote_block"
+                            if "compose_locked_quote_block" in node_ids
+                            else "semantic_review"
+                        ),
+                        "revision_status": "continue",
+                        "retry_counts": dict(state.get("retry_counts") or {}),
+                    }
             if previous_node == "validate_title_candidates" and not _report_is_blocked(title_validation_report):
                 return {
                     "revision_reason_code": None,

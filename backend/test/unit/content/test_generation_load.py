@@ -205,6 +205,22 @@ def test_ordinal_is_not_mistaken_for_ranking_claim(text, blocked):
     assert any(c["code"] == "CONTENT_HIGH_RISK_CLAIM" for c in report["checks"]) is blocked
 
 
+def test_json_authority_mode_skips_evidence_path_number_and_high_risk_rules():
+    from yuxi.content.validators import validate_content
+
+    report = validate_content(
+        title="案例",
+        body="全国第一，行业第一，另收999元",
+        topics=[],
+        brief={},
+        evidence_bundle={"items": []},
+        strategy={"methods": ["M01"], "title_formula_code": "T01", "body_formula_code": "C02"},
+        number_authority={"persona": {"name": "测试"}},
+    )
+    assert not any(c["code"] == "CONTENT_HIGH_RISK_CLAIM" for c in report["checks"])
+    assert not any(c["code"] == "FACT_NUMBER_WITHOUT_SOURCE" for c in report["checks"])
+
+
 @pytest.mark.parametrize("price", ["预算18万元", "成交18万元"])
 def test_separately_entered_price_is_not_merged_with_budget(price):
     facts = {

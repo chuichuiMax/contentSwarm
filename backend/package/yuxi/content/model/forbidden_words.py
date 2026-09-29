@@ -39,6 +39,13 @@ def replace_forbidden_words(text: str, replacements: dict[str, str]) -> str:
     return output
 
 
+def residual_forbidden_terms(text: str, alternatives: dict[str, list[str]] | dict[str, str]) -> list[str]:
+    """返回文本中仍残留的封禁问题词（按词长降序，便于优先处理）。"""
+
+    terms = [term for term in alternatives if term and term in text]
+    return sorted(terms, key=len, reverse=True)
+
+
 def contains_frozen_term(text: str, term: str, replacements: dict[str, str]) -> bool:
     """冻结事实/词条允许原文或词库映射后的展示形式，不接受任意同义改写。"""
     display_term = replace_forbidden_words(term, replacements)

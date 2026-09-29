@@ -233,7 +233,7 @@ WORKFLOW_V3_NODES = [
             "content_outline",
             "content_draft",
         ),
-        token_budget=12000,
+        token_budget=48000,
     ),
     _fixed("adapt_to_channel"),
     _fixed("deterministic_validate"),

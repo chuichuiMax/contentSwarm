@@ -223,6 +223,7 @@ class TokenUsageMiddleware(AgentMiddleware[TokenUsageState]):
             - int(snapshot.get("state_messages_tokens_before_call", 0)),
             0,
         )
+        estimated_input = int(snapshot.get("llm_input_tokens") or 0)
         if isinstance(output_tokens, int):
             details = model_usage.get("output_token_details") or {}
             reasoning_tokens = 0
@@ -236,12 +237,22 @@ class TokenUsageMiddleware(AgentMiddleware[TokenUsageState]):
                 if isinstance(value, int):
                     reasoning_tokens = max(reasoning_tokens, value)
             current = max(output_tokens - reasoning_tokens, 0)
-            if (
-                reasoning_tokens == 0
-                and getattr(runtime_context, "reasoning_effort", None)
-                and current > estimated
-            ):
-                # 推理模型常把思考 Token 算进 output_tokens，却不给 reasoning 明细；节点预算只约束可见输出。
+            reported_input = model_usage.get("input_tokens")
+            provider_untrusted = current > estimated and (
+                (
+                    # 推理模型常把思考 Token 算进 output_tokens，却不给 reasoning 明细。
+                    reasoning_tokens == 0
+                    and getattr(runtime_context, "reasoning_effort", None)
+                )
+                or (
+                    # 厂商 usage 偶发数量级错误（短调用却报百万级 input/reasoning）。
+                    isinstance(reported_input, int)
+                    and reported_input > max(estimated_input * 8, estimated_input + 4096)
+                )
+                or current > max(estimated * 8, estimated + 4096)
+            )
+            if provider_untrusted:
+                # 节点预算只约束本地可观测的可见输出，不信任明显失真的厂商 usage。
                 current = estimated
         else:
             current = estimated

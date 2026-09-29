@@ -156,6 +156,25 @@ def evidence_number_tokens(evidence_bundle: dict[str, Any]) -> list[str]:
     return sorted(tokens)
 
 
+def number_authority_bundle(source: Any) -> dict[str, Any]:
+    """将传入业务 JSON 包装为数字核验权威来源，替代证据包。"""
+
+    if source is None:
+        return {"items": []}
+    return {
+        "items": [
+            {
+                "id": "raw_business_json",
+                "type": "business_fact",
+                "value": source,
+                "source_type": "manual_input",
+                "verified_status": "user_confirmed",
+                "allowed_usage": ["title", "body"],
+            }
+        ]
+    }
+
+
 def unsupported_number_tokens(content: str, evidence_bundle: dict[str, Any]) -> list[str]:
     values = [item.get("value") for item in evidence_bundle.get("items") or [] if item.get("value") is not None]
     evidence_text = " ".join(json.dumps(value, ensure_ascii=False) for value in values)
@@ -179,23 +198,26 @@ def validate_content(
     evidence_bundle: dict[str, Any],
     strategy: dict[str, Any],
     title_publication_year: str | None = None,
+    number_authority: Any | None = None,
 ) -> dict[str, Any]:
     checks: list[dict[str, Any]] = []
     combined = f"{title}\n{body}\n{' '.join(topics)}"
     allowed_year_tokens = {title_publication_year, f"{title_publication_year}年"} if title_publication_year else set()
-    unsupported = set(unsupported_number_tokens(title, evidence_bundle)) - allowed_year_tokens
-    unsupported.update(unsupported_number_tokens(f"{body}\n{' '.join(topics)}", evidence_bundle))
-    for number in sorted(unsupported):
-        checks.append(
-            {
-                "code": "FACT_NUMBER_WITHOUT_SOURCE",
-                "level": "error",
-                "location": "content",
-                "message": f"数字“{number}”没有出现在证据包中",
-                "evidence_ids": [],
-                "suggestion": "删除该数字，或补充可追溯的业务事实/知识来源",
-            }
-        )
+    # 原文仿写：取消证据包路径的数字/绝对化规则核验，事实以传入业务 JSON 为准（由生成提示约束）。
+    if number_authority is None:
+        unsupported = set(unsupported_number_tokens(title, evidence_bundle)) - allowed_year_tokens
+        unsupported.update(unsupported_number_tokens(f"{body}\n{' '.join(topics)}", evidence_bundle))
+        for number in sorted(unsupported):
+            checks.append(
+                {
+                    "code": "FACT_NUMBER_WITHOUT_SOURCE",
+                    "level": "error",
+                    "location": "content",
+                    "message": f"数字“{number}”没有出现在证据包中",
+                    "evidence_ids": [],
+                    "suggestion": "删除该数字，或补充对应证据",
+                }
+            )
 
     forbidden_terms = brief.get("forbidden_terms") or []
     for term in forbidden_terms:
@@ -224,27 +246,28 @@ def validate_content(
                 }
             )
 
-    for claim in HIGH_RISK_CLAIMS:
-        # “第一次刷到”等明确时间/步骤序数不属于排名宣传，避免无效回修。
-        matched = (
-            re.search(
-                r"第一(?!次|天|周|月|年|步|阶段|版|期|轮|页|张|个|条|段|件|套|层|集|批|遍|回|季度|部分)",
-                combined,
+    if number_authority is None:
+        for claim in HIGH_RISK_CLAIMS:
+            # “第一次刷到”等明确时间/步骤序数不属于排名宣传，避免无效回修。
+            matched = (
+                re.search(
+                    r"第一(?!次|天|周|月|年|步|阶段|版|期|轮|页|张|个|条|段|件|套|层|集|批|遍|回|季度|部分)",
+                    combined,
+                )
+                if claim == "第一"
+                else claim in combined
             )
-            if claim == "第一"
-            else claim in combined
-        )
-        if matched:
-            checks.append(
-                {
-                    "code": "CONTENT_HIGH_RISK_CLAIM",
-                    "level": "error",
-                    "location": "content",
-                    "message": f"检测到高风险绝对化表达“{claim}”",
-                    "evidence_ids": [],
-                    "suggestion": "改为有边界、可验证的客观表达",
-                }
-            )
+            if matched:
+                checks.append(
+                    {
+                        "code": "CONTENT_HIGH_RISK_CLAIM",
+                        "level": "error",
+                        "location": "content",
+                        "message": f"检测到高风险绝对化表达“{claim}”",
+                        "evidence_ids": [],
+                        "suggestion": "改为有边界、可验证的客观表达",
+                    }
+                )
 
     if (
         not strategy.get("methods")

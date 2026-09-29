@@ -77,6 +77,29 @@ def test_content_token_budget_uses_visible_delta_when_reasoning_model_omits_deta
     assert context._content_node_tokens_used == 4
 
 
+def test_content_token_budget_ignores_corrupt_provider_usage_with_reasoning_details() -> None:
+    context = SimpleNamespace(_content_node_token_budget=48000, reasoning_effort="medium")
+    request = SimpleNamespace(runtime=SimpleNamespace(context=context))
+
+    TokenUsageMiddleware._enforce_content_token_budget(
+        request,
+        {
+            "model_usage": {
+                "input_tokens": 2_697_574,
+                "output_tokens": 6_025_681,
+                "total_tokens": 8_723_255,
+                "input_token_details": {"cache_read": 2_652_672},
+                "output_token_details": {"reasoning": 5_923_488},
+            },
+            "llm_input_tokens": 334,
+            "state_messages_tokens": 1800,
+            "state_messages_tokens_before_call": 1200,
+        },
+    )
+
+    assert context._content_node_tokens_used == 600
+
+
 def test_content_token_budget_still_rejects_visible_output_over_limit() -> None:
     context = SimpleNamespace(_content_node_token_budget=5)
     request = SimpleNamespace(runtime=SimpleNamespace(context=context))
