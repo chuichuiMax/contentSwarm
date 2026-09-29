@@ -33,6 +33,16 @@ const tabs = [
 const materialType = ref('image')
 const userStore = useUserStore()
 const materialScope = ref('private')
+const personalFolder = ref('')
+const personalFolders = ref([])
+const personalItems = ref([])
+const personalTotal = ref(0)
+const personalPage = ref(1)
+const personalFolderName = computed(() => personalFolders.value.find((folder) => folder.id === personalFolder.value)?.name || '')
+const personalFolderOrder = ['generated', 'rough', 'works', 'uploads']
+const filteredPersonalFolders = computed(() => personalFolders.value
+  .filter((folder) => folder.name.toLowerCase().includes(queryInput.value.trim().toLowerCase()))
+  .sort((left, right) => personalFolderOrder.indexOf(left.id) - personalFolderOrder.indexOf(right.id)))
 const canCreateShared = ref(false)
 const isGalleryRoot = computed(() => materialType.value === 'image' && !activeGallery.value)
 const loading = ref(false)
@@ -157,18 +167,32 @@ const filteredGalleries = computed(() => {
   if (!term) return industryScoped
   return industryScoped.filter((item) => `${item.name}${item.description}`.toLowerCase().includes(term))
 })
-const galleryGroups = computed(() => {
-  if (!isGalleryRoot.value) return [{ slug: 'children', name: '二级图库', galleries: filteredGalleries.value }]
+const filteredPersonalGalleries = computed(() => {
+  const term = queryInput.value.trim().toLowerCase()
+  const personal = galleries.value.filter((item) =>
+    !item.parent_id &&
+    !item.is_system &&
+    (item.visibility || 'private') === 'private'
+  )
+  if (!term) return personal
+  return personal.filter((item) => `${item.name}${item.description}`.toLowerCase().includes(term))
+})
+
+function groupGalleriesByIndustry(items) {
   const options = [...industries.value, { slug: 'uncategorized', name: '未分类行业' }]
   return options
     .map((industry) => ({
       ...industry,
-      galleries: filteredGalleries.value.filter(
-        (gallery) => (gallery.industry_slug || 'uncategorized') === industry.slug
-      )
+      galleries: items.filter((gallery) => (gallery.industry_slug || 'uncategorized') === industry.slug)
     }))
     .filter((group) => group.galleries.length)
+}
+
+const galleryGroups = computed(() => {
+  if (!isGalleryRoot.value) return [{ slug: 'children', name: '二级图库', galleries: filteredGalleries.value }]
+  return groupGalleriesByIndustry(filteredGalleries.value)
 })
+const personalGalleryGroups = computed(() => groupGalleriesByIndustry(filteredPersonalGalleries.value))
 const createCategoryTitle = computed(() => {
   if (categoryEditorMode.value === 'edit') {
     if (materialType.value !== 'image') return '编辑分类'
@@ -322,12 +346,7 @@ async function loadGalleries() {
   loading.value = true
   try {
     const response = await materialLibraryApi.listGalleries()
-    releasePreviews()
-    industries.value = response.industries || []
-    galleries.value = await Promise.all((response.galleries || []).map(async (gallery) => ({
-      ...gallery,
-      coverUrl: gallery.cover_item_id ? await blobPreview(gallery.cover_item_id, `gallery-${gallery.code}`) : ''
-    })))
+    await hydrateGalleries(response)
   } catch (error) {
     message.error(error.message || '图库加载失败')
   } finally {
@@ -335,7 +354,19 @@ async function loadGalleries() {
   }
 }
 
+async function hydrateGalleries(response) {
+  releasePreviews()
+  industries.value = response.industries || []
+  galleries.value = await Promise.all((response.galleries || []).map(async (gallery) => ({
+    ...gallery,
+    coverUrl: gallery.cover_item_id ? await blobPreview(gallery.cover_item_id, `gallery-${gallery.code}`) : ''
+  })))
+}
+
 async function loadItems() {
+  if (materialType.value === 'image' && materialScope.value === 'private' && !activeGallery.value) {
+    return personalFolder.value ? loadPersonalItems() : loadPersonalFolders()
+  }
   if (isGalleryRoot.value) return loadGalleries()
   loading.value = true
   try {
@@ -359,6 +390,57 @@ async function loadItems() {
   } finally {
     loading.value = false
   }
+}
+
+async function loadPersonalFolders() {
+  loading.value = true
+  try {
+    const [folderResponse, galleryResponse] = await Promise.all([
+      materialLibraryApi.listPersonalFolders(),
+      materialLibraryApi.listGalleries(),
+      loadCategories()
+    ])
+    personalFolders.value = folderResponse.folders || []
+    await hydrateGalleries(galleryResponse)
+  } catch (error) {
+    message.error(error.message || '我的素材加载失败')
+  } finally {
+    loading.value = false
+  }
+}
+
+async function loadPersonalItems() {
+  loading.value = true
+  try {
+    const response = await materialLibraryApi.listPersonalItems(personalFolder.value, personalPage.value)
+    releasePreviews()
+    personalItems.value = await Promise.all((response.items || []).map(async (item) => {
+      const file = personalFolder.value === 'works'
+        ? await materialLibraryApi.getWorkFile(item.id)
+        : await materialLibraryApi.getItemThumbnail(item.id)
+      const previewUrl = URL.createObjectURL(await file.blob())
+      previewUrls.set(item.id, previewUrl)
+      return { ...item, previewUrl }
+    }))
+    personalTotal.value = response.total || 0
+  } catch (error) {
+    message.error(error.message || '图库图片加载失败')
+  } finally {
+    loading.value = false
+  }
+}
+
+function enterPersonalFolder(folder) {
+  personalFolder.value = folder.id
+  personalPage.value = 1
+  personalItems.value = []
+  void loadPersonalItems()
+}
+
+function leavePersonalFolder() {
+  personalFolder.value = ''
+  personalItems.value = []
+  void loadPersonalFolders()
 }
 
 function search() {
@@ -387,6 +469,7 @@ function leaveGallery() {
   query.value = ''
   queryInput.value = ''
   if (targetGallery) void loadItems()
+  else if (materialScope.value === 'private') void loadPersonalFolders()
   else void loadGalleries()
 }
 
@@ -396,7 +479,11 @@ function categoryOptionLabel(category) {
 }
 
 function openUpload() {
-  uploadCategory.value = activeGallery.value || uploadCategories.value[0]?.id || ''
+  const personalTarget = personalFolder.value === 'rough' ? '毛坯房图库' : '我的上传'
+  const fixedGallery = !activeGallery.value && materialScope.value === 'private' && materialType.value === 'image'
+    ? uploadCategories.value.find((item) => item.name.startsWith(personalTarget))
+    : null
+  uploadCategory.value = activeGallery.value || fixedGallery?.id || uploadCategories.value[0]?.id || ''
   uploadDesignStyle.value = currentGallery.value?.design_style || ''
   uploadOpen.value = true
 }
@@ -646,7 +733,10 @@ async function uploadFiles() {
     const uploadedTo = response?.items?.[0]?.category || uploadCategory.value
     resetUpload()
     page.value = 1
-    if (materialType.value === 'image' && activeGallery.value !== uploadedTo) {
+    const shouldEnterUploadedGallery = materialType.value === 'image' &&
+      !personalFolder.value &&
+      (materialScope.value === 'enterprise' || Boolean(activeGallery.value))
+    if (shouldEnterUploadedGallery && activeGallery.value !== uploadedTo) {
       activeGallery.value = uploadedTo
     }
     await loadItems()
@@ -728,11 +818,15 @@ async function saveEdit() {
 }
 
 async function downloadItem(item) {
-  const response = await materialLibraryApi.getItemFile(item.id)
-  const url = URL.createObjectURL(await response.blob())
+  const response = personalFolder.value === 'works'
+    ? await materialLibraryApi.getWorkFile(item.id)
+    : await materialLibraryApi.getItemFile(item.id)
+  const blob = await response.blob()
+  const url = URL.createObjectURL(blob)
   const anchor = document.createElement('a')
   anchor.href = url
-  anchor.download = item.file_name || `${item.name}.png`
+  const workExtension = blob.type === 'image/webp' ? 'webp' : blob.type === 'image/jpeg' ? 'jpg' : 'png'
+  anchor.download = item.file_name || `${item.name}.${personalFolder.value === 'works' ? workExtension : 'png'}`
   anchor.click()
   URL.revokeObjectURL(url)
 }
@@ -828,6 +922,14 @@ watch(materialType, async () => {
     message.error(error.message || '素材分类加载失败')
   }
 }, { immediate: true })
+
+watch(materialScope, async () => {
+  activeGallery.value = ''
+  personalFolder.value = ''
+  queryInput.value = ''
+  personalPage.value = 1
+  await loadItems()
+})
 
 watch(uploadCategory, (id) => {
   const gallery = categoryMap.value[id]
@@ -1003,7 +1105,7 @@ onBeforeUnmount(() => {
           <a-button v-if="userStore.isAdmin" class="lucide-icon-btn" :loading="remoteSyncing" @click="syncRemoteMaterials">
             <RefreshCw :size="15" />同步远程素材
           </a-button>
-          <a-button v-if="(isGalleryRoot && (materialScope === 'private' || canCreateShared)) || (isTopLevelGallery && !currentGallery?.is_system && currentGallery?.can_manage)" class="lucide-icon-btn" @click="openCreateCategory(isTopLevelGallery ? activeGallery : '')">
+          <a-button v-if="(isGalleryRoot && !personalFolder && (materialScope === 'private' || canCreateShared)) || (isTopLevelGallery && !currentGallery?.is_system && currentGallery?.can_manage)" class="lucide-icon-btn" @click="openCreateCategory(isTopLevelGallery ? activeGallery : '')">
             <FolderPlus :size="15" />{{ isTopLevelGallery ? '新建二级图库' : '新建图库' }}
           </a-button>
           <a-button v-if="isChildGallery" class="lucide-icon-btn" :disabled="!selectedShareItemIds.length" @click="shareOpen = true">
@@ -1013,7 +1115,7 @@ onBeforeUnmount(() => {
         <a-button v-else class="lucide-icon-btn" @click="categoryManagerOpen = true">
           <Settings2 :size="15" />分类管理
         </a-button>
-        <a-button type="primary" class="lucide-icon-btn" @click="openUpload">
+        <a-button v-if="materialScope === 'enterprise' || !personalFolder || personalFolder === 'rough' || personalFolder === 'uploads'" type="primary" class="lucide-icon-btn" @click="openUpload">
           <Upload :size="15" />上传{{ materialType === 'image' ? '图片' : '模板' }}
         </a-button>
       </template>
@@ -1028,6 +1130,77 @@ onBeforeUnmount(() => {
         </div>
         <a-progress :percent="remoteSyncJob.progress || 0" :show-info="false" size="small" />
       </div>
+      <template v-if="materialType === 'image' && materialScope === 'private' && !activeGallery">
+        <div class="context-head">
+          <button v-if="personalFolder" type="button" class="back-button" @click="leavePersonalFolder"><ArrowLeft :size="16" />返回我的图库</button>
+          <div>
+            <a-radio-group v-if="!personalFolder" v-model:value="materialScope" button-style="solid">
+              <a-radio-button value="private">我的素材</a-radio-button>
+              <a-radio-button value="enterprise">企业共享</a-radio-button>
+            </a-radio-group>
+            <h2>{{ personalFolder ? personalFolderName : '我的图库' }}</h2>
+            <p>按来源汇总我的图片和可使用的共享图片。</p>
+          </div>
+        </div>
+        <div class="toolbar">
+          <a-input v-if="!personalFolder" v-model:value="queryInput" allow-clear placeholder="搜索图库名称">
+            <template #prefix><Search :size="15" /></template>
+          </a-input>
+          <a-button class="lucide-icon-btn" :loading="loading" @click="loadItems"><RefreshCw :size="15" />刷新</a-button>
+        </div>
+        <a-spin :spinning="loading">
+          <template v-if="!personalFolder">
+          <div class="gallery-section">
+            <h3>固定图库</h3>
+            <div class="gallery-grid">
+              <article v-for="folder in filteredPersonalFolders" :key="folder.id" class="gallery-card">
+                <button type="button" class="gallery-open" @click="enterPersonalFolder(folder)">
+                  <span class="gallery-cover"><span class="folder-art"><Folder :size="44" /><i></i></span><em>{{ folder.count }} 张</em></span>
+                  <span class="gallery-copy"><strong>{{ folder.name }}</strong><small>暂未填写图库说明</small><em>装修与家居</em></span>
+                </button>
+              </article>
+            </div>
+          </div>
+          <div v-for="group in personalGalleryGroups" :key="group.slug" class="gallery-section">
+            <h3>个人图库 · {{ group.name }}</h3>
+            <div class="gallery-grid">
+              <article v-for="gallery in group.galleries" :key="gallery.id" class="gallery-card">
+                <button type="button" class="gallery-open" @click="enterGallery(gallery)">
+                  <span class="gallery-cover">
+                    <img v-if="gallery.coverUrl" :src="gallery.coverUrl" alt="" />
+                    <span v-else class="folder-art"><Folder :size="44" /><i></i></span>
+                    <em>{{ gallery.count }} 张<span v-if="gallery.child_count"> · {{ gallery.child_count }} 个子图库</span></em>
+                  </span>
+                  <span class="gallery-copy"><strong>{{ gallery.name }}</strong><small>{{ gallery.description || '暂未填写图库说明' }}</small><em>{{ gallery.industry_name }}</em></span>
+                </button>
+                <div class="gallery-actions">
+                  <button v-if="gallery.can_manage" type="button" :aria-label="`编辑图库 ${gallery.name}`" title="编辑图库" @click="openEditCategory(gallery)"><Pencil :size="15" /></button>
+                  <button v-if="gallery.can_manage" type="button" class="danger" :aria-label="`删除图库 ${gallery.name}`" title="删除图库" @click="askDeleteCategory(gallery)"><Trash2 :size="15" /></button>
+                </div>
+              </article>
+            </div>
+          </div>
+          </template>
+          <div v-else class="material-section current-gallery-section">
+            <div class="image-grid">
+              <article v-for="item in personalItems" :key="item.id" class="material-card">
+                <button type="button" class="preview-button" @click="previewItem = item"><img :src="item.previewUrl" :alt="item.name" /></button>
+                <div class="material-info"><strong :title="item.name">{{ item.name }}</strong><small>{{ item.uploaded_at || '' }}</small></div>
+                <div class="card-actions">
+                  <button type="button" title="预览" @click="previewItem = item"><Eye :size="15" /></button>
+                  <button type="button" title="下载" @click="downloadItem(item)"><Download :size="15" /></button>
+                  <button v-if="item.can_manage" type="button" title="编辑名称和分类" @click="showEdit(item)"><Pencil :size="15" /></button>
+                  <button v-if="item.can_manage" type="button" class="danger" title="删除" @click="removeItem(item)"><Trash2 :size="15" /></button>
+                </div>
+              </article>
+            </div>
+            <a-empty v-if="!loading && !personalItems.length" :image="false" description="当前图库还没有图片" />
+          </div>
+          <a-empty v-if="!loading && !personalFolder && !filteredPersonalFolders.length && !filteredPersonalGalleries.length" :image="false" description="没有匹配的图库" />
+        </a-spin>
+        <a-pagination v-if="personalFolder && personalTotal > 24" v-model:current="personalPage" :total="personalTotal" :page-size="24" show-less-items @change="loadPersonalItems" />
+      </template>
+      <template v-else>
       <div v-if="materialType === 'image'" class="context-head">
         <button v-if="activeGallery" type="button" class="back-button" @click="leaveGallery"><ArrowLeft :size="16" />{{ parentGallery ? `返回${parentGallery.name}` : '返回图库' }}</button>
         <div>
@@ -1143,19 +1316,17 @@ onBeforeUnmount(() => {
         </a-empty>
       </a-spin>
       <a-pagination v-if="!isGalleryRoot && total > 24" v-model:current="page" :total="total" :page-size="24" show-less-items @change="loadItems" />
+      </template>
     </main>
 
     <a-modal
-      v-model:open="uploadOpen"
-      :title="`上传${materialType === 'image' ? '素材图片' : '封面模板'}`"
-      :confirm-loading="uploading"
-      :mask-closable="!uploading"
-      :keyboard="!uploading"
-      :closable="!uploading"
-      :cancel-button-props="{ disabled: uploading }"
-      ok-text="开始上传"
-      @ok="uploadFiles"
-      @cancel="resetUpload"
+      v-model:open="remoteConfigOpen"
+      title="配置远程素材库"
+      :confirm-loading="remoteConfigSaving"
+      ok-text="验证并保存"
+      cancel-text="取消"
+      @ok="saveRemoteConfig"
+      @cancel="closeRemoteConfig"
     >
       <div class="remote-config-form">
         <p>配置全站共享的远程素材库凭据。远程地址仅首次配置时可修改；密码只用于服务端登录验证，不会在页面中回显。</p>
@@ -1275,23 +1446,6 @@ onBeforeUnmount(() => {
           <a-select-option v-for="item in deleteTargetOptions" :key="item.id" :value="item.id">{{ categoryOptionLabel(item) }}</a-select-option>
         </a-select></label>
         <a-alert v-else type="info" show-icon message="这是一个空分类，可以直接删除。" />
-      </div>
-    </a-modal>
-
-    <a-modal
-      v-model:open="remoteConfigOpen"
-      title="配置远程素材库"
-      :confirm-loading="remoteConfigSaving"
-      ok-text="验证并保存"
-      cancel-text="取消"
-      @ok="saveRemoteConfig"
-      @cancel="closeRemoteConfig"
-    >
-      <div class="remote-config-form">
-        <p>配置全站共享的远程素材库凭据。密码只用于服务端登录验证，不会在页面中回显。</p>
-        <label><span>远程地址</span><a-input :value="remoteConfigState?.base_url || ''" disabled /></label>
-        <label><span>账号</span><a-input v-model:value="remoteConfigForm.username" :maxlength="255" autocomplete="off" placeholder="请输入远程素材库账号" /></label>
-        <label><span>密码</span><a-input-password v-model:value="remoteConfigForm.password" :maxlength="500" autocomplete="new-password" placeholder="请输入远程素材库密码" /></label>
       </div>
     </a-modal>
 

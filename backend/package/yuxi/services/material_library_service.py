@@ -483,16 +483,18 @@ async def ensure_material_categories(
     elif not any(category.id == "uncategorized" for category in own_categories):
         definition = next(item for item in list_material_categories(material_type) if item["code"] == "uncategorized")
         await repo.ensure_default_categories(
-            [{
-                "owner_uid": owner_uid,
-                "id": "uncategorized",
-                "tenant_id": tenant_id,
-                "material_type": material_type,
-                "name": definition["name"],
-                "description": definition["description"],
-                "sort_order": len(own_categories) * 10,
-                "is_system": True,
-            }]
+            [
+                {
+                    "owner_uid": owner_uid,
+                    "id": "uncategorized",
+                    "tenant_id": tenant_id,
+                    "material_type": material_type,
+                    "name": definition["name"],
+                    "description": definition["description"],
+                    "sort_order": len(own_categories) * 10,
+                    "is_system": True,
+                }
+            ]
         )
         categories = await repo.list_categories(owner_uid, material_type)
     fallback = next(
@@ -618,6 +620,16 @@ async def import_material_images(
         style = None
     else:
         resolved_category, style = await _resolve_upload_category(db, user, category, design_style)
+        source_folder = None
+        if resolved_category.visibility == "private":
+            if (
+                resolved_category.id == "mp-rough-private"
+                or resolved_category.image_design_role == "rough"
+                or resolved_category.name in {"毛坯房图库", "毛胚房图库"}
+            ):
+                source_folder = "rough"
+            elif resolved_category.id in {"private-root", "mp-uploads-private"} or resolved_category.name == "我的上传":
+                source_folder = "uploads"
     category_id = resolved_category.id
     category_owner_uid = resolved_category.owner_uid
     category_visibility = resolved_category.visibility
@@ -888,8 +900,7 @@ def render_public_material_share_page(
     for item in ordered_items:
         image_url = f"{base_url}{_share_webp_image_path(share.token, item.display_order)}"
         image_tags.append(
-            f'<img src="{html.escape(image_url, quote=True)}" '
-            f'alt="{title} 第 {item.display_order} 张" loading="lazy">'
+            f'<img src="{html.escape(image_url, quote=True)}" alt="{title} 第 {item.display_order} 张" loading="lazy">'
         )
     images = "".join(image_tags)
     return "\n".join(
@@ -963,9 +974,7 @@ async def get_public_material_share_image(db: AsyncSession, token: str, display_
     return data, snapshot.content_type, snapshot.original_file_name
 
 
-async def get_public_material_share_display_webp(
-    db: AsyncSession, token: str, display_order: int
-) -> bytes:
+async def get_public_material_share_display_webp(db: AsyncSession, token: str, display_order: int) -> bytes:
     _, items = await get_public_material_share(db, token)
     snapshot = next((item for item in items if item.display_order == display_order), None)
     if snapshot is None:
@@ -1552,6 +1561,11 @@ async def get_material_file(db: AsyncSession, user: User, item_id: str) -> tuple
     repo = MaterialLibraryRepository(db, include_shared=True)
     item = await repo.get_item_for_user(item_id, _owner_uid(user))
     if item is None:
+        from yuxi.services.personal_materials import can_read_fixed_item
+
+        if await can_read_fixed_item(db, user, item_id):
+            item = await db.get(ContentMaterialLibraryItem, item_id)
+    if item is None:
         raise _error(404, "MATERIAL_NOT_FOUND", "素材不存在")
     asset = await repo.get_asset(item.asset_id, item.owner_uid)
     if asset is None:
@@ -1566,6 +1580,11 @@ async def get_material_file(db: AsyncSession, user: User, item_id: str) -> tuple
 async def get_material_thumbnail(db: AsyncSession, user: User, item_id: str) -> tuple[bytes, str]:
     repo = MaterialLibraryRepository(db, include_shared=True)
     item = await repo.get_item_for_user(item_id, _owner_uid(user))
+    if item is None:
+        from yuxi.services.personal_materials import can_read_fixed_item
+
+        if await can_read_fixed_item(db, user, item_id):
+            item = await db.get(ContentMaterialLibraryItem, item_id)
     if item is None:
         raise _error(404, "MATERIAL_NOT_FOUND", "素材不存在")
     asset = await repo.get_asset(item.asset_id, item.owner_uid)

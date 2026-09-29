@@ -35,8 +35,13 @@ class MemoryRepository:
         pass
 
     async def list_categories(self, owner_uid, material_type):
-        return [c for c in self.db.categories if c.material_type == material_type and c.deleted_at is None
-                and (c.owner_uid == owner_uid or c.visibility == 'enterprise')]
+        return [
+            c
+            for c in self.db.categories
+            if c.material_type == material_type
+            and c.deleted_at is None
+            and (c.owner_uid == owner_uid or c.visibility == "enterprise")
+        ]
 
     async def ensure_default_categories(self, values):
         for value in values:
@@ -157,6 +162,7 @@ class MemorySession:
 def db(monkeypatch):
     session = MemorySession()
     from yuxi.services import personal_materials
+
     for module in (save_targets, worker, material_library_service, personal_materials):
         monkeypatch.setattr(module, "MaterialLibraryRepository", MemoryRepository)
     return session
@@ -170,37 +176,59 @@ def asset():
 async def test_mp_worker_does_not_fallback_when_generated_gallery_disappears(db):
     with pytest.raises(HTTPException):
         await worker.attach_generated_asset(
-            db, user=db.user, asset=asset(), requested=ImageDesignSaveTarget(scope="enterprise", gallery_id="deleted"),
-            job_id="idj_test", workflow="room_adapt", mp_fixed_target=True,
+            db,
+            user=db.user,
+            asset=asset(),
+            requested=ImageDesignSaveTarget(scope="enterprise", gallery_id="deleted"),
+            job_id="idj_test",
+            workflow="room_adapt",
+            mp_fixed_target=True,
         )
     assert db.items == [] and db.design_library_items == []
 
 
 @pytest.mark.asyncio
-async def test_mp_worker_registers_both_libraries_in_existing_enterprise_gallery(db):
-    db.categories.append(ContentMaterialCategory(
-        id="actual-generated-id", owner_uid="admin", material_type="image", name="生图图库", visibility="enterprise",
-    ))
-    resolved, item = await worker.attach_generated_asset(
-        db, user=db.user, asset=asset(),
-        requested=ImageDesignSaveTarget(scope="enterprise", gallery_id="actual-generated-id"),
-        job_id="idj_test", workflow="room_adapt", mp_fixed_target=True,
+async def test_mp_worker_accepts_old_target_but_saves_to_pc_personal_root(db):
+    db.categories.append(
+        ContentMaterialCategory(
+            id="actual-generated-id",
+            owner_uid="admin",
+            material_type="image",
+            name="生图图库",
+            visibility="enterprise",
+        )
     )
-    assert resolved.gallery_id == "actual-generated-id"
-    assert item.category_owner_uid == "admin"
+    resolved, item = await worker.attach_generated_asset(
+        db,
+        user=db.user,
+        asset=asset(),
+        requested=ImageDesignSaveTarget(scope="enterprise", gallery_id="actual-generated-id"),
+        job_id="idj_test",
+        workflow="room_adapt",
+        mp_fixed_target=True,
+    )
+    assert resolved.public_target == {"scope": "private", "gallery_id": None}
+    assert item.category == "private-root"
+    assert item.category_owner_uid == "employee"
+    assert item.metadata_json["source_channel"] == "mp"
+    assert item.metadata_json["source_folder"] == "generated"
     assert db.design_library_items[0].source_material_item_id == item.id
 
     db.design_library_items[0].hidden_at = worker.utc_now_naive()
     await worker.attach_generated_asset(
-        db, user=db.user, asset=asset(),
+        db,
+        user=db.user,
+        asset=asset(),
         requested=ImageDesignSaveTarget(scope="enterprise", gallery_id="actual-generated-id"),
-        job_id="idj_test", workflow="room_adapt", mp_fixed_target=True,
+        job_id="idj_test",
+        workflow="room_adapt",
+        mp_fixed_target=True,
     )
     assert len(db.design_library_items) == 1 and db.design_library_items[0].hidden_at is not None
 
 
 @pytest.mark.asyncio
-async def test_mp_worker_saves_private_option_to_ai_generated_gallery(db):
+async def test_mp_worker_saves_private_option_to_pc_personal_root(db):
     resolved, item = await worker.attach_generated_asset(
         db,
         user=db.user,
@@ -210,8 +238,8 @@ async def test_mp_worker_saves_private_option_to_ai_generated_gallery(db):
         workflow="room_adapt",
         mp_fixed_target=True,
     )
-    assert resolved.public_target == {"scope": "enterprise", "gallery_id": "mp-generated-shared"}
-    assert item.category == "mp-generated-shared"
+    assert resolved.public_target == {"scope": "private", "gallery_id": None}
+    assert item.category == "private-root"
 
 
 @pytest.mark.asyncio

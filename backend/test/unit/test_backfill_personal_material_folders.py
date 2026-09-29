@@ -18,15 +18,14 @@ def test_historical_sources_route_pc_outputs_and_mp_inputs_with_existing_items()
     mp_task = SimpleNamespace(brief_json={"form_values": {"mp_content_code": "MP-1"}})
     old_mp_task = SimpleNamespace(brief_json={"form_values": {"mp_service_entry": "装修家居"}})
 
-    assert MODULE.historical_destination(
-        SimpleNamespace(role="output", metadata_json={}), item, pc_task, None
-    ) == ("generated", None)
-    assert MODULE.historical_destination(
-        SimpleNamespace(role="output", metadata_json={}), item, mp_task, None
-    ) is None
-    assert MODULE.historical_destination(
-        SimpleNamespace(role="output", metadata_json={}), item, old_mp_task, None
-    ) is None
+    assert MODULE.historical_destination(SimpleNamespace(role="output", metadata_json={}), item, pc_task, None) == (
+        "generated",
+        "pc",
+    )
+    assert MODULE.historical_destination(SimpleNamespace(role="output", metadata_json={}), item, mp_task, None) is None
+    assert (
+        MODULE.historical_destination(SimpleNamespace(role="output", metadata_json={}), item, old_mp_task, None) is None
+    )
     assert MODULE.historical_destination(
         SimpleNamespace(role="image_design_input", metadata_json={}), item, None, None
     ) == ("uploads", "mp")
@@ -46,12 +45,20 @@ def test_historical_private_photos_are_not_shared_without_source_evidence():
     assert MODULE.historical_destination(
         asset, SimpleNamespace(metadata_json={"source_channel": "pc", "source_folder": None}), None, unknown
     ) == ("review", None)
-    assert MODULE.historical_destination(
-        asset, SimpleNamespace(metadata_json={"source_channel": "pc", "source_folder": None}), None, shared_custom
-    ) is None
+    assert (
+        MODULE.historical_destination(
+            asset, SimpleNamespace(metadata_json={"source_channel": "pc", "source_folder": None}), None, shared_custom
+        )
+        is None
+    )
     assert MODULE.historical_destination(
         asset, SimpleNamespace(metadata_json={"source_channel": "pc", "source_folder": "rough"}), None, unknown
     ) == ("rough", "pc")
+    assert (
+        MODULE.historical_destination(asset, SimpleNamespace(metadata_json={"source": "image_design"}), None, unknown)
+        is None
+    )
+    mp_job = SimpleNamespace(request_json={"mp_fixed_target": True})
     assert MODULE.historical_destination(
-        asset, SimpleNamespace(metadata_json={"source": "image_design"}), None, unknown
-    ) == ("generated", None)
+        asset, SimpleNamespace(metadata_json={"source": "image_design"}), None, unknown, mp_job
+    ) == ("generated", "mp")
