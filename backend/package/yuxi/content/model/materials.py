@@ -9,7 +9,7 @@ from copy import deepcopy
 from datetime import UTC, datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from yuxi.content.model.viral_assets import ReferenceCardV2
 from yuxi.content.v3.title_formula_slots import process_title_options
@@ -89,6 +89,13 @@ class BusinessFactPayloadV2(MaterialContract):
     unit: str | None = Field(default=None, max_length=80)
     derivation: DerivedFactV1 | None = None
 
+    @field_validator("unit", mode="before")
+    @classmethod
+    def blank_unit_to_none(cls, value: Any):
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
     @model_validator(mode="after")
     def require_non_empty_value(self):
         if self.value in (None, "", [], {}):
@@ -106,6 +113,16 @@ class PriceFactPayloadV2(MaterialContract):
     city: str | None = Field(default=None, max_length=80)
     included_items: tuple[str, ...] = ()
     excluded_items: tuple[str, ...] = ()
+
+    @field_validator("unit", mode="before")
+    @classmethod
+    def blank_unit_to_yuan(cls, value: Any):
+        if value is None:
+            return "元"
+        if isinstance(value, str):
+            cleaned = value.strip()
+            return cleaned or "元"
+        return value
 
     @model_validator(mode="after")
     def require_non_negative_amounts(self):
@@ -523,6 +540,11 @@ def build_material_manifest(
             evidence_policy.get("allowed_sources")
             or ("manual_input", "business_record", "media", "knowledge_base", "human_confirmation", "external_api")
         )
+        if catalog.get("industry_slug") == "decoration" and code == "quote_type":
+            # 当家锁定仍走 business_record；工作室预算口径由表单注入，历史已发布包也需接纳 manual_input。
+            allowed_sources = tuple(
+                dict.fromkeys([*allowed_sources, "business_record", "manual_input", "human_confirmation"])
+            )
         risk_level = sensitivity if sensitivity in {"normal", "sensitive", "high_risk"} else "normal"
         configured_review_policy = evidence_policy.get("review_policy")
         review_policy = (
@@ -845,14 +867,27 @@ def standardize_evidence_materials(
                 if match:
                     unit = match.group()
                     break
-        quote_text = " ".join(
-            str(item.get("value") or "")
+        if not unit:
+            unit = "元"
+        quote_values = [
+            str(item.get("value") or "").strip()
             for item in evidence_items
-            if "quote_type" in set(item.get("variable_codes") or [])
-        )
+            if "quote_type" in set(item.get("variable_codes") or []) and str(item.get("value") or "").strip()
+        ]
+        quote_text = " ".join(quote_values)
         basis = str(metadata.get("price_basis") or "")
         if basis not in {"standard_unit_price", "project_quote", "budget", "settlement"}:
-            if "标准" in quote_text or "单价" in quote_text:
+            enum_hit = next(
+                (
+                    value
+                    for value in quote_values
+                    if value in {"standard_unit_price", "project_quote", "budget", "settlement"}
+                ),
+                None,
+            )
+            if enum_hit:
+                basis = enum_hit
+            elif "标准" in quote_text or "单价" in quote_text:
                 basis = "standard_unit_price"
             elif "预算" in quote_text:
                 basis = "budget"

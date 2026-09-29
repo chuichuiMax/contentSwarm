@@ -290,15 +290,10 @@ def compile_production_order_and_manifest(
         body_formula_code=body["code"],
     )
     try:
+        # 预算报价没有当家锁定块；放宽后的清单必须保留 single_blueprint 类型要求，不能再覆盖回未放宽版本。
         manifest = _relax_budget_quote_manifest(
-            build_material_manifest(catalog=catalog, order=order), fact_index
-        )
-        manifest = build_material_manifest(
-            catalog=catalog,
-            order=order,
-            single_blueprint=bool(
-                ((runtime_config_snapshot or {}).get("content_rule_bundle") or {}).get("single_blueprint")
-            ),
+            build_material_manifest(catalog=catalog, order=order, single_blueprint=single_blueprint),
+            fact_index,
         )
     except ValueError as exc:
         raise ContentApplicationError("CONTENT_PLAN_CONFIGURATION_INVALID", str(exc), "conflict") from exc

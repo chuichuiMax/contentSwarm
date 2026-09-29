@@ -1245,8 +1245,8 @@ def test_formal_content_agent_catalog_and_conflict_policy():
     preparation = next(item for item in CONTENT_AGENT_SPECS if item.slug == "content-viral-asset-agent")
     assert joint.reasoning_effort == preparation.reasoning_effort == "low"
     assert joint.model_call_timeout_seconds == 65
-    assert preparation.model_call_timeout_seconds == 180
-    assert preparation.config_version == 4
+    assert preparation.model_call_timeout_seconds == 300
+    assert preparation.config_version == 5
     assert joint.skill_tools == preparation.skill_tools == ()
     generation_spec = next(item for item in CONTENT_AGENT_SPECS if item.slug == "content-generation-agent")
     assert generation_spec.skills == (

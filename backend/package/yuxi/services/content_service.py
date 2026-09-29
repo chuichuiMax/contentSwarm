@@ -1527,6 +1527,7 @@ async def save_content_brief(
     form_values = raw_brief.get("form_values") or {}
     service_entry = form_values.get("mp_service_entry")
     content_type_id = str(form_values.get("mp_content_type_id") or "").strip()
+    is_mp_brief = bool(str(form_values.get("mp_content_code") or "").strip())
     if compile_now and service_entry == "装修家居" and not content_type_id:
         raise _content_error(422, "CONTENT_TYPE_REQUIRED", "请选择内容类型")
     form_fields = None
@@ -1535,7 +1536,8 @@ async def save_content_brief(
             (await list_business_variables(db))["business_variables"],
             service_entry=str(service_entry),
             content_type_id=content_type_id or None,
-            port="pc",
+            # 小程序任务带 mp_content_code：只校验 APP 端口变量，避免 PC 必填项（如发布渠道）误拦。
+            port="app" if is_mp_brief else "pc",
             select_options=catalog_select_options(
                 target_audiences=await list_enabled_target_audience_names(db),
                 resident_populations=await list_enabled_resident_population_names(db),
@@ -1544,6 +1546,9 @@ async def save_content_brief(
             ),
         )
     compiled, missing = compile_content_brief(task=task, template=template, brief=brief)
+    if is_mp_brief:
+        # mp_service 已按 APP 端口校验；这里清空行业表单缺失项，仅保留 APP 变量复核。
+        missing = []
     if compile_now and form_fields:
         for field in form_fields:
             if not field.get("required"):

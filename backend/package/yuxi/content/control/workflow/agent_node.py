@@ -425,6 +425,7 @@ class AgentNodeHandler:
                 if isinstance(max_chars, int) and max_chars > 0:
                     limits[role] = min(limits.get(role, max_chars), max_chars)
             if visual_material.get("cover_mode") == "ai":
+                locked_values["require_ai_cover_text"] = True
                 limits["title"] = min(limits.get("title", 60), 60)
                 limits["subtitle"] = min(limits.get("subtitle", 120), 120)
             locked_values["visual_text_max_chars"] = limits

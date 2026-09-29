@@ -1161,6 +1161,7 @@ class ContractDomainContext:
     selected_viral_reference_ids: tuple[str, ...] = ()
     viral_candidate_ids: frozenset[str] = frozenset()
     visual_text_max_chars: dict[str, int] = field(default_factory=dict)
+    require_ai_cover_text: bool = False
     allowed_visual_template_fields: dict[str, dict[str, int]] = field(default_factory=dict)
     required_visual_template_fields: dict[str, dict[str, int]] = field(default_factory=dict)
     compiled_visual_template_fields: dict[str, str] = field(default_factory=dict)
@@ -1317,6 +1318,7 @@ class ContractDomainContext:
                 for key, value in (locks.get("visual_text_max_chars") or {}).items()
                 if str(key) in {"title", "subtitle", "body_excerpt"} and isinstance(value, int) and value > 0
             },
+            require_ai_cover_text=bool(locks.get("require_ai_cover_text")),
             allowed_visual_template_fields={
                 str(label): dict(constraints)
                 for label, constraints in (locks.get("allowed_visual_template_fields") or {}).items()
@@ -2236,6 +2238,26 @@ def validate_content_node_result(
                     f"text.{index}",
                     f"封面{role}最多 {max_chars} 个字符，请缩短后重新提交视觉方案",
                 )
+        if context.require_ai_cover_text:
+            role_labels = ("标题", "副标题", "标签")
+            missing_roles = [
+                role_labels[index]
+                for index in range(3)
+                if index >= len(result.text) or not str(result.text[index]).strip()
+            ]
+            if missing_roles:
+                raise ContractDomainValidationError(
+                    "ai_cover_text_incomplete",
+                    "text",
+                    "AI 封面必须提供标题、副标题和标签，当前缺少：" + "、".join(missing_roles),
+                )
+            for index, value in enumerate(result.text[2:], start=2):
+                if len(str(value).strip()) > 30:
+                    raise ContractDomainValidationError(
+                        "visual_text_too_long",
+                        f"text.{index}",
+                        "封面标签最多 30 个字符，请缩短后重新提交视觉方案",
+                    )
     elif isinstance(result, CoverJobSubmissionResultV1):
         _require_equal(result.plan_hash, context.visual_plan_hash, "plan_hash")
         if context.required_source_asset_ids and tuple(result.source_asset_ids) != context.required_source_asset_ids:

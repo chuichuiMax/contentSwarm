@@ -255,6 +255,7 @@ def quote_list_catalog():
                 "advantages",
                 "advantage",
                 "scene",
+                "pain",
                 "price",
                 "quantity",
                 "quote_type",
@@ -296,12 +297,33 @@ def test_budget_quote_plan_does_not_require_locked_quote_fields():
         fact_index=build_fact_index(brief, {"items": []}),
     )
     required = {item["variable_code"] for item in manifest["requirements"] if item["required"]}
-    assert not {"quote_block", "title_price", "title_price_label"} & required
+    assert not {"quote_block", "title_price", "title_price_label", "quote_type"} & required
+
+    _, single_manifest = compile_production_order_and_manifest(
+        task_id="task-budget-quote-single",
+        catalog=catalog_data,
+        fact_index=build_fact_index(brief, {"items": []}),
+        runtime_config_snapshot={"content_rule_bundle": {"single_blueprint": True}},
+    )
+    single_required = {item["variable_code"] for item in single_manifest["requirements"] if item["required"]}
+    assert "price" in single_required
+    assert "quote_type" not in single_required
+    assert not {"quote_block", "title_price", "title_price_label"} & single_required
 
 
 def test_locked_quote_plan_still_requires_trusted_quote_fields():
+    from yuxi.content.v3.foreman_rules import load_foreman_rule_catalog
+
+    rules = load_foreman_rule_catalog()
+    catalog_data = {
+        **quote_list_catalog(),
+        "direction_code": "CT03",
+        "source_rules": [
+            item for item in rules["combination_rules"] if "CT03" in (item.get("content_type_codes") or [])
+        ],
+    }
     gaps = analyze_plan_gaps(
-        catalog=quote_list_catalog(),
+        catalog=catalog_data,
         references=[],
         content_brief={"business_variables": {"product": "三室二厅", "location": "长沙"}},
         evidence_bundle={"items": []},

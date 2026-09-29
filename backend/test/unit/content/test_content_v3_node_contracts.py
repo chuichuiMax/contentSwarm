@@ -488,6 +488,22 @@ def test_visual_plan_over_template_limit_is_returned_to_agent_for_revision():
     assert "最多 7 个字符" in str(exc_info.value)
 
 
+def test_ai_cover_visual_plan_requires_title_subtitle_and_tag():
+    context = replace(DOMAIN_CONTEXT, require_ai_cover_text=True)
+    payload = deepcopy(VALID_PAYLOADS["VisualPlanResultV1"])
+    payload["text"] = ["封面标题", "封面副标题"]
+
+    with pytest.raises(ContractDomainValidationError) as exc_info:
+        validate_content_node_result("VisualPlanResultV1", payload, context)
+
+    assert exc_info.value.code == "ai_cover_text_incomplete"
+    assert "标签" in str(exc_info.value)
+
+    payload["text"] = ["封面标题", "封面副标题", "工艺细节"]
+    result = validate_content_node_result("VisualPlanResultV1", payload, context)
+    assert result.text == ["封面标题", "封面副标题", "工艺细节"]
+
+
 def test_visual_plan_requires_agent_rewrite_for_missing_template_fact():
     context = replace(
         DOMAIN_CONTEXT,

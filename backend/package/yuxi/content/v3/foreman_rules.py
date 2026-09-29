@@ -186,29 +186,35 @@ def import_foreman_rules(bundle: dict[str, Any]) -> dict[str, Any]:
             "value_type": "string",
             "allowed_usages": ["body"],
             "validation_schema": {"enum": ["standard_unit_price", "project_quote", "budget", "settlement"]},
+            # 当家锁定走 business_record；内容工作室预算口径由用户确认表单注入，允许 manual_input。
+            "allowed_sources": ["business_record", "manual_input", "human_confirmation"],
         },
         "title_price": {
             "name": "标题价格",
             "value_type": "string",
             "allowed_usages": ["title"],
             "validation_schema": {"minLength": 1, "maxLength": 100},
+            "allowed_sources": ["business_record"],
         },
         "title_price_label": {
             "name": "标题价格口径",
             "value_type": "string",
             "allowed_usages": ["title", "body"],
             "validation_schema": {"minLength": 1, "maxLength": 100},
+            "allowed_sources": ["business_record"],
         },
         "quote_block": {
             "name": "锁定报价原文",
             "value_type": "object",
             "allowed_usages": ["body"],
             "validation_schema": {},
+            "allowed_sources": ["business_record"],
         },
     }
     variables = result.setdefault("variables", [])
     existing_by_code = {item.get("code"): item for item in variables}
     for code, definition in quote_variables.items():
+        allowed_sources = tuple(definition.pop("allowed_sources"))
         payload = {
             "code": code,
             **definition,
@@ -216,7 +222,7 @@ def import_foreman_rules(bundle: dict[str, Any]) -> dict[str, Any]:
             "evidence_policy": {
                 "required": True,
                 "review_policy": "user_confirmed",
-                "allowed_sources": ["business_record"],
+                "allowed_sources": list(allowed_sources),
             },
             "sensitivity": "high_risk",
             "enabled": True,

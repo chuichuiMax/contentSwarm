@@ -11,6 +11,7 @@ from yuxi.content.model.materials import (
     MaterialEnvelopeV2,
     MaterialRequirementManifestV1,
     MaterialRequirementV1,
+    PriceFactPayloadV2,
     ProductionOrderV1,
     build_expression_policy,
     build_formula_lexicon_constraints,
@@ -146,7 +147,8 @@ def test_single_blueprint_manifest_is_independent_of_body_formula_and_optional_p
     changed = build_material_manifest(catalog=catalog, order=_order(), single_blueprint=True)
     assert first.requirements == changed.requirements
     required = {r.variable_code for r in changed.requirements if r.required}
-    assert "quote_block" in required
+    assert required >= {"price", "quote_type", "product"}
+    assert "quote_block" not in required
     assert not required & {"persona_fact", "process", "advantages"}
     assert not any("persona:value" in r.validation_schema.get("alternative_groups", []) for r in changed.requirements)
 
@@ -1146,6 +1148,138 @@ def test_standardize_evidence_materials_builds_typed_price_from_confirmed_bundle
     assert price.payload.unit == "元/㎡"
     assert price.payload.price_basis == "standard_unit_price"
     assert validate_material_gate(manifest=manifest, materials=materials).status == "passed"
+
+
+def test_studio_budget_quote_type_manual_input_passes_foreman_like_gate():
+    """内容工作室注入的 budget/manual_input 必须能通过工长包 quote_type 门禁。"""
+
+    catalog = _catalog()
+    for item in catalog["variables"]:
+        if item["code"] == "quote_type":
+            item["evidence_policy"] = {
+                "required": True,
+                "review_policy": "user_confirmed",
+                "allowed_sources": ["business_record", "manual_input", "human_confirmation"],
+            }
+            item["validation_schema"] = {
+                "enum": ["standard_unit_price", "project_quote", "budget", "settlement"]
+            }
+            item["sensitivity"] = "high_risk"
+            item["allowed_usages"] = ["body"]
+    manifest = build_material_manifest(catalog=catalog, order=_order(), single_blueprint=True)
+    materials = standardize_evidence_materials(
+        evidence_bundle={
+            "id": "bundle-budget",
+            "version": 1,
+            "status": "frozen",
+            "bundle_hash": "e" * 64,
+            "items": [
+                {
+                    "id": "ev-product",
+                    "variable_codes": ["product"],
+                    "value": "洋湖天街定制化家装项目",
+                    "source_type": "manual_input",
+                    "source_id": "field_product",
+                    "source_version": "brief-v1",
+                    "source_hash": "a" * 64,
+                    "verified_status": "user_confirmed",
+                    "allowed_usage": ["title", "body"],
+                    "risk_level": "normal",
+                    "metadata": {},
+                },
+                {
+                    "id": "ev-price",
+                    "variable_codes": ["price"],
+                    "value": ["基础 9万", "木制品 4万"],
+                    "source_type": "manual_input",
+                    "source_id": "field_price",
+                    "source_version": "brief-v1",
+                    "source_hash": "b" * 64,
+                    "verified_status": "user_confirmed",
+                    "allowed_usage": ["title", "body"],
+                    "risk_level": "normal",
+                    "metadata": {"unit": "元/㎡"},
+                },
+                {
+                    "id": "ev-quote-type",
+                    "variable_codes": ["quote_type"],
+                    "value": "budget",
+                    "source_type": "manual_input",
+                    "source_id": "field_quote_type",
+                    "source_version": "brief-v1",
+                    "source_hash": "c" * 64,
+                    "verified_status": "user_confirmed",
+                    "allowed_usage": ["title", "body", "visual"],
+                    "risk_level": "normal",
+                    "metadata": {},
+                },
+            ],
+        },
+        manifest=manifest,
+    )
+    price = next(item for item in materials if item.material_type == "price_fact")
+    quote_type = next(item for item in materials if item.material_type == "business_fact" and "quote_type" in item.variable_codes)
+    assert price.payload.price_basis == "budget"
+    assert quote_type.payload.value == "budget"
+    assert quote_type.governance.risk_level == "high_risk"
+    report = validate_material_gate(manifest=manifest, materials=materials)
+    assert report.status == "passed"
+    assert "variable:quote_type" not in report.missing_requirement_ids
+    assert any(binding.requirement_id == "variable:quote_type" for binding in report.bindings)
+
+
+def test_standardize_evidence_materials_defaults_blank_price_unit_to_yuan():
+    manifest = build_material_manifest(catalog=_catalog(), order=_order())
+    materials = standardize_evidence_materials(
+        evidence_bundle={
+            "id": "bundle-blank-unit",
+            "version": 1,
+            "status": "frozen",
+            "bundle_hash": "e" * 64,
+            "items": [
+                {
+                    "id": "ev-product",
+                    "variable_codes": ["product"],
+                    "value": "整装交付",
+                    "source_type": "manual_input",
+                    "source_id": "field_product",
+                    "source_version": "brief-v1",
+                    "source_hash": "a" * 64,
+                    "verified_status": "user_confirmed",
+                    "allowed_usage": ["title", "body"],
+                    "risk_level": "normal",
+                    "metadata": {},
+                },
+                {
+                    "id": "ev-price",
+                    "variable_codes": ["price"],
+                    "value": "128000",
+                    "source_type": "human_confirmation",
+                    "source_id": "price-confirmation",
+                    "source_version": "v1",
+                    "source_hash": "b" * 64,
+                    "verified_status": "user_confirmed",
+                    "allowed_usage": ["title", "body"],
+                    "risk_level": "high_risk",
+                    "metadata": {"unit": "", "scope": "整装预算"},
+                },
+            ],
+        },
+        manifest=manifest,
+    )
+
+    price = next(item for item in materials if item.material_type == "price_fact")
+    assert price.payload.amounts == (128000.0,)
+    assert price.payload.unit == "元"
+    assert PriceFactPayloadV2.model_validate(
+        {
+            "quoted_value": "128000",
+            "amounts": [128000],
+            "unit": "",
+            "price_basis": "budget",
+            "scope": "整装预算",
+        }
+    ).unit == "元"
 
 
 @pytest.mark.asyncio
