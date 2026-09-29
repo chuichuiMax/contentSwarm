@@ -37,7 +37,7 @@ class Image2Config:
     submit_path: str = "/images/generations"
     edit_path: str = "/images/edits"
     status_path: str = "/images/generations/{task_id}"
-    timeout_seconds: float = 120
+    timeout_seconds: float = 300
     send_response_format: bool = False
     trusted_output_origins: tuple[str, ...] = ()
     edit_model: str | None = None
@@ -78,7 +78,7 @@ class Image2Config:
         if "{task_id}" not in status_path:
             raise Image2Error("IMAGE2_CONFIG_INVALID", "IMAGE2_STATUS_PATH 必须包含 {task_id}")
         try:
-            timeout_seconds = float(os.getenv("IMAGE2_TIMEOUT_SECONDS", "120"))
+            timeout_seconds = float(os.getenv("IMAGE2_TIMEOUT_SECONDS", "300"))
         except ValueError as exc:
             raise Image2Error("IMAGE2_CONFIG_INVALID", "IMAGE2_TIMEOUT_SECONDS 必须是数字") from exc
         if timeout_seconds <= 0:

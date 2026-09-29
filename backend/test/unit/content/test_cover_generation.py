@@ -314,6 +314,18 @@ def test_image2_configuration_rejects_invalid_status_path(monkeypatch: pytest.Mo
     assert exc_info.value.code == "IMAGE2_CONFIG_INVALID"
 
 
+def test_image2_configuration_defaults_to_five_minute_request_timeout(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.delenv("IMAGE2_TIMEOUT_SECONDS", raising=False)
+
+    config = Image2Config.from_values(
+        base_url="https://relay.example.com/v1",
+        api_key="test-key",
+        model="image2-test",
+    )
+
+    assert config.timeout_seconds == 300
+
+
 def test_global_image2_config_normalizes_values():
     payload = Image2GlobalConfigUpdate(
         base_url=" https://relay.example.com/v1 ",
