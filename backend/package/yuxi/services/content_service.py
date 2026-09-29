@@ -1348,10 +1348,40 @@ async def save_content_brief(
             "CONTENT_AI_COVER_TEMPLATE_CONFLICT",
             "AI 封面只使用图库原图，不能选择或叠加封面模板",
         )
+    hycanvas_template = None
+    if compile_now and requested_hycanvas_template_id:
+        from yuxi.services.hycanvas_service import HyCanvasClient
+
+        hycanvas_template = await HyCanvasClient.from_env().get_xiaohongshu_template(requested_hycanvas_template_id)
+        if hycanvas_template is None or hycanvas_template.get("zone") != "builtin":
+            raise _content_error(
+                422,
+                "CONTENT_HYCANVAS_TEMPLATE_INVALID",
+                "所选内置封面模板不存在或不可用",
+            )
+    is_handwritten_quote_template = bool(hycanvas_template and hycanvas_template.get("is_handwritten_quote_template"))
+    existing_quote_snapshot = (task.runtime_config_snapshot_json or {}).get("trusted_external_material_snapshot")
+    has_trusted_quote = quote_case is not None or (
+        isinstance(existing_quote_snapshot, dict)
+        and existing_quote_snapshot.get("quote_block")
+        and existing_quote_snapshot.get("title_price")
+        and (
+            existing_quote_snapshot.get("source") == "dangjia"
+            or existing_quote_snapshot.get("sanitized_user_request") == raw_user_request
+        )
+    )
+    if is_handwritten_quote_template and not has_trusted_quote:
+        raise _content_error(
+            422,
+            "CONTENT_HANDWRITTEN_QUOTE_REQUIRED",
+            "手写报价封面需要已确认的结构化施工报价数据",
+        )
+    effective_image_item_id = None if is_handwritten_quote_template else requested_image_item_id
     if (
         compile_now
         and (requested_cover_mode == "ai" or requested_hycanvas_template_id or requested_featured_cover_template_id)
-        and not requested_image_item_id
+        and not effective_image_item_id
+        and not is_handwritten_quote_template
     ):
         raise _content_error(
             422,
@@ -1359,7 +1389,9 @@ async def save_content_brief(
             "请选择一张图库图片作为封面背景图",
         )
     requested_composition = (
-        selection.photo_composition.model_dump() if selection and selection.photo_composition else None
+        None
+        if is_handwritten_quote_template
+        else (selection.photo_composition.model_dump() if selection and selection.photo_composition else None)
     )
     if requested_cover_mode == "ai" and requested_composition:
         raise _content_error(
@@ -1369,7 +1401,7 @@ async def save_content_brief(
         )
     current_visual_material = (getattr(task, "brief_json", None) or {}).get("visual_material") or {}
     if task.current_stage != "brief" and (
-        task.selected_image_item_id != requested_image_item_id
+        task.selected_image_item_id != effective_image_item_id
         or task.selected_poster_template_id != requested_poster_template_id
         or current_visual_material.get("cover_mode") != requested_cover_mode
         or current_visual_material.get("hycanvas_template_id") != requested_hycanvas_template_id
@@ -1384,17 +1416,17 @@ async def save_content_brief(
 
     visual_snapshot: dict[str, Any] | None = (
         {}
-        if requested_image_item_id
+        if effective_image_item_id
         or requested_poster_template_id
         or requested_hycanvas_template_id
         or requested_featured_cover_template_id
         or requested_cover_mode
         else None
     )
-    if requested_image_item_id:
+    if effective_image_item_id:
         owner_uid = str(user.uid)
         material_repo = MaterialLibraryRepository(db, include_shared=True)
-        image_item = await material_repo.get_item_for_user(requested_image_item_id, owner_uid, for_update=True)
+        image_item = await material_repo.get_item_for_user(effective_image_item_id, owner_uid, for_update=True)
         if image_item is None or image_item.material_type != "image" or image_item.status != "enabled":
             raise _content_error(
                 422,
@@ -1448,36 +1480,30 @@ async def save_content_brief(
     if requested_composition:
         from yuxi.services.content_photo_composition import resolve_photo_composition
 
-        if not requested_image_item_id or not (requested_hycanvas_template_id or requested_featured_cover_template_id):
+        if not effective_image_item_id or not (requested_hycanvas_template_id or requested_featured_cover_template_id):
             raise _content_error(422, "CONTENT_COMPOSITION_TEMPLATE_REQUIRED", "图片组合需要选择首图和封面模板")
         visual_snapshot["photo_composition"] = await resolve_photo_composition(
             db,
             user,
             selection.photo_composition,
-            requested_image_item_id,
+            effective_image_item_id,
             complete=compile_now,
         )
     if compile_now and (requested_hycanvas_template_id or requested_featured_cover_template_id):
-        from yuxi.services.hycanvas_service import HyCanvasClient
-
-        template_catalog = await HyCanvasClient.from_env().list_xiaohongshu_templates()
-        catalog_by_id = {item["id"]: item for item in template_catalog["templates"]}
         if requested_hycanvas_template_id:
-            hycanvas_template = catalog_by_id.get(requested_hycanvas_template_id)
-            if hycanvas_template is None or hycanvas_template.get("zone") != "builtin":
-                raise _content_error(
-                    422,
-                    "CONTENT_HYCANVAS_TEMPLATE_INVALID",
-                    "所选内置封面模板不存在或不可用",
-                )
             visual_snapshot.update(
                 {
                     "hycanvas_template_id": hycanvas_template["id"],
                     "hycanvas_template_title": hycanvas_template["title"],
                     "hycanvas_fillable_fields": hycanvas_template["fillable_fields"],
+                    "is_handwritten_quote_template": is_handwritten_quote_template,
                 }
             )
         if requested_featured_cover_template_id:
+            from yuxi.services.hycanvas_service import HyCanvasClient
+
+            template_catalog = await HyCanvasClient.from_env().list_xiaohongshu_templates()
+            catalog_by_id = {item["id"]: item for item in template_catalog["templates"]}
             featured_template = catalog_by_id.get(requested_featured_cover_template_id)
             if featured_template is None or featured_template.get("zone") != "featured":
                 raise _content_error(
@@ -1491,7 +1517,7 @@ async def save_content_brief(
                     "featured_cover_template_title": featured_template["title"],
                 }
             )
-    task.selected_image_item_id = requested_image_item_id
+    task.selected_image_item_id = effective_image_item_id
     task.selected_poster_template_id = requested_poster_template_id
     runtime_snapshot = dict(task.runtime_config_snapshot_json or {})
     original_request = compiled.get("original_user_request") or raw_user_request
@@ -1532,6 +1558,7 @@ async def save_content_brief(
             "poster_template_name": visual_snapshot.get("poster_template_name"),
             "hycanvas_template_id": requested_hycanvas_template_id,
             "hycanvas_template_title": visual_snapshot.get("hycanvas_template_title"),
+            "is_handwritten_quote_template": visual_snapshot.get("is_handwritten_quote_template", False),
             "featured_cover_template_id": requested_featured_cover_template_id,
             "featured_cover_template_title": visual_snapshot.get("featured_cover_template_title"),
             "photo_composition": requested_composition,

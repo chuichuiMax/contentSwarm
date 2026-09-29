@@ -55,6 +55,7 @@ var apiKeyRoutes = []apiKeyRoute{
 	{method: http.MethodGet, re: regexp.MustCompile(`^/api/v1/jobs/([^/]+)$`), scope: "", designIdx: -1, label: ""},
 	{method: http.MethodGet, re: regexp.MustCompile(`^/api/v1/themes$`), scope: "", designIdx: -1, label: ""},
 	{method: http.MethodGet, re: regexp.MustCompile(`^/api/v1/templates$`), scope: apikeys.ScopeRead, designIdx: -1, label: "http:list_templates"},
+	{method: http.MethodGet, re: regexp.MustCompile(`^/api/v1/templates/([^/]+)$`), scope: apikeys.ScopeRead, designIdx: -1, label: "http:get_template"},
 	{method: http.MethodGet, re: regexp.MustCompile(`^/api/v1/templates/([^/]+)/render\.png$`), scope: apikeys.ScopeExport, designIdx: -1, label: "http:render_template_png"},
 	{method: http.MethodPost, re: regexp.MustCompile(`^/api/v1/templates/([^/]+)/preview\.png$`), scope: apikeys.ScopeExport, designIdx: -1, label: "http:preview_template_png"},
 	{method: http.MethodPost, re: regexp.MustCompile(`^/api/v1/templates/([^/]+)/instantiate$`), scope: apikeys.ScopeGenerate, designIdx: -1, label: "http:instantiate_template"},

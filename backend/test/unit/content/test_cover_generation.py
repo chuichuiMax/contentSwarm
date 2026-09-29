@@ -50,6 +50,7 @@ from yuxi.services.content_cover_service import (
     _normalize_upload,
     _template_texts,
     create_cover_generate_job,
+    ensure_hycanvas_reference_asset,
 )
 from yuxi.storage.postgres.models_content import ContentCoverJob
 
@@ -67,10 +68,15 @@ def test_hycanvas_output_does_not_add_generic_title_overlay():
         mode="image_to_image",
         request_json={"title": "89㎡收纳逆袭", "render_copy_with_image2": True},
     )
+    prompt_text_job = SimpleNamespace(
+        mode="image_to_image",
+        request_json={"title": "装修人工报价", "render_prompt_text": True},
+    )
 
     assert content_cover_worker._output_title_overlay(hycanvas_job) == ""
     assert content_cover_worker._output_title_overlay(generated_job) == "89㎡收纳逆袭"
     assert content_cover_worker._output_title_overlay(image2_copy_job) == ""
+    assert content_cover_worker._output_title_overlay(prompt_text_job) == ""
 
 
 def _template_analysis_fixture():
@@ -605,6 +611,113 @@ async def test_image2_copy_mode_sends_exact_copy_and_keeps_numbers(monkeypatch: 
     assert "标题贴顶" in request["negative_prompt"]
     assert "标签贴底" in request["negative_prompt"]
     assert captured["content_prompt_kwargs"]["include_content_context"] is False
+
+
+@pytest.mark.asyncio
+async def test_prompt_text_mode_keeps_handwritten_quote_copy_in_image_to_image(monkeypatch: pytest.MonkeyPatch):
+    captured = {}
+
+    class FakeRepository:
+        def __init__(self, _db):
+            pass
+
+        async def get_assets_for_user(self, *_args, **_kwargs):
+            return [SimpleNamespace(id="reference-1", role="source")]
+
+    async def fake_resolve_image2_config(*_args, **_kwargs):
+        return SimpleNamespace(model="gpt-image-2")
+
+    async def fake_content_prompt(*_args, **_kwargs):
+        captured["content_prompt_kwargs"] = _kwargs
+        return "逐字书写：拆除卫生间 2000元；整套人工合计 1.206w", None, ""
+
+    async def fake_create_job(_db, _user, **kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(), False
+
+    service_globals = create_cover_generate_job.__globals__
+    monkeypatch.setitem(service_globals, "ContentCoverRepository", FakeRepository)
+    monkeypatch.setitem(service_globals, "resolve_image2_config", fake_resolve_image2_config)
+    monkeypatch.setitem(service_globals, "_content_prompt", fake_content_prompt)
+    monkeypatch.setitem(service_globals, "_create_job", fake_create_job)
+    monkeypatch.setitem(service_globals, "serialize_job", lambda _job: {})
+
+    await create_cover_generate_job(
+        object(),
+        SimpleNamespace(uid="alice"),
+        CoverGenerateCreate(
+            mode="image_to_image",
+            source_asset_ids=["reference-1"],
+            render_prompt_text=True,
+            prompt="逐字书写：拆除卫生间 2000元；整套人工合计 1.206w",
+            idempotency_key="request-handwritten",
+        ),
+    )
+
+    request = captured["request"]
+    assert "以唯一参考图作为手写报价模板例图" in request["prompt"]
+    assert "拆除卫生间 2000元" in request["prompt"]
+    assert "不得改写、遗漏、重复、增加或重新计算" in request["prompt"]
+    assert "错误数字" in request["negative_prompt"]
+    assert captured["content_prompt_kwargs"]["include_content_context"] is False
+
+
+@pytest.mark.asyncio
+async def test_hycanvas_handwritten_reference_is_saved_as_image_source(monkeypatch: pytest.MonkeyPatch):
+    import yuxi.services.hycanvas_service as hycanvas_service
+
+    captured = {}
+    asset = SimpleNamespace(id="reference-1", sha256="new-sha", metadata_json={})
+
+    class FakeRepository:
+        def __init__(self, _db):
+            pass
+
+        async def find_hycanvas_reference_asset(self, owner_uid, template_id):
+            assert owner_uid == "alice"
+            assert template_id == "template-1"
+            return None
+
+        async def get_asset_for_user(self, asset_id, owner_uid):
+            assert (asset_id, owner_uid) == ("reference-1", "alice")
+            return asset
+
+        async def update_asset_metadata(self, item, metadata):
+            item.metadata_json = metadata
+
+    class FakeClient:
+        async def render_template_png(self, template_id):
+            assert template_id == "template-1"
+            return _image("white"), "image/png"
+
+    async def fake_create_cover_asset(_db, _user, _upload, *, role, content_task_id):
+        captured.update(role=role, content_task_id=content_task_id)
+        return {"asset": {"id": "reference-1"}}
+
+    class FakeDB:
+        async def commit(self):
+            captured["committed"] = True
+
+    service_globals = ensure_hycanvas_reference_asset.__globals__
+    monkeypatch.setitem(service_globals, "ContentCoverRepository", FakeRepository)
+    monkeypatch.setitem(service_globals, "create_cover_asset", fake_create_cover_asset)
+    monkeypatch.setattr(hycanvas_service.HyCanvasClient, "from_env", classmethod(lambda cls: FakeClient()))
+
+    result = await ensure_hycanvas_reference_asset(FakeDB(), SimpleNamespace(uid="alice"), "template-1")
+
+    assert result is asset
+    assert captured == {"role": "source", "content_task_id": None, "committed": True}
+    assert asset.metadata_json["hycanvas_template_id"] == "template-1"
+
+
+def test_prompt_text_mode_rejects_text_to_image_without_reference():
+    with pytest.raises(ValidationError, match="提示词文字直出仅支持单图图生图"):
+        CoverGenerateCreate(
+            mode="text_to_image",
+            render_prompt_text=True,
+            prompt="手写报价",
+            idempotency_key="request-handwritten",
+        )
 
 
 @pytest.mark.parametrize(

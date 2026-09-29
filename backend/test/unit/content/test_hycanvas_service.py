@@ -3,10 +3,9 @@ import json
 import httpx
 import pytest
 from fastapi import HTTPException
-
 from yuxi.content_cover.schemas import HyCanvasDesignCreate
-from yuxi.services.hycanvas_service import HyCanvasClient
 from yuxi.services import hycanvas_service
+from yuxi.services.hycanvas_service import HyCanvasClient
 
 
 def test_system_cover_template_id_can_create_design():
@@ -62,6 +61,7 @@ async def test_lists_three_by_four_fillable_templates_and_keeps_metadata():
                     "format": {"width": 1080, "height": 1440, "unit": "px"},
                     "fillableFields": [{"nodeId": "n1", "kind": "text", "label": "主标题"}],
                     "previewUrls": ["/template-previews/xiaohongshu-checklist-p0.png"],
+                    "isHandwrittenQuoteTemplate": 1,
                 },
                 {
                     "id": "8bc32ed9-f80a-47e2-8e2b-913e35c125c8",
@@ -82,9 +82,7 @@ async def test_lists_three_by_four_fillable_templates_and_keeps_metadata():
                     "id": "landscape-template",
                     "title": "横版封面",
                     "format": {"width": 1200, "height": 628, "unit": "px"},
-                    "fillableFields": [
-                        {"nodeId": "title", "kind": "text", "label": "标题"}
-                    ],
+                    "fillableFields": [{"nodeId": "title", "kind": "text", "label": "标题"}],
                 },
                 {"id": "generic-poster", "title": "普通海报"},
             ],
@@ -103,6 +101,7 @@ async def test_lists_three_by_four_fillable_templates_and_keeps_metadata():
     assert result["total"] == 3
     assert result["templates"][0]["id"] == "xiaohongshu-checklist"
     assert result["templates"][0]["zone"] == "builtin"
+    assert result["templates"][0]["is_handwritten_quote_template"] is True
     assert result["templates"][1]["id"] == "8bc32ed9-f80a-47e2-8e2b-913e35c125c8"
     assert result["templates"][1]["zone"] == "builtin"
     assert result["templates"][0]["fillable_fields"][0]["label"] == "主标题"
@@ -113,6 +112,53 @@ async def test_lists_three_by_four_fillable_templates_and_keeps_metadata():
     assert result["templates"][2]["id"] == "featured-cover-1"
     assert result["templates"][2]["zone"] == "featured"
     assert result["templates"][2]["preview_urls"] == ["/hycanvas-template-previews/featured-cover-1-p0.png"]
+
+
+@pytest.mark.asyncio
+async def test_gets_single_cover_template_by_id_with_handwritten_quote_flag():
+    template_id = "8bc32ed9-f80a-47e2-8e2b-913e35c125c8"
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == f"/api/v1/templates/{template_id}"
+        return httpx.Response(
+            200,
+            json={
+                "id": template_id,
+                "title": "手写报价",
+                "tags": ["小红书"],
+                "format": {"width": 1080, "height": 1440, "unit": "px"},
+                "fillableFields": [],
+                "previewUrls": [],
+                "isHandwrittenQuoteTemplate": 1,
+            },
+        )
+
+    client = HyCanvasClient(
+        base_url="http://hycanvas",
+        public_url="http://canvas.example",
+        api_key="hyk_test",
+        workspace_id="ws-1",
+        transport=httpx.MockTransport(handler),
+    )
+
+    result = await client.get_xiaohongshu_template(template_id)
+
+    assert result["id"] == template_id
+    assert result["zone"] == "builtin"
+    assert result["is_handwritten_quote_template"] is True
+
+
+@pytest.mark.asyncio
+async def test_get_single_cover_template_returns_none_when_template_is_missing():
+    client = HyCanvasClient(
+        base_url="http://hycanvas",
+        public_url="http://canvas.example",
+        api_key="hyk_test",
+        workspace_id="ws-1",
+        transport=httpx.MockTransport(lambda request: httpx.Response(404, json={"code": "not_found"})),
+    )
+
+    assert await client.get_xiaohongshu_template("missing-template") is None
 
 
 @pytest.mark.asyncio

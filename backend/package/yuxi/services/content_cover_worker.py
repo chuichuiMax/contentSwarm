@@ -142,6 +142,7 @@ def _output_title_overlay(job: ContentCoverJob) -> str:
         job.mode in {"hycanvas", "poster_billboard", "editor_render"}
         or request.get("template_replicate")
         or request.get("render_copy_with_image2")
+        or request.get("render_prompt_text")
     ):
         return ""
     return str(request.get("title") or "").strip()

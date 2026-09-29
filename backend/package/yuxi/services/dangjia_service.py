@@ -465,11 +465,20 @@ async def create_dangjia_content(db: AsyncSession, user: User, payload: DangjiaC
         ),
     )
     task_id = created["task"]["id"]
+    trusted_quote_snapshot = build_trusted_quote_snapshot(payload, content_type_code=ct_code)
+    task = await db.get(ContentTask, task_id)
+    if task is None:
+        raise _dj_error(500, "DANGJIA_TASK_PERSIST_FAILED", "内容任务创建后未找到")
+    if trusted_quote_snapshot:
+        task.runtime_config_snapshot_json = {
+            **(task.runtime_config_snapshot_json or {}),
+            TRUSTED_QUOTE_SNAPSHOT_KEY: trusted_quote_snapshot,
+        }
+        await db.flush()
     await save_content_brief(db, user, task_id, brief, compile_now=True)
     task = await db.get(ContentTask, task_id)
     if task is None:
         raise _dj_error(500, "DANGJIA_TASK_PERSIST_FAILED", "内容任务创建后未找到")
-    trusted_quote_snapshot = build_trusted_quote_snapshot(payload, content_type_code=ct_code)
     task.runtime_config_snapshot_json = {
         **(task.runtime_config_snapshot_json or {}),
         "dangjia_request_fingerprint": request_fingerprint,

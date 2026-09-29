@@ -10,6 +10,13 @@ export const FEATURED_COVER_TAG = "精选封面";
 export const COVER_WIDTH = 1080;
 export const COVER_HEIGHT = 1440;
 
+export type ImageTemplateUploadOptions = {
+  collectionId?: string;
+  category?: string;
+  tags?: string[];
+  visibility: "workspace" | "public";
+};
+
 function readImageSize(file: Blob): Promise<{ width: number; height: number }> {
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(file);
@@ -61,12 +68,13 @@ export function buildCoverDesign(
 }
 
 /** Upload each image as an asset, wrap it in a cover design, and save it as a
- *  public featured-cover template. Sequential on purpose: covers arrive in a
- *  handful at a time and a serial loop keeps asset-quota failures ordered.
+ *  template in the requested workspace collection/zone. Sequential on purpose:
+ *  images arrive in a handful at a time and a serial loop keeps quota failures ordered.
  *  Returns the number of files that failed. */
-export async function uploadFeaturedCovers(
+export async function uploadImageTemplates(
   workspaceId: string,
   files: File[],
+  options: ImageTemplateUploadOptions,
   onProgress?: (done: number, total: number) => void,
 ): Promise<{ uploaded: number; failed: number }> {
   let uploaded = 0;
@@ -81,9 +89,10 @@ export async function uploadFeaturedCovers(
         workspaceId,
         file: design,
         title,
-        category: FEATURED_COVER_TAG,
-        tags: [FEATURED_COVER_TAG],
-        visibility: "public",
+        category: options.category,
+        tags: options.tags,
+        visibility: options.visibility,
+        collectionId: options.collectionId,
       });
       uploaded += 1;
     } catch {
@@ -92,4 +101,21 @@ export async function uploadFeaturedCovers(
     onProgress?.(uploaded + failed, files.length);
   }
   return { uploaded, failed };
+}
+
+export function uploadFeaturedCovers(
+  workspaceId: string,
+  files: File[],
+  onProgress?: (done: number, total: number) => void,
+): Promise<{ uploaded: number; failed: number }> {
+  return uploadImageTemplates(
+    workspaceId,
+    files,
+    {
+      category: FEATURED_COVER_TAG,
+      tags: [FEATURED_COVER_TAG],
+      visibility: "public",
+    },
+    onProgress,
+  );
 }

@@ -294,6 +294,10 @@ func templatesGetHandler(tm *templates.Service) http.HandlerFunc {
 			templatesProblem(w, r, err)
 			return
 		}
+		if key := apiKeyFrom(r.Context()); key != nil && t.WorkspaceID != nil && *t.WorkspaceID != key.WorkspaceID {
+			templatesProblem(w, r, templates.ErrNotFound)
+			return
+		}
 		writeJSON(w, http.StatusOK, t)
 	}
 }

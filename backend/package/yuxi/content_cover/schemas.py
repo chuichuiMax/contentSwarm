@@ -133,6 +133,7 @@ class CoverGenerateCreate(BaseModel):
     subtitle: str = Field(default="", max_length=120)
     tags: list[str] = Field(default_factory=list, max_length=10)
     render_copy_with_image2: bool = False
+    render_prompt_text: bool = False
     reference_mode: Literal["replicate", "style"] = "replicate"
     prompt: str = Field(default="", max_length=8000)
     negative_prompt: str | None = Field(default=None, max_length=4000)
@@ -196,6 +197,10 @@ class CoverGenerateCreate(BaseModel):
             raise ValueError("风格参考模式需要多图参考并携带模板图")
         if self.render_copy_with_image2 and self.mode != "image_to_image":
             raise ValueError("image2 文案直出仅支持单图图生图")
+        if self.render_prompt_text and self.mode != "image_to_image":
+            raise ValueError("提示词文字直出仅支持单图图生图")
+        if self.render_copy_with_image2 and self.render_prompt_text:
+            raise ValueError("两种文字直出模式不能同时启用")
         return self
 
 

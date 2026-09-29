@@ -96,6 +96,24 @@ class ContentCoverRepository:
             .first()
         )
 
+    async def find_hycanvas_reference_asset(
+        self, owner_uid: str, hycanvas_template_id: str
+    ) -> ContentCoverAsset | None:
+        return (
+            (
+                await self.db.execute(
+                    select(ContentCoverAsset).where(
+                        ContentCoverAsset.owner_uid == owner_uid,
+                        ContentCoverAsset.role == "source",
+                        ContentCoverAsset.deleted_at.is_(None),
+                        ContentCoverAsset.metadata_json["hycanvas_template_id"].astext == hycanvas_template_id,
+                    )
+                )
+            )
+            .scalars()
+            .first()
+        )
+
     async def update_asset_metadata(
         self,
         asset: ContentCoverAsset,
