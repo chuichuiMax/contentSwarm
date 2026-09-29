@@ -21,6 +21,23 @@ class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class ImageDesignSaveTarget(StrictModel):
+    """Public save destination; roots are represented by a missing gallery ID."""
+
+    scope: Literal["private", "enterprise"]
+    gallery_id: str | None = Field(default=None, min_length=1, max_length=64)
+
+    @field_validator("gallery_id")
+    @classmethod
+    def normalize_gallery_id(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        if not value:
+            raise ValueError("保存文件夹标识不能为空")
+        return value
+
+
 class ImageDesignClientCreate(StrictModel):
     name: str = Field(min_length=1, max_length=120)
 
@@ -98,6 +115,7 @@ class ImageDesignGenerateCreate(StrictModel):
     gen_count: Literal[1, 2, 4] = 1
     clarity: Literal["1K", "2K"] = "1K"
     idempotency_key: str | None = Field(default=None, max_length=128)
+    save_target: ImageDesignSaveTarget | None = None
 
 
 class ImageDesignAnalysisCreate(StrictModel):

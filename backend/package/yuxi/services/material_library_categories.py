@@ -29,6 +29,11 @@ MATERIAL_CATEGORIES: dict[MaterialType, tuple[dict[str, str], ...]] = {
     ),
 }
 
+# Keep the PC's existing image categories. The mini-program's fixed result
+# gallery has its own ID and is created by personal_materials.folder_categories.
+DEFAULT_IMAGE_CATEGORY_IDS = frozenset(item["code"] for item in MATERIAL_CATEGORIES["image"])
+RETIRED_PRIVATE_IMAGE_CATEGORY_IDS: frozenset[str] = frozenset()
+
 
 def _aliases(material_type: MaterialType) -> dict[str, str]:
     aliases = {item["name"]: item["code"] for item in MATERIAL_CATEGORIES[material_type]}

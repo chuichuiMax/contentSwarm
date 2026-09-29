@@ -193,6 +193,19 @@ async def _store_outputs(job: ContentCoverJob, outputs: list[bytes]) -> list[str
     try:
         async with pg_manager.get_async_session_context() as db:
             repo = ContentCoverRepository(db)
+            from sqlalchemy import select
+            from yuxi.storage.postgres.models_business import User
+            from yuxi.storage.postgres.models_content import ContentTask
+
+            task = (
+                await db.scalar(select(ContentTask).where(ContentTask.id == job.content_task_id))
+                if job.content_task_id else None
+            )
+            form_values = ((task.brief_json or {}).get("form_values") or {}) if task else {}
+            pc_content_output = task is not None and not (
+                form_values.get("mp_content_code") or form_values.get("mp_service_entry")
+            )
+            user = await db.scalar(select(User).where(User.uid == job.owner_uid)) if pc_content_output else None
             for index, raw in enumerate(outputs):
                 normalized, width, height = _normalize_output(
                     raw,
@@ -208,7 +221,7 @@ async def _store_outputs(job: ContentCoverJob, outputs: list[bytes]) -> list[str
                     content_type="image/png",
                 )
                 uploaded_objects.append((uploaded.bucket_name, uploaded.object_name))
-                await repo.create_asset(
+                asset = await repo.create_asset(
                     id=asset_id,
                     owner_uid=job.owner_uid,
                     tenant_id=job.tenant_id,
@@ -253,6 +266,16 @@ async def _store_outputs(job: ContentCoverJob, outputs: list[bytes]) -> list[str
                         ),
                     },
                 )
+                if pc_content_output and user is not None:
+                    from yuxi.services.material_library_service import create_library_item_for_asset
+                    from yuxi.services.personal_materials import folder_categories
+
+                    gallery = (await folder_categories(db, user))["generated"][0]
+                    await create_library_item_for_asset(
+                        db, asset=asset, material_type="image", name=f"cover-{index + 1}",
+                        category=gallery.id, category_owner_uid=gallery.owner_uid,
+                        metadata={"source": "content_production", "source_channel": "pc", "source_folder": "generated"},
+                    )
                 asset_ids.append(asset_id)
             await db.commit()
     except Exception:

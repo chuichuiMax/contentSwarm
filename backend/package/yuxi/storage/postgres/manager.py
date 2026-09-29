@@ -420,6 +420,9 @@ class PostgresManager(metaclass=SingletonMeta):
                 "CREATE INDEX IF NOT EXISTS idx_content_material_share_items_share_order "
                 "ON content_material_share_items(share_id, display_order)"
             ),
+            "ALTER TABLE IF EXISTS content_material_shares ADD COLUMN IF NOT EXISTS building_name VARCHAR(80)",
+            "ALTER TABLE IF EXISTS content_material_shares ADD COLUMN IF NOT EXISTS area VARCHAR(32)",
+            "ALTER TABLE IF EXISTS content_material_shares ADD COLUMN IF NOT EXISTS design_style VARCHAR(32)",
             "ALTER TABLE IF EXISTS content_material_categories ADD COLUMN IF NOT EXISTS parent_id VARCHAR(64)",
             "ALTER TABLE IF EXISTS content_material_categories ADD COLUMN IF NOT EXISTS design_style VARCHAR(32)",
             "ALTER TABLE IF EXISTS content_material_categories ADD COLUMN IF NOT EXISTS building_name VARCHAR(80)",
@@ -471,6 +474,11 @@ class PostgresManager(metaclass=SingletonMeta):
                 "ADD COLUMN IF NOT EXISTS verification_status VARCHAR(32) NOT NULL DEFAULT 'unverified'"
             ),
             ("ALTER TABLE IF EXISTS content_cover_image2_settings ADD COLUMN IF NOT EXISTS verified_at TIMESTAMP"),
+            "ALTER TABLE IF EXISTS content_cover_assets ADD COLUMN IF NOT EXISTS hidden_from_works_at TIMESTAMP",
+            (
+                "CREATE INDEX IF NOT EXISTS ix_content_cover_assets_hidden_from_works_at "
+                "ON content_cover_assets(hidden_from_works_at)"
+            ),
             ("ALTER TABLE IF EXISTS content_cover_image2_settings ADD COLUMN IF NOT EXISTS max_concurrent INTEGER"),
             (
                 "ALTER TABLE IF EXISTS content_cover_poster_templates "
@@ -654,6 +662,8 @@ class PostgresManager(metaclass=SingletonMeta):
 
         self._check_initialized()
         stmts = [
+            "ALTER TABLE IF EXISTS image_design_library_items ADD COLUMN IF NOT EXISTS hidden_at TIMESTAMP",
+            "ALTER TABLE IF EXISTS content_inspire_samples ADD COLUMN IF NOT EXISTS cover_url VARCHAR(2048)",
             "ALTER TABLE IF EXISTS content_viral_article_versions "
             "DROP CONSTRAINT IF EXISTS content_viral_article_versions_file_id_fkey",
             "ALTER TABLE IF EXISTS content_viral_article_versions "

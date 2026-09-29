@@ -9,7 +9,15 @@ from .schemas import (
     RoomAdaptRefinementCreate,
     StyleTransferRefinementCreate,
 )
-from .workflow_profiles import ADDONS, LAYOUTS, SPACE_LABELS, STYLE_PROFILES, WORKFLOW_PROFILES
+from .workflow_profiles import (
+    ADDONS,
+    LAYOUTS,
+    MP_SHARED_ADDONS,
+    MP_SHARED_LAYOUTS,
+    SPACE_LABELS,
+    STYLE_PROFILES,
+    WORKFLOW_PROFILES,
+)
 
 RefinementPayload = StyleTransferRefinementCreate | RoomAdaptRefinementCreate | CrossSpaceRefinementCreate
 
@@ -175,15 +183,18 @@ def build_prompt_plan(payload: RefinementPayload, analyses: dict[str, Any]) -> P
         palette = _unique(list(style.get("palette") or []))
         lighting = _unique(list(style.get("lighting") or []))
         space_label = SPACE_LABELS.get(payload.target_space)
-        layout_label = LAYOUTS.get(payload.target_space, {}).get(payload.layout)
+        layout_label = LAYOUTS.get(payload.target_space, {}).get(payload.layout) or MP_SHARED_LAYOUTS.get(
+            payload.layout
+        )
         if not space_label or not layout_label:
             raise ValueError("目标空间或布局不在当前工作流配置中")
-        unknown_addons = [item for item in payload.addons if item not in ADDONS[payload.target_space]]
+        addon_choices = {**ADDONS[payload.target_space], **MP_SHARED_ADDONS}
+        unknown_addons = [item for item in payload.addons if item not in addon_choices]
         if unknown_addons:
             raise ValueError(f"目标空间不支持附加元素：{', '.join(unknown_addons)}")
         target_space = {"id": payload.target_space, "label": space_label}
         layout = {"id": payload.layout, "label": layout_label}
-        addon_profiles = [{"id": item, "label": ADDONS[payload.target_space][item]} for item in payload.addons]
+        addon_profiles = [{"id": item, "label": addon_choices[item]} for item in payload.addons]
 
     if not preserve and payload.workflow != "cross_space":
         warnings.append("视觉分析未发现可枚举的固定结构，仍按工作流硬约束保留原图结构")

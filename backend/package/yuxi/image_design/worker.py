@@ -5,18 +5,36 @@ import hashlib
 import io
 import os
 import uuid
+from pathlib import Path
 from typing import Any
 
+from fastapi import HTTPException
 from PIL import Image, ImageOps
 from sqlalchemy import select
 
 from yuxi.content_cover.image2_client import Image2Client, Image2Error
 from yuxi.content_cover.image2_settings import resolve_image2_config
 from yuxi.content_cover.schemas import Image2Input, Image2Request, Image2Submission
+from yuxi.image_design.save_targets import (
+    ResolvedSaveTarget,
+    resolve_mp_save_target,
+    resolve_writable_save_target,
+    validate_mp_save_target,
+)
+from yuxi.image_design.schemas import ImageDesignSaveTarget
+from yuxi.image_design.service import resolve_image_input
 from yuxi.repositories.material_library_repository import MaterialLibraryRepository
+from yuxi.services.material_library_service import create_library_item_for_asset
+from yuxi.services.material_upload_queue import read_material_bytes
 from yuxi.services.run_queue_service import clear_cancel_signal
 from yuxi.storage.minio import get_minio_client
-from yuxi.storage.postgres.models_content import ContentCoverAsset, ImageDesignJob
+from yuxi.storage.postgres.models_business import User
+from yuxi.storage.postgres.models_content import (
+    ContentCoverAsset,
+    ContentMaterialCategory,
+    ImageDesignJob,
+    ImageDesignLibraryItem,
+)
 from yuxi.storage.postgres.manager import pg_manager
 from yuxi.utils.datetime_utils import utc_now_naive
 from yuxi.utils.logging_config import logger
@@ -39,14 +57,9 @@ async def _set_job(job_id: str, **values: Any) -> ImageDesignJob | None:
 
 
 async def _load_material_input(db, owner_uid: str, material_id: str) -> Image2Input:
-    repo = MaterialLibraryRepository(db, include_shared=True)
-    item = await repo.get_item_for_user(material_id, owner_uid)
-    if item is None or item.material_type != "image" or item.status != "enabled":
-        raise Image2Error("IMAGE_DESIGN_MATERIAL_NOT_FOUND", "图片设计引用的素材不存在或已下架")
-    asset = await repo.get_asset(item.asset_id, item.owner_uid)
-    if asset is None:
-        raise Image2Error("IMAGE_DESIGN_MATERIAL_FILE_MISSING", "图片设计引用的素材文件不存在")
-    data = await get_minio_client().adownload_file(asset.bucket_name, asset.object_name)
+    image = await resolve_image_input(db, owner_uid, material_id)
+    asset = image.asset
+    data = await read_material_bytes(asset)
     return Image2Input(data=data, content_type=asset.content_type, file_name=asset.original_file_name)
 
 
@@ -136,6 +149,93 @@ async def _poll(client: Image2Client, result: Image2Submission) -> Image2Submiss
     raise Image2Error("IMAGE2_POLL_TIMEOUT", "image2 异步任务等待超时", retryable=True)
 
 
+async def _ensure_generated_library_item(db, *, user, asset, material_item):
+    owner_uid = str(user.uid)
+    existing = await db.scalar(
+        select(ImageDesignLibraryItem).where(
+            ImageDesignLibraryItem.owner_uid == owner_uid,
+            ImageDesignLibraryItem.asset_id == asset.id,
+        )
+    )
+    if existing is not None:
+        return existing
+    entry = ImageDesignLibraryItem(
+        id=f"idl_{uuid.uuid4().hex}",
+        owner_uid=owner_uid,
+        tenant_id=str(user.department_id) if user.department_id is not None else None,
+        asset_id=asset.id,
+        source_material_item_id=material_item.id,
+        source_gallery_id=material_item.category,
+        source_role="generated",
+    )
+    db.add(entry)
+    await db.flush()
+    return entry
+
+
+async def attach_generated_asset(db, *, user, asset, requested, job_id, workflow, mp_fixed_target=False):
+    """Attach in the caller's transaction, retaining a completed attachment on retry."""
+    existing = await MaterialLibraryRepository(db, include_shared=True).get_item_by_asset(asset.id)
+    if existing is not None:
+        metadata = existing.metadata_json or {}
+        saved = metadata["resolved_save_target"]
+        resolved = ResolvedSaveTarget(
+            saved["scope"],
+            saved["gallery_id"],
+            existing.category,
+            existing.category_owner_uid,
+            metadata.get("save_warning"),
+        )
+        await _ensure_generated_library_item(db, user=user, asset=asset, material_item=existing)
+        return resolved, existing
+
+    # An inaccessible or re-scoped folder is not a deleted folder. Do not hide
+    # a permission change behind the resolver's missing-folder fallback.
+    if requested.gallery_id is not None:
+        category = await db.scalar(
+            select(ContentMaterialCategory)
+            .where(
+                ContentMaterialCategory.id == requested.gallery_id,
+                ContentMaterialCategory.material_type == "image",
+                ContentMaterialCategory.deleted_at.is_(None),
+            )
+            .with_for_update()
+        )
+        allow_fallback = category is None
+    else:
+        allow_fallback = False
+    if mp_fixed_target:
+        await validate_mp_save_target(db, user, requested)
+    resolved = (
+        await resolve_mp_save_target(db, user, requested)
+        if mp_fixed_target
+        else await resolve_writable_save_target(
+            db, user, requested, fallback_invalid_folder=allow_fallback,
+        )
+    )
+    metadata = {
+        "source": "image_design",
+        "save_target_version": 2,
+        "image_design_job_id": job_id,
+        "workflow": workflow,
+        "requested_save_target": requested.model_dump(mode="json"),
+        "resolved_save_target": resolved.public_target,
+        "save_warning": resolved.warning,
+    }
+    item = await create_library_item_for_asset(
+        db,
+        asset=asset,
+        material_type="image",
+        name=Path(asset.original_file_name).stem,
+        category=resolved.category_id,
+        category_owner_uid=resolved.category_owner_uid,
+        metadata=metadata,
+    )
+    asset.metadata_json = {**(asset.metadata_json or {}), **metadata}
+    await _ensure_generated_library_item(db, user=user, asset=asset, material_item=item)
+    return resolved, item
+
+
 async def process_image_design_job(ctx: dict[str, Any], job_id: str) -> None:
     del ctx
     async with pg_manager.get_async_session_context() as db:
@@ -144,13 +244,32 @@ async def process_image_design_job(ctx: dict[str, Any], job_id: str) -> None:
             logger.warning("Image design job not found: %s", job_id)
             return
         request = dict(job.request_json or {})
+        saved_result = dict(job.result_json or {})
+        saved_asset_ids = list(saved_result.get("asset_ids") or [])
         job.status = "running"
         job.progress = 5
         job.started_at = utc_now_naive()
         await db.commit()
 
     try:
+        requested = (
+            ImageDesignSaveTarget.model_validate(request["requested_save_target"])
+            if request.get("requested_save_target") is not None
+            else None
+        )
         async with pg_manager.get_async_session_context() as db:
+            if requested is not None:
+                user = await db.scalar(
+                    select(User).where(
+                        User.uid == job.owner_uid,
+                        User.is_deleted == 0,
+                        User.deleted_at.is_(None),
+                    )
+                )
+                if user is None:
+                    raise Image2Error("IMAGE_DESIGN_OWNER_NOT_FOUND", "图片设计任务所属用户不存在")
+                if request.get("mp_fixed_target"):
+                    await validate_mp_save_target(db, user, requested)
             material_ids = list(request.get("material_ids") or [])
             inputs = [await _load_material_input(db, job.owner_uid, material_id) for material_id in material_ids]
             image2_config = await resolve_image2_config(db, owner_uid=job.owner_uid)
@@ -158,29 +277,34 @@ async def process_image_design_job(ctx: dict[str, Any], job_id: str) -> None:
             raise Image2Error("IMAGE_DESIGN_MATERIAL_REQUIRED", "图片设计任务缺少参考素材")
         image2_request = _build_image2_request(request, inputs)
         requested_count = int(request.get("gen_count") or 1)
-        asset_ids: list[str] = []
-        provider_task_ids: list[str] = []
+        asset_ids: list[str] = list(saved_asset_ids)
+        library_item_ids: list[str] = list(saved_result.get("library_item_ids") or [])
+        result_payload: dict[str, Any] = {**saved_result, "asset_ids": asset_ids}
+        save_warning = saved_result.get("save_warning")
+        provider_task_ids: list[str] = list(job.provider_task_ids_json or [])
         async with Image2Client(image2_config) as client:
-            for index in range(requested_count):
-                await _set_job(job_id, progress=10 + int(index * 70 / requested_count))
-                result = await client.submit(image2_request, idempotency_key=f"{job_id}:{index}")
-                if result.provider_task_id:
-                    provider_task_ids.append(result.provider_task_id)
-                    await _set_job(job_id, provider_task_ids_json=provider_task_ids, status="polling")
-                result = await _poll(client, result)
-                if not result.images:
-                    raise Image2Error("IMAGE2_RESULT_EMPTY", "image2 任务完成但没有返回图片")
-                raw, _ = await client.read_output(result.images[0])
-                normalized, width, height = _normalize_output(raw, str(request.get("size")))
-                asset_id = f"cca_{uuid.uuid4().hex}"
-                object_name = f"image-design/{job.owner_uid}/{job.id}/result-{index + 1}.png"
-                uploaded = await get_minio_client().aupload_file(
-                    bucket_name=RESULT_BUCKET,
-                    object_name=object_name,
-                    data=normalized,
-                    content_type="image/png",
-                )
-                async with pg_manager.get_async_session_context() as db:
+            for index in range(len(saved_asset_ids), requested_count):
+                resume_asset_id = None
+                asset = None
+                if resume_asset_id is None:
+                    await _set_job(job_id, progress=10 + int(index * 70 / requested_count))
+                    result = await client.submit(image2_request, idempotency_key=f"{job_id}:{index}")
+                    if result.provider_task_id:
+                        provider_task_ids.append(result.provider_task_id)
+                        await _set_job(job_id, provider_task_ids_json=provider_task_ids, status="polling")
+                    result = await _poll(client, result)
+                    if not result.images:
+                        raise Image2Error("IMAGE2_RESULT_EMPTY", "image2 任务完成但没有返回图片")
+                    raw, _ = await client.read_output(result.images[0])
+                    normalized, width, height = _normalize_output(raw, str(request.get("size")))
+                    asset_id = f"cca_{uuid.uuid4().hex}"
+                    object_name = f"image-design/{job.owner_uid}/{job.id}/{asset_id}.png"
+                    uploaded = await get_minio_client().aupload_file(
+                        bucket_name=RESULT_BUCKET,
+                        object_name=object_name,
+                        data=normalized,
+                        content_type="image/png",
+                    )
                     asset = ContentCoverAsset(
                         id=asset_id,
                         owner_uid=job.owner_uid,
@@ -210,27 +334,92 @@ async def process_image_design_job(ctx: dict[str, Any], job_id: str) -> None:
                             "clarity": request.get("clarity"),
                         },
                     )
-                    db.add(asset)
+                async with pg_manager.get_async_session_context() as db:
+                    if requested is not None:
+                        # Serialize checkpoints as well as attachment so a repeated
+                        # delivery cannot allocate a second asset for this output.
+                        current_job = await db.scalar(
+                            select(ImageDesignJob).where(ImageDesignJob.id == job_id).with_for_update()
+                        )
+                        current_ids = list((current_job.result_json or {}).get("asset_ids") or [])
+                        if index < len(current_ids):
+                            resume_asset_id = current_ids[index]
+                        if resume_asset_id is not None:
+                            asset = await db.scalar(
+                                select(ContentCoverAsset).where(
+                                    ContentCoverAsset.id == resume_asset_id,
+                                    ContentCoverAsset.owner_uid == job.owner_uid,
+                                    ContentCoverAsset.deleted_at.is_(None),
+                                )
+                            )
+                            if asset is None:
+                                raise Image2Error("IMAGE_DESIGN_RESULT_NOT_FOUND", "已生成的图片不存在")
+                        else:
+                            db.add(asset)
+                            await db.flush()
+                        user = await db.scalar(
+                            select(User).where(
+                                User.uid == job.owner_uid,
+                                User.is_deleted == 0,
+                                User.deleted_at.is_(None),
+                            )
+                        )
+                        if user is None:
+                            raise Image2Error("IMAGE_DESIGN_OWNER_NOT_FOUND", "图片设计任务所属用户不存在")
+                        resolved, item = await attach_generated_asset(
+                            db,
+                            user=user,
+                            asset=asset,
+                            requested=requested,
+                            job_id=job_id,
+                            workflow=job.workflow,
+                            mp_fixed_target=request.get("mp_fixed_target", False),
+                        )
+                        asset_ids.append(asset.id)
+                        library_item_ids.append(item.id)
+                        save_warning = resolved.warning or save_warning
+                        current_item_ids = list((current_job.result_json or {}).get("library_item_ids") or [])
+                        result_payload = {
+                            **(current_job.result_json or {}),
+                            "asset_ids": current_ids if len(current_ids) > len(asset_ids) else list(asset_ids),
+                            "library_item_ids": (
+                                current_item_ids
+                                if len(current_item_ids) > len(library_item_ids)
+                                else list(library_item_ids)
+                            ),
+                            "requested_save_target": requested.model_dump(mode="json"),
+                            "resolved_save_target": resolved.public_target,
+                            "save_warning": save_warning,
+                        }
+                        current_job.result_json = result_payload
+                        current_job.progress = 20 + int((index + 1) * 70 / requested_count)
+                        current_job.updated_at = utc_now_naive()
+                    else:
+                        db.add(asset)
                     await db.commit()
-                asset_ids.append(asset_id)
-                await _set_job(
-                    job_id,
-                    progress=20 + int((index + 1) * 70 / requested_count),
-                    result_json={"asset_ids": asset_ids},
-                )
+                if requested is None:
+                    asset_ids.append(asset.id)
+                    result_payload = {"asset_ids": list(asset_ids)}
+                    await _set_job(
+                        job_id,
+                        progress=20 + int((index + 1) * 70 / requested_count),
+                        result_json=result_payload,
+                    )
         await _set_job(
             job_id,
             status="succeeded",
             progress=100,
-            result_json={"asset_ids": asset_ids},
+            result_json=result_payload,
             completed_at=utc_now_naive(),
+            **({"error_code": None, "error_message": None} if requested is not None else {}),
         )
-    except Image2Error as exc:
+    except (Image2Error, HTTPException) as exc:
+        error = exc.detail.get("error", {}) if isinstance(exc, HTTPException) and isinstance(exc.detail, dict) else {}
         await _set_job(
             job_id,
             status="failed",
-            error_code=exc.code,
-            error_message=str(exc),
+            error_code=exc.code if isinstance(exc, Image2Error) else error.get("code", "IMAGE_DESIGN_SAVE_FAILED"),
+            error_message=error.get("message") or str(exc),
             completed_at=utc_now_naive(),
         )
         logger.warning("Image design job failed: {} {}", job_id, exc)

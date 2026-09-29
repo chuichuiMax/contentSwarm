@@ -1116,6 +1116,7 @@ class ContentCoverAsset(Base):
     object_name = Column(Text, nullable=False)
     metadata_json = Column(JSON, nullable=False, default=dict)
     created_at = Column(DateTime, default=utc_now_naive, index=True)
+    hidden_from_works_at = Column(DateTime, nullable=True, index=True)
     deleted_at = Column(DateTime, nullable=True, index=True)
 
     __table_args__ = (Index("idx_content_cover_assets_owner_created", "owner_uid", "created_at"),)
@@ -1133,6 +1134,7 @@ class ContentCoverAsset(Base):
             "sha256": self.sha256,
             "metadata": self.metadata_json or {},
             "created_at": format_utc_datetime(self.created_at),
+            "hidden_from_works_at": format_utc_datetime(self.hidden_from_works_at),
         }
 
 
@@ -1489,6 +1491,33 @@ class ContentReviewRecord(Base):
     checks = Column(JSON, nullable=False, default=list)
     reviewer_uid = Column(String(64), nullable=True)
     created_at = Column(DateTime, default=utc_now_naive)
+
+
+class ImageDesignMpDraft(Base):
+    __tablename__ = "image_design_mp_drafts"
+
+    owner_uid = Column(String(255), primary_key=True)
+    tenant_id = Column(String(64), nullable=True, index=True)
+    drafts_json = Column(JSON, nullable=False, default=dict)
+    created_at = Column(DateTime, default=utc_now_naive, nullable=False)
+    updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive, nullable=False)
+
+
+class ImageDesignLibraryItem(Base):
+    __tablename__ = "image_design_library_items"
+
+    id = Column(String(64), primary_key=True)
+    owner_uid = Column(String(255), nullable=False, index=True)
+    tenant_id = Column(String(64), nullable=True, index=True)
+    asset_id = Column(String(64), ForeignKey("content_cover_assets.id", ondelete="CASCADE"), nullable=False)
+    source_material_item_id = Column(String(64), nullable=True, index=True)
+    source_gallery_id = Column(String(64), nullable=True)
+    source_role = Column(String(32), nullable=False)
+    hidden_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=utc_now_naive, nullable=False, index=True)
+    updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive, nullable=False)
+
+    __table_args__ = (UniqueConstraint("owner_uid", "asset_id", name="uq_image_design_library_owner_asset"),)
 
 
 class ImageDesignClient(Base):
