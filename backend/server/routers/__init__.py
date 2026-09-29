@@ -20,6 +20,7 @@ from server.routers.mention_router import mention_router
 from server.routers.content_router import content
 from server.routers.content_cover_router import content_covers
 from server.routers.image_design_router import image_design
+from server.routers.mp_image_design_router import mp_image_design
 from server.routers.account_router import accounts
 from server.routers.employee_router import employees
 from server.routers.role_router import roles
@@ -30,7 +31,7 @@ from server.routers.process_standard_router import content_process_standards
 from server.routers.target_audience_router import content_target_audiences
 from server.routers.resident_population_router import content_resident_populations
 from server.routers.mp_router import mp
-from server.routers.material_library_router import material_library, public_share_router
+from server.routers.material_library_router import material_library, public_share_router as public_share_router
 from server.routers.dangjia_router import dangjia
 
 _LITE_MODE = os.environ.get("LITE_MODE", "").lower() in ("true", "1")
@@ -59,6 +60,7 @@ router.include_router(mention_router)  # /api/mention/* 提及文件搜索接口
 router.include_router(content)  # /api/content/* 通用内容策略工作台
 router.include_router(content_covers)  # /api/content/covers/* 封面生成
 router.include_router(image_design)  # /api/image-design/* 图片设计
+router.include_router(mp_image_design)  # /api/mp/image-design/* 小程序图片设计
 router.include_router(accounts)  # /api/accounts/* 内容发布账号管理
 router.include_router(employees)  # /api/employees/* 内容发布员工管理
 router.include_router(roles)  # /api/roles/* 内容发布角色与权限配置

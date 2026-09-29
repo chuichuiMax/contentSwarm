@@ -14,12 +14,21 @@ from typing import Any, Literal
 
 from fastapi import HTTPException, UploadFile
 from PIL import Image, ImageOps, UnidentifiedImageError
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from yuxi.repositories.content_cover_repository import ContentCoverRepository
 from yuxi.repositories.material_library_repository import MaterialLibraryRepository
+from yuxi.image_design.save_targets import (
+    can_contribute_to_category,
+    ensure_scope_root,
+    is_storage_root,
+    resolve_writable_save_target,
+)
+from yuxi.image_design.schemas import ImageDesignSaveTarget
 from yuxi.services.material_library_categories import (
+    DEFAULT_IMAGE_CATEGORY_IDS,
+    RETIRED_PRIVATE_IMAGE_CATEGORY_IDS,
     list_material_categories,
     resolve_legacy_category,
 )
@@ -99,6 +108,7 @@ def _display_area_value(value: str | None) -> str:
 class MaterialItemUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=255)
     category: str | None = Field(default=None, min_length=1, max_length=80)
+    location: ImageDesignSaveTarget | None = None
     status: Literal["enabled", "disabled"] | None = None
 
     @field_validator("name")
@@ -107,6 +117,12 @@ class MaterialItemUpdate(BaseModel):
         if value is not None and not value.strip():
             raise ValueError("名称不能为空")
         return value
+
+    @model_validator(mode="after")
+    def reject_ambiguous_location(self):
+        if self.category is not None and self.location is not None:
+            raise ValueError("category 与 location 不能同时提交")
+        return self
 
 
 class MaterialShareCreate(BaseModel):
@@ -293,6 +309,8 @@ async def _resolve_upload_category(
             raise _error(422, "MATERIAL_STYLE_GALLERY_MISSING", f"请先创建「{style}」风格的二级图库")
         else:
             raise _error(422, "MATERIAL_STYLE_GALLERY_AMBIGUOUS", "该风格有多个二级图库，请直接选择其中一个")
+    if not can_contribute_to_category(user, resolved):
+        raise _error(403, "MATERIAL_UPLOAD_FORBIDDEN", "不能向该图库上传素材")
     return resolved, style
 
 
@@ -444,7 +462,8 @@ async def ensure_material_categories(
 ) -> list[ContentMaterialCategory]:
     repo = MaterialLibraryRepository(db)
     categories = await repo.list_categories(owner_uid, material_type)
-    if not categories:
+    own_categories = [category for category in categories if category.owner_uid == owner_uid]
+    if not own_categories:
         await repo.ensure_default_categories(
             [
                 {
@@ -461,7 +480,24 @@ async def ensure_material_categories(
             ]
         )
         categories = await repo.list_categories(owner_uid, material_type)
-    fallback = next(category for category in categories if category.is_system)
+    elif not any(category.id == "uncategorized" for category in own_categories):
+        definition = next(item for item in list_material_categories(material_type) if item["code"] == "uncategorized")
+        await repo.ensure_default_categories(
+            [{
+                "owner_uid": owner_uid,
+                "id": "uncategorized",
+                "tenant_id": tenant_id,
+                "material_type": material_type,
+                "name": definition["name"],
+                "description": definition["description"],
+                "sort_order": len(own_categories) * 10,
+                "is_system": True,
+            }]
+        )
+        categories = await repo.list_categories(owner_uid, material_type)
+    fallback = next(
+        category for category in categories if category.owner_uid == owner_uid and category.id == "uncategorized"
+    )
     await repo.normalize_orphan_categories(
         owner_uid,
         material_type,
@@ -516,15 +552,26 @@ async def create_library_item_for_asset(
     name: str,
     category: str = "uncategorized",
     metadata: dict[str, Any] | None = None,
+    category_owner_uid: str | None = None,
 ) -> ContentMaterialLibraryItem:
     repo = MaterialLibraryRepository(db, include_shared=True)
-    resolved_category = await resolve_material_category(
-        db,
-        owner_uid=asset.owner_uid,
-        tenant_id=asset.tenant_id,
-        material_type=material_type,
-        category_id=category,
-    )
+    if category_owner_uid is None:
+        resolved_category = await resolve_material_category(
+            db,
+            owner_uid=asset.owner_uid,
+            tenant_id=asset.tenant_id,
+            material_type=material_type,
+            category_id=category,
+        )
+    else:
+        resolved_category = await repo.get_category_exact(
+            requester_uid=asset.owner_uid,
+            material_type=material_type,
+            category_id=category,
+            category_owner_uid=category_owner_uid,
+        )
+        if resolved_category is None:
+            raise _error(422, "MATERIAL_CATEGORY_INVALID", "素材图库或分类不存在")
     existing = await repo.get_item_by_asset(asset.id)
     if existing is not None:
         if (
@@ -532,6 +579,7 @@ async def create_library_item_for_asset(
             is None
         ):
             existing.category = resolved_category.id
+            existing.category_owner_uid = resolved_category.owner_uid
         existing.tags_json = []
         return existing
     return await repo.create_item(
@@ -556,24 +604,39 @@ async def import_material_images(
     *,
     category: str,
     design_style: str | None = None,
+    source_channel: Literal["pc", "mp"] = "pc",
+    source_folder: Literal["rough", "uploads"] | None = None,
 ) -> dict[str, Any]:
     if not files or len(files) > 50:
         raise _error(422, "MATERIAL_FILE_COUNT_INVALID", "每次必须上传 1–50 张图片")
     owner_uid = _owner_uid(user)
-    resolved_category, style = await _resolve_upload_category(db, user, category, design_style)
+    if source_channel == "mp":
+        from yuxi.services.personal_materials import upload_category
+
+        source_folder = source_folder or "uploads"
+        resolved_category = await upload_category(db, user, source_folder, "mp")
+        style = None
+    else:
+        resolved_category, style = await _resolve_upload_category(db, user, category, design_style)
     category_id = resolved_category.id
+    category_owner_uid = resolved_category.owner_uid
+    category_visibility = resolved_category.visibility
     results: list[dict[str, Any]] = []
     staged_ids: list[str] = []
     for index, file in enumerate(files):
         # 与范围调整互斥；每张上传独立提交，逐次重新校验图库权限。
-        resolved_category = await MaterialLibraryRepository(db, include_shared=True).get_category(
-            owner_uid,
-            "image",
-            category_id,
+        resolved_category = await MaterialLibraryRepository(db, include_shared=True).get_category_exact(
+            requester_uid=owner_uid,
+            material_type="image",
+            category_id=category_id,
+            category_owner_uid=category_owner_uid,
+            visibility=category_visibility,
             for_update=True,
         )
         if resolved_category is None:
             raise _error(422, "MATERIAL_CATEGORY_INVALID", "图库不存在或共享范围已变更")
+        if not can_contribute_to_category(user, resolved_category):
+            raise _error(403, "MATERIAL_UPLOAD_FORBIDDEN", "不能向该图库上传素材")
         if not file.filename:
             raise _error(400, "MATERIAL_FILE_NAME_REQUIRED", "无法识别上传文件名")
         try:
@@ -609,6 +672,8 @@ async def import_material_images(
                 object_name=object_name,
                 metadata_json={
                     "original_content_type": file.content_type or "",
+                    "source_channel": source_channel,
+                    "source_folder": source_folder,
                     "ingest_status": INGEST_PENDING,
                     "redis_key": material_upload_redis_key(asset_id),
                 },
@@ -619,7 +684,12 @@ async def import_material_images(
                 material_type="image",
                 name=Path(file.filename).stem,
                 category=resolved_category.id,
-                metadata={"design_style": style} if style else None,
+                category_owner_uid=resolved_category.owner_uid,
+                metadata={
+                    "source_channel": source_channel,
+                    "source_folder": source_folder,
+                    **({"design_style": style} if style else {}),
+                },
             )
             _audit(db, user, "material.upload", item_id=item.id, category_id=resolved_category.id)
             await db.commit()
@@ -937,12 +1007,15 @@ async def list_material_items(
     sort: str,
     scope: Literal["private", "enterprise"] | None = None,
     include_descendants: bool = False,
+    root_only: bool = False,
     exclude_task_id: str | None = None,
 ) -> dict[str, Any]:
     if material_type not in {"image", "cover_template"}:
         raise _error(422, "MATERIAL_TYPE_INVALID", "素材类型不存在")
     if sort not in {"newest", "oldest", "name"}:
         raise _error(422, "MATERIAL_SORT_INVALID", "排序方式不存在")
+    if root_only and (material_type != "image" or scope is None):
+        raise _error(422, "MATERIAL_ROOT_SCOPE_INVALID", "根目录素材仅支持按图片共享范围查询")
     await ensure_material_categories(
         db,
         owner_uid=_owner_uid(user),
@@ -960,8 +1033,11 @@ async def list_material_items(
         if category
         else None
     )
+    root = await ensure_scope_root(db, user, scope) if root_only else None
     repo = MaterialLibraryRepository(db, include_shared=True)
     category_ids = None
+    if root is not None:
+        category_ids = [root.id]
     if resolved_category is not None and include_descendants:
         children = await repo.list_child_categories(
             resolved_category.owner_uid,
@@ -972,8 +1048,9 @@ async def list_material_items(
     rows, total = await repo.list_items(
         _owner_uid(user),
         material_type=material_type,
-        category=resolved_category.id if resolved_category else None,
+        category=resolved_category.id if resolved_category and category_ids is None else None,
         category_ids=category_ids,
+        category_owner_uid=root.owner_uid if root else None,
         status=status,
         query_text=query,
         page=page,
@@ -1024,7 +1101,28 @@ async def update_material_item(
     changes = payload.model_dump(exclude_unset=True)
     if "name" in changes:
         item.display_name = changes["name"].strip()
-    if "category" in changes:
+    if payload.location is not None:
+        if item.material_type != "image":
+            raise _error(422, "MATERIAL_LOCATION_INVALID", "仅图片素材支持保存位置")
+        target = await resolve_writable_save_target(db, user, payload.location)
+        item_category = await repo.get_category_exact(
+            requester_uid=_owner_uid(user),
+            material_type="image",
+            category_id=target.category_id,
+            category_owner_uid=target.category_owner_uid,
+            visibility=target.scope,
+        )
+        if item_category is None:
+            raise _error(422, "MATERIAL_CATEGORY_INVALID", "图库不存在或共享范围已变更")
+        if not can_contribute_to_category(user, item_category):
+            raise _error(403, "MATERIAL_MOVE_FORBIDDEN", "不能向该图库移动素材")
+        if item_category.visibility != "enterprise" and item_category.owner_uid != item.owner_uid:
+            raise _error(403, "MATERIAL_MOVE_FORBIDDEN", "他人上传的素材只能移动到企业共享图库")
+        item.category = item_category.id
+        item.category_owner_uid = item_category.owner_uid
+        if item_category.visibility == "enterprise":
+            item.metadata_json = {**(item.metadata_json or {}), "ever_shared": True}
+    elif "category" in changes:
         item_category = await resolve_material_category(
             db,
             owner_uid=_owner_uid(user),
@@ -1035,6 +1133,8 @@ async def update_material_item(
         item_category = await repo.get_category(_owner_uid(user), item.material_type, item_category.id, for_update=True)
         if item_category is None:
             raise _error(422, "MATERIAL_CATEGORY_INVALID", "图库不存在或共享范围已变更")
+        if not can_contribute_to_category(user, item_category):
+            raise _error(403, "MATERIAL_MOVE_FORBIDDEN", "不能向该图库移动素材")
         if item_category.visibility != "enterprise" and item_category.owner_uid != item.owner_uid:
             raise _error(403, "MATERIAL_MOVE_FORBIDDEN", "他人上传的素材只能移动到企业共享图库")
         item.category = item_category.id
@@ -1049,6 +1149,9 @@ async def update_material_item(
             material_type=item.material_type,
             category_id=item.category,
         )
+    if ("location" in changes or "category" in changes) and (item.metadata_json or {}).get("source") == "image_design":
+        # Explicit moves must not be undone by the legacy private-root migration.
+        item.metadata_json = {**item.metadata_json, "save_target_version": 2}
     if "status" in changes:
         item.status = changes["status"]
     item.updated_at = utc_now_naive()
@@ -1068,7 +1171,13 @@ async def update_material_item(
     return {"item": {**serialize_item(item, asset, item_category, poster), "can_manage": True}}
 
 
-async def get_material_categories(db: AsyncSession, user: User, material_type: str) -> dict[str, Any]:
+async def get_material_categories(
+    db: AsyncSession,
+    user: User,
+    material_type: str,
+    *,
+    include_private_defaults: bool = True,
+) -> dict[str, Any]:
     if material_type not in {"image", "cover_template"}:
         raise _error(422, "MATERIAL_TYPE_INVALID", "素材类型不存在")
     repo = MaterialLibraryRepository(db, include_shared=True)
@@ -1078,7 +1187,19 @@ async def get_material_categories(db: AsyncSession, user: User, material_type: s
         tenant_id=_tenant_id(user),
         material_type=material_type,
     )
-    categories = await repo.list_categories(_owner_uid(user), material_type)
+    categories = [
+        category
+        for category in await repo.list_categories(_owner_uid(user), material_type)
+        if not is_storage_root(category)
+        and (material_type != "image" or category.id not in RETIRED_PRIVATE_IMAGE_CATEGORY_IDS)
+        and (
+            include_private_defaults
+            or material_type != "image"
+            or category.visibility != "private"
+            or category.owner_uid != _owner_uid(user)
+            or category.id not in DEFAULT_IMAGE_CATEGORY_IDS
+        )
+    ]
     industry_catalog = await _industry_catalog(db)
     parents = {category.id: category for category in categories if category.parent_id is None}
     result = []
@@ -1209,6 +1330,8 @@ async def update_material_category(
         raise _error(404, "MATERIAL_CATEGORY_NOT_FOUND", "图库或分类不存在")
     if not _can_manage_category(user, category):
         raise _error(403, "MATERIAL_CATEGORY_FORBIDDEN", "只有管理员可管理企业共享图库")
+    if category.is_system:
+        raise _error(409, "MATERIAL_CATEGORY_SYSTEM_REQUIRED", "系统图库不能修改")
     changes = payload.model_dump(exclude_unset=True)
     if "visibility" in changes and changes["visibility"] != category.visibility:
         if not _is_admin(user) or material_type != "image" or category.parent_id or category.is_system:
@@ -1322,11 +1445,15 @@ async def delete_material_category(
     if not _can_manage_category(user, category):
         raise _error(403, "MATERIAL_CATEGORY_FORBIDDEN", "只有管理员可管理企业共享图库")
     if category.is_system:
-        raise _error(409, "MATERIAL_CATEGORY_SYSTEM_REQUIRED", "未分类是系统兜底项，不能删除")
+        raise _error(409, "MATERIAL_CATEGORY_SYSTEM_REQUIRED", "系统图库不能删除")
     children = await repo.list_child_categories(_owner_uid(user), material_type, category.id)
     if children:
         raise _error(409, "MATERIAL_CATEGORY_HAS_CHILDREN", "一级图库仍有二级图库，请先移动或删除二级图库")
-    fallback = next(item for item in categories if item.is_system)
+    fallback = (
+        await ensure_scope_root(db, user, "private")
+        if material_type == "image" and category.visibility == "private"
+        else next(item for item in categories if item.is_system)
+    )
     target_id = payload.target_category_id or fallback.id
     if target_id == category.id:
         raise _error(422, "MATERIAL_CATEGORY_TARGET_INVALID", "迁移目标不能是当前图库或分类")
@@ -1347,7 +1474,13 @@ async def delete_material_category(
     return {"success": True, "id": category.id, "moved": moved, "target_category_id": target.id}
 
 
-async def list_image_galleries(db: AsyncSession, user: User, industry_slug: str | None = None) -> dict[str, Any]:
+async def list_image_galleries(
+    db: AsyncSession,
+    user: User,
+    industry_slug: str | None = None,
+    *,
+    include_private_defaults: bool = True,
+) -> dict[str, Any]:
     categories = await ensure_material_categories(
         db,
         owner_uid=_owner_uid(user),
@@ -1355,7 +1488,18 @@ async def list_image_galleries(db: AsyncSession, user: User, industry_slug: str 
         material_type="image",
     )
     repo = MaterialLibraryRepository(db, include_shared=True)
-    categories = await repo.list_categories(_owner_uid(user), "image")
+    categories = [
+        category
+        for category in await repo.list_categories(_owner_uid(user), "image")
+        if not is_storage_root(category)
+        and category.id not in RETIRED_PRIVATE_IMAGE_CATEGORY_IDS
+        and (
+            include_private_defaults
+            or category.visibility != "private"
+            or category.owner_uid != _owner_uid(user)
+            or category.id not in DEFAULT_IMAGE_CATEGORY_IDS
+        )
+    ]
     raw = await repo.category_summaries(_owner_uid(user), material_type="image")
     industry_catalog = await _industry_catalog(db)
     parents = {category.id: category for category in categories if category.parent_id is None}
@@ -1445,7 +1589,7 @@ async def delete_material_item(db: AsyncSession, user: User, item_id: str) -> di
     category = await repo.get_category(item.category_owner_uid or item.owner_uid, item.material_type, item.category)
     if category is None or not _can_manage_item(user, item, category):
         raise _error(403, "MATERIAL_MANAGE_FORBIDDEN", "只能删除自己上传的素材，管理员可删除企业共享素材")
-    if (item.metadata_json or {}).get("ever_shared"):
+    if (item.metadata_json or {}).get("ever_shared") or (item.metadata_json or {}).get("retain_asset_on_delete"):
         item.deleted_at = utc_now_naive()
         _audit(db, user, "material.remove", item_id=item.id, retained_for_designs=True)
         await db.commit()

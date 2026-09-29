@@ -74,7 +74,12 @@ async def material_users(test_client):
         assert login.status_code == 200, login.text
         headers.append({"Authorization": f"Bearer {login.json()['access_token']}"})
     try:
-        yield {"owner": headers[0], "other": headers[1]}
+        yield {
+            "owner": headers[0],
+            "other": headers[1],
+            "owner_uid": credentials[0],
+            "department_id": department_id,
+        }
     finally:
         async with session_factory() as db:
             from yuxi.storage.postgres.models_content import ContentMaterialCategory, ContentMaterialShare
@@ -113,7 +118,7 @@ async def test_material_image_round_trip_uses_private_image_bucket(test_client, 
         assert asset.bucket_name == "image"
         assert asset.object_name == f"material-library/{asset.owner_uid}/images/{asset.id}/image.webp"
         assert asset.content_type == "image/webp"
-        assert (asset.metadata_json or {}).get("ingest_status") in {"pending", "ready"}
+        assert (asset.metadata_json or {}).get("ingest_status") in {"pending", "completed"}
     await engine.dispose()
 
     listed = await test_client.get(
@@ -353,15 +358,15 @@ async def test_image_gallery_supports_exactly_one_nested_level(test_client, mate
         changed = await test_client.patch(
             f"/api/material-library/categories/{parent['id']}?material_type=image",
             headers=headers,
-            json={"industry_slug": "professional-services"},
+            json={"industry_slug": "uncategorized"},
         )
         assert changed.status_code == 200, changed.text
-        assert changed.json()["category"]["industry_slug"] == "professional-services"
+        assert changed.json()["category"]["industry_slug"] == "uncategorized"
         categories_response = await test_client.get(
             "/api/material-library/categories?material_type=image", headers=headers
         )
         categories = {entry["id"]: entry for entry in categories_response.json()["categories"]}
-        assert categories[child["id"]]["industry_slug"] == "professional-services"
+        assert categories[child["id"]]["industry_slug"] == "uncategorized"
 
         blocked = await test_client.request(
             "DELETE",

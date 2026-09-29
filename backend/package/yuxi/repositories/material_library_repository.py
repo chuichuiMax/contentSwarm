@@ -15,6 +15,7 @@ from yuxi.storage.postgres.models_content import (
     ContentMaterialShare,
     ContentMaterialShareItem,
     ContentTask,
+    ImageDesignLibraryItem,
 )
 
 # 仅生成中或生成成功的任务占用图库图片；草稿、编译未开跑、失败、取消、审核拦截不占用。
@@ -83,6 +84,67 @@ class MaterialLibraryRepository:
     async def ensure_default_categories(self, values: list[dict[str, Any]]) -> None:
         await self.db.execute(pg_insert(ContentMaterialCategory).values(values).on_conflict_do_nothing())
 
+    async def sync_system_categories(self, values: list[dict[str, Any]]) -> None:
+        """Create or restore fixed galleries without touching user-created galleries."""
+        for value in values:
+            category = await self.db.scalar(
+                select(ContentMaterialCategory).where(
+                    ContentMaterialCategory.owner_uid == value["owner_uid"],
+                    ContentMaterialCategory.material_type == value["material_type"],
+                    ContentMaterialCategory.id == value["id"],
+                )
+            )
+            if category is None:
+                self.db.add(ContentMaterialCategory(**value))
+                continue
+            for key in (
+                "tenant_id", "visibility", "parent_id", "industry_slug", "description", "sort_order", "is_system"
+            ):
+                setattr(category, key, value[key])
+            name_conflict = await self.db.scalar(
+                select(ContentMaterialCategory.id).where(
+                    ContentMaterialCategory.owner_uid == value["owner_uid"],
+                    ContentMaterialCategory.material_type == value["material_type"],
+                    ContentMaterialCategory.id != value["id"],
+                    func.lower(ContentMaterialCategory.name) == value["name"].lower(),
+                    ContentMaterialCategory.deleted_at.is_(None),
+                )
+            )
+            if name_conflict is None:
+                category.name = value["name"]
+            category.deleted_at = None
+        await self.db.flush()
+
+    async def migrate_generated_private_root(self, owner_uid: str, root_id: str) -> None:
+        """Move only explicitly recorded old root saves, preserving ordinary uncategorized images."""
+        item = ContentMaterialLibraryItem
+        rows = (
+            (await self.db.execute(
+                select(item).where(
+                    item.owner_uid == owner_uid,
+                    or_(item.category_owner_uid == owner_uid, item.category_owner_uid.is_(None)),
+                    item.material_type == "image",
+                    item.category == "uncategorized",
+                    item.metadata_json["source"].as_string() == "image_design",
+                    item.metadata_json["resolved_save_target"]["scope"].as_string() == "private",
+                    item.metadata_json["resolved_save_target"]["gallery_id"].as_string().is_(None),
+                ).with_for_update()
+            )).scalars().all()
+        )
+        for row in rows:
+            metadata = row.metadata_json or {}
+            saved = metadata.get("resolved_save_target") or {}
+            if metadata.get("save_target_version") == 2 or "gallery_id" not in saved:
+                continue
+            row.category = root_id
+            row.metadata_json = {**metadata, "save_target_version": 2}
+            await self.db.execute(
+                update(ImageDesignLibraryItem)
+                .where(ImageDesignLibraryItem.source_material_item_id == row.id)
+                .values(source_gallery_id=root_id)
+            )
+        await self.db.flush()
+
     async def list_categories(self, owner_uid: str, material_type: str) -> list[ContentMaterialCategory]:
         return list(
             (
@@ -112,6 +174,32 @@ class MaterialLibraryRepository:
             ContentMaterialCategory.id == category_id,
             ContentMaterialCategory.deleted_at.is_(None),
         )
+        if for_update:
+            query = query.with_for_update().execution_options(populate_existing=True)
+        return (await self.db.execute(query)).scalar_one_or_none()
+
+    async def get_category_exact(
+        self,
+        *,
+        requester_uid: str,
+        material_type: str,
+        category_id: str,
+        category_owner_uid: str | None = None,
+        visibility: str | None = None,
+        for_update: bool = False,
+    ) -> ContentMaterialCategory | None:
+        """Load one visible category without losing its owner when IDs overlap."""
+        filters = [
+            self.category_access(requester_uid),
+            ContentMaterialCategory.material_type == material_type,
+            ContentMaterialCategory.id == category_id,
+            ContentMaterialCategory.deleted_at.is_(None),
+        ]
+        if category_owner_uid is not None:
+            filters.append(ContentMaterialCategory.owner_uid == category_owner_uid)
+        if visibility is not None:
+            filters.append(ContentMaterialCategory.visibility == visibility)
+        query = select(ContentMaterialCategory).where(*filters)
         if for_update:
             query = query.with_for_update().execution_options(populate_existing=True)
         return (await self.db.execute(query)).scalar_one_or_none()
@@ -273,6 +361,7 @@ class MaterialLibraryRepository:
         page_size: int,
         sort: str = "newest",
         scope: str | None = None,
+        category_owner_uid: str | None = None,
     ) -> tuple[list[tuple[ContentMaterialLibraryItem, ContentCoverAsset, ContentMaterialCategory]], int]:
         filters = [
             self.item_access(owner_uid),
@@ -286,6 +375,11 @@ class MaterialLibraryRepository:
             filters.append(ContentMaterialLibraryItem.category.in_(category_ids))
         elif category:
             filters.append(ContentMaterialLibraryItem.category == category)
+        if category_owner_uid is not None:
+            filters.append(
+                func.coalesce(ContentMaterialLibraryItem.category_owner_uid, ContentMaterialLibraryItem.owner_uid)
+                == category_owner_uid
+            )
         if status:
             filters.append(ContentMaterialLibraryItem.status == status)
         if query_text:
