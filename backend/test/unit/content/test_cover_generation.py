@@ -16,6 +16,7 @@ from PIL import Image, ImageDraw
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from yuxi.content.schemas import XiaohongshuDistributionCreate
+from yuxi.content_cover.ai_cover_prompt import AI_COVER_PROMPT
 from yuxi.content_cover.image2_client import Image2Client, Image2Config, Image2Error, image2_is_configured
 from yuxi.content_cover.renderer import (
     apply_template_title,
@@ -544,6 +545,12 @@ def test_image2_copy_mode_normalizes_tags_and_requires_single_image_mode():
         )
 
 
+def test_ai_cover_prompt_reserves_top_and_bottom_exclusion_zones():
+    assert "上方 0%—12%" in AI_COVER_PROMPT
+    assert "下方 88%—100%" in AI_COVER_PROMPT
+    assert "禁止使用贴顶、贴底或出血式文字" in AI_COVER_PROMPT
+
+
 @pytest.mark.asyncio
 async def test_image2_copy_mode_sends_exact_copy_and_keeps_numbers(monkeypatch: pytest.MonkeyPatch):
     captured = {}
@@ -595,6 +602,8 @@ async def test_image2_copy_mode_sends_exact_copy_and_keeps_numbers(monkeypatch: 
     assert "标签：鸿扬家装报价" in request["prompt"]
     assert "不得改写、遗漏、增加或改变顺序" in request["prompt"]
     assert "数字" not in request["negative_prompt"]
+    assert "标题贴顶" in request["negative_prompt"]
+    assert "标签贴底" in request["negative_prompt"]
     assert captured["content_prompt_kwargs"]["include_content_context"] is False
 
 
