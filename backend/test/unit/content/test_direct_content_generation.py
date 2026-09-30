@@ -58,7 +58,12 @@ async def test_direct_generation_uses_only_requested_inputs(monkeypatch):
     )
 
     assert result.title == "费用标题"
-    assert result.body == "费用正文"
+    assert result.body == (
+        "费用正文\n\n"
+        "📩在下方留下【小区＋面积】\n"
+        "我们将为你提供相关案例及费用参考，\n"
+        "💕让装修预算更清楚，让装修更透明！"
+    )
     assert result.topics == ["费用"]
     assert load_model_calls == [
         {
@@ -95,6 +100,71 @@ async def test_direct_generation_uses_only_requested_inputs(monkeypatch):
     assert '"报价": ["费用"]' in prompt
     assert "排版与表情要求" in prompt
     assert "不得用 Emoji 替代价格、数字、面积、时间、单位、品牌名或专业信息" in prompt
+    assert "标题不超过20个字" in prompt
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_direct_generation_omits_empty_creative_style(monkeypatch):
+    calls = []
+
+    class FakeModel:
+        def bind_tools(self, schemas, **kwargs):
+            return self
+
+        async def astream(self, messages):
+            calls.append(messages)
+            yield AIMessageChunk(
+                content="",
+                tool_call_chunks=[
+                    {
+                        "name": "ContentArtifactAIEditOutput",
+                        "args": '{"title":"标题","body":"正文","topics":[]}',
+                        "id": "call-1",
+                        "index": 0,
+                    }
+                ],
+            )
+
+    monkeypatch.setattr(generation, "resolve_chat_model_spec", lambda value: value or "default")
+    monkeypatch.setattr(generation, "load_chat_model", lambda **kwargs: FakeModel())
+
+    await generation.generate_direct_content(
+        model_spec=None,
+        creative_style={},
+        viral_source={"title": "爆款标题", "body": "爆款正文"},
+        user_request="写一段内容",
+    )
+
+    prompt = calls[0][0].content
+    assert "创作风格：" not in prompt
+    assert "爆款正文" in prompt
+
+
+def test_limit_content_title_stops_at_sentence_end():
+    title = "邵阳洋湖1号165㎡装修要花多少？鸿扬家装真实费用明细来啦"
+    limited = generation.limit_content_title(title)
+    assert limited == "邵阳洋湖1号165㎡装修要花多少？"
+    assert len(limited) <= 20
+    assert generation.limit_content_title("不超过二十个字的标题") == "不超过二十个字的标题"
+
+
+def test_limit_content_title_completes_trailing_word_after_hard_limit():
+    title = "长沙装修要花多少？洋湖天街122㎡真实费用"
+    limited = generation.limit_content_title(title)
+    assert limited == title
+    assert limited.endswith("真实费用")
+    assert not limited.endswith("真实费")
+
+
+def test_place_closing_cta_moves_lead_copy_to_the_end():
+    body = "开头说明。\n\n📩在下方留下【小区＋面积】\n我们将为你提供相关案例及费用参考，\n中间还有工艺说明。\n💕让装修预算更清楚，让装修更透明！"
+    placed = generation.place_closing_cta(body)
+    assert placed.startswith("开头说明。\n\n中间还有工艺说明。\n\n📩在下方留下")
+    assert placed.endswith("💕让装修预算更清楚，让装修更透明！")
+    assert placed.count("在下方留下") == 1
+    assert generation.normalize_escaped_newlines("开工\\n先聊") == "开工\n先聊"
+    assert "\\n" not in generation.normalize_escaped_newlines("开工\\n先聊")
 
 
 @pytest.mark.unit

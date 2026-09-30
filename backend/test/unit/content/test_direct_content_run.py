@@ -96,6 +96,23 @@ async def test_direct_run_freezes_selected_original_before_enqueue(direct_run):
 
 @pytest.mark.unit
 @pytest.mark.asyncio
+async def test_direct_run_allows_missing_creative_style(direct_run):
+    ctx = direct_run
+    ctx.task.brief_json["form_values"] = {}
+    ctx.payload = ContentDirectGenerateCreate(
+        request_id="request-1", viral_asset_id=ctx.asset.id, creative_style=None
+    )
+
+    result = await service.create_direct_content_run(ctx.db, ctx.user, ctx.task.id, ctx.payload)
+
+    assert result == {"run_id": "run-1"}
+    frozen = ctx.run_repo.create_run.call_args.kwargs["input_payload"]
+    assert frozen["creative_style"] == {}
+    ctx.queue.enqueue_job.assert_awaited_once()
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
 @pytest.mark.parametrize("invalid", ["type", "industry", "status", "skill", "review", "source", "body", "slots"])
 async def test_direct_run_rejects_unavailable_selected_reference(direct_run, invalid):
     ctx = direct_run

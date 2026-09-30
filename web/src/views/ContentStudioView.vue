@@ -259,7 +259,10 @@ const currentContentType = computed(
   () => store.task?.content_type_code || creation.content_type_code
 )
 const availableCreativeStyleOptions = computed(() =>
-  creativeStylesForContentType(currentContentType.value)
+  creativeStylesForContentType(
+    studioContentTypeCode.value || currentContentType.value,
+    selectedStudioContentType.value?.name || formValues.mp_content_type_name || ''
+  )
 )
 const selectedCreativeStyleOption = computed(
   () =>
@@ -620,6 +623,9 @@ const selectedStudioContentType = computed(() =>
 )
 const studioContentTypeCode = computed(
   () => CONTENT_TYPE_NAME_TO_CODE[selectedStudioContentType.value?.name] || ''
+)
+const viralContentTypeCode = computed(() =>
+  store.task ? studioContentTypeCode.value : currentContentType.value
 )
 const PROCESS_NAME_GUARD_HINT = '请先选择工艺类型，或没有工艺类型，请联系管理员配置'
 const FIELD_SELECT_OPTIONS = {
@@ -1144,6 +1150,9 @@ const initializeFormValues = () => {
     if (saved[field.key] !== undefined) formValues[field.key] = saved[field.key]
     else formValues[field.key] = field.type === 'tags' ? [] : ''
   })
+  formValues.generation_prompt = String(saved.generation_prompt ?? '').trim()
+    ? saved.generation_prompt
+    : DEFAULT_DIRECT_GENERATION_PROMPT
   syncGeneratedContentRequest()
 }
 
@@ -1179,6 +1188,9 @@ const onContentTypeChange = (value) => {
     if (saved[field.key] !== undefined) formValues[field.key] = saved[field.key]
     else formValues[field.key] = field.type === 'tags' ? [] : ''
   })
+  formValues.generation_prompt = String(saved.generation_prompt ?? '').trim()
+    ? saved.generation_prompt
+    : DEFAULT_DIRECT_GENERATION_PROMPT
   syncGeneratedContentRequest()
   if (studioContentTypeCode.value) creation.content_type_code = studioContentTypeCode.value
   appliedFrameAreaBand = ''
@@ -1246,16 +1258,14 @@ const onBusinessSelectChange = (key, value) => {
 const guardProcessNameSelect = (fieldKey, open) => {
   if (!open || fieldKey !== '工艺名称') return
   if (processNameNeedsTypeHint.value) message.warning(PROCESS_NAME_GUARD_HINT)
-  formValues.user_request = saved.user_request ?? store.task?.brief?.user_request ?? ''
-  formValues.generation_prompt = saved.generation_prompt ?? DEFAULT_DIRECT_GENERATION_PROMPT
 }
 
 const loadViralAssets = async () => {
   const request = ++viralAssetsRequest
-  const contentType = currentContentType.value
+  const contentType = viralContentTypeCode.value
   const industrySlug = selectedIndustrySlug.value
   viralAssets.value = []
-  if (!currentContentType.value || !selectedIndustrySlug.value) {
+  if (!contentType || !industrySlug) {
     selectedViralAssetId.value = ''
     viralAssetsLoading.value = false
     return
@@ -2117,9 +2127,14 @@ watch(directionOptions, (options) => {
     creation.content_type_code = undefined
 })
 watch(
-  [currentContentType, selectedIndustrySlug],
+  () => [selectedContentTypeId.value, availableCreativeStyleOptions.value],
   () => {
     if (!selectedCreativeStyleOption.value) selectedCreativeStyle.value = ''
+  }
+)
+watch(
+  [viralContentTypeCode, selectedIndustrySlug],
+  () => {
     void loadViralAssets()
   },
   { immediate: true }
@@ -2450,7 +2465,6 @@ const compileBrief = async () => {
   }
 }
 
-const submitCreation = async () => {
 const submitContentOnlyCreation = async () => {
   if (creationSubmitting.value || quoteTestCaseTypeSyncing.value) return
   if (!selectedContentTypeId.value) {
@@ -2463,10 +2477,6 @@ const submitContentOnlyCreation = async () => {
   }
   if (!String(formValues.user_request || '').trim()) {
     message.warning('请填写内容需求')
-    return
-  }
-  if (!selectedCreativeStyleOption.value) {
-    message.warning('请选择创作风格')
     return
   }
   if (viralAssetsLoading.value || !selectedViralAsset.value) {
@@ -2925,80 +2935,6 @@ const returnToContentCreation = async () => {
               </a-button>
             </div>
 
-            <div
-              v-if="availableCreativeStyleOptions.length"
-              class="field-block creative-style-field"
-            >
-              <div class="creative-style-heading">
-                <span id="creative-style-label">创作风格</span>
-                <small>可选，生成时会作为独立创作偏好保存</small>
-              </div>
-              <a-radio-group
-                v-model:value="selectedCreativeStyle"
-                class="creative-style-options"
-                :disabled="briefLocked || creationSubmitting"
-                aria-labelledby="creative-style-label"
-              >
-                <a-radio-button
-                  v-for="item in availableCreativeStyleOptions"
-                  :key="item.value"
-                  :value="item.value"
-                  class="creative-style-option"
-                >
-                  <strong>{{ item.label }}</strong>
-                  <small>{{ item.description }}</small>
-                </a-radio-button>
-              </a-radio-group>
-            </div>
-
-            <div class="direct-generation-fields">
-              <div class="field-block viral-reference-field">
-                <label id="viral-reference-label" for="viral-reference-select">爆款原文</label>
-                <a-select
-                  id="viral-reference-select"
-                  v-model:value="selectedViralAssetId"
-                  show-search
-                  option-filter-prop="label"
-                  :loading="viralAssetsLoading"
-                  :disabled="briefLocked || creationSubmitting || !currentContentType"
-                  placeholder="请选择同类型爆款原文"
-                  aria-labelledby="viral-reference-label"
-                >
-                  <a-select-option
-                    v-for="item in viralAssets"
-                    :key="item.id"
-                    :value="item.id"
-                    :label="item.title"
-                  >
-                    {{ item.title }}
-                  </a-select-option>
-                </a-select>
-                <small v-if="selectedViralAsset" class="viral-reference-summary">
-                  {{ selectedViralAsset.reference_card?.summary || '已选择可用爆款原文' }}
-                </small>
-                <small
-                  v-else-if="currentContentType && !viralAssetsLoading"
-                  class="viral-reference-summary warning"
-                >
-                  当前创作类型暂无已审核爆款原文
-                </small>
-              </div>
-
-              <div class="field-block direct-generation-prompt">
-                <label id="direct-generation-prompt-label" for="direct-generation-prompt">
-                  生成提示词
-                </label>
-                <a-textarea
-                  id="direct-generation-prompt"
-                  v-model:value="formValues.generation_prompt"
-                  :rows="3"
-                  :readonly="briefLocked"
-                  aria-labelledby="direct-generation-prompt-label"
-                  placeholder="请输入新生成时交给大模型的写作要求"
-                />
-              </div>
-            </div>
-
           </template>
 
           <template v-else>
@@ -3030,6 +2966,75 @@ const returnToContentCreation = async () => {
                         @change="onContentTypeChange"
                       />
                     </label>
+                    <div
+                      v-if="selectedContentTypeId && availableCreativeStyleOptions.length"
+                      class="field-block creative-style-field"
+                    >
+                      <div class="creative-style-heading">
+                        <span id="creative-style-label">创作风格</span>
+                        <small>可选，生成时会作为独立创作偏好保存</small>
+                      </div>
+                      <a-radio-group
+                        v-model:value="selectedCreativeStyle"
+                        class="creative-style-options"
+                        :disabled="briefLocked || creationSubmitting"
+                        aria-labelledby="creative-style-label"
+                      >
+                        <a-radio-button
+                          v-for="item in availableCreativeStyleOptions"
+                          :key="item.value"
+                          :value="item.value"
+                          class="creative-style-option"
+                        >
+                          <strong>{{ item.label }}</strong>
+                          <small>{{ item.description }}</small>
+                        </a-radio-button>
+                      </a-radio-group>
+                    </div>
+                    <div v-if="selectedContentTypeId" class="field-block viral-reference-field">
+                      <label id="viral-reference-label" for="viral-reference-select">爆款原文</label>
+                      <a-select
+                        id="viral-reference-select"
+                        v-model:value="selectedViralAssetId"
+                        show-search
+                        option-filter-prop="label"
+                        :loading="viralAssetsLoading"
+                        :disabled="briefLocked || creationSubmitting || !viralContentTypeCode"
+                        placeholder="请选择同类型爆款原文"
+                        aria-labelledby="viral-reference-label"
+                      >
+                        <a-select-option
+                          v-for="item in viralAssets"
+                          :key="item.id"
+                          :value="item.id"
+                          :label="item.title"
+                        >
+                          {{ item.title }}
+                        </a-select-option>
+                      </a-select>
+                      <small v-if="selectedViralAsset" class="viral-reference-summary">
+                        {{ selectedViralAsset.reference_card?.summary || '已选择可用爆款原文' }}
+                      </small>
+                      <small
+                        v-else-if="viralContentTypeCode && !viralAssetsLoading"
+                        class="viral-reference-summary warning"
+                      >
+                        当前内容类型暂无已审核爆款原文
+                      </small>
+                    </div>
+                    <div v-if="selectedContentTypeId" class="field-block direct-generation-prompt">
+                      <label id="direct-generation-prompt-label" for="direct-generation-prompt">
+                        生成提示词
+                      </label>
+                      <a-textarea
+                        id="direct-generation-prompt"
+                        v-model:value="formValues.generation_prompt"
+                        :rows="3"
+                        :readonly="briefLocked"
+                        aria-labelledby="direct-generation-prompt-label"
+                        placeholder="请输入新生成时交给大模型的写作要求"
+                      />
+                    </div>
                   </section>
 
                   <section class="brief-section variables-section">
@@ -4814,7 +4819,7 @@ const returnToContentCreation = async () => {
 }
 .direct-generation-fields {
   display: grid;
-  grid-template-columns: minmax(280px, 0.8fr) minmax(0, 1.2fr);
+  grid-template-columns: 1fr;
   gap: 16px;
   margin: 24px 0;
 }
@@ -4882,7 +4887,7 @@ const returnToContentCreation = async () => {
     margin-bottom: 4px;
   }
   :deep(.creative-style-option small) {
-    max-width: 180px;
+    max-width: min(100%, 280px);
     color: var(--color-text-secondary);
     font-size: 12px;
   }
@@ -5948,6 +5953,7 @@ const returnToContentCreation = async () => {
   line-height: 1.5;
   font-weight: 600;
   overflow-wrap: anywhere;
+  white-space: pre-line;
 }
 .completion-result-body {
   max-height: 66px;
@@ -6224,6 +6230,7 @@ const returnToContentCreation = async () => {
   font-size: 15px;
   line-height: 1.5;
   overflow-wrap: anywhere;
+  white-space: pre-line;
 }
 .result-detail-body-section {
   min-height: 0;
@@ -6440,6 +6447,7 @@ const returnToContentCreation = async () => {
   color: var(--color-text);
   font-size: 22px;
   line-height: 1.45;
+  white-space: pre-line;
 }
 .direct-stream-body {
   color: var(--color-text);

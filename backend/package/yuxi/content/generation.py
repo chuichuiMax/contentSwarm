@@ -10,12 +10,14 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.utils.json import parse_partial_json
 
 from yuxi.agents import load_chat_model, resolve_chat_model_spec
+from yuxi.utils.line_breaks import normalize_escaped_newlines, place_closing_cta
 from yuxi.content.model.forbidden_words import replace_forbidden_words
 from yuxi.content.schemas import ContentArtifactAIEditOutput, ReviewReport
 from yuxi.utils.logging_config import logger
 
 SKILLS_ROOT = Path(__file__).resolve().parents[1] / "agents" / "skills" / "buildin"
 DEFAULT_DIRECT_GENERATION_PROMPT = "使用我给你的一些元素，根据爆文 换一种表达方式 符合当地的口吻"
+DIRECT_TITLE_MAX_CHARS = 20
 SKILL_VERSIONS = {
     "content-value-analyzer": "1.3.0",
     "content-strategy-planner": "4.0.1",
@@ -30,6 +32,51 @@ SKILL_VERSIONS = {
     "content-cover-generator": "1.2.0",
     "content-visual-reviewer": "1.1.0",
 }
+
+
+_TITLE_SUFFIX_FRAGMENTS = (
+    "费用",
+    "明细",
+    "清单",
+    "攻略",
+    "案例",
+    "来啦",
+    "参考",
+    "透明",
+    "施工",
+    "装修",
+)
+
+
+def _extend_incomplete_title_suffix(head: str, full: str, *, max_overflow: int = 2) -> str:
+    """硬截断后若落在常见双字词中间（如「费|用」），补全词尾，避免句式残缺。"""
+
+    if len(head) >= len(full):
+        return head
+    tail = full[len(head) : len(head) + max_overflow]
+    if not tail:
+        return head
+    for suffix in _TITLE_SUFFIX_FRAGMENTS:
+        if len(suffix) < 2:
+            continue
+        if head.endswith(suffix[0]) and tail.startswith(suffix[1:]):
+            completed = head + suffix[1:]
+            if len(completed) <= len(head) + max_overflow:
+                return completed
+    return head
+
+
+def limit_content_title(title: str, *, limit: int = DIRECT_TITLE_MAX_CHARS) -> str:
+    """把标题收到指定字数内；超长时优先停在后半段的句末标点。"""
+
+    text = title.strip()
+    if len(text) <= limit:
+        return text
+    window = text[:limit]
+    cut = max(window.rfind(mark) for mark in "？?！!。")
+    if cut >= limit // 2:
+        return window[: cut + 1]
+    return _extend_incomplete_title_suffix(window, text)
 
 
 def load_skill_instruction(slug: str) -> str:
@@ -97,8 +144,14 @@ async def generate_direct_content(
     if resolved_model.startswith("ark:doubao-"):
         model_kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
     model = load_chat_model(fully_specified_name=resolved_model, **model_kwargs)
-    style_name = str(creative_style.get("name") or "").strip()
-    style_instruction = str(creative_style.get("instruction") or "").strip()
+    style = creative_style if isinstance(creative_style, dict) else {}
+    style_name = str(style.get("name") or "").strip()
+    style_instruction = str(style.get("instruction") or "").strip()
+    style_block = (
+        f"创作风格：{style_name}\n创作风格说明：{style_instruction}\n\n"
+        if style_name or style_instruction
+        else ""
+    )
     forbidden_lexicon = forbidden_lexicon or {}
     forbidden_replacements = {term: alternatives[0] for term, alternatives in forbidden_lexicon.items() if alternatives}
     prompt = (
@@ -108,9 +161,14 @@ async def generate_direct_content(
         "在这些位置用用户提供的事实改写，不能逐句照抄。"
         "创作风格只决定表达手法，不得因此杜撰其他人的报价、节省金额、"
         "客户经历或施工结果；原文有而用户未提供的事实，用已提供的信息自然替换或略去。"
-        "用户输入的金额、单位、面积、数量及报价明细必须准确保留，不自行换算或补造。\n\n"
-        f"创作风格：{style_name}\n"
-        f"创作风格说明：{style_instruction}\n\n"
+        "用户输入的金额、单位、面积、数量及报价明细必须准确保留，不自行换算或补造。"
+        f"标题不超过{DIRECT_TITLE_MAX_CHARS}个字，汉字、数字、字母、标点、单位和 Emoji 都各计 1 个字，"
+        "并且必须是完整表达。正文分段使用真实换行，不要输出反斜杠和字母 n。"
+        "引流收尾必须使用这段原文，并且只能放在正文最后，不要插在中间：\n"
+        "📩在下方留下【小区＋面积】\n"
+        "我们将为你提供相关案例及费用参考，\n"
+        "💕让装修预算更清楚，让装修更透明！\n\n"
+        f"{style_block}"
         "爆款原文：\n"
         f"{json.dumps(viral_source, ensure_ascii=False)}\n\n"
         "用户输入数据（原样保留并结合其中信息写作）：\n"
@@ -167,7 +225,9 @@ async def generate_direct_content(
             if field in {"title", "body"}:
                 if not isinstance(value, str):
                     continue
-                value = replace_forbidden_words(value, forbidden_replacements)
+                value = normalize_escaped_newlines(replace_forbidden_words(value, forbidden_replacements))
+                if field == "title":
+                    value = limit_content_title(value)
                 if value == streamed_values[field]:
                     continue
                 previous = streamed_values[field]
@@ -192,9 +252,16 @@ async def generate_direct_content(
         raise ValueError("模型没有返回内容生成工具调用")
     raw_output = ContentArtifactAIEditOutput.model_validate(json.loads(arguments))
     output = ContentArtifactAIEditOutput(
-        title=replace_forbidden_words(raw_output.title, forbidden_replacements),
-        body=replace_forbidden_words(raw_output.body, forbidden_replacements),
-        topics=[replace_forbidden_words(topic, forbidden_replacements) for topic in raw_output.topics],
+        title=limit_content_title(
+            normalize_escaped_newlines(replace_forbidden_words(raw_output.title, forbidden_replacements))
+        ),
+        body=place_closing_cta(
+            normalize_escaped_newlines(replace_forbidden_words(raw_output.body, forbidden_replacements))
+        ),
+        topics=[
+            normalize_escaped_newlines(replace_forbidden_words(topic, forbidden_replacements))
+            for topic in raw_output.topics
+        ],
     )
     combined = "\n".join([output.title, output.body, *output.topics])
     residual = [term for term in forbidden_lexicon if term in combined]

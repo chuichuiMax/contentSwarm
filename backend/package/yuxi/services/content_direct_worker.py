@@ -7,6 +7,7 @@ from sqlalchemy import select
 
 from yuxi.content.control.visual_template_fields import resolve_hycanvas_template_fields
 from yuxi.content.generation import DEFAULT_DIRECT_GENERATION_PROMPT, generate_direct_content
+from yuxi.utils.line_breaks import normalize_escaped_newlines
 from yuxi.content_cover.ai_cover_prompt import AI_COVER_PROMPT
 from yuxi.content_cover.handwritten_quote_prompt import (
     HANDWRITTEN_QUOTE_NEGATIVE_PROMPT,
@@ -240,7 +241,7 @@ async def _set_run_running(run_id: str) -> None:
 
 
 def _cover_text(output) -> tuple[str, str, list[str]]:
-    title = str(output.title).strip()[:60]
+    title = normalize_escaped_newlines(str(output.title)).strip()[:60]
     paragraphs = [item.strip() for item in re.split(r"\n+", str(output.body)) if item.strip()]
     subtitle = (paragraphs[0] if paragraphs else title)[:120]
     topics = [str(item).strip() for item in output.topics if str(item).strip()][:10]

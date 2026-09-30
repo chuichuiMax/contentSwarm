@@ -17,6 +17,7 @@ from sqlalchemy import (
     UniqueConstraint,
     text,
 )
+from yuxi.utils.line_breaks import normalize_escaped_newlines
 from yuxi.storage.postgres.models_business import Base
 from yuxi.utils.datetime_utils import format_utc_datetime, utc_now_naive
 
@@ -659,7 +660,15 @@ class ContentTask(Base):
             "evidence_bundle": self.evidence_json or {},
             "active_evidence_bundle_id": self.active_evidence_bundle_id,
             "title_candidates": self.title_candidates_json or [],
-            "selected_title": self.selected_title_json,
+            "selected_title": (
+                {
+                    **self.selected_title_json,
+                    "text": normalize_escaped_newlines(self.selected_title_json["text"]),
+                }
+                if isinstance(self.selected_title_json, dict)
+                and isinstance(self.selected_title_json.get("text"), str)
+                else self.selected_title_json
+            ),
             "review": self.review_json or {},
             "latest_run_id": self.latest_run_id,
             "error": self.error_json,
@@ -970,8 +979,8 @@ class ContentArtifact(Base):
             "tenant_id": self.tenant_id,
             "status": self.status,
             "current_version": self.current_version,
-            "title": self.title,
-            "body": self.body,
+            "title": normalize_escaped_newlines(self.title),
+            "body": normalize_escaped_newlines(self.body),
             "topics": self.topics or [],
             "strategy_snapshot": self.strategy_snapshot or {},
             "evidence_snapshot": self.evidence_snapshot or {},

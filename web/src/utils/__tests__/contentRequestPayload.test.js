@@ -33,7 +33,7 @@ describe('buildContentRequestPayload', () => {
       contentType: {
         typeName: '工艺施工展示',
         contentTypeId: '6c79d8ca-1774-4e79-a622-213104f1e7b8',
-        contentTypeCode: 'CT05'
+        contentTypeCode: 'CT06'
       },
       persona: {
         name: '朱穆',
@@ -55,17 +55,12 @@ describe('buildContentRequestPayload', () => {
       facts: {
         persona_fact: '朱穆，27岁，新媒体运营，家装事业部渠道管理中心/网络获客部，工号H06380。',
         process: ['个性定制系统', 'HYB-吊顶与背景墙造型实现工艺'],
-        advantage: [
-          '个性定制系统；HYB-吊顶与背景墙造型实现工艺',
-          '项目施工鸿扬家装',
-          '鸿扬家装定制化家装与透明施工'
-        ],
         result: '拆改阶段按工艺规范落实HYB-吊顶与背景墙造型实现工艺',
         product: '洋湖天街定制化家装项目',
         location: '洋湖天街',
+        case_background: '洋湖天街',
         scene: '拆改阶段',
-        audience: ['三口之家'],
-        pain: '业主关心个性定制系统是否规范、细节是否到位、会不会走过场'
+        audience: ['三口之家']
       }
     })
   })
@@ -182,7 +177,7 @@ describe('buildContentRequestPayload', () => {
     assert.ok(!payload.facts.title_price)
   })
 
-  it('maps knowledge pack to CT06 pain/process without dumping style into process', () => {
+  it('maps knowledge pack to CT06 process without dumping style into process', () => {
     const payload = buildContentRequestPayload({
       employee: {
         name: '朱穆',
@@ -217,16 +212,13 @@ describe('buildContentRequestPayload', () => {
     assert.ok(!payload.facts.case_background)
     assert.deepEqual(payload.facts.audience, ['毛坯'])
     assert.deepEqual(payload.facts.craft_role, ['毛坯'])
-    assert.match(payload.facts.pain, /HYB-吊顶与背景墙造型实现工艺/)
     assert.match(payload.facts.result, /判断标准/)
-    assert.ok(payload.facts.advantage.some((item) => item.includes('鸿扬家装')))
-    assert.ok(!payload.facts.advantage.some((item) => item.includes('鸿扬家居')))
     assert.ok(!payload.facts.price)
     assert.ok(!payload.facts.quote_type)
     assert.ok(!payload.facts.quote_block)
   })
 
-  it('maps persona pack to CT07 persona_fact/advantage with job and years', () => {
+  it('maps persona pack to CT07 persona_fact with job and years', () => {
     const payload = buildContentRequestPayload({
       employee: {
         name: '朱穆',
@@ -257,13 +249,9 @@ describe('buildContentRequestPayload', () => {
       '朱穆，27岁，设计师，从业5年，服务长沙，家装事业部渠道管理中心/网络获客部，工号H06380。'
     )
     assert.deepEqual(payload.facts.process, ['设计师服务'])
-    assert.ok(payload.facts.advantage.includes('设计师，5年'))
-    assert.ok(payload.facts.advantage.some((item) => item.includes('鸿扬家装')))
     assert.equal(payload.facts.product, '鸿扬家装设计师服务')
     assert.equal(payload.facts.location, '长沙')
     assert.deepEqual(payload.facts.audience, ['毛坯'])
-    assert.match(payload.facts.pain, /设计师/)
-    assert.ok(!payload.facts.pain.includes('户型'))
     assert.ok(!payload.facts.price)
     assert.ok(!payload.facts.quote_type)
     assert.ok(!payload.facts.quote_block)

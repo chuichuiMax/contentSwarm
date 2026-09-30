@@ -119,11 +119,7 @@ const buildFacts = (typeName, persona, businessVariables) => {
   const job = text(businessVariables['岗位'])
   const years = formatServiceYears(businessVariables['从业年限'])
   const craftParts = compactList(processType, processName, processType ? '' : stageTopic)
-  const craftText = (craftParts || []).join('；')
-  const delivery = `项目施工${CONSTRUCTION_BRAND}`
   let process
-  let advantage
-  let pain
   let result
   const lockedArea = lockFrameArea(frameArea, persona.employeeCode || community)
   const priceItems = QUOTE_KEYS.filter((key) => text(businessVariables[key])).map(
@@ -131,49 +127,25 @@ const buildFacts = (typeName, persona, businessVariables) => {
   )
   if (isQuote) {
     process = compactList(`${BRAND_POSITIONING}交付`, style)
-    advantage = compactList(
-      `${BRAND_NAME}品牌与${BRAND_POSITIONING}交付`,
-      delivery,
-      '透明工艺与售后服务（费用数字仅作参考，不以低价作为卖点）'
-    )
-    pain = `${community || '业主'}关心装修预算怎么花、怕隐形增项，更需要看清品牌与交付是否靠谱`
     result = [community, lockedArea, style, `施工${CONSTRUCTION_BRAND}`].filter(Boolean).join(' ')
   } else if (isCase) {
     process = compactList(`${BRAND_POSITIONING}交付`)
-    advantage = compactList(
-      `${BRAND_NAME}品牌与${BRAND_POSITIONING}交付`,
-      delivery,
-      '真实项目落地与透明服务'
-    )
-    pain = `${household || audienceTarget || community || '业主'}关心${[community, lockedArea, style].filter(Boolean).join('') || '案例'}怎么从方案落到完工`
     result = [community, lockedArea, style, `施工${CONSTRUCTION_BRAND}`].filter(Boolean).join(' ')
   } else if (isKnowledge) {
     process = craftParts || compactList(`${BRAND_POSITIONING}交付`)
-    advantage = compactList(craftText, delivery, `${BRAND_NAME}${BRAND_POSITIONING}与工艺标准说明`)
-    pain = `${audienceTarget || '业主'}不清楚${processName || processType || '装修工艺'}该怎么判断、容易被话术带偏`
     result = processName
       ? `看懂${processName}的判断标准与验收要点`
       : `看懂${processType || style || '装修工艺'}该怎么判断`
   } else if (isPersona) {
     process = compactList(job ? `${job}服务` : `${BRAND_POSITIONING}服务`)
-    advantage = compactList(
-      [job, years].filter(Boolean).join('，') || undefined,
-      `${BRAND_NAME}${BRAND_POSITIONING}交付`,
-      '服务边界清晰，不夸口、不承诺做不到的结果'
-    )
-    pain = `${audienceTarget || '业主'}不知道该找谁、怕遇上不靠谱的${job || '服务人员'}`
     result = [region && job ? `${region}${job}` : job || region, years ? `从业${years}` : '', '可对接咨询']
       .filter(Boolean)
       .join('，')
   } else if (isCraft) {
     process = craftParts
-    advantage = compactList(craftText, delivery, `${BRAND_NAME}${BRAND_POSITIONING}与透明施工`)
-    pain = `业主关心${processType || stageTopic || '施工'}是否规范、细节是否到位、会不会走过场`
     result = [projectStage, processName ? `按工艺规范落实${processName}` : ''].filter(Boolean).join('')
   } else {
     process = compactList(style, frameArea) || compactList(`${BRAND_POSITIONING}交付`)
-    advantage = compactList(style, delivery, `${BRAND_NAME}${BRAND_POSITIONING}与透明服务`)
-    pain = `${community || '业主'}关注${lockedArea || frameArea || '户型'}装修落地`
     result = [community, lockedArea || frameArea, style, `施工${CONSTRUCTION_BRAND}`].filter(Boolean).join(' ')
   }
   const personaFact = buildPersonaFact(persona, isPersona ? { job, years, region } : {})
@@ -182,7 +154,6 @@ const buildFacts = (typeName, persona, businessVariables) => {
     persona_fact: personaFact ? `${personaFact}。` : undefined,
     process,
     craft_role: isKnowledge ? audience : undefined,
-    advantage,
     result: text(result) || undefined,
     product: isPersona
       ? `${BRAND_NAME}${job || BRAND_POSITIONING}服务`
@@ -197,8 +168,7 @@ const buildFacts = (typeName, persona, businessVariables) => {
     audience,
     quantity: lockedArea || frameArea || undefined,
     price: isQuote || isCase ? compactList(...priceItems) || compactList(budgetText) : undefined,
-    quote_type: isQuote || (isCase && priceItems.length) ? 'budget' : undefined,
-    pain
+    quote_type: isQuote || (isCase && priceItems.length) ? 'budget' : undefined
   })
 }
 

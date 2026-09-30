@@ -21,6 +21,7 @@ from yuxi.content.generation import (
     refine_generated_content,
     review_generated_content,
 )
+from yuxi.utils.line_breaks import normalize_escaped_newlines
 from yuxi.content.model.industry.pack import CONTENT_TYPE_CODES, IndustryPackPolicy
 from yuxi.content.model.workflows.definition import WorkflowCatalog, WorkflowDefinitionPolicy, workflow_definition_hash
 from yuxi.content.rules import CONTENT_GOALS
@@ -1373,7 +1374,7 @@ async def list_content_tasks(
     for item in items:
         result = item.to_dict()
         title, cover_asset_id = artifacts.get(item.id, (None, None))
-        result["artifact_title"] = title
+        result["artifact_title"] = normalize_escaped_newlines(title) if isinstance(title, str) else title
         result["cover_asset_id"] = cover_asset_id
         results.append(result)
     return {"items": results, "total": total, "page": page, "page_size": page_size}
@@ -1987,6 +1988,8 @@ async def create_direct_content_run(
     form_values = brief.get("form_values") or {}
     user_request = str(payload.user_request or brief.get("user_request") or "").strip()
     creative_style = payload.creative_style or form_values.get("creative_style") or {}
+    if not isinstance(creative_style, dict):
+        creative_style = {}
     generation_prompt = str(
         payload.generation_prompt
         if payload.generation_prompt is not None
@@ -1994,8 +1997,6 @@ async def create_direct_content_run(
     ).strip()
     if not user_request:
         raise _content_error(409, "CONTENT_TASK_NOT_READY", "请先填写内容需求")
-    if not isinstance(creative_style, dict) or not str(creative_style.get("name") or "").strip():
-        raise _content_error(409, "CONTENT_CREATIVE_STYLE_REQUIRED", "请选择创作风格")
     visual_material = brief.get("visual_material") or {}
     if not visual_material:
         raise _content_error(409, "CONTENT_COVER_MATERIAL_REQUIRED", "请选择封面图片和封面方式")

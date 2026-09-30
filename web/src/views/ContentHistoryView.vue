@@ -294,7 +294,7 @@ onBeforeUnmount(() => {
           <div class="detail-content">
             <section class="detail-section">
               <div class="detail-section-heading"><strong>发布标题</strong><a-button type="text" size="small" @click="copyText(detailArtifact.title || '', '标题')"><Copy :size="14" />复制标题</a-button></div>
-              <h2>{{ detailArtifact.title || '暂无标题' }}</h2>
+              <h2 class="history-detail-title">{{ detailArtifact.title || '暂无标题' }}</h2>
             </section>
             <section class="detail-section detail-body-section">
               <div class="detail-section-heading"><strong>正文文案</strong><a-button type="text" size="small" @click="copyText(detailArtifact.body || '', '正文')"><Copy :size="14" />复制正文</a-button></div>
@@ -371,7 +371,7 @@ header :deep(.ant-btn), .history-card :deep(.ant-btn) { display: inline-flex; al
   .detail-content { min-width: 0; min-height: 0; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; padding: 0 22px; overflow: hidden; background: var(--gray-0); }
   .detail-section { min-height: 0; padding: 14px 0; border-bottom: 1px solid var(--gray-150); }
   .detail-section:last-child { border: 0; }
-  .detail-section h2 { margin: 8px 0 0; padding: 9px 12px; border: 1px solid var(--gray-150); border-radius: 6px; font-size: 15px; line-height: 1.5; overflow-wrap: anywhere; }
+  .detail-section h2 { margin: 8px 0 0; padding: 9px 12px; border: 1px solid var(--gray-150); border-radius: 6px; font-size: 15px; line-height: 1.5; overflow-wrap: anywhere; white-space: pre-line; }
   .detail-body-section { display: flex; flex-direction: column; overflow: hidden; }
   .detail-body { min-height: 0; flex: 1; margin-top: 8px; overflow-y: auto; overscroll-behavior: contain; font-size: 13px; line-height: 1.68; overflow-wrap: anywhere; }
   .detail-body p:first-child { margin-top: 0; }

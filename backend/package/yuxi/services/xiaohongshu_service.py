@@ -14,6 +14,7 @@ from fastapi import HTTPException
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from yuxi.utils.line_breaks import normalize_escaped_newlines
 from yuxi.content.schemas import (
     XiaohongshuAccountCreate,
     XiaohongshuAccountUpdate,
@@ -717,8 +718,8 @@ async def create_distribution(
             account_ids=unavailable,
         )
 
-    title = payload.title if payload.title is not None else artifact.title.strip()
-    body = payload.body if payload.body is not None else artifact.body.strip()
+    title = normalize_escaped_newlines(payload.title if payload.title is not None else artifact.title).strip()
+    body = normalize_escaped_newlines(payload.body if payload.body is not None else artifact.body).strip()
     topics = list(
         dict.fromkeys(item.strip().lstrip("#") for item in (payload.topics or artifact.topics or []) if item.strip())
     )

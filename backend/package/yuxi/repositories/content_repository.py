@@ -6,6 +6,7 @@ from typing import Any
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from yuxi.utils.line_breaks import normalize_escaped_newlines
 from yuxi.content.rule_library import active_combination_rules
 from yuxi.storage.postgres.models_business import AgentRun, User
 from yuxi.storage.postgres.models_content import (
@@ -910,8 +911,8 @@ class ContentRepository:
                 "id": item.id,
                 "artifact_id": item.artifact_id,
                 "version": item.version,
-                "title": item.title,
-                "body": item.body,
+                "title": normalize_escaped_newlines(item.title),
+                "body": normalize_escaped_newlines(item.body),
                 "topics": item.topics or [],
                 "source_type": item.source_type,
                 "model_spec": item.model_spec,
