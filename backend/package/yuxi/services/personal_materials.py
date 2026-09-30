@@ -22,8 +22,6 @@ from yuxi.utils.datetime_utils import format_utc_datetime
 Folder = Literal["rough", "generated", "uploads"]
 FOLDER_NAMES = {"rough": "毛坯房图库", "generated": "生图图库", "uploads": "我的上传"}
 PRIVATE_IDS = {"rough": "mp-rough-private", "uploads": "mp-uploads-private"}
-SHARED_UPLOAD_ID = "mp-uploads-shared"
-SYSTEM_OWNER = "system:material-library"
 ROUGH_NAMES = {"毛坯房图库", "毛胚房图库"}
 
 
@@ -43,25 +41,17 @@ def _private_category_name(folder: str, categories: list[ContentMaterialCategory
 
 
 async def folder_categories(db: AsyncSession, user: User) -> dict[str, list[ContentMaterialCategory]]:
-    """Create only missing fixed categories; reuse the existing PC rough/result galleries."""
+    """Keep upload destinations under the owner's PC personal materials."""
+    from yuxi.image_design.save_targets import ensure_scope_root
+
     owner = str(user.uid)
-    repo = MaterialLibraryRepository(db, include_shared=True)
+    repo = MaterialLibraryRepository(db)
     categories = await repo.list_categories(owner, "image")
-    rough = [
-        c for c in categories
-        if c.visibility == "enterprise" and c.parent_id is None
-        and _is_rough_category(c)
-    ]
-    generated = [c for c in categories if c.visibility == "enterprise" and c.parent_id is None and c.name == "生图图库"]
-    shared_uploads = [
-        c for c in categories if c.visibility == "enterprise" and c.parent_id is None and c.name == "我的上传"
-    ]
-    if len(generated) > 1:
-        raise HTTPException(409, "企业图库配置重复，请联系管理员")
     values = []
     for folder, category_id in PRIVATE_IDS.items():
         if not any(
-            c.owner_uid == owner and c.visibility == "private"
+            c.owner_uid == owner
+            and c.visibility == "private"
             and (c.id == category_id or (folder == "rough" and _is_rough_category(c)) or c.name == FOLDER_NAMES[folder])
             for c in categories
         ):
@@ -69,39 +59,13 @@ async def folder_categories(db: AsyncSession, user: User) -> dict[str, list[Cont
                 dict(
                     owner_uid=owner,
                     id=category_id,
-                    tenant_id=None,
+                    tenant_id=str(user.department_id) if getattr(user, "department_id", None) is not None else None,
                     material_type="image",
                     visibility="private",
                     parent_id=None,
                     industry_slug="uncategorized",
                     name=_private_category_name(folder, categories, owner),
-                    description="小程序个人上传",
-                    sort_order=10,
-                    is_system=True,
-                )
-            )
-    for folder, category_id, present in (
-        ("rough", "mp-rough-shared", rough),
-        ("generated", "mp-generated-shared", generated),
-        (
-            "uploads",
-            SHARED_UPLOAD_ID,
-            shared_uploads,
-        ),
-    ):
-        if not present:
-            values.append(
-                dict(
-                    owner_uid=SYSTEM_OWNER,
-                    id=category_id,
-                    tenant_id=None,
-                    material_type="image",
-                    visibility="enterprise",
-                    parent_id=None,
-                    industry_slug="uncategorized",
-                    image_design_role="rough" if folder == "rough" else None,
-                    name=FOLDER_NAMES[folder],
-                    description="企业共享素材",
+                    description="个人素材上传",
                     sort_order=10,
                     is_system=True,
                 )
@@ -110,40 +74,24 @@ async def folder_categories(db: AsyncSession, user: User) -> dict[str, list[Cont
         await repo.sync_system_categories(values)
         await db.flush()
         categories = await repo.list_categories(owner, "image")
-        rough = [
-            c
-            for c in categories
-            if c.visibility == "enterprise" and c.parent_id is None
-            and _is_rough_category(c)
-        ]
-        generated = [
-            c for c in categories if c.visibility == "enterprise" and c.parent_id is None and c.name == "生图图库"
-        ]
-        shared_uploads = [
-            c for c in categories if c.visibility == "enterprise" and c.parent_id is None and c.name == "我的上传"
-        ]
-    private_rough = [
-        c for c in categories
-        if c.visibility == "private" and c.owner_uid == owner
-        and _is_rough_category(c)
-    ]
     private_fixed_rough = next(
-        c for c in categories
-        if c.owner_uid == owner and c.visibility == "private"
+        c
+        for c in categories
+        if c.owner_uid == owner
+        and c.visibility == "private"
         and (c.id == PRIVATE_IDS["rough"] or _is_rough_category(c))
     )
     private_fixed_upload = next(
-        c for c in categories
-        if c.owner_uid == owner and c.visibility == "private"
+        c
+        for c in categories
+        if c.owner_uid == owner
+        and c.visibility == "private"
         and (c.id == PRIVATE_IDS["uploads"] or c.name == "我的上传")
     )
     return {
-        "rough": [*rough, *[c for c in private_rough if c.id != private_fixed_rough.id], private_fixed_rough],
-        "generated": generated,
-        "uploads": [
-            *shared_uploads,
-            private_fixed_upload,
-        ],
+        "rough": [private_fixed_rough],
+        "generated": [await ensure_scope_root(db, user, "private")],
+        "uploads": [private_fixed_upload],
     }
 
 
@@ -151,61 +99,101 @@ async def upload_category(
     db: AsyncSession, user: User, folder: Literal["rough", "uploads"], channel: Literal["pc", "mp"]
 ) -> ContentMaterialCategory:
     categories = (await folder_categories(db, user))[folder]
-    return next(c for c in categories if c.visibility == ("enterprise" if channel == "pc" else "private"))
+    return next(c for c in categories if c.visibility == "private")
 
 
-async def list_folder(
-    db: AsyncSession, user: User, folder: Folder, *, page: int, page_size: int,
-    date_from: date | None = None, date_to: date | None = None,
-) -> dict:
-    if date_from and date_to and date_from > date_to:
-        raise HTTPException(422, "开始日期不能晚于结束日期")
-    categories = (await folder_categories(db, user))[folder]
+def folder_source_filter(user: User, folder: Folder):
+    """Share designated PC sources while keeping mini-program originals personal."""
+    item = ContentMaterialLibraryItem
+    asset = ContentCoverAsset
+    category = ContentMaterialCategory
+    owner_uid = str(user.uid)
+    requester_tenant_id = getattr(user, "department_id", None)
+    shared_with_requester = item.owner_uid == owner_uid
+    if requester_tenant_id is not None:
+        item_tenant_id = func.coalesce(item.tenant_id, asset.tenant_id, category.tenant_id)
+        shared_with_requester = or_(
+            shared_with_requester,
+            item_tenant_id == str(requester_tenant_id),
+        )
+    channel = func.coalesce(
+        item.metadata_json["source_channel"].as_string(),
+        asset.metadata_json["source_channel"].as_string(),
+        "",
+    )
+    source = func.coalesce(
+        item.metadata_json["source_folder"].as_string(),
+        asset.metadata_json["source_folder"].as_string(),
+        "",
+    )
+    if folder == "generated":
+        origin = item.metadata_json["source"].as_string()
+        allowed = and_(
+            shared_with_requester,
+            or_(
+                and_(channel == "pc", origin == "content_production"),
+                and_(channel == "mp", origin == "image_design"),
+            ),
+        )
+    else:
+        allowed = or_(
+            and_(channel == "pc", shared_with_requester),
+            and_(channel == "mp", item.owner_uid == owner_uid),
+        )
+    return and_(category.visibility == "private", source == folder, allowed)
+
+
+async def can_read_fixed_item(db: AsyncSession, user: User, item_id: str) -> bool:
     item = ContentMaterialLibraryItem
     asset = ContentCoverAsset
     category = ContentMaterialCategory
     join = item.__table__.join(asset, asset.id == item.asset_id).join(
         category, MaterialLibraryRepository.category_join()
     )
-    locations = or_(
-        *(
-            and_(item.category == c.id, func.coalesce(item.category_owner_uid, item.owner_uid) == c.owner_uid)
-            for c in categories
-        )
-    )
-    if folder == "uploads":
-        # Legacy uploads had no channel marker. Shared ones remain shared; private
-        # ones are included for their owner only, never promoted by inference.
-        other_uploads = and_(
-            asset.role == "library_image",
-            or_(category.image_design_role.is_(None), category.image_design_role != "rough"),
-            category.name.notin_({"生图图库", "AI生图图库", "毛坯房图库", "毛胚房图库"}),
-            func.coalesce(item.metadata_json["source"].as_string(), "") != "image_design",
-            or_(
-                and_(category.visibility == "enterprise", category.name.in_({"我的上传", "我的图库", "未分类"})),
-                and_(category.visibility == "private", item.owner_uid == str(user.uid)),
-            ),
-        )
-        locations = or_(locations, other_uploads)
     filters = (
-        locations,
+        item.id == item_id,
+        item.material_type == "image",
+        item.status == "enabled",
+        item.deleted_at.is_(None),
+        asset.deleted_at.is_(None),
+        or_(*(folder_source_filter(user, folder) for folder in FOLDER_NAMES)),
+    )
+    return (await db.scalar(select(item.id).select_from(join).where(*filters).limit(1))) is not None
+
+
+async def list_folder(
+    db: AsyncSession,
+    user: User,
+    folder: Folder,
+    *,
+    page: int,
+    page_size: int,
+    date_from: date | None = None,
+    date_to: date | None = None,
+) -> dict:
+    if date_from and date_to and date_from > date_to:
+        raise HTTPException(422, "开始日期不能晚于结束日期")
+    await folder_categories(db, user)
+    item = ContentMaterialLibraryItem
+    asset = ContentCoverAsset
+    category = ContentMaterialCategory
+    join = item.__table__.join(asset, asset.id == item.asset_id).join(
+        category, MaterialLibraryRepository.category_join()
+    )
+    filters = (
+        folder_source_filter(user, folder),
         item.material_type == "image",
         item.status == "enabled",
         item.deleted_at.is_(None),
         asset.deleted_at.is_(None),
         category.deleted_at.is_(None),
-        or_(category.visibility == "enterprise", item.owner_uid == str(user.uid)),
     )
     shanghai = timezone(timedelta(hours=8))
     if date_from:
         start_utc = datetime.combine(date_from, time.min, shanghai).astimezone(UTC).replace(tzinfo=None)
         filters += (asset.created_at >= start_utc,)
     if date_to:
-        end_utc = (
-            datetime.combine(date_to + timedelta(days=1), time.min, shanghai)
-            .astimezone(UTC)
-            .replace(tzinfo=None)
-        )
+        end_utc = datetime.combine(date_to + timedelta(days=1), time.min, shanghai).astimezone(UTC).replace(tzinfo=None)
         filters += (asset.created_at < end_utc,)
     total = (await db.execute(select(func.count(item.id)).select_from(join).where(*filters))).scalar_one()
     rows = (
@@ -235,15 +223,53 @@ async def list_folder(
     }
 
 
-async def folder_counts(db: AsyncSession, user: User) -> list[dict]:
+async def folder_counts(
+    db: AsyncSession,
+    user: User,
+    *,
+    client: Literal["mp", "pc"] = "mp",
+) -> list[dict]:
     from yuxi.services.mp_service import visible_mp_works
 
     await folder_categories(db, user)
     result = []
     for folder, name in FOLDER_NAMES.items():
         listing = await list_folder(db, user, folder, page=1, page_size=1)
-        result.append({"id": folder, "name": name, "count": listing["total"], "can_upload": folder in PRIVATE_IDS})
-    works_count = len(await visible_mp_works(db, str(user.uid)))
-    result.append({"id": "works", "name": "我的作品", "count": works_count, "can_upload": False})
+        first_item = next(iter(listing["items"]), None)
+        if first_item and client == "pc":
+            cover_thumbnail_file_url = f"/api/material-library/items/{first_item['id']}/thumbnail"
+            cover_file_url = f"/api/material-library/items/{first_item['id']}/file"
+        else:
+            cover_thumbnail_file_url = first_item["thumbnail_file_url"] if first_item else None
+            cover_file_url = first_item["file_url"] if first_item else None
+        result.append(
+            {
+                "id": folder,
+                "name": name,
+                "count": listing["total"],
+                "can_upload": folder in PRIVATE_IDS,
+                "cover_thumbnail_file_url": cover_thumbnail_file_url,
+                "cover_file_url": cover_file_url,
+            }
+        )
+    works = await visible_mp_works(db, str(user.uid))
+    first_work_id = works[0]["id"] if works else None
+    work_file_url = None
+    if first_work_id:
+        work_file_url = (
+            f"/api/content/covers/assets/{first_work_id}/file"
+            if client == "pc"
+            else f"/api/mp/image/works/{first_work_id}/file"
+        )
+    result.append(
+        {
+            "id": "works",
+            "name": "我的作品",
+            "count": len(works),
+            "can_upload": False,
+            "cover_thumbnail_file_url": work_file_url,
+            "cover_file_url": work_file_url,
+        }
+    )
     await db.commit()
     return result

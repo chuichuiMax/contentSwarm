@@ -189,9 +189,7 @@ async def test_corrupt_system_root_is_not_accepted_as_a_save_target(ordinary_use
     ]
 
     with pytest.raises(HTTPException) as error:
-        await resolve_writable_save_target(
-            object(), ordinary_user, SaveTarget(scope="enterprise", gallery_id=None)
-        )
+        await resolve_writable_save_target(object(), ordinary_user, SaveTarget(scope="enterprise", gallery_id=None))
 
     assert error.value.detail["error"]["code"] == "IMAGE_DESIGN_SAVE_TARGET_INVALID"
 
@@ -253,44 +251,37 @@ async def test_writable_target_list_hides_storage_roots_and_keeps_scope_paths(or
 
 
 @pytest.mark.asyncio
-async def test_mp_targets_keep_pc_root_but_resolve_private_generation_to_ai_gallery(ordinary_user):
+async def test_mp_targets_resolve_generation_to_pc_personal_root(ordinary_user):
     db = type("Db", (), {"flush": AsyncMock()})()
     FakeMaterialLibraryRepository.categories = [
         _category("ordinary-user", "uncategorized", visibility="private", name="我的图库", is_system=True),
         _category("admin", "generated-real-id", visibility="enterprise", name="生图图库"),
         _category("admin", "case", visibility="enterprise", name="案例图库"),
     ]
-    private, enterprise = (await list_mp_save_targets(db, ordinary_user))["scopes"]
-    assert private["can_write_root"] is False and private["folders"] == []
-    assert enterprise["can_write_root"] is False
-    assert [folder["id"] for folder in enterprise["folders"]] == ["generated-real-id"]
+    scopes = (await list_mp_save_targets(db, ordinary_user))["scopes"]
+    assert scopes == [{"scope": "private", "label": "我的素材", "can_write_root": True, "folders": []}]
     assert not is_storage_root(FakeMaterialLibraryRepository.categories[0])
     resolved = await resolve_writable_save_target(object(), ordinary_user, SaveTarget(scope="private"))
     assert resolved.category_id == "private-root"
     mp_resolved = await resolve_mp_save_target(db, ordinary_user, SaveTarget(scope="private"))
-    assert mp_resolved.category_id == "generated-real-id"
-    assert mp_resolved.public_target == {"scope": "enterprise", "gallery_id": "generated-real-id"}
-    await validate_mp_save_target(
-        db, ordinary_user, SaveTarget(scope="enterprise", gallery_id="generated-real-id")
-    )
-    for target in [SaveTarget(scope="enterprise"), SaveTarget(scope="enterprise", gallery_id="case"),
-                   SaveTarget(scope="private", gallery_id="uncategorized")]:
+    assert mp_resolved.category_id == "private-root"
+    assert mp_resolved.public_target == {"scope": "private", "gallery_id": None}
+    await validate_mp_save_target(db, ordinary_user, SaveTarget(scope="enterprise", gallery_id="generated-real-id"))
+    for target in [
+        SaveTarget(scope="enterprise"),
+        SaveTarget(scope="enterprise", gallery_id="case"),
+        SaveTarget(scope="private", gallery_id="uncategorized"),
+    ]:
         with pytest.raises(HTTPException):
             await validate_mp_save_target(db, ordinary_user, target)
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("count", [0, 2])
-async def test_missing_or_ambiguous_generated_gallery_stays_unavailable(ordinary_user, count):
+async def test_enterprise_generated_galleries_do_not_change_mp_personal_target(ordinary_user, count):
     db = type("Db", (), {"flush": AsyncMock()})()
     FakeMaterialLibraryRepository.categories = [
         _category(f"admin-{i}", f"generated-{i}", visibility="enterprise", name="生图图库") for i in range(count)
     ]
-    if count == 2:
-        with pytest.raises(HTTPException):
-            await list_mp_save_targets(db, ordinary_user)
-    else:
-        private, enterprise = (await list_mp_save_targets(db, ordinary_user))["scopes"]
-        assert private["can_write_root"] is False
-        assert len(enterprise["folders"]) == 1
-        assert enterprise["folders"][0]["id"] == "mp-generated-shared"
+    scopes = (await list_mp_save_targets(db, ordinary_user))["scopes"]
+    assert scopes == [{"scope": "private", "label": "我的素材", "can_write_root": True, "folders": []}]

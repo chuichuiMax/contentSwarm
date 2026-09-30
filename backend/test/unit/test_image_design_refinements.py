@@ -30,9 +30,7 @@ def test_refinement_integrity_accepts_matching_semantics_materials_and_roles() -
         payload,
         {"structure_source": {"room_type": "卧室", "preserve": ["窗户位置"]}},
     )
-    materials = [
-        {"role": "structure_source", "material_id": "mli_source", "asset_sha256": "a" * 64}
-    ]
+    materials = [{"role": "structure_source", "material_id": "mli_source", "asset_sha256": "a" * 64}]
     semantic = payload.model_dump(mode="json", exclude={"parent_refinement_id", "edited_prompt"})
     semantic["effective_prompt"] = payload.user_prompt
     row = _refinement(semantic=semantic, materials=materials, plan=plan.model_dump(mode="json"))
@@ -70,9 +68,7 @@ def test_refinement_integrity_rejects_plan_role_tampering() -> None:
     )
     plan = build_prompt_plan(payload, {"structure_source": {"room_type": "卧室"}})
     plan.image_roles[0]["material_id"] = "mli_other"
-    materials = [
-        {"role": "structure_source", "material_id": "mli_source", "asset_sha256": "a" * 64}
-    ]
+    materials = [{"role": "structure_source", "material_id": "mli_source", "asset_sha256": "a" * 64}]
     semantic = payload.model_dump(mode="json", exclude={"parent_refinement_id", "edited_prompt"})
     semantic["effective_prompt"] = payload.user_prompt
     row = _refinement(semantic=semantic, materials=materials, plan=plan.model_dump(mode="json"))
@@ -81,3 +77,44 @@ def test_refinement_integrity_rejects_plan_role_tampering() -> None:
         validate_refinement_integrity(row, materials)
 
     assert exc_info.value.detail["error"]["code"] == "IMAGE_DESIGN_REFINEMENT_STALE"
+
+
+@pytest.mark.parametrize(
+    "workflow,images,options",
+    [
+        ("redesign", [{"role": "source", "library_item_id": "source"}], {}),
+        (
+            "adapt",
+            [
+                {"role": "reference", "library_item_id": "reference"},
+                {"role": "rough", "library_item_id": "rough"},
+            ],
+            {},
+        ),
+        (
+            "transfer",
+            [{"role": "reference", "library_item_id": "reference"}],
+            {"target_space": "客厅", "layout_type": "一字型沙发墙"},
+        ),
+    ],
+)
+def test_mp_task_accepts_one_image_for_each_workflow(workflow, images, options):
+    from pydantic import ValidationError
+
+    from yuxi.image_design.mp_schemas import MpTaskCreate
+
+    payload = {
+        "workflow": workflow,
+        "images": images,
+        "description": "暖色自然光",
+        "style": "现代简约",
+        "refinement_id": "idr_owned",
+        "ratio": "portrait",
+        "quality": "2k",
+        "count": 1,
+        "save_target": {"scope": "enterprise"},
+        **options,
+    }
+    assert MpTaskCreate.model_validate(payload).count == 1
+    with pytest.raises(ValidationError):
+        MpTaskCreate.model_validate({**payload, "count": 3})

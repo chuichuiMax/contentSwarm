@@ -210,7 +210,10 @@ async def attach_generated_asset(db, *, user, asset, requested, job_id, workflow
         await resolve_mp_save_target(db, user, requested)
         if mp_fixed_target
         else await resolve_writable_save_target(
-            db, user, requested, fallback_invalid_folder=allow_fallback,
+            db,
+            user,
+            requested,
+            fallback_invalid_folder=allow_fallback,
         )
     )
     metadata = {
@@ -222,6 +225,8 @@ async def attach_generated_asset(db, *, user, asset, requested, job_id, workflow
         "resolved_save_target": resolved.public_target,
         "save_warning": resolved.warning,
     }
+    if mp_fixed_target:
+        metadata.update(source_channel="mp", source_folder="generated")
     item = await create_library_item_for_asset(
         db,
         asset=asset,

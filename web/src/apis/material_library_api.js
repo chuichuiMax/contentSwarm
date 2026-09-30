@@ -21,6 +21,11 @@ export const materialLibraryApi = {
     }),
   listGalleries: (industrySlug = '') =>
     apiGet(`/api/material-library/galleries${encodeQuery({ industry_slug: industrySlug })}`),
+  listPersonalFolders: () => apiGet('/api/material-library/my-materials/folders'),
+  listPersonalItems: (folder, page = 1, pageSize = 24) =>
+    apiGet(`/api/material-library/my-materials/${encodeURIComponent(folder)}${encodeQuery({ page, page_size: pageSize })}`),
+  getWorkFile: (assetId) =>
+    apiGet(`/api/content/covers/assets/${encodeURIComponent(assetId)}/file`, {}, true, 'blob'),
   getRemoteConfig: () => apiGet('/api/material-library/remote-config'),
   saveRemoteConfig: (payload) => apiPut('/api/material-library/remote-config', payload),
   syncRemote: () => apiPost('/api/material-library/remote-sync', {}),

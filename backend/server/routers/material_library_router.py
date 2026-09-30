@@ -31,6 +31,8 @@ from yuxi.services.material_library_service import (
     update_material_category,
     update_material_item,
 )
+from yuxi.services.mp_service import visible_mp_works
+from yuxi.services.personal_materials import folder_counts, list_folder
 from yuxi.services.remote_material_library_service import (
     RemoteMaterialConfigUpdate,
     create_remote_material_sync_job,
@@ -39,6 +41,7 @@ from yuxi.services.remote_material_library_service import (
     verify_and_save_remote_material_config,
 )
 from yuxi.storage.postgres.models_business import User
+from yuxi.utils.datetime_utils import format_utc_datetime
 
 from server.utils.auth_middleware import get_admin_user, get_db, get_required_user, get_superadmin_user
 from server.utils.public_url import request_public_base_url
@@ -146,6 +149,48 @@ async def image_galleries(
     db: AsyncSession = Depends(get_db),
 ):
     return await list_image_galleries(db, current_user, industry_slug=industry_slug)
+
+
+@material_library.get("/my-materials/folders")
+async def personal_material_folders(
+    current_user: User = Depends(get_required_user),
+    db: AsyncSession = Depends(get_db),
+):
+    return {"folders": await folder_counts(db, current_user, client="pc")}
+
+
+@material_library.get("/my-materials/{folder}")
+async def personal_material_items(
+    folder: Literal["rough", "generated", "uploads", "works"],
+    page: int = Query(1, ge=1),
+    page_size: int = Query(24, ge=1, le=100),
+    current_user: User = Depends(get_required_user),
+    db: AsyncSession = Depends(get_db),
+):
+    if folder == "works":
+        works = await visible_mp_works(db, str(current_user.uid))
+        start = (page - 1) * page_size
+        return {
+            "items": [
+                {
+                    **work,
+                    "name": f"作品 {work['id'][:8]}",
+                    "uploaded_at": format_utc_datetime(work["uploaded_at"]),
+                    "file_url": f"/api/content/covers/assets/{work['id']}/file",
+                    "thumbnail_file_url": f"/api/content/covers/assets/{work['id']}/file",
+                    "can_manage": False,
+                }
+                for work in works[start : start + page_size]
+            ],
+            "total": len(works),
+            "page": page,
+            "page_size": page_size,
+        }
+    result = await list_folder(db, current_user, folder, page=page, page_size=page_size)
+    for item in result["items"]:
+        item["file_url"] = f"/api/material-library/items/{item['id']}/file"
+        item["thumbnail_file_url"] = f"/api/material-library/items/{item['id']}/thumbnail"
+    return result
 
 
 @material_library.post("/shares", status_code=status.HTTP_201_CREATED)
