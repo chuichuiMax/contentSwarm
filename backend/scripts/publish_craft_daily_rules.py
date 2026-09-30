@@ -1,4 +1,4 @@
-"""同步 CT06 工艺展示 / CT07 日常工作公式及删除项；保留历史版本及其他运营配置。
+"""仅同步 CT06 工艺展示公式及删除项；保留 CT01/02/07 与其他运营配置。
 
 容器内运行：python scripts/publish_craft_daily_rules.py --uid <管理员UID> [--publish]
 默认只验证并显示变更，--publish 才创建并发布新规则版本。
@@ -38,7 +38,7 @@ async def main(uid: str, publish: bool) -> None:
             if updated == bundle:
                 print(f"当前版本已包含修复：{current.id}")
                 return
-            note = "同步 CT06/CT07 公式，工艺标题仅保留 FRT16，正文删除 FRB12 组合，保留历史规则版本"
+            note = "CT06 工艺展示：新增 FRT23 识别标题，保留 FRT16；正文仍按 FRB11/13/14/15/16 选式，删除 FRB12 组合"
             payload = RuleBundleUpdate(**{**updated, "changelog": note})
             validation = validate_rule_bundle_for_publish(normalize_rule_bundle(payload))
             if validation["errors"]:

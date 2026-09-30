@@ -36,7 +36,16 @@ CREATION_TYPE_NAMES = {
     "CT06": "工艺施工展示",
     "CT07": "人设自荐",
 }
+CRAFT_KB_EXCLUDED_VARIABLE_CODES = frozenset(
+    {"quote_block", "quote_type", "title_price", "title_price_label", "price", "cost_explanation"}
+)
 MAX_INTERRUPT_RETRIES = 3
+
+
+def filter_allowed_variable_codes(codes: list[str], *, kb_content_type_code: str) -> list[str]:
+    if kb_content_type_code != "CT06":
+        return codes
+    return sorted(set(codes) - CRAFT_KB_EXCLUDED_VARIABLE_CODES)
 
 
 def _interrupt_count(asset: ContentViralArticleVersion) -> int:
@@ -85,9 +94,6 @@ async def process_viral_asset(_ctx, asset_id: str, attempt: int):
             if asset.preparation_skill_hash != preparation_skill_hash():
                 raise ValueError("准备 Skill 已更新，请重新导入")
             source = ViralArticleSource.model_validate(asset.source_json)
-            allowed_variable_codes = sorted(await published_variable_codes(db))
-            if not allowed_variable_codes:
-                raise ValueError("已发布变量目录为空，无法准备参考槽位")
             kb_content_type_code = await db.scalar(
                 select(KnowledgeBase.additional_params["viral_content_type"].as_string()).where(
                     KnowledgeBase.kb_id == asset.kb_id
@@ -95,6 +101,12 @@ async def process_viral_asset(_ctx, asset_id: str, attempt: int):
             )
             if kb_content_type_code not in CREATION_TYPE_NAMES:
                 raise ValueError("请先在知识库创建或编辑中绑定一个爆款创作类型")
+            allowed_variable_codes = filter_allowed_variable_codes(
+                sorted(await published_variable_codes(db)),
+                kb_content_type_code=kb_content_type_code,
+            )
+            if not allowed_variable_codes:
+                raise ValueError("已发布变量目录为空，无法准备参考槽位")
 
             context = await resolve_agent_runtime_context(db=db, user=user, bound_agent_id="content-viral-asset-agent")
             agent = await AgentRepository(db).get_visible_by_slug(slug="content-viral-asset-agent", user=user)

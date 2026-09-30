@@ -70,6 +70,7 @@ def test_foreman_catalog_keeps_case_modes_and_adds_daily_work_mode() -> None:
     assert groups["CT02"]["body_formula_candidate_codes"] == ["FRB01"]
     assert groups["CT07"]["title_formula_candidate_codes"] == ["FRT22", "FRT12"]
     assert groups["CT07"]["body_formula_candidate_codes"] == ["FRB05"]
+    assert groups["CT06"]["title_formula_candidate_codes"] == ["FRT23", "FRT16"]
     assert all(
         "FRT06" not in group["title_formula_candidate_codes"]
         for direction, group in groups.items()

@@ -52,7 +52,6 @@ def test_latest_rules_remove_deleted_formulas_and_upgrade_keeps_old_bundle_intac
     for group in bundle["combination_rules"]:
         if group["content_type_codes"] == ["CT06"]:
             group["title_formula_candidate_codes"] = ["FRT15", "FRT17", "FRT16", "FRT18", "FRT19"]
-        if group["content_type_codes"] in (["CT06"], ["CT07"]):
             group["body_formula_candidate_codes"] = [f"FRB{i:02d}" for i in range(11, 17)]
             group["hard_conditions"]["allowed_formula_pairs"] = [
                 [title, body]
@@ -68,8 +67,7 @@ def test_latest_rules_remove_deleted_formulas_and_upgrade_keeps_old_bundle_intac
     assert "FRB12" not in {item["code"] for item in upgraded["content_formulas"]}
     for group in upgraded["combination_rules"]:
         if group["content_type_codes"] == ["CT06"]:
-            assert group["title_formula_candidate_codes"] == ["FRT16"]
-        if group["content_type_codes"] in (["CT06"], ["CT07"]):
+            assert group["title_formula_candidate_codes"] == ["FRT23", "FRT16"]
             assert group["body_formula_candidate_codes"] == ["FRB11", "FRB13", "FRB14", "FRB15", "FRB16"]
             assert not any(
                 title in {"FRT15", "FRT17", "FRT18", "FRT19"} or body == "FRB12"
@@ -79,16 +77,8 @@ def test_latest_rules_remove_deleted_formulas_and_upgrade_keeps_old_bundle_intac
     assert upgrade_craft_daily_rules(upgraded) == upgraded
 
 
-@pytest.mark.parametrize(
-    ("extra", "expected"),
-    [
-        ({}, "FRT16"),
-        ({"craft_count": "18道工序", "result": "墙面验收通过"}, "FRT16"),
-        ({"craft_duration": "12天", "result": "瓷砖铺贴完工"}, "FRT16"),
-        ({"project": "卫生间", "location": "长沙"}, "FRT16"),
-    ],
-)
-def test_craft_title_uses_only_supported_specific_facts(extra, expected):
+@pytest.mark.parametrize(("extra",), [({},), ({"craft_count": "18道工序", "result": "墙面验收通过"},), ({"craft_duration": "12天", "result": "瓷砖铺贴完工"},), ({"project": "卫生间", "location": "长沙"},)])
+def test_craft_title_uses_only_supported_specific_facts(extra):
     values = {**BASE, **extra, "number": "30", "duration": "5年"}
     catalog = lock(values)
     order, manifest = compile_production_order_and_manifest(
@@ -96,21 +86,21 @@ def test_craft_title_uses_only_supported_specific_facts(extra, expected):
         catalog=catalog,
         fact_index=build_fact_index({"form_values": values}, {"items": []}),
     )
-    assert order["title_formula_code"] == expected
+    assert order["title_formula_code"] in {"FRT16", "FRT23"}
     assert "number" not in {x["variable_code"] for x in manifest["requirements"]}
     assert "duration" not in {x["variable_code"] for x in manifest["requirements"]}
 
 
-@pytest.mark.parametrize(("extra", "title"), [({}, "FRT13"), ({"inspection": "工地巡检"}, "FRT14")])
-def test_daily_title_and_four_components_do_not_require_pain_or_result(extra, title):
+@pytest.mark.parametrize("extra", [{}, {"inspection": "工地巡检"}])
+def test_craft_four_component_body_does_not_require_pain_or_result(extra):
     values = {**BASE, **extra}
-    catalog = lock(values, "CT07")
+    catalog = lock(values, "CT06")
     order, manifest = compile_production_order_and_manifest(
         task_id="task-a",
         catalog=catalog,
         fact_index=build_fact_index({"form_values": values}, {"items": []}),
     )
-    assert order["title_formula_code"] == title
+    assert order["title_formula_code"] in {"FRT16", "FRT23"}
     assert order["body_formula_code"] == "FRB16"
     body = next(x for x in catalog["content_formulas"] if x["code"] == "FRB16")
     assert len(body["source_content"]["selected_components"]) == 4
@@ -128,8 +118,14 @@ def test_selection_is_frozen_when_extraction_adds_new_facts():
     assert updated == before
 
 
-@pytest.mark.parametrize("direction", ["CT06", "CT07"])
-def test_fixed_combinations_and_four_component_composition_are_reachable(direction):
+@pytest.mark.parametrize(
+    ("direction", "expected_bodies"),
+    [
+        ("CT06", {"FRB11", "FRB13", "FRB14", "FRB15", "FRB16"}),
+        ("CT07", {"FRB05"}),
+    ],
+)
+def test_fixed_combinations_and_four_component_composition_are_reachable(direction, expected_bodies):
     values = {
         **BASE,
         "case_background": "梅溪湖工地",
@@ -142,7 +138,7 @@ def test_fixed_combinations_and_four_component_composition_are_reachable(directi
     for i in range(80):
         catalog = lock(values, direction, seed=f"task-{i}")
         selected.add(catalog["source_rules"][0]["body_formula_candidate_codes"][0])
-    assert selected == {"FRB11", "FRB13", "FRB14", "FRB15", "FRB16"}
+    assert selected == expected_bodies
 
 
 def test_legacy_policy_is_unchanged():
@@ -168,8 +164,8 @@ def test_upgrade_is_narrow_and_idempotent_after_database_normalization():
         assert [x for x in after[section] if x["code"] in old_codes] == [
             x for x in before[section] if x["code"] in old_codes
         ]
-    assert [x for x in after["combination_rules"] if x["content_type_codes"][0] not in {"CT06", "CT07"}] == [
-        x for x in before["combination_rules"] if x["content_type_codes"][0] not in {"CT06", "CT07"}
+    assert [x for x in after["combination_rules"] if x["content_type_codes"][0] != "CT06"] == [
+        x for x in before["combination_rules"] if x["content_type_codes"][0] != "CT06"
     ]
     assert validate_rule_bundle_for_publish(after)["errors"] == []
     normalized = normalize_rule_bundle(RuleBundleUpdate(**after))
@@ -234,7 +230,7 @@ async def test_preparation_freezes_selection_through_plan_and_material_manifest(
         status="ready",
         source_hash="a" * 64,
         preparation_skill_hash="skill-v2",
-        source_json={"locator": "article:1"},
+        source_json={"locator": "article:1", "title": "工艺标题", "body": "正文"},
         prepared_json={"reference_card": refs[0]["reference_card"], "reference_blueprint": {}},
     )
     monkeypatch.setattr(creation_plan, "require_asset", AsyncMock(return_value=asset))
@@ -303,6 +299,6 @@ async def test_plain_text_candidates_are_extracted_before_formula_is_frozen(monk
         ),
     )
     merged = await creation_plan.merge_extracted_creation_facts(db=object(), state=current, node_run_id="merge")
-    assert merged["production_order"]["title_formula_code"] == "FRT16"
+    assert merged["production_order"]["title_formula_code"] in {"FRT16", "FRT23"}
     assert merged["creation_plan_gap_analysis"]["missing_variable_codes"] == []
     assert "case_background" not in facts and "craft_duration" not in facts

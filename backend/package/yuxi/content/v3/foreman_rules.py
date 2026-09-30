@@ -11,7 +11,7 @@ from typing import Any
 CATALOG_PATH = Path(__file__).with_name("fixtures") / "foreman_rule_catalog_v1.json"
 DIRECTION_MATRIX_PATH = Path(__file__).with_name("fixtures") / "foreman_direction_matrix_v2.json"
 METHOD_CODES = {f"FRM{index:02d}" for index in range(1, 13)}
-TITLE_CODES = {f"FRT{index:02d}" for index in range(1, 23)} - {
+TITLE_CODES = {f"FRT{index:02d}" for index in range(1, 24)} - {
     "FRT13",
     "FRT14",
     "FRT15",
@@ -55,7 +55,7 @@ def load_foreman_rule_catalog(
         raise ForemanRuleValidationError("装修工长正文模式必须完整覆盖 FRM01～FRM12")
     if {item.get("code") for item in payload.get("title_formulas") or []} != TITLE_CODES:
         raise ForemanRuleValidationError(
-            "装修工长标题公式必须完整覆盖 FRT01～FRT12、FRT16 及 FRT20～FRT22（不含已删除的日常巡检标题）"
+            "装修工长标题公式必须完整覆盖 FRT01～FRT12、FRT16 及 FRT20～FRT23（不含已删除的日常巡检标题）"
         )
     if {item.get("code") for item in payload.get("content_formulas") or []} != BODY_CODES:
         raise ForemanRuleValidationError("装修工长正文公式必须完整覆盖 FRB01～FRB16（不含已删除的 FRB12）")
@@ -133,6 +133,10 @@ def load_foreman_rule_catalog(
             raise ForemanRuleValidationError("人设自荐必须包含 FRT12 地域+身份+业务标题公式")
         if direction == "CT07" and "FRT22" not in group["title_formula_candidate_codes"]:
             raise ForemanRuleValidationError("人设自荐必须包含 FRT22 痛点问题+专业主张标题公式")
+        if direction == "CT06" and "FRT16" not in group["title_formula_candidate_codes"]:
+            raise ForemanRuleValidationError("工艺展示必须包含 FRT16 人群/工种+工艺+情绪标题公式")
+        if direction == "CT06" and "FRT23" not in group["title_formula_candidate_codes"]:
+            raise ForemanRuleValidationError("工艺展示必须包含 FRT23 工艺主题+做法/验收主张标题公式")
         if direction not in {"CT03", "CT04", "CT05"} and "FRT06" in group["title_formula_candidate_codes"]:
             raise ForemanRuleValidationError("FRT06 含价格槽位，只能用于报价类型")
         if direction != "CT02" and layer_codes != [
@@ -318,7 +322,7 @@ def _add_craft_daily_variables(bundle: dict[str, Any]) -> None:
 
 
 def upgrade_craft_daily_rules(bundle: dict[str, Any]) -> dict[str, Any]:
-    """同步 CT06/CT07 最新公式及删除项，保留其他运营规则，不修改输入历史版本。"""
+    """仅同步 CT06 工艺展示最新公式及删除项，保留 CT01/02/07 与其他运营规则。"""
     result = deepcopy(bundle)
     catalog = load_foreman_rule_catalog()
     result["title_formulas"] = [
@@ -328,9 +332,9 @@ def upgrade_craft_daily_rules(bundle: dict[str, Any]) -> dict[str, Any]:
     ]
     result["content_formulas"] = [item for item in result["content_formulas"] if item["code"] != "FRB12"]
     for section, codes in (
-        ("methods", {"FRM01", "FRM02", "FRM05", "FRM11", "FRM12"}),
-        ("title_formulas", {f"FRT{i:02d}" for i in range(13, 23)} | {"FRT01", "FRT05", "FRT07", "FRT08", "FRT09", "FRT12"}),
-        ("content_formulas", {f"FRB{i:02d}" for i in range(11, 17)} | {"FRB01", "FRB02", "FRB05"}),
+        ("methods", {"FRM11", "FRM12"}),
+        ("title_formulas", {"FRT16", "FRT23"}),
+        ("content_formulas", {"FRB11", "FRB13", "FRB14", "FRB15", "FRB16"}),
     ):
         existing = {item["code"]: item for item in result[section]}
         for item in catalog[section]:
@@ -342,7 +346,7 @@ def upgrade_craft_daily_rules(bundle: dict[str, Any]) -> dict[str, Any]:
             else:
                 result[section].append(updated)
     for group in result["combination_rules"]:
-        if group.get("content_type_codes") not in (["CT06"], ["CT07"], ["CT01"], ["CT02"]):
+        if group.get("content_type_codes") != ["CT06"]:
             continue
         canonical = next(
             x for x in catalog["combination_rules"] if x["content_type_codes"] == group["content_type_codes"]

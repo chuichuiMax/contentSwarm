@@ -4,7 +4,7 @@
   "source": {
     "document": "装修工长一级内容方向组合表",
     "captured_at": "2026-09-23",
-    "catalog_revision": "foreman-direction-matrix-v8-viral-type-realign",
+    "catalog_revision": "foreman-direction-matrix-v9-ct06-craft-identify",
     "section": "选题类型、内容类型、层级组合、词组组合"
   },
   "groups": [
@@ -245,7 +245,7 @@
       "industry_scope": ["decoration"],
       "combination_type": "single",
       "method_members": [{"method_code": "FRM11", "role": "primary", "order": 1}],
-      "title_formula_candidate_codes": ["FRT16"],
+      "title_formula_candidate_codes": ["FRT23", "FRT16"],
       "body_formula_candidate_codes": ["FRB11", "FRB13", "FRB14", "FRB15", "FRB16"],
       "scenario_description": "工艺展示方向，固定使用工艺展示内容词组和工地照片/工艺节点证据",
       "required_variable_codes": ["product", "process"],

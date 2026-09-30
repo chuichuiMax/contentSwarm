@@ -40,6 +40,7 @@ TITLE_FORMULA_LEXICON_CODES = {
     "FRT20": ("title.oral_emotion", "title.positioning", "title.positive_result", "title.beneficial_result"),
     "FRT21": ("title.pain", "title.question", "title.advice", "title.instruction_value"),
     "FRT22": ("title.pain", "title.question", "title.advice", "title.beneficial_result"),
+    "FRT23": ("title.instruction_value", "title.advice", "title.beneficial_result"),
 }
 
 

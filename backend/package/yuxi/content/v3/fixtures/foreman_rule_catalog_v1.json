@@ -218,6 +218,24 @@
       "risk_rules": ["身份与主张必须来自真实人设资料", "不得展开某套房旧况到完工的案例故事冒充自荐"]
     },
     {
+      "code": "FRT23",
+      "name": "工艺主题+做法/验收主张",
+      "industry_scope": ["decoration"],
+      "suitable_scenes": ["工艺展示", "工艺施工展示"],
+      "core_goal": "用具体工艺、工序或验收主题带出专业做法主张，识别为工艺施工展示而非报价清单或案例空间叙事。",
+      "reference_examples": ["贴砖对缝，这几步决定后期会不会空鼓", "防水不是刷两遍就行，关键看这几个节点", "吊顶造型落地，先对齐这3道工艺"],
+      "source_content": {
+        "slot_schema": [
+          {"code": "craft_topic", "label": "工艺/工序主题", "variable_codes": ["process", "craft_role", "product"], "lexicon_codes": ["title.instruction_value"]},
+          {"code": "craft_claim", "label": "做法/验收主张", "variable_codes": ["advantages", "advantage", "process"], "lexicon_codes": ["title.advice", "title.beneficial_result"]}
+        ],
+        "business_family": "N"
+      },
+      "variable_schema": ["process", "product"],
+      "compatible_methods": ["FRM11"],
+      "risk_rules": ["不得把问清单或分项报价标题冒充工艺展示", "工艺对象必须来自本次已确认资料", "验收或标准结论仅在有依据时使用"]
+    },
+    {
       "code": "FRT01",
       "name": "地域+面积/房型+业务+价格",
       "industry_scope": ["decoration"],
