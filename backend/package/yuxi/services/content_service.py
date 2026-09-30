@@ -15,7 +15,12 @@ from yuxi.content.control.industry.pack import (
     EvaluateIndustryPackRegressionHandler,
     ValidateIndustryPackHandler,
 )
-from yuxi.content.generation import SKILL_VERSIONS, refine_generated_content, review_generated_content
+from yuxi.content.generation import (
+    DEFAULT_DIRECT_GENERATION_PROMPT,
+    SKILL_VERSIONS,
+    refine_generated_content,
+    review_generated_content,
+)
 from yuxi.content.model.industry.pack import CONTENT_TYPE_CODES, IndustryPackPolicy
 from yuxi.content.model.workflows.definition import WorkflowCatalog, WorkflowDefinitionPolicy, workflow_definition_hash
 from yuxi.content.rules import CONTENT_GOALS
@@ -46,6 +51,7 @@ from yuxi.content.schemas import (
     ContentArtifactRegenerate,
     ContentArtifactUpdate,
     ContentBriefPayload,
+    ContentDirectGenerateCreate,
     ContentRunCreate,
     ContentRunResume,
     ContentTaskCreate,
@@ -68,6 +74,14 @@ from yuxi.repositories.content_cover_repository import ContentCoverRepository
 from yuxi.repositories.content_repository import ContentRepository
 from yuxi.repositories.material_library_repository import MaterialLibraryRepository
 from yuxi.services.run_queue_service import get_arq_pool, list_run_stream_events
+from yuxi.services.content_viral_assets import (
+    asset_has_approved_review,
+    check_asset_source,
+    preparation_skill_hash,
+    require_asset,
+    reference_card_variable_codes,
+    published_variable_codes,
+)
 from yuxi.storage.postgres.models_business import AgentRun, User
 from yuxi.storage.postgres.models_content import ContentArtifact, ContentArtifactVersion, ContentTask
 from yuxi.utils.datetime_utils import format_utc_datetime, utc_now_naive
@@ -1959,6 +1973,119 @@ async def create_content_run(db: AsyncSession, user: User, task_id: str, payload
     return result
 
 
+async def create_direct_content_run(
+    db: AsyncSession, user: User, task_id: str, payload: ContentDirectGenerateCreate
+) -> dict[str, Any]:
+    """创建只调用一次模型的轻量内容生成运行。"""
+
+    repo = ContentRepository(db)
+    task = await repo.get_task_for_user(task_id, user, for_update=True)
+    if task is None:
+        raise _content_error(404, "CONTENT_TASK_NOT_FOUND", "内容任务不存在")
+    _require_v3_task(task)
+    brief = task.brief_json or {}
+    form_values = brief.get("form_values") or {}
+    user_request = str(payload.user_request or brief.get("user_request") or "").strip()
+    creative_style = payload.creative_style or form_values.get("creative_style") or {}
+    generation_prompt = str(
+        payload.generation_prompt
+        if payload.generation_prompt is not None
+        else form_values.get("generation_prompt", DEFAULT_DIRECT_GENERATION_PROMPT)
+    ).strip()
+    if not user_request:
+        raise _content_error(409, "CONTENT_TASK_NOT_READY", "请先填写内容需求")
+    if not isinstance(creative_style, dict) or not str(creative_style.get("name") or "").strip():
+        raise _content_error(409, "CONTENT_CREATIVE_STYLE_REQUIRED", "请选择创作风格")
+    visual_material = brief.get("visual_material") or {}
+    if not visual_material:
+        raise _content_error(409, "CONTENT_COVER_MATERIAL_REQUIRED", "请选择封面图片和封面方式")
+    if not visual_material.get("image_asset_id") and not visual_material.get("hycanvas_template_id"):
+        raise _content_error(409, "CONTENT_COVER_IMAGE_REQUIRED", "请选择一张图库图片作为封面原图")
+
+    model_spec = _validate_model_spec(payload.model_spec)
+    template = await repo.get_template(task.industry_template_version_id)
+    reference = await require_asset(db, user, payload.viral_asset_id)
+    prepared = reference.prepared_json or {}
+    card = prepared.get("reference_card") or {}
+    if (
+        not template
+        or reference.industry_slug != template.slug
+        or reference.status != "ready"
+        or reference.preparation_skill_hash != preparation_skill_hash()
+        or not asset_has_approved_review(reference)
+        or card.get("schema_version") != 2
+        or card.get("content_type_code") != task.content_type_code
+        or reference_card_variable_codes(prepared) - await published_variable_codes(db)
+        or not await check_asset_source(db, reference)
+    ):
+        raise _content_error(409, "CONTENT_VIRAL_REFERENCE_MISSING", "所选爆款原文已不可用，请重新选择")
+    source_json = reference.source_json or {}
+    viral_source = {
+        "title": source_json.get("title") or "",
+        "body": source_json.get("body") or "",
+    }
+    if not viral_source["body"]:
+        raise _content_error(409, "CONTENT_VIRAL_REFERENCE_MISSING", "匹配的爆款资产缺少原文")
+
+    request_id = payload.request_id
+    run_repo = AgentRunRepository(db)
+    existing = await run_repo.get_run_by_request_id(request_id)
+    if existing:
+        if existing.uid != str(user.uid):
+            raise _content_error(409, "CONTENT_REQUEST_ID_CONFLICT", "request_id 已被其他用户使用")
+        return _run_response(existing)
+    run_id = str(uuid.uuid4())
+    input_payload = {
+        "run_type": "content_direct",
+        "task_id": task.id,
+        "uid": str(user.uid),
+        "request_id": request_id,
+        "model_spec": model_spec,
+        "creative_style": creative_style,
+        "generation_prompt": generation_prompt,
+        "user_request": user_request,
+        "viral_asset_id": reference.id,
+        "viral_source": viral_source,
+        "content_brief": brief,
+        "visual_material": visual_material,
+        "trusted_external_material_snapshot": (task.runtime_config_snapshot_json or {}).get(
+            "trusted_external_material_snapshot"
+        ),
+    }
+    try:
+        run = await run_repo.create_run(
+            run_id=run_id,
+            thread_id=task.id,
+            agent_id="content-direct-generation",
+            uid=str(user.uid),
+            request_id=request_id,
+            input_payload=input_payload,
+            run_type="content_direct",
+            checkpoint_thread_id=f"content-direct:{run_id}",
+        )
+        task.latest_run_id = run.id
+        task.status = "queued"
+        task.current_stage = "generation"
+        task.error_json = None
+        await repo.track(
+            "content_direct_run_started",
+            uid=str(user.uid),
+            task_id=task.id,
+            run_id=run.id,
+            properties={"viral_asset_id": reference.id},
+        )
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        existing = await run_repo.get_run_by_request_id(request_id)
+        if existing and existing.uid == str(user.uid):
+            return _run_response(existing)
+        raise _content_error(409, "CONTENT_REQUEST_ID_CONFLICT", "request_id 冲突")
+    queue = await get_arq_pool()
+    await queue.enqueue_job("process_direct_content_run", run.id, _job_id=f"content-direct:{run.id}")
+    return _run_response(run)
+
+
 async def resume_content_run(db: AsyncSession, user: User, run_id: str, payload: ContentRunResume) -> dict[str, Any]:
     run_repo = AgentRunRepository(db)
     parent = await run_repo.get_run_for_user(run_id, str(user.uid))
@@ -2017,7 +2144,7 @@ async def retry_content_node(
 async def get_content_run(db: AsyncSession, user: User, run_id: str) -> dict[str, Any]:
     run_repo = AgentRunRepository(db)
     run = await run_repo.get_run_for_user(run_id, str(user.uid))
-    if run is None or run.run_type not in {"content", "content_resume"}:
+    if run is None or run.run_type not in {"content", "content_resume", "content_direct"}:
         raise _content_error(404, "CONTENT_RUN_NOT_FOUND", "内容运行不存在")
     root, content_runs, delegated_runs = await run_repo.list_content_run_family(run)
     run_ids = [item.id for item in content_runs]

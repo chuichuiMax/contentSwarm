@@ -81,12 +81,23 @@ class ViralAssetRepository:
         return (await self.db.execute(query)).scalar_one_or_none()
 
     async def list(
-        self, *, kb_ids: list[str], industry_slug: str | None = None, ready_only: bool = False, limit: int = 100
+        self,
+        *,
+        kb_ids: list[str],
+        industry_slug: str | None = None,
+        ready_only: bool = False,
+        content_type_code: str | None = None,
+        limit: int = 100,
     ):
         query = select(ContentViralArticleVersion).where(ContentViralArticleVersion.kb_id.in_(kb_ids))
         if industry_slug:
             query = query.where(ContentViralArticleVersion.industry_slug == industry_slug)
         if ready_only:
             query = query.where(ContentViralArticleVersion.status == "ready")
+        if content_type_code:
+            query = query.where(
+                ContentViralArticleVersion.prepared_json["reference_card"]["content_type_code"].as_string()
+                == content_type_code
+            )
         query = query.order_by(ContentViralArticleVersion.created_at.desc(), ContentViralArticleVersion.id).limit(limit)
         return list((await self.db.execute(query)).scalars())

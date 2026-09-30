@@ -225,7 +225,10 @@ async def test_unified_creation_preserves_inputs_and_existing_request_sequence()
                     await expect(request_input).to_have_value(content)
                     await page.locator("#creation-model").fill("ui-test-model")
                     await expect(submit).to_be_enabled(timeout=30000)
-                    await expect(page.locator(".poster-choice.selected img")).to_be_visible(timeout=30000)
+                    await expect(page.locator(".poster-choice.selected")).to_be_visible(timeout=30000)
+                    await expect(page.get_by_role("button", name="放大查看模板叠加效果").locator("img")).to_be_visible(
+                        timeout=30000
+                    )
                     await page.locator(".poster-choice.selected").scroll_into_view_if_needed()
                     await page.screenshot(path=f"/tmp/content-unified-locked-dark-{width}.png", full_page=True)
                     await submit.click()

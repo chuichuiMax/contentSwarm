@@ -2256,6 +2256,10 @@ async def set_current_cover(
     if asset is None or asset.role != "output":
         raise _error(404, "COVER_ASSET_NOT_FOUND", "封面结果不存在")
     version = await repo.set_current_cover(artifact=artifact, asset=asset, job=job, owner_uid=_owner_uid(user))
+    hycanvas_snapshot = (job.result_json or {}).get("hycanvas_design_snapshot") or {}
+    if hycanvas_snapshot:
+        artifact.hycanvas_design_snapshot = hycanvas_snapshot
+        version.hycanvas_design_snapshot = hycanvas_snapshot
     await db.commit()
     return {
         "artifact": artifact.to_dict(),

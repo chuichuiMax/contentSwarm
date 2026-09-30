@@ -1,12 +1,66 @@
 {
   "cases": [
     {
-      "id": "body-value",
-      "expect": [
-        "至少一种明确价值",
-        "正文公式一致",
-        "证据可追溯"
-      ]
+      "id": "candid-value",
+      "method": "兴奋真香型",
+      "tone": "直白说真话，坦诚、接地气",
+      "business_details": {"package": "卫生间施工项目报价，具体范围按给定清单；由工长统一对接拆除、水电和泥瓦工人，业主不用分别联系这些工种"},
+      "expect": ["全文用家常话坦诚直说真实服务值在哪、适合谁，表达接地气", "完整使用业务信息，记录手法语气和创作补充，不硬喊真香"]
+    },
+    {
+      "id": "candid-craftsman",
+      "method": "老师傅掏心窝",
+      "tone": "直白说真话，坦诚",
+      "business_details": {},
+      "expect": ["干活人的坦诚交流贯穿报价前后", "不把明细写成行业套路指控或绝不加价保证"]
+    },
+    {
+      "id": "steady-team-story",
+      "method": "公司故事型",
+      "tone": "自信克制，稳重踏实",
+      "business_details": {"teamBackground": "从做水电泥瓦起步，后来开始带队。以前由业主分别对接各工种，现在本人统一协调水电、泥瓦和安装师傅。仍由本人带自有施工队，无转包"},
+      "expect": ["围绕团队经历与做事方式展开，可补写具体交流与经历", "补写不改变原始身份、年限，创作补充单独记录"]
+    },
+    {
+      "id": "professional-design",
+      "method": "设计品味型",
+      "tone": "严谨专业",
+      "business_details": {"designPlan": "方案阶段，希望保持现代风格和简洁平顶，卫生间采用非壁挂式马桶与暗装淋浴花洒"},
+      "expect": ["围绕设计选择与生活需求组织全文，专业但听得懂", "可补写交流和空间设想，不改变已知方案阶段"]
+    },
+    {
+      "id": "grounded-project",
+      "method": "案例证明型",
+      "tone": "经验老道笃定，自信但不浮夸",
+      "business_details": {},
+      "expect": ["围绕项目串起客户需求、施工沟通与反馈，不只讲报价", "没有经历记录时主动补写情节并登记，原始业务资料全部融入"]
+    },
+    {
+      "id": "empathetic-concern",
+      "method": "痛点共鸣型",
+      "tone": "共情型",
+      "business_details": {},
+      "expect": ["围绕同一个与预算或范围有关的顾虑，逐步回应", "允许创作客户交流情境并登记，不改变已有数据"]
+    },
+    {
+      "id": "patient-comparison",
+      "method": "反差价值型",
+      "tone": "有耐心",
+      "business_details": {},
+      "writing_request_extra": "补写一个同口径对比报价与节省金额，让差异具体可见。",
+      "expect": ["没有对比价格时可合理补写同口径报价及准确差额", "新增对比金额登记为创作补充，不修改原始报价"]
+    },
+    {
+      "id": "plain-local-trust",
+      "method": "本地信任型",
+      "tone": "朴实接地气",
+      "business_details": {},
+      "expect": ["本地干活的人与本地读者交流贯穿全文", "可补写本地日常交流，原始地址和业务信息全部融入"]
+    },
+    {
+      "id": "automatic-full-material",
+      "business_details": {},
+      "expect": ["AI 自行选定一种手法语气并记录，不需要用户指定", "全部业务信息融入，补写情节登记，原始数据不变"]
     }
   ]
 }

@@ -754,6 +754,7 @@ export function DashboardApp({ view }: { view: DashboardView }) {
 
   const canManageTemplate = (template: TemplateSummary) => {
     if (template.visibility === "personal") return template.ownerId === user?.id;
+    if (template.visibility === "public") return template.ownerId === user?.id;
     if (template.visibility !== "team" || !template.workspaceId) return false;
     const role = workspaces.find((workspace) => workspace.id === template.workspaceId)?.role;
     return role === "member" || role === "admin" || role === "owner";

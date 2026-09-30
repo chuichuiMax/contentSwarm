@@ -1,13 +1,23 @@
 {
   "module_id": "viral-body-author",
-  "version": "2.0.0",
+  "version": "3.1.0",
   "applies_when": {
     "creation_mode": "viral_rewrite"
   },
   "rule_ids": [
-    "viral-body-author.v2"
+    "viral-body-author.v3"
   ],
   "runtime_rules": {
-    "writing_mode": "reference_rewrite"
+    "writing_mode": "reference_rewrite",
+    "writing_styles": {
+      "兴奋真香型": "直白说真话，坦诚、接地气",
+      "老师傅掏心窝": "直白说真话，坦诚",
+      "公司故事型": "自信克制，稳重踏实",
+      "设计品味型": "严谨专业",
+      "案例证明型": "经验老道笃定，自信但不浮夸",
+      "痛点共鸣型": "共情型",
+      "反差价值型": "有耐心",
+      "本地信任型": "朴实接地气"
+    }
   }
 }

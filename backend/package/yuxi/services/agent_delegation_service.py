@@ -272,7 +272,7 @@ class AgentDelegationService:
                 for module in frozen_modules
                 if module["slug"] in request.required_skills
             ]
-        from yuxi.content.model.raw_reference import is_raw_reference
+        from yuxi.content.model.raw_reference import has_writing_plan, is_raw_reference
 
         plain_text = request.node_run.node_id == "generate_content" and is_raw_reference(
             request.input_payload.get("production_pack") or {}
@@ -281,19 +281,32 @@ class AgentDelegationService:
         if plain_text:
             context._content_max_model_calls = 1
             context.model_retry_times = 0
-            author = next(m for m in frozen_modules if m["slug"] == "single-blueprint-author")
+            writing_modules = [
+                m for m in frozen_modules if m["slug"] in {"single-blueprint-author", "viral-body-author"}
+            ]
+            context._runtime_skill_snapshots = [
+                {key: module[key] for key in ("slug", "version", "content_hash")} for module in writing_modules
+            ]
             context._content_applied_skill_instructions = {
-                author["slug"]: {
+                module["slug"]: {
                     "mode": "verbatim_user_instruction",
-                    "version": author["version"],
-                    "content_hash": author["content_hash"],
-                    "applied_hash": hashlib.sha256(author["instructions"].encode()).hexdigest(),
-                    "instruction_chars": len(author["instructions"]),
+                    "version": module["version"],
+                    "content_hash": module["content_hash"],
+                    "applied_hash": hashlib.sha256(module["instructions"].encode()).hexdigest(),
+                    "instruction_chars": len(module["instructions"]),
                 }
+                for module in writing_modules
             }
         runtime_snapshot = build_runtime_config_snapshot(agent=agent, context=context, request=request)
         if plain_text:
-            runtime_snapshot.update(tools=[], mcps=[], knowledges=[], output_contract="PlainArticleTextV1")
+            runtime_snapshot.update(
+                tools=[],
+                mcps=[],
+                knowledges=[],
+                output_contract="PlannedArticleTextV1"
+                if has_writing_plan(request.input_payload["production_pack"])
+                else "PlainArticleTextV1",
+            )
             runtime_snapshot["limits"]["max_model_calls"] = 1
         visible_payload = get_input_contract_model(request.input_contract).model_validate(request.input_payload)
         node_input_payload = {
@@ -370,10 +383,14 @@ class AgentDelegationService:
                 ).encode()
             ).hexdigest()
             node_input = node_input.model_copy(update={"runtime_config_snapshot": runtime_snapshot})
-        collector = None if plain_text else ContentNodeResultCollector(
-            contract_name=request.output_contract,
-            domain_context=request.domain_context,
-            runtime_context=context,
+        collector = (
+            None
+            if plain_text
+            else ContentNodeResultCollector(
+                contract_name=request.output_contract,
+                domain_context=request.domain_context,
+                runtime_context=context,
+            )
         )
         context._content_node_tool_scope = runtime_snapshot["tools"]
         context._content_node_result_tool_name = request.result_tool_name

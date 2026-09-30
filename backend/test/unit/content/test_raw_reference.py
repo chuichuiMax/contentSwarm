@@ -1,4 +1,5 @@
 import json
+import shutil
 from copy import deepcopy
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -7,7 +8,7 @@ import pytest
 from langchain_core.messages import AIMessage
 
 from yuxi.content.control.workflow.deterministic_node import V3DeterministicNodeHandler
-from yuxi.content.model.raw_reference import assemble_article, project_input
+from yuxi.content.model.raw_reference import PLAN_INSTRUCTION, TOPIC_INSTRUCTION, assemble_article, project_input
 from yuxi.content.v3.modular_rules import build_modular_rule_bundle
 from yuxi.services.agent_delegation_service import AgentDelegationService
 
@@ -27,7 +28,7 @@ TOPICS = [
 
 @pytest.fixture
 def payload():
-    return {
+    result = {
         "raw_business_json": {
             "persona": {"skills": ["工长", "泥瓦"], "tone": "有耐心"},
             "requirementType": {"prices": [{"content": "24墙拆除：40元/㎡"}]},
@@ -39,6 +40,9 @@ def payload():
             "strategy_snapshot": {"title_formula": {"code": "FRT07"}, "body_formula": {"code": "FRB06"}},
         },
     }
+    # 保留无首行元数据的历史输出契约测试。
+    result["production_pack"]["content_rule_bundle"]["single_blueprint"].pop("article_output_format")
+    return result
 
 
 def test_prompt_contains_exactly_original_reference_json_and_one_instruction(payload):
@@ -73,6 +77,63 @@ def test_missing_original_data_does_not_fall_back_to_compiled_facts(payload):
         project_input(payload)
 
 
+def test_frozen_body_skill_and_explicit_writing_request_reach_model_without_changing_data(payload):
+    request = "全文使用案例证明型，保留报价明细。"
+    payload["production_pack"]["writing_request"] = request
+    quote = "石膏板吊顶（平顶）：70 元 /㎡ ×10㎡ =280 元；整套人工合计：12060元"
+    payload["raw_business_json"]["requirementType"]["prices"][0]["content"] = quote
+    original = deepcopy(payload)
+    modules = {m["slug"]: m for m in payload["production_pack"]["content_rule_bundle"]["modules"]}
+
+    view = project_input(payload)
+
+    assert view["本篇写作要求"] == request
+    assert view["仿写要求"] == "\n\n".join(
+        [
+            modules["single-blueprint-author"]["instructions"],
+            modules["viral-body-author"]["instructions"],
+            TOPIC_INSTRUCTION,
+        ]
+    )
+    assert modules["single-blueprint-reviewer"]["instructions"] not in view["仿写要求"]
+    assert view["原始业务JSON"] == original["raw_business_json"]
+    assert payload == original
+
+
+def test_legacy_frozen_task_keeps_original_prompt_without_current_body_skill(payload):
+    pack = payload["production_pack"]
+    pack["content_rule_bundle"]["modules"] = [
+        {"slug": "single-blueprint-author", "instructions": "历史冻结的写作要求", "version": "3.0.0"}
+    ]
+    pack["writing_request"] = "历史输入中未投影的要求"
+
+    view = project_input(payload)
+
+    assert view["仿写要求"] == f"历史冻结的写作要求\n\n{TOPIC_INSTRUCTION}"
+    assert set(view) == {"仿写要求", "爆款原文", "原始业务JSON"}
+
+
+def test_changing_live_body_skill_changes_new_bundle_but_not_frozen_model_input(payload, tmp_path, monkeypatch):
+    from yuxi.content.v3 import modular_rules
+
+    skill_root = tmp_path / "skills"
+    shutil.copytree(modular_rules._SKILL_ROOT, skill_root)
+    monkeypatch.setattr(modular_rules, "_SKILL_ROOT", skill_root)
+    before = project_input(payload)
+    path = skill_root / "viral-body-author/SKILL.md"
+    path.write_text(path.read_text() + "\n新增的下一版本写法。\n")
+
+    new_bundle = build_modular_rule_bundle({}, single_blueprint=True)
+
+    old_bundle = payload["production_pack"]["content_rule_bundle"]
+    old_body = next(m for m in old_bundle["modules"] if m["slug"] == "viral-body-author")
+    new_body = next(m for m in new_bundle["modules"] if m["slug"] == "viral-body-author")
+    assert new_body["content_hash"] != old_body["content_hash"]
+    assert new_bundle["bundle_hash"] != old_bundle["bundle_hash"]
+    assert new_body["instructions"] != old_body["instructions"]
+    assert project_input(payload) == before
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("title", "expected_status"),
@@ -88,9 +149,7 @@ async def test_reference_comparison_price_needs_its_own_business_evidence(payloa
     }
     payload["raw_business_json"] = {"requirementType": {"prices": [{"content": "整套人工报价1.206w，合计12060元"}]}}
     view = project_input(payload)
-    assert "数字事实（包括中文数字）只能来自原始业务 JSON" in view["仿写要求"]
     assert "已有的金额、面积、数量、年限、单位及报价明细原样保留" in view["仿写要求"]
-    assert "没有对比价格时改用不含数字的预算疑问" in view["仿写要求"]
     state = {
         "production_pack": payload["production_pack"],
         "selected_title": {"text": title},
@@ -167,6 +226,105 @@ def test_inline_trailing_hashtags_are_extracted_as_topics(payload):
     result = assemble_article(text, payload["production_pack"])
     assert result["draft"]["body"] == "厨房想怎么改，咱们慢慢聊。"
     assert result["draft"]["topics"] == ["北京装修", "旧房局改"]
+
+
+@pytest.mark.parametrize(("indent", "separator"), [(None, "\n"), (2, "\n\n"), (None, " ")])
+def test_new_article_records_ai_choice_and_additions_separately_from_publishable_text(payload, indent, separator):
+    pack = payload["production_pack"]
+    pack["content_rule_bundle"] = build_modular_rule_bundle({}, single_blueprint=True)
+    plan = {
+        "method": "反差价值型",
+        "tone": "有耐心",
+        "creative_additions": ["同口径对比报价20000元，差额7940元。"],
+    }
+    body = "整套人工合计：12060元\n\n同口径对比报价20000元，差额7940元。"
+    text = json.dumps(plan, ensure_ascii=False, indent=indent) + f"{separator}长沙施工报价\n\n{body}\n\n#装修 #长沙装修"
+
+    article = assemble_article(text, pack)
+
+    assert article["title"]["text"] == "长沙施工报价"
+    assert article["draft"]["body"] == body
+    assert article["draft"]["raw_model_text"] == text
+    assert article["draft"]["writing_choice"] == {"method": plan["method"], "tone": plan["tone"]}
+    assert article["outline"]["writing_choice"] == article["draft"]["writing_choice"]
+    assert article["outline"]["creative_additions"] == ["同口径对比报价20000元，差额7940元"]
+    assert PLAN_INSTRUCTION in project_input(payload)["仿写要求"]
+
+
+def test_writing_record_matches_quote_transition_with_different_terminal_punctuation(payload):
+    pack = payload["production_pack"]
+    pack["content_rule_bundle"] = build_modular_rule_bundle({}, single_blueprint=True)
+    plan = {
+        "method": "案例证明型",
+        "tone": "经验老道笃定，自信但不浮夸",
+        "creative_additions": ["业主问得仔细，我就逐项说明。"],
+    }
+    body = "业主问得仔细，我就逐项说明：\n整套人工合计：12060元"
+    article = assemble_article(json.dumps(plan, ensure_ascii=False) + f"\n长沙施工报价\n\n{body}", pack)
+
+    assert article["draft"]["body"] == body
+    assert article["draft"]["creative_additions"] == ["业主问得仔细，我就逐项说明"]
+
+
+@pytest.mark.parametrize("change", ["missing_header", "unknown_method", "wrong_tone", "wrong_additions"])
+def test_new_article_rejects_missing_or_inconsistent_writing_record(payload, change):
+    pack = payload["production_pack"]
+    pack["content_rule_bundle"] = build_modular_rule_bundle({}, single_blueprint=True)
+    plan = {"method": "反差价值型", "tone": "有耐心", "creative_additions": []}
+    if change == "unknown_method":
+        plan["method"] = "FRM07"
+    elif change == "wrong_tone":
+        plan["tone"] = "随和型"
+    elif change == "wrong_additions":
+        plan["creative_additions"] = ["没有出现在文章中的补写"]
+    text = "标题\n\n正文" if change == "missing_header" else json.dumps(plan, ensure_ascii=False) + "\n标题\n\n正文"
+
+    with pytest.raises(ValueError):
+        assemble_article(text, pack)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("planned", "registered", "changed_quote", "expected_codes"),
+    [
+        (True, True, False, []),
+        (True, False, False, ["FACT_NUMBER_WITHOUT_SOURCE", "FACT_NUMBER_WITHOUT_SOURCE"]),
+        (False, True, False, ["FACT_NUMBER_WITHOUT_SOURCE", "FACT_NUMBER_WITHOUT_SOURCE"]),
+        (True, True, True, ["ORIGINAL_QUOTE_CHANGED"]),
+    ],
+)
+async def test_creative_comparison_does_not_become_evidence_or_override_original_quote(
+    payload, planned, registered, changed_quote, expected_codes
+):
+    pack = payload["production_pack"]
+    if planned:
+        pack["content_rule_bundle"] = build_modular_rule_bundle({}, single_blueprint=True)
+    platform = pack["content_rule_bundle"]["runtime_rules"]["viral-platform-expression"]
+    platform["forbidden_replacements"] = {"报价": "报J"}
+    addition = "同口径对比报价20000元，差额7940元。"
+    quote = "整套人工合计：12060元"
+    rendered_quote = "整套人工合计：13000元" if changed_quote else quote
+    state = {
+        "production_pack": pack,
+        "selected_title": {"text": "长沙装修差额7940元"},
+        "content_draft": {
+            "body": f"{rendered_quote}\n{addition.replace('报价', '报J')}",
+            "topics": TOPICS,
+            "creative_additions": [addition, rendered_quote] if registered else [],
+        },
+        "runtime_config_snapshot": {"raw_business_json": {"requirementType": {"prices": [{"content": quote}]}}},
+        "content_brief": {},
+        "evidence_bundle": {"items": [{"value": quote}]},
+        "strategy_snapshot": {"creation_methods": ["FRM03"], **pack["strategy_snapshot"]},
+    }
+    before = deepcopy(state)
+
+    result = await V3DeterministicNodeHandler._deterministic_validate(db=None, state=state, node_run_id="test")
+
+    assert state == before
+    report = result["validation_report"]
+    assert [c["code"] for c in report["checks"]] == expected_codes
+    assert report["status"] == ("blocked" if expected_codes else "passed")
 
 
 @pytest.mark.parametrize("native_format", [False, True])

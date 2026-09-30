@@ -1089,6 +1089,10 @@ async def test_save_artifact_allows_content_version_without_cover(monkeypatch, r
 
     agent = ContentWorkflowAgent()
     agent._workflow_definition = {"semantic_review_enabled": review_enabled}
+    writing_plan = {
+        "writing_choice": {"method": "反差价值型", "tone": "有耐心"},
+        "creative_additions": ["同口径对比报价20000元。"],
+    }
     result = await agent._save_artifact(
         {
             "task_id": task.id,
@@ -1110,11 +1114,13 @@ async def test_save_artifact_allows_content_version_without_cover(monkeypatch, r
             "validation_report": {"status": "passed", "checks": []},
             "approval_result": {"status": "approved", "reviewer_uid": "user-1"},
             "runtime_config_snapshot": {},
+            "content_outline": writing_plan,
         }
     )
 
     assert result["artifact_version"]["cover_asset_id"] is None
     assert saved["artifact"].cover_asset_id is None
+    assert saved["artifact"].pattern_slot_snapshot["outline"] == writing_plan
     if not review_enabled:
         assert saved["artifact"].review_snapshot["review_mode"] == "deterministic_only"
         assert saved["artifact"].review_snapshot["semantic_review_status"] == "not_run"

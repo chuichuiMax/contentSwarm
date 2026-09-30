@@ -214,9 +214,47 @@ def test_persona_numeric_fields_supply_only_their_declared_units():
 
     assert {"5年", "10个", "10位"} <= set(evidence_number_tokens(evidence))
     assert unsupported_number_tokens("做工长5年，服务10个工地，获10位业主推荐", evidence) == []
+    assert unsupported_number_tokens("获得业主推荐10次，有10个业主推荐", evidence) == []
     assert unsupported_number_tokens("5万元报价，10天完工", evidence) == ["10天", "5万元"]
     evidence["items"][0]["source_type"] = "knowledge_base"
     assert unsupported_number_tokens("做工长5年", evidence) == ["5年"]
+
+
+def test_nested_persona_recommendation_count_keeps_value_and_dimension():
+    evidence = {"items": [{"value": {"persona": {"honors": {"ownerRecommendCount": "10"}}}}]}
+
+    assert unsupported_number_tokens("有10次业主推荐，10位业主的支持", evidence) == []
+    assert unsupported_number_tokens("推荐11次，节省10元，工期10天", evidence) == ["10元", "10天", "11次"]
+
+
+def test_flattened_count_evidence_allows_equivalent_count_units_only():
+    evidence = {
+        "items": [
+            {
+                "source_type": "manual_input",
+                "value": "业主推荐10次，累计服务工地10个。",
+            }
+        ]
+    }
+
+    assert unsupported_number_tokens("我有10位业主推荐，也服务过10个工地", evidence) == []
+    assert unsupported_number_tokens("推荐11位，报价10元，工期10天", evidence) == ["10元", "10天", "11位"]
+
+
+def test_registered_creative_amount_can_recur_but_does_not_allow_other_units_or_claims():
+    report = validate_content(
+        title="长沙装修差额7940元",
+        body="同口径对比报价20000元，差额7940元。保证节省7940万元。",
+        topics=["差额7940元"],
+        brief={},
+        evidence_bundle={"items": []},
+        strategy={"methods": ["FRM07"], "title_formula_code": "FRT07", "body_formula_code": "FRB06"},
+        creative_number_contexts=("同口径对比报价20000元，差额7940元",),
+    )
+
+    numbers = [c["message"] for c in report["checks"] if c["code"] == "FACT_NUMBER_WITHOUT_SOURCE"]
+    assert numbers == ["数字“7940万元”没有出现在证据包中", "数字“7940元”没有出现在证据包中"]
+    assert any(c["code"] == "CONTENT_HIGH_RISK_CLAIM" for c in report["checks"])
 
 
 def test_quote_currency_shorthand_allows_yuan_without_allowing_new_amounts_or_units():

@@ -191,9 +191,19 @@ def build_modular_rule_bundle(content_brief: dict[str, Any], *, single_blueprint
             }
             for slug in ("single-blueprint-author", "single-blueprint-reviewer")
         ]
+        if snapshot["single_blueprint"].get("writing_mode") == "raw_reference_text":
+            body_module = next(module for module in modules if module["slug"] == "viral-body-author")
+            snapshot["modules"].append(
+                {
+                    **body_module,
+                    "instructions": (_SKILL_ROOT / "viral-body-author/SKILL.md").read_text().split("---", 2)[2].strip(),
+                }
+            )
         snapshot["runtime_rules"] = {
             key: runtime_rules[key] for key in ("viral-author-core", "viral-platform-expression", "viral-topic-author")
         }
+        if snapshot["single_blueprint"].get("article_output_format") == "planned_article_text_v1":
+            snapshot["runtime_rules"]["viral-body-author"] = runtime_rules["viral-body-author"]
         snapshot["runtime_rules"]["viral-layout-expression"] = snapshot["single_blueprint"].get("layout", {})
         snapshot["active_rule_ids"] = []
         if snapshot["single_blueprint"].get("writing_mode") in {"direct_reference", "raw_reference_text"}:

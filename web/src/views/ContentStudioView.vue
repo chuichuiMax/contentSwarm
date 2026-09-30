@@ -24,7 +24,6 @@ import {
   LayoutTemplate,
   LoaderCircle,
   PencilLine,
-  Play,
   RefreshCw,
   Save,
   Send,
@@ -46,6 +45,7 @@ import { contentApi } from '@/apis/content_api'
 import { materialLibraryApi } from '@/apis/material_library_api'
 import { employeeApi } from '@/apis/employee_api'
 import { CONTENT_TEST_CASES } from '@/data/contentTestCases'
+import { creativeStylesForContentType } from '@/data/creativeStyles'
 import { useContentStudioStore } from '@/stores/contentStudio'
 import { formatContentRequestJson } from '@/utils/contentRequestPayload'
 import { CONTENT_TYPE_NAME_TO_CODE } from '@/utils/content_creation_types'
@@ -89,9 +89,16 @@ const creation = reactive({
   content_type_code: undefined,
   name: ''
 })
+const DEFAULT_DIRECT_GENERATION_PROMPT =
+  '使用我给你的一些元素，根据爆文 换一种表达方式 符合当地的口吻'
 const formValues = reactive({})
 const currentEmployee = ref(null)
 const contentRequestExpanded = ref(false)
+const selectedCreativeStyle = ref('')
+const viralAssets = ref([])
+const viralAssetsLoading = ref(false)
+const selectedViralAssetId = ref('')
+let viralAssetsRequest = 0
 const selectedContentTestCaseId = ref()
 const quoteTestCaseTypeSyncing = ref(false)
 const selectedAngleId = ref('')
@@ -250,6 +257,18 @@ const selectedHandwrittenQuoteTemplate = computed(
 )
 const currentContentType = computed(
   () => store.task?.content_type_code || creation.content_type_code
+)
+const availableCreativeStyleOptions = computed(() =>
+  creativeStylesForContentType(currentContentType.value)
+)
+const selectedCreativeStyleOption = computed(
+  () =>
+    availableCreativeStyleOptions.value.find(
+      (item) => item.value === selectedCreativeStyle.value
+    ) || null
+)
+const selectedViralAsset = computed(
+  () => viralAssets.value.find((item) => item.id === selectedViralAssetId.value) || null
 )
 const availableContentTestCases = computed(() => {
   const category = { CT01: 'self-introduction', CT06: 'construction-craft', CT07: 'daily-work' }[
@@ -479,7 +498,9 @@ const loadHyCanvasTemplates = async () => {
         : 'builtin'
     selectedHyCanvasTemplateId.value =
       coverTemplateTab.value === 'builtin'
-        ? savedVisual.hycanvas_template_id || store.artifact?.hycanvas_design_snapshot?.template_id || ''
+        ? savedVisual.hycanvas_template_id ||
+          store.artifact?.hycanvas_design_snapshot?.template_id ||
+          ''
         : ''
     initializeHyCanvasFields()
   } catch (error) {
@@ -909,6 +930,23 @@ const runFailed = computed(
 const workflowRunStatus = computed(
   () => store.currentRun?.status || store.runAudit?.run?.status || ''
 )
+const isDirectRun = computed(
+  () => store.directStream?.active || store.runAudit?.run?.run_type === 'content_direct'
+)
+const directStreamHeading = computed(() => {
+  if (store.directStream?.phase === 'failed') return '内容生成失败'
+  if (['cover', 'completing'].includes(store.directStream?.phase)) return '正在生成封面'
+  if (store.directStream?.phase === 'completed') return '内容生成完成'
+  return '正在生成内容'
+})
+const directStreamProgressText = computed(() => {
+  if (store.directStream?.phase === 'failed')
+    return store.lastError?.message || '生成失败，请稍后重试'
+  if (store.directStream?.phase === 'cover') return '正文已生成，正在制作并绑定封面…'
+  if (store.directStream?.phase === 'completing') return '封面已生成，正在整理最终结果…'
+  if (store.directStream?.body) return '大模型正在继续输出内容…'
+  return '大模型正在组织标题和正文…'
+})
 const workflowCompleted = computed(
   () => !!store.artifact && String(workflowRunStatus.value).toLowerCase() === 'completed'
 )
@@ -1120,6 +1158,23 @@ const onContentTypeChange = (value) => {
   Object.keys(formValues).forEach((key) => {
     if (!keepKeys.has(key)) delete formValues[key]
   })
+  const savedCreativeStyle =
+    typeof saved.creative_style === 'string'
+      ? saved.creative_style
+      : saved.creative_style?.name || ''
+  selectedCreativeStyle.value = availableCreativeStyleOptions.value.some(
+    (item) => item.value === savedCreativeStyle
+  )
+    ? savedCreativeStyle
+    : ''
+  selectedViralAssetId.value = saved.viral_asset_id || ''
+  const hasSavedValues = Object.values(saved).some(
+    (value) =>
+      value !== undefined &&
+      value !== null &&
+      value !== '' &&
+      (!Array.isArray(value) || value.length)
+  )
   activeFields.value.forEach((field) => {
     if (saved[field.key] !== undefined) formValues[field.key] = saved[field.key]
     else formValues[field.key] = field.type === 'tags' ? [] : ''
@@ -1192,6 +1247,42 @@ const guardProcessNameSelect = (fieldKey, open) => {
   if (!open || fieldKey !== '工艺名称') return
   if (processNameNeedsTypeHint.value) message.warning(PROCESS_NAME_GUARD_HINT)
   formValues.user_request = saved.user_request ?? store.task?.brief?.user_request ?? ''
+  formValues.generation_prompt = saved.generation_prompt ?? DEFAULT_DIRECT_GENERATION_PROMPT
+}
+
+const loadViralAssets = async () => {
+  const request = ++viralAssetsRequest
+  const contentType = currentContentType.value
+  const industrySlug = selectedIndustrySlug.value
+  viralAssets.value = []
+  if (!currentContentType.value || !selectedIndustrySlug.value) {
+    selectedViralAssetId.value = ''
+    viralAssetsLoading.value = false
+    return
+  }
+  viralAssetsLoading.value = true
+  try {
+    const response = await contentApi.listViralAssets({
+      industry_slug: industrySlug,
+      ready_only: true,
+      content_type_code: contentType,
+      limit: 100
+    })
+    if (request !== viralAssetsRequest) return
+    viralAssets.value = (response.items || []).filter(
+      (item) => item.reference_card?.content_type_code === contentType
+    )
+    if (!viralAssets.value.some((item) => item.id === selectedViralAssetId.value)) {
+      selectedViralAssetId.value = viralAssets.value[0]?.id || ''
+    }
+  } catch (error) {
+    if (request !== viralAssetsRequest) return
+    viralAssets.value = []
+    selectedViralAssetId.value = ''
+    message.warning(error.message || '爆款原文加载失败')
+  } finally {
+    if (request === viralAssetsRequest) viralAssetsLoading.value = false
+  }
 }
 
 const revokePreviewUrls = (urls) => {
@@ -1269,7 +1360,8 @@ const initializeVisualSelection = () => {
     !store.task || saved.cover_mode === 'ai' || saved.featured_cover_template_id ? 'ai' : 'builtin'
   selectedHyCanvasTemplateId.value =
     coverTemplateTab.value === 'builtin' ? saved.hycanvas_template_id || '' : ''
-  photoComposition.value = coverTemplateTab.value === 'builtin' ? saved.photo_composition || null : null
+  photoComposition.value =
+    coverTemplateTab.value === 'builtin' ? saved.photo_composition || null : null
 }
 
 const loadGalleryImages = async () => {
@@ -1590,6 +1682,7 @@ const initializeCreationView = async () => {
   creation.content_goal = selectedTemplate.value?.default_goal || 'acquire'
   creation.content_type_code = undefined
   creation.name = ''
+  selectedCreativeStyle.value = ''
   initializeVisualSelection()
   initializeFormValues()
   await loadVisualMaterials()
@@ -2023,6 +2116,14 @@ watch(directionOptions, (options) => {
   if (!options.some((item) => item.code === creation.content_type_code))
     creation.content_type_code = undefined
 })
+watch(
+  [currentContentType, selectedIndustrySlug],
+  () => {
+    if (!selectedCreativeStyleOption.value) selectedCreativeStyle.value = ''
+    void loadViralAssets()
+  },
+  { immediate: true }
+)
 watch(selectedImageItemId, (itemId) => void loadSelectedImagePreview(itemId))
 watch(
   [selectedImageItemId, selectedHyCanvasTemplateId],
@@ -2219,6 +2320,19 @@ const buildBrief = () => ({
     mp_content_type_id: selectedContentTypeId.value,
     mp_content_type_name: selectedStudioContentType.value?.name || ''
   },
+  form_values: {
+    user_request: String(formValues.user_request || '').trim(),
+    generation_prompt: String(formValues.generation_prompt || '').trim(),
+    ...(selectedCreativeStyleOption.value
+      ? {
+          creative_style: {
+            name: selectedCreativeStyleOption.value.label,
+            instruction: selectedCreativeStyleOption.value.description
+          }
+        }
+      : {}),
+    viral_asset_id: selectedViralAssetId.value || null
+  },
   visual_material:
     selectedImageItemId.value || selectedHyCanvasTemplateId.value || coverTemplateTab.value === 'ai'
       ? {
@@ -2264,6 +2378,18 @@ watch(
 watch([selectedImageItemId, selectedHyCanvasTemplateId, photoComposition, coverTemplateTab], scheduleBriefSave, {
   deep: true
 })
+watch(
+  [
+    selectedImageItemId,
+    selectedHyCanvasTemplateId,
+    photoComposition,
+    coverTemplateTab,
+    selectedCreativeStyle,
+    selectedViralAssetId
+  ],
+  scheduleBriefSave,
+  { deep: true }
+)
 onBeforeUnmount(() => {
   hycanvasPreviewObserver?.disconnect()
   hycanvasPreviewObserver = null
@@ -2325,6 +2451,7 @@ const compileBrief = async () => {
 }
 
 const submitCreation = async () => {
+const submitContentOnlyCreation = async () => {
   if (creationSubmitting.value || quoteTestCaseTypeSyncing.value) return
   if (!selectedContentTypeId.value) {
     message.warning('请选择内容类型')
@@ -2336,6 +2463,14 @@ const submitCreation = async () => {
   }
   if (!String(formValues.user_request || '').trim()) {
     message.warning('请填写内容需求')
+    return
+  }
+  if (!selectedCreativeStyleOption.value) {
+    message.warning('请选择创作风格')
+    return
+  }
+  if (viralAssetsLoading.value || !selectedViralAsset.value) {
+    message.warning('请选择一篇爆款原文')
     return
   }
   if (
@@ -2358,9 +2493,19 @@ const submitCreation = async () => {
     window.clearTimeout(draftSaveTimer)
     await Promise.all(draftSaveRequests)
     await ensureCreationTask()
-    if (!briefLocked.value) await store.compileBrief(buildBrief())
-    if (usesDeterministicPlan.value) await loadCreationPlanPreview()
-    await startGeneration()
+    await store.saveBrief(buildBrief())
+    await store.startDirectRun(modelSpec.value, {
+      user_request: String(formValues.user_request || '').trim(),
+      generation_prompt: String(formValues.generation_prompt || '').trim(),
+      viral_asset_id: selectedViralAssetId.value,
+      creative_style: selectedCreativeStyleOption.value
+        ? {
+            name: selectedCreativeStyleOption.value.label,
+            instruction: selectedCreativeStyleOption.value.description
+          }
+        : null
+    })
+    stage.value = 2
   } catch (error) {
     const missingFields = error.response?.data?.detail?.error?.fields
     message.error(
@@ -2383,18 +2528,6 @@ async function loadCreationPlanPreview() {
     message.error(error.message || '创作计划预检失败')
   } finally {
     creationPlanLoading.value = false
-  }
-}
-
-const startGeneration = async () => {
-  if (!creationPlanCanGenerate.value) {
-    message.warning('请先补齐创作计划缺失资料或准备同类型爆款')
-    return
-  }
-  try {
-    await store.startRun(modelSpec.value)
-  } catch (error) {
-    message.error(error.message || '启动内容生成失败')
   }
 }
 
@@ -2791,6 +2924,81 @@ const returnToContentCreation = async () => {
                 创建任务并填写素材
               </a-button>
             </div>
+
+            <div
+              v-if="availableCreativeStyleOptions.length"
+              class="field-block creative-style-field"
+            >
+              <div class="creative-style-heading">
+                <span id="creative-style-label">创作风格</span>
+                <small>可选，生成时会作为独立创作偏好保存</small>
+              </div>
+              <a-radio-group
+                v-model:value="selectedCreativeStyle"
+                class="creative-style-options"
+                :disabled="briefLocked || creationSubmitting"
+                aria-labelledby="creative-style-label"
+              >
+                <a-radio-button
+                  v-for="item in availableCreativeStyleOptions"
+                  :key="item.value"
+                  :value="item.value"
+                  class="creative-style-option"
+                >
+                  <strong>{{ item.label }}</strong>
+                  <small>{{ item.description }}</small>
+                </a-radio-button>
+              </a-radio-group>
+            </div>
+
+            <div class="direct-generation-fields">
+              <div class="field-block viral-reference-field">
+                <label id="viral-reference-label" for="viral-reference-select">爆款原文</label>
+                <a-select
+                  id="viral-reference-select"
+                  v-model:value="selectedViralAssetId"
+                  show-search
+                  option-filter-prop="label"
+                  :loading="viralAssetsLoading"
+                  :disabled="briefLocked || creationSubmitting || !currentContentType"
+                  placeholder="请选择同类型爆款原文"
+                  aria-labelledby="viral-reference-label"
+                >
+                  <a-select-option
+                    v-for="item in viralAssets"
+                    :key="item.id"
+                    :value="item.id"
+                    :label="item.title"
+                  >
+                    {{ item.title }}
+                  </a-select-option>
+                </a-select>
+                <small v-if="selectedViralAsset" class="viral-reference-summary">
+                  {{ selectedViralAsset.reference_card?.summary || '已选择可用爆款原文' }}
+                </small>
+                <small
+                  v-else-if="currentContentType && !viralAssetsLoading"
+                  class="viral-reference-summary warning"
+                >
+                  当前创作类型暂无已审核爆款原文
+                </small>
+              </div>
+
+              <div class="field-block direct-generation-prompt">
+                <label id="direct-generation-prompt-label" for="direct-generation-prompt">
+                  生成提示词
+                </label>
+                <a-textarea
+                  id="direct-generation-prompt"
+                  v-model:value="formValues.generation_prompt"
+                  :rows="3"
+                  :readonly="briefLocked"
+                  aria-labelledby="direct-generation-prompt-label"
+                  placeholder="请输入新生成时交给大模型的写作要求"
+                />
+              </div>
+            </div>
+
           </template>
 
           <template v-else>
@@ -3026,7 +3234,10 @@ const returnToContentCreation = async () => {
                         </span>
                         <strong>封面原图</strong>
                       </div>
-                      <div v-if="coverTemplateTab === 'builtin'" class="selected-gallery-preview-card">
+                      <div
+                        v-if="coverTemplateTab === 'builtin'"
+                        class="selected-gallery-preview-card"
+                      >
                         <span class="selected-gallery-preview-media">
                           <LoaderCircle
                             v-if="hycanvasCompositePreviewLoading"
@@ -3270,11 +3481,9 @@ const returnToContentCreation = async () => {
               /></a-button>
             </a-tooltip>
             <a-button
-              type="primary"
-              :loading="creationSubmitting"
-              :disabled="quoteTestCaseTypeSyncing || materialSelectorLoading || creationPlanLoading"
-              @click="submitCreation"
-              ><Play :size="17" />开始生成</a-button
+              :disabled="quoteTestCaseTypeSyncing || creationSubmitting || creationPlanLoading"
+              @click="submitContentOnlyCreation"
+              ><Sparkles :size="17" />新生成</a-button
             >
           </footer>
           </template>
@@ -3453,7 +3662,70 @@ const returnToContentCreation = async () => {
 
             <template v-else>
               <div class="workflow-stream">
-                <Transition name="workflow-list" mode="out-in">
+                <section
+                  v-if="isDirectRun"
+                  class="codex-workflow-status direct-stream-status"
+                  :class="store.directStream.phase"
+                  aria-live="polite"
+                >
+                  <div class="codex-workflow-heading">
+                    <span class="codex-workflow-icon">
+                      <CircleAlert v-if="store.directStream.phase === 'failed'" :size="17" />
+                      <CheckCircle2
+                        v-else-if="['completing', 'completed'].includes(store.directStream.phase)"
+                        :size="17"
+                      />
+                      <LoaderCircle v-else class="spin" :size="17" />
+                    </span>
+                    <span class="codex-workflow-copy">
+                      <strong>{{ directStreamHeading }}</strong>
+                    </span>
+                  </div>
+                  <div class="workflow-narrative direct-stream-narrative">
+                    <div
+                      v-if="
+                        store.directStream.title ||
+                        store.directStream.body ||
+                        store.directStream.topics.length
+                      "
+                      class="direct-stream-output"
+                    >
+                      <h2 v-if="store.directStream.title" class="direct-stream-title">
+                        {{ store.directStream.title }}
+                      </h2>
+                      <MarkdownPreview
+                        v-if="store.directStream.body"
+                        class="direct-stream-body"
+                        :content="store.directStream.body"
+                      />
+                      <div v-if="store.directStream.topics.length" class="direct-stream-topics">
+                        <a-tag v-for="topic in store.directStream.topics" :key="topic">
+                          #{{ topic }}
+                        </a-tag>
+                      </div>
+                    </div>
+                    <div class="workflow-thinking-row direct-stream-progress">
+                      <span class="workflow-thinking-indicator" role="status">
+                        <CircleAlert
+                          v-if="store.directStream.phase === 'failed'"
+                          :size="14"
+                          aria-hidden="true"
+                        />
+                        <LoaderCircle v-else class="spin" :size="14" aria-hidden="true" />
+                        <span>{{ directStreamProgressText }}</span>
+                        <span
+                          v-if="store.directStream.phase !== 'failed'"
+                          class="workflow-thinking-dots"
+                          aria-hidden="true"
+                        >
+                          <i></i><i></i><i></i>
+                        </span>
+                      </span>
+                    </div>
+                  </div>
+                </section>
+
+                <Transition v-else name="workflow-list" mode="out-in">
                   <section
                     v-if="activeWorkflowGroup"
                     :key="activeWorkflowGroup.id"
@@ -4540,19 +4812,82 @@ const returnToContentCreation = async () => {
   margin: 0;
   border: 0;
 }
+.direct-generation-fields {
+  display: grid;
+  grid-template-columns: minmax(280px, 0.8fr) minmax(0, 1.2fr);
+  gap: 16px;
+  margin: 24px 0;
+}
+.direct-generation-fields > .field-block {
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid var(--gray-150);
+  border-radius: 8px;
+  background: var(--gray-10);
+}
 .creation-request-heading {
   display: flex;
   align-items: center;
   justify-content: space-between;
   flex-wrap: wrap;
   gap: 8px;
+  margin-bottom: 8px;
   label {
-    font-size: 13px;
+    font-size: 14px;
     font-weight: 600;
   }
   :deep(.ant-select) {
-    width: 240px;
+    width: 220px;
     max-width: 100%;
+  }
+}
+.creation-request :deep(textarea.ant-input) {
+  min-height: 180px;
+  padding: 12px 14px;
+  line-height: 1.7;
+  resize: vertical;
+}
+.creative-style-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+  span {
+    font-size: 13px;
+    font-weight: 600;
+  }
+  small {
+    color: var(--color-text-tertiary);
+    font-size: 12px;
+  }
+}
+.creative-style-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  :deep(.creative-style-option) {
+    height: auto;
+    min-height: 64px;
+    padding: 10px 12px;
+    line-height: 1.35;
+    text-align: left;
+    white-space: normal;
+  }
+  :deep(.creative-style-option strong),
+  :deep(.creative-style-option small) {
+    display: block;
+  }
+  :deep(.creative-style-option strong) {
+    margin-bottom: 4px;
+  }
+  :deep(.creative-style-option small) {
+    max-width: 180px;
+    color: var(--color-text-secondary);
+    font-size: 12px;
+  }
+  :deep(.creative-style-option.ant-radio-button-wrapper-checked small) {
+    color: inherit;
   }
 }
 .creation-submit-bar {
@@ -4723,6 +5058,32 @@ const returnToContentCreation = async () => {
 .field-block > span {
   font-size: 13px;
   font-weight: 600;
+}
+.viral-reference-field > label,
+.direct-generation-prompt > label {
+  font-size: 14px;
+  font-weight: 600;
+}
+.viral-reference-field :deep(.ant-select) {
+  width: 100%;
+}
+.viral-reference-field :deep(.ant-select-selector) {
+  min-height: 40px;
+  align-items: center;
+}
+.direct-generation-prompt :deep(textarea.ant-input) {
+  min-height: 104px;
+  padding: 10px 12px;
+  line-height: 1.65;
+  resize: vertical;
+}
+.viral-reference-summary {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.viral-reference-summary.warning {
+  color: var(--color-warning-700);
 }
 .field-block em {
   margin-left: 3px;
@@ -6052,6 +6413,46 @@ const returnToContentCreation = async () => {
   padding: 0;
   line-height: inherit;
 }
+.direct-stream-status .codex-workflow-icon {
+  color: var(--color-info-700);
+}
+.direct-stream-status.failed .codex-workflow-icon,
+.direct-stream-status.failed .workflow-thinking-indicator {
+  color: var(--color-error-700);
+}
+.direct-stream-status.completing .codex-workflow-icon,
+.direct-stream-status.completed .codex-workflow-icon {
+  color: var(--color-success-700);
+}
+.direct-stream-narrative {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.direct-stream-output {
+  padding: 20px 22px;
+  border: 1px solid var(--gray-150);
+  border-radius: 10px;
+  background: var(--color-bg-container);
+}
+.direct-stream-title {
+  margin: 0 0 16px;
+  color: var(--color-text);
+  font-size: 22px;
+  line-height: 1.45;
+}
+.direct-stream-body {
+  color: var(--color-text);
+}
+.direct-stream-topics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 16px;
+}
+.direct-stream-progress {
+  margin-top: 0;
+}
 .workflow-thinking-row {
   margin-top: 10px;
 }
@@ -6630,6 +7031,9 @@ const returnToContentCreation = async () => {
   .panel-heading {
     flex-direction: column;
   }
+  .direct-generation-fields {
+    grid-template-columns: 1fr;
+  }
   .review-layout {
     grid-template-columns: 1fr;
   }
@@ -6671,6 +7075,9 @@ const returnToContentCreation = async () => {
   }
   .stage-panel {
     padding: 16px;
+  }
+  .creation-request-heading :deep(.ant-select) {
+    width: 100%;
   }
   .workflow-stream,
   .workflow-chat-panel {

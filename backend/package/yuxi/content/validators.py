@@ -13,12 +13,13 @@ NUMBER_PATTERN = re.compile(rf"\d+(?:\.\d+)?(?:{NUMBER_UNITS})?")
 NUMBER_TOKEN_PATTERN = re.compile(rf"(?P<value>\d+(?:\.\d+)?)(?P<unit>{NUMBER_UNITS})?")
 HIGH_RISK_CLAIMS = ("保证", "百分百", "100%", "一定有效", "绝对", "零风险", "最便宜", "第一")
 NUMBER_UNIT_SPACING = re.compile(rf"(?<=\d)\s+(?={NUMBER_UNITS})")
+COUNT_NUMBER_UNITS = {"个", "位", "次", "人"}
 PERSONA_NUMBER_UNITS = {
-    "age": "岁",
-    "workYears": "年",
-    "work_years": "年",
-    "servedSiteCount": "个",
-    "ownerRecommendCount": "位",
+    "age": ("岁",),
+    "workYears": ("年",),
+    "work_years": ("年",),
+    "servedSiteCount": ("个",),
+    "ownerRecommendCount": ("位", "次", "个", "人"),
 }
 
 
@@ -112,10 +113,10 @@ def _structured_number_aliases(value: Any, inherited_unit: str = "") -> set[str]
                 scalar = str(int(nested)) if isinstance(nested, float) and nested.is_integer() else str(nested)
                 aliases.add(_canonical_number_token(f"{scalar}{amount_unit}"))
         for key, nested in value.items():
-            unit = PERSONA_NUMBER_UNITS.get(key)
             scalar = str(nested).strip()
-            if unit and re.fullmatch(r"\d+(?:\.\d+)?", scalar):
-                aliases.add(_canonical_number_token(f"{scalar}{unit}"))
+            if re.fullmatch(r"\d+(?:\.\d+)?", scalar):
+                for unit in PERSONA_NUMBER_UNITS.get(key, ()):
+                    aliases.add(_canonical_number_token(f"{scalar}{unit}"))
             aliases.update(_structured_number_aliases(nested, amount_unit))
     elif isinstance(value, list):
         for nested in value:
@@ -150,9 +151,9 @@ def evidence_number_tokens(evidence_bundle: dict[str, Any]) -> list[str]:
             continue
         tokens.update(_structured_number_aliases(value))
         raw = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
-        for field, unit in PERSONA_NUMBER_UNITS.items():
+        for field, units in PERSONA_NUMBER_UNITS.items():
             for number in re.findall(rf'"{field}"\s*:\s*"?(\d+(?:\.\d+)?)"?', raw):
-                tokens.add(_canonical_number_token(f"{number}{unit}"))
+                tokens.update(_canonical_number_token(f"{number}{unit}") for unit in units)
     return sorted(tokens)
 
 
@@ -181,9 +182,24 @@ def unsupported_number_tokens(content: str, evidence_bundle: dict[str, Any]) -> 
     evidence_text = NUMBER_UNIT_SPACING.sub("", evidence_text)
     content = re.sub(r"[0-9]\ufe0f?\u20e3", "", content)
     allowed = set(evidence_number_tokens(evidence_bundle))
+    allowed_count_values = {
+        matched.group("value")
+        for token in allowed
+        if (matched := NUMBER_TOKEN_PATTERN.fullmatch(token)) and matched.group("unit") in COUNT_NUMBER_UNITS
+    }
     unsupported = set()
     for number in NUMBER_PATTERN.findall(content):
-        if number in evidence_text or _canonical_number_token(number) in allowed:
+        canonical = _canonical_number_token(number)
+        matched = NUMBER_TOKEN_PATTERN.fullmatch(canonical)
+        if (
+            number in evidence_text
+            or canonical in allowed
+            or (
+                matched is not None
+                and matched.group("unit") in COUNT_NUMBER_UNITS
+                and matched.group("value") in allowed_count_values
+            )
+        ):
             continue
         unsupported.add(number)
     return sorted(unsupported)
@@ -199,6 +215,7 @@ def validate_content(
     strategy: dict[str, Any],
     title_publication_year: str | None = None,
     number_authority: Any | None = None,
+    creative_number_contexts: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     checks: list[dict[str, Any]] = []
     combined = f"{title}\n{body}\n{' '.join(topics)}"
@@ -218,6 +235,27 @@ def validate_content(
                     "suggestion": "删除该数字，或补充对应证据",
                 }
             )
+    # 已登记的创作金额可在标题和正文中呼应，按数值及单位核对，不写入原始证据。
+    creative_numbers = {
+        _canonical_number_token(token)
+        for context in creative_number_contexts
+        for token in NUMBER_PATTERN.findall(NUMBER_UNIT_SPACING.sub("", context))
+    }
+    unsupported = set(unsupported_number_tokens(title, evidence_bundle)) - allowed_year_tokens
+    unsupported.update(unsupported_number_tokens(body, evidence_bundle))
+    unsupported = {number for number in unsupported if _canonical_number_token(number) not in creative_numbers}
+    unsupported.update(unsupported_number_tokens(" ".join(topics), evidence_bundle))
+    for number in sorted(unsupported):
+        checks.append(
+            {
+                "code": "FACT_NUMBER_WITHOUT_SOURCE",
+                "level": "error",
+                "location": "content",
+                "message": f"数字“{number}”没有出现在证据包中",
+                "evidence_ids": [],
+                "suggestion": "删除该数字，或补充可追溯的业务事实/知识来源",
+            }
+        )
 
     forbidden_terms = brief.get("forbidden_terms") or []
     for term in forbidden_terms:

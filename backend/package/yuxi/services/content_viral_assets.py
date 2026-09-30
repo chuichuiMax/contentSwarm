@@ -324,11 +324,12 @@ async def import_viral_assets(db, user, payload: ViralAssetImport):
     return {"items": [asset_dict(asset) for asset in assets]}
 
 
-async def list_viral_assets(db, user, *, industry_slug=None, ready_only=False, limit=100):
+async def list_viral_assets(db, user, *, industry_slug=None, ready_only=False, content_type_code=None, limit=100):
     assets = await ViralAssetRepository(db).list(
         kb_ids=await accessible_asset_kbs(user),
         industry_slug=industry_slug,
         ready_only=ready_only,
+        content_type_code=content_type_code,
         limit=limit,
     )
     allowed_variable_codes = await published_variable_codes(db)

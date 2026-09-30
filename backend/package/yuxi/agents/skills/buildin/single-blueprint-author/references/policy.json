@@ -1,6 +1,7 @@
 {
-  "version": "3.0.0",
+  "version": "3.2.0",
   "writing_mode": "raw_reference_text",
+  "article_output_format": "planned_article_text_v1",
   "forbidden_knowledge_base": "封禁词库",
   "title_styles": {"CT02": "local_labor_standard"},
   "allow_price_anchor": true,
@@ -9,7 +10,7 @@
   "review_codes": ["FACTUAL_ACCURACY", "WRITING_QUALITY"],
   "skip_expression_knowledge": true,
   "creative_max_chars": null,
-  "narrative_policy": "允许围绕已有资料合理适当虚构经历与叙事情境；不得改写接口数字、项目参数、身份资质、报价范围，不虚构客户背书、施工成效和服务承诺。虚构叙述不作为接口证据，不得伪挂事实引用；用户要求纪实或真实记录时仅用记录。",
+  "narrative_policy": "完整融入已有业务资料，允许合理补写客户经历、施工情节、反馈和同口径对比价格、预算、节省金额；创作补充单独记录，不作为接口证据。已有数字、项目参数、身份资质与报价范围不改写，不新增保证承诺。用户要求纪实时仅用记录。",
   "creative_min_chars": 0,
   "layout": {"max_paragraph_chars": null, "forbidden_markdown_patterns": ["```", "**"]},
   "expression": {"minimum_semantic_categories": 0, "required_categories": [], "placement_rule": "学习参考表情的情绪、位置和阅读节奏，在本篇对应语境自然使用；报价清单标记和封禁词替换符号不能代替正文情绪表情，有耐心、靠谱不意味着减少表情；参考较少时可按语义补充，不设固定数量或类别配额，不为表情新增段落", "policy_version": "blueprint-expression-v3"},

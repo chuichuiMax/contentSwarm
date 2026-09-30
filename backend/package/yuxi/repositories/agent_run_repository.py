@@ -54,7 +54,7 @@ class AgentRunRepository:
                     await self.db.execute(
                         select(AgentRun).where(
                             AgentRun.parent_run_id.in_(known_ids),
-                            AgentRun.run_type.in_(("content", "content_resume")),
+                            AgentRun.run_type.in_(("content", "content_resume", "content_direct")),
                         )
                     )
                 ).scalars()
