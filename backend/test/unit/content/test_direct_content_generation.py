@@ -9,6 +9,7 @@ import yuxi.content.generation as generation
 async def test_direct_generation_uses_only_requested_inputs(monkeypatch):
     calls = []
     bind_tool_calls = []
+    load_model_calls = []
     deltas = []
 
     class FakeModel:
@@ -36,13 +37,18 @@ async def test_direct_generation_uses_only_requested_inputs(monkeypatch):
                 )
 
     monkeypatch.setattr(generation, "resolve_chat_model_spec", lambda value: value or "default")
-    monkeypatch.setattr(generation, "load_chat_model", lambda **kwargs: FakeModel())
+
+    def fake_load_chat_model(**kwargs):
+        load_model_calls.append(kwargs)
+        return FakeModel()
+
+    monkeypatch.setattr(generation, "load_chat_model", fake_load_chat_model)
 
     async def collect_delta(update):
         deltas.append(update)
 
     result = await generation.generate_direct_content(
-        model_spec=None,
+        model_spec="ark:doubao-seed-2-1-pro-260915",
         creative_style={"name": "反差价值型", "instruction": "用别人报 xx 万、我们 xx 万制造反差"},
         viral_source={"title": "爆款标题", "body": "爆款正文"},
         user_request='{"serialNo":"002","persona":{"age":"45"}}',
@@ -54,6 +60,13 @@ async def test_direct_generation_uses_only_requested_inputs(monkeypatch):
     assert result.title == "费用标题"
     assert result.body == "费用正文"
     assert result.topics == ["费用"]
+    assert load_model_calls == [
+        {
+            "fully_specified_name": "ark:doubao-seed-2-1-pro-260915",
+            "temperature": 0.7,
+            "extra_body": {"thinking": {"type": "disabled"}},
+        }
+    ]
     assert len(calls) == 1
     assert bind_tool_calls == [
         (

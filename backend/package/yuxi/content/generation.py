@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
@@ -11,6 +12,7 @@ from langchain_core.utils.json import parse_partial_json
 from yuxi.agents import load_chat_model, resolve_chat_model_spec
 from yuxi.content.model.forbidden_words import replace_forbidden_words
 from yuxi.content.schemas import ContentArtifactAIEditOutput, ReviewReport
+from yuxi.utils.logging_config import logger
 
 SKILLS_ROOT = Path(__file__).resolve().parents[1] / "agents" / "skills" / "buildin"
 DEFAULT_DIRECT_GENERATION_PROMPT = "使用我给你的一些元素，根据爆文 换一种表达方式 符合当地的口吻"
@@ -91,7 +93,10 @@ async def generate_direct_content(
     """用创作风格、爆款原文和用户原始输入直接生成内容，不执行工作流审核。"""
 
     resolved_model = resolve_chat_model_spec(model_spec)
-    model = load_chat_model(fully_specified_name=resolved_model, temperature=0.7)
+    model_kwargs: dict[str, Any] = {"temperature": 0.7}
+    if resolved_model.startswith("ark:doubao-"):
+        model_kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
+    model = load_chat_model(fully_specified_name=resolved_model, **model_kwargs)
     style_name = str(creative_style.get("name") or "").strip()
     style_instruction = str(creative_style.get("instruction") or "").strip()
     forbidden_lexicon = forbidden_lexicon or {}
@@ -129,6 +134,8 @@ async def generate_direct_content(
     )
     arguments_by_index: dict[int, str] = {}
     streamed_values: dict[str, Any] = {"title": "", "body": "", "topics": []}
+    generation_started_at = time.monotonic()
+    first_chunk_elapsed: float | None = None
 
     async for chunk in streaming_model.astream(messages):
         arguments_changed = False
@@ -140,6 +147,13 @@ async def generate_direct_content(
             normalized_index = index if isinstance(index, int) else 0
             arguments_by_index[normalized_index] = arguments_by_index.get(normalized_index, "") + arguments
             arguments_changed = True
+            if first_chunk_elapsed is None:
+                first_chunk_elapsed = time.monotonic() - generation_started_at
+                logger.info(
+                    "Direct content model first chunk: model={} elapsed={:.2f}s",
+                    resolved_model,
+                    first_chunk_elapsed,
+                )
         if not arguments_changed or on_delta is None:
             continue
 
@@ -186,6 +200,12 @@ async def generate_direct_content(
     residual = [term for term in forbidden_lexicon if term in combined]
     if residual:
         raise ValueError("封禁词替换后仍有残留：" + "、".join(residual))
+    logger.info(
+        "Direct content model completed: model={} first_chunk={:.2f}s total={:.2f}s",
+        resolved_model,
+        first_chunk_elapsed or 0.0,
+        time.monotonic() - generation_started_at,
+    )
     return output
 
 
