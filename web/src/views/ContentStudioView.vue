@@ -21,7 +21,6 @@ import {
   LayoutTemplate,
   LoaderCircle,
   PencilLine,
-  Play,
   RefreshCw,
   Save,
   Send,
@@ -2015,51 +2014,6 @@ onBeforeUnmount(() => {
   })
 })
 
-const submitCreation = async () => {
-  if (creationSubmitting.value || quoteTestCaseTypeSyncing.value) return
-  if (!currentContentType.value && needsContentDirection.value) {
-    message.warning('请选择创作类型')
-    return
-  }
-  if (!String(formValues.user_request || '').trim()) {
-    message.warning('请填写内容需求')
-    return
-  }
-  if (
-    !selectedHandwrittenQuoteTemplate.value &&
-    photoComposition.value?.slots.some((slot) => !slot.image_item_id)
-  ) {
-    message.warning('请填满图片组合的所有位置')
-    return
-  }
-  if (!selectedImageItemId.value && !selectedHandwrittenQuoteTemplate.value) {
-    message.warning('请选择一张图库图片作为封面原图')
-    return
-  }
-  if (coverTemplateTab.value === 'builtin' && !selectedHyCanvasTemplateId.value) {
-    message.warning('请选择一个内置封面模板')
-    return
-  }
-  creationSubmitting.value = true
-  try {
-    window.clearTimeout(draftSaveTimer)
-    await Promise.all(draftSaveRequests)
-    await ensureCreationTask()
-    if (!briefLocked.value) await store.compileBrief(buildBrief())
-    if (usesDeterministicPlan.value) await loadCreationPlanPreview()
-    await startGeneration()
-  } catch (error) {
-    const missingFields = error.response?.data?.detail?.error?.fields
-    message.error(
-      missingFields?.length
-        ? `请补充：${missingFields.map((field) => field.label || field.field).join('、')}`
-        : error.message || '启动内容生成失败'
-    )
-  } finally {
-    creationSubmitting.value = false
-  }
-}
-
 const submitContentOnlyCreation = async () => {
   if (creationSubmitting.value || quoteTestCaseTypeSyncing.value) return
   if (!currentContentType.value && needsContentDirection.value) {
@@ -2133,18 +2087,6 @@ async function loadCreationPlanPreview() {
     message.error(error.message || '创作计划预检失败')
   } finally {
     creationPlanLoading.value = false
-  }
-}
-
-const startGeneration = async () => {
-  if (!creationPlanCanGenerate.value) {
-    message.warning('请先补齐创作计划缺失资料或准备同类型爆款')
-    return
-  }
-  try {
-    await store.startRun(modelSpec.value)
-  } catch (error) {
-    message.error(error.message || '启动内容生成失败')
   }
 }
 
@@ -2507,50 +2449,52 @@ const returnToContentCreation = async () => {
               </a-radio-group>
             </div>
 
-            <div class="field-block viral-reference-field">
-              <label id="viral-reference-label" for="viral-reference-select">爆款原文</label>
-              <a-select
-                id="viral-reference-select"
-                v-model:value="selectedViralAssetId"
-                show-search
-                option-filter-prop="label"
-                :loading="viralAssetsLoading"
-                :disabled="briefLocked || creationSubmitting || !currentContentType"
-                placeholder="请选择同类型爆款原文"
-                aria-labelledby="viral-reference-label"
-              >
-                <a-select-option
-                  v-for="item in viralAssets"
-                  :key="item.id"
-                  :value="item.id"
-                  :label="item.title"
+            <div class="direct-generation-fields">
+              <div class="field-block viral-reference-field">
+                <label id="viral-reference-label" for="viral-reference-select">爆款原文</label>
+                <a-select
+                  id="viral-reference-select"
+                  v-model:value="selectedViralAssetId"
+                  show-search
+                  option-filter-prop="label"
+                  :loading="viralAssetsLoading"
+                  :disabled="briefLocked || creationSubmitting || !currentContentType"
+                  placeholder="请选择同类型爆款原文"
+                  aria-labelledby="viral-reference-label"
                 >
-                  {{ item.title }}
-                </a-select-option>
-              </a-select>
-              <small v-if="selectedViralAsset" class="viral-reference-summary">
-                {{ selectedViralAsset.reference_card?.summary || '已选择可用爆款原文' }}
-              </small>
-              <small
-                v-else-if="currentContentType && !viralAssetsLoading"
-                class="viral-reference-summary warning"
-              >
-                当前创作类型暂无已审核爆款原文
-              </small>
-            </div>
+                  <a-select-option
+                    v-for="item in viralAssets"
+                    :key="item.id"
+                    :value="item.id"
+                    :label="item.title"
+                  >
+                    {{ item.title }}
+                  </a-select-option>
+                </a-select>
+                <small v-if="selectedViralAsset" class="viral-reference-summary">
+                  {{ selectedViralAsset.reference_card?.summary || '已选择可用爆款原文' }}
+                </small>
+                <small
+                  v-else-if="currentContentType && !viralAssetsLoading"
+                  class="viral-reference-summary warning"
+                >
+                  当前创作类型暂无已审核爆款原文
+                </small>
+              </div>
 
-            <div class="field-block direct-generation-prompt">
-              <label id="direct-generation-prompt-label" for="direct-generation-prompt">
-                生成提示词
-              </label>
-              <a-textarea
-                id="direct-generation-prompt"
-                v-model:value="formValues.generation_prompt"
-                :rows="3"
-                :readonly="briefLocked"
-                aria-labelledby="direct-generation-prompt-label"
-                placeholder="请输入新生成时交给大模型的写作要求"
-              />
+              <div class="field-block direct-generation-prompt">
+                <label id="direct-generation-prompt-label" for="direct-generation-prompt">
+                  生成提示词
+                </label>
+                <a-textarea
+                  id="direct-generation-prompt"
+                  v-model:value="formValues.generation_prompt"
+                  :rows="3"
+                  :readonly="briefLocked"
+                  aria-labelledby="direct-generation-prompt-label"
+                  placeholder="请输入新生成时交给大模型的写作要求"
+                />
+              </div>
             </div>
 
             <div class="field-block creation-request">
@@ -2914,13 +2858,6 @@ const returnToContentCreation = async () => {
               :disabled="quoteTestCaseTypeSyncing || creationSubmitting || creationPlanLoading"
               @click="submitContentOnlyCreation"
               ><Sparkles :size="17" />新生成</a-button
-            >
-            <a-button
-              type="primary"
-              :loading="creationSubmitting"
-              :disabled="quoteTestCaseTypeSyncing || materialSelectorLoading || creationPlanLoading"
-              @click="submitCreation"
-              ><Play :size="17" />开始生成</a-button
             >
           </footer>
         </section>
@@ -4237,20 +4174,40 @@ const returnToContentCreation = async () => {
   margin: 0;
   border: 0;
 }
+.direct-generation-fields {
+  display: grid;
+  grid-template-columns: minmax(280px, 0.8fr) minmax(0, 1.2fr);
+  gap: 16px;
+  margin: 24px 0;
+}
+.direct-generation-fields > .field-block {
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid var(--gray-150);
+  border-radius: 8px;
+  background: var(--gray-10);
+}
 .creation-request-heading {
   display: flex;
   align-items: center;
   justify-content: space-between;
   flex-wrap: wrap;
   gap: 8px;
+  margin-bottom: 8px;
   label {
-    font-size: 13px;
+    font-size: 14px;
     font-weight: 600;
   }
   :deep(.ant-select) {
-    width: 240px;
+    width: 220px;
     max-width: 100%;
   }
+}
+.creation-request :deep(textarea.ant-input) {
+  min-height: 180px;
+  padding: 12px 14px;
+  line-height: 1.7;
+  resize: vertical;
 }
 .creative-style-heading {
   display: flex;
@@ -4473,11 +4430,21 @@ const returnToContentCreation = async () => {
 }
 .viral-reference-field > label,
 .direct-generation-prompt > label {
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
 }
 .viral-reference-field :deep(.ant-select) {
   width: 100%;
+}
+.viral-reference-field :deep(.ant-select-selector) {
+  min-height: 40px;
+  align-items: center;
+}
+.direct-generation-prompt :deep(textarea.ant-input) {
+  min-height: 104px;
+  padding: 10px 12px;
+  line-height: 1.65;
+  resize: vertical;
 }
 .viral-reference-summary {
   color: var(--color-text-secondary);
@@ -6294,6 +6261,9 @@ const returnToContentCreation = async () => {
   .panel-heading {
     flex-direction: column;
   }
+  .direct-generation-fields {
+    grid-template-columns: 1fr;
+  }
   .review-layout {
     grid-template-columns: 1fr;
   }
@@ -6335,6 +6305,9 @@ const returnToContentCreation = async () => {
   }
   .stage-panel {
     padding: 16px;
+  }
+  .creation-request-heading :deep(.ant-select) {
+    width: 100%;
   }
   .workflow-stream,
   .workflow-chat-panel {
