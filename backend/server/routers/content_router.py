@@ -9,6 +9,7 @@ from yuxi.content.schemas import (
     ContentArtifactReview,
     ContentArtifactUpdate,
     ContentBriefSave,
+    ContentDirectGenerateCreate,
     ContentFinalizeRequest,
     ContentNodeRetry,
     ContentOCRCorrection,
@@ -72,6 +73,7 @@ from yuxi.services.content_service import (
     ai_edit_content_artifact,
     create_content_rule_draft,
     create_content_run,
+    create_direct_content_run,
     create_content_task,
     delete_content_task,
     delete_content_tasks,
@@ -487,11 +489,19 @@ async def compile_brief(
 async def get_viral_assets(
     industry_slug: str | None = None,
     ready_only: bool = False,
+    content_type_code: str | None = Query(default=None, pattern=r"^CT0[1-7]$"),
     limit: int = Query(default=100, ge=1, le=100),
     current_user: User = Depends(get_required_user),
     db: AsyncSession = Depends(get_db),
 ):
-    return await list_viral_assets(db, current_user, industry_slug=industry_slug, ready_only=ready_only, limit=limit)
+    return await list_viral_assets(
+        db,
+        current_user,
+        industry_slug=industry_slug,
+        ready_only=ready_only,
+        content_type_code=content_type_code,
+        limit=limit,
+    )
 
 
 @content.post("/viral-assets/import")
@@ -786,6 +796,16 @@ async def create_run(
     db: AsyncSession = Depends(get_db),
 ):
     return await create_content_run(db, current_user, task_id, payload)
+
+
+@content.post("/tasks/{task_id}/direct-generate")
+async def direct_generate(
+    task_id: str,
+    payload: ContentDirectGenerateCreate,
+    current_user: User = Depends(get_required_user),
+    db: AsyncSession = Depends(get_db),
+):
+    return await create_direct_content_run(db, current_user, task_id, payload)
 
 
 @content.get("/runs/{run_id}")

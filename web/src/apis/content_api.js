@@ -134,6 +134,8 @@ export const contentApi = {
   compileBrief: (taskId, brief) => apiPost(`/api/content/tasks/${taskId}/compile-brief`, { brief }),
   getRuleBundle: (versionId) => apiGet(`/api/content/rule-versions/${versionId}/bundle`),
   createRun: (taskId, payload) => apiPost(`/api/content/tasks/${taskId}/runs`, payload),
+  directGenerate: (taskId, payload) =>
+    apiPost(`/api/content/tasks/${taskId}/direct-generate`, payload),
   getRun: (runId) => apiGet(`/api/content/runs/${runId}`),
   resumeRun: (runId, payload) => apiPost(`/api/content/runs/${runId}/resume`, payload),
   cancelRun: (runId) => apiPost(`/api/content/runs/${runId}/cancel`),

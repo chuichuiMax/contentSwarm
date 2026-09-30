@@ -11,7 +11,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from yuxi.content.model.raw_reference import is_raw_reference, topic_validation_checks
+from yuxi.content.model.raw_reference import has_writing_plan, is_raw_reference, topic_validation_checks
 from yuxi.content.control.errors import ContentApplicationError
 from yuxi.content.control.evidence import EvidenceApplicationService
 from yuxi.content.control.strategy.recommend_v3 import StrategyPreviewActor
@@ -932,6 +932,18 @@ class V3DeterministicNodeHandler:
                 _display_business_value(brief.get("user_request") or brief_variable_map(brief).get("user_request"))
                 or None
             )
+            creative_style = (brief.get("form_values") or {}).get("creative_style")
+            if isinstance(creative_style, dict):
+                style_name = str(creative_style.get("name") or "").strip()
+                style_instruction = str(creative_style.get("instruction") or "").strip()
+            else:
+                style_name = str(creative_style or "").strip()
+                style_instruction = ""
+            if style_name:
+                style_request = f"本次创作风格：{style_name}。"
+                if style_instruction:
+                    style_request += f"写作要求：{style_instruction}。"
+                writing_request = f"{writing_request}\n{style_request}" if writing_request else style_request
             if (runtime.get("content_rule_bundle", {}).get("single_blueprint") or {}).get(
                 "full_context_repair"
             ) and writing_request:
@@ -2487,7 +2499,7 @@ class V3DeterministicNodeHandler:
         body = draft.get("body", "")
         production_pack = state.get("production_pack") or {}
         blueprint_policy = production_pack.get("content_rule_bundle", {}).get("single_blueprint") or {}
-        from yuxi.content.model.forbidden_words import contains_frozen_term
+        from yuxi.content.model.forbidden_words import contains_frozen_term, replace_forbidden_words
         from yuxi.content.model.single_blueprint import title_publication_year
 
         evidence_bundle = state["evidence_bundle"]
@@ -2510,6 +2522,18 @@ class V3DeterministicNodeHandler:
                         }
                     ],
                 )
+        planned = is_raw_reference(production_pack) and has_writing_plan(production_pack)
+        replacements = (
+            production_pack.get("content_rule_bundle", {})
+            .get("runtime_rules", {})
+            .get("viral-platform-expression", {})
+            .get("forbidden_replacements", {})
+        )
+        creative_contexts = (
+            tuple(replace_forbidden_words(s, replacements) for s in draft.get("creative_additions", []))
+            if planned
+            else ()
+        )
         report = validate_content(
             title=(state.get("selected_title") or {}).get("text", ""),
             body=body,
@@ -2517,6 +2541,7 @@ class V3DeterministicNodeHandler:
             brief=state["content_brief"],
             evidence_bundle=evidence_bundle,
             title_publication_year=title_publication_year(production_pack),
+            creative_number_contexts=creative_contexts,
             strategy={
                 "methods": (state.get("strategy_snapshot") or {}).get("creation_methods"),
                 "title_formula_code": ((state.get("strategy_snapshot") or {}).get("title_formula") or {}).get("code"),
@@ -2524,6 +2549,26 @@ class V3DeterministicNodeHandler:
             },
         )
         if is_raw_reference(production_pack):
+            if planned:
+                # 原始报价仍逐项核验，即使模型把改动后的报价登记为创作补充也不放行。
+                business = (state.get("runtime_config_snapshot") or {}).get("raw_business_json") or {}
+                prices = (business.get("requirementType") or {}).get("prices") or []
+                compact_body = "".join(body.split())
+                for price in prices:
+                    for line in re.split(r"[；;\n]+", price.get("content") or ""):
+                        expected = "".join(replace_forbidden_words(line.strip(), replacements).split())
+                        if expected and expected not in compact_body:
+                            report["checks"].append(
+                                {
+                                    "code": "ORIGINAL_QUOTE_CHANGED",
+                                    "level": "error",
+                                    "location": "body",
+                                    "message": f"原始报价被改动或遗漏：{line.strip()}",
+                                    "evidence_ids": [],
+                                }
+                            )
+                report["creative_additions"] = list(draft.get("creative_additions") or [])
+                report["writing_choice"] = draft.get("writing_choice") or {}
             report["checks"].extend((state.get("channel_result") or {}).get("checks") or [])
             report["checks"].extend(topic_validation_checks(draft.get("topics") or []))
             platform = production_pack["content_rule_bundle"]["runtime_rules"]["viral-platform-expression"]

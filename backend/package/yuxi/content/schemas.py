@@ -88,6 +88,17 @@ class ContentRunCreate(BaseModel):
     model_spec: str | None = None
 
 
+class ContentDirectGenerateCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    request_id: str
+    viral_asset_id: str = Field(min_length=1)
+    model_spec: str | None = None
+    user_request: str | None = None
+    creative_style: dict[str, Any] | None = None
+    generation_prompt: str | None = Field(default=None, max_length=4000)
+
+
 class ContentRunResume(BaseModel):
     request_id: str
     resume: dict[str, Any]

@@ -22,7 +22,7 @@ BUILTIN_SKILLS: list[BuiltinSkillSpec] = [
     BuiltinSkillSpec(
         slug="single-blueprint-author",
         display_name="爆款原文仿写",
-        version="3.0.0",
+        version="3.2.0",
         source_dir=_SKILLS_ROOT / "single-blueprint-author",
         description="把真实资料代入爆款原文，亲切真诚地仿写",
     ),
@@ -254,9 +254,9 @@ BUILTIN_SKILLS: list[BuiltinSkillSpec] = [
     BuiltinSkillSpec(
         slug="viral-body-author",
         display_name="爆款正文仿写",
-        version="2.0.0",
+        version="3.1.0",
         source_dir=_SKILLS_ROOT / "viral-body-author",
-        description="参考爆款完整原文，代入本篇资料，换一种亲切真诚、无营销感的表达自然仿写正文。",
+        description="从八种手法中选定一种及其配套语气，代入真实资料，保持全文主线和口吻一致。",
     ),
     BuiltinSkillSpec(
         slug="viral-persona-author",

@@ -52,6 +52,37 @@ const createClientRequestId = () => {
   return `req-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
 }
 
+const createDirectStreamState = (active = false) => ({
+  active,
+  phase: active ? 'generating' : 'idle',
+  title: '',
+  body: '',
+  topics: []
+})
+
+const applyDirectStreamEvent = (state, eventType, payload = {}) => {
+  if (eventType === 'content.direct.delta') {
+    state.active = true
+    state.phase = 'generating'
+    const { field, value, delta } = payload
+    if (field === 'title' || field === 'body') {
+      state[field] = typeof value === 'string' ? value : `${state[field]}${delta || ''}`
+    } else if (field === 'topics') {
+      state.topics = Array.isArray(value)
+        ? [...value]
+        : [...state.topics, ...(Array.isArray(delta) ? delta : [])]
+    }
+  } else if (state.active && ['content.generated', 'content.cover.started'].includes(eventType)) {
+    state.phase = 'cover'
+  } else if (state.active && eventType === 'content.cover.completed') {
+    state.phase = 'completing'
+  } else if (state.active && eventType === 'error') {
+    state.phase = 'failed'
+  } else if (state.active && eventType === 'end') {
+    state.phase = payload.status === 'completed' ? 'completed' : payload.status || state.phase
+  }
+}
+
 export const useContentStudioStore = defineStore('contentStudio', () => {
   const bootstrap = ref(null)
   const task = ref(null)
@@ -61,6 +92,7 @@ export const useContentStudioStore = defineStore('contentStudio', () => {
   const interrupt = ref(null)
   const runEvents = ref([])
   const runAudit = ref(null)
+  const directStream = ref(createDirectStreamState())
   const history = ref([])
   const historyTotal = ref(0)
   const versions = ref([])
@@ -165,6 +197,7 @@ export const useContentStudioStore = defineStore('contentStudio', () => {
   function handleRunEvent(eventType, envelope, eventId) {
     if (eventId) lastRunSeq = eventId
     const payload = envelope?.payload || envelope || {}
+    applyDirectStreamEvent(directStream.value, eventType, payload)
     if (eventType === 'custom' && payload.name === 'content.node') {
       const existing = runEvents.value.find(
         (item) => item.node_id === payload.node_id && item.run_id === envelope.run_id
@@ -208,6 +241,11 @@ export const useContentStudioStore = defineStore('contentStudio', () => {
     if (!runId) return null
     const response = await contentApi.getRun(runId)
     runAudit.value = response
+    const nextDirectStream = createDirectStreamState(response.run?.run_type === 'content_direct')
+    for (const event of response.events || []) {
+      applyDirectStreamEvent(nextDirectStream, event.event_type, event.payload)
+    }
+    directStream.value = nextDirectStream
     return response
   }
 
@@ -296,6 +334,7 @@ export const useContentStudioStore = defineStore('contentStudio', () => {
     interrupt.value = null
     runEvents.value = []
     runAudit.value = null
+    directStream.value = createDirectStreamState()
     lastRunSeq = '0-0'
     const response = await contentApi.createRun(task.value.id, {
       request_id: createClientRequestId(),
@@ -306,9 +345,26 @@ export const useContentStudioStore = defineStore('contentStudio', () => {
     return response
   }
 
+  async function startDirectRun(modelSpec = null, input = {}) {
+    interrupt.value = null
+    runEvents.value = []
+    runAudit.value = null
+    directStream.value = createDirectStreamState(true)
+    lastRunSeq = '0-0'
+    const response = await contentApi.directGenerate(task.value.id, {
+      request_id: createClientRequestId(),
+      model_spec: modelSpec || null,
+      ...input
+    })
+    applyStartedRun(response)
+    void subscribeRun(response.run_id)
+    return response
+  }
+
   async function resumeRun(resume) {
     if (!currentRun.value?.run_id) return
     interrupt.value = null
+    directStream.value = createDirectStreamState()
     const response = await contentApi.resumeRun(currentRun.value.run_id, {
       request_id: createClientRequestId(),
       resume
@@ -341,6 +397,7 @@ export const useContentStudioStore = defineStore('contentStudio', () => {
     applyStartedRun(response)
     runEvents.value = []
     runAudit.value = null
+    directStream.value = createDirectStreamState()
     lastRunSeq = '0-0'
     void subscribeRun(response.run_id)
     return response
@@ -427,6 +484,7 @@ export const useContentStudioStore = defineStore('contentStudio', () => {
     interrupt.value = null
     runEvents.value = []
     runAudit.value = null
+    directStream.value = createDirectStreamState()
     lastError.value = null
     versions.value = []
     saveStatus.value = 'idle'
@@ -441,6 +499,7 @@ export const useContentStudioStore = defineStore('contentStudio', () => {
     interrupt,
     runEvents,
     runAudit,
+    directStream,
     history,
     historyTotal,
     versions,
@@ -458,6 +517,7 @@ export const useContentStudioStore = defineStore('contentStudio', () => {
     compileBrief,
     saveBrief,
     startRun,
+    startDirectRun,
     resumeRun,
     recoverRun,
     loadRunAudit,

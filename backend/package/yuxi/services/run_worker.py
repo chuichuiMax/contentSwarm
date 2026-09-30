@@ -15,6 +15,7 @@ from yuxi.agents.skills.service import init_builtin_skills
 from yuxi.repositories.agent_run_repository import TERMINAL_RUN_STATUSES, AgentRunRepository
 from yuxi.services.chat_service import stream_agent_chat, stream_agent_resume
 from yuxi.services.content_run_worker import process_content_run, resume_content_run_from_cover
+from yuxi.services.content_direct_worker import process_direct_content_run
 from yuxi.services.content_cover_worker import process_content_cover_job
 from yuxi.services.remote_material_library_worker import process_remote_material_sync_job
 from yuxi.image_design.worker import process_image_design_job
@@ -533,6 +534,7 @@ class WorkerSettings:
     functions = [
         process_agent_run,
         process_content_run,
+        process_direct_content_run,
         resume_content_run_from_cover,
         process_content_cover_job,
         process_remote_material_sync_job,
