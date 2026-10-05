@@ -2,10 +2,13 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import { Plus, Search } from 'lucide-vue-next'
+import { useRouter } from 'vue-router'
 
 import { employeeApi } from '@/apis/employee_api'
 import { roleApi } from '@/apis/role_api'
 import PageHeader from '@/components/shared/PageHeader.vue'
+
+const router = useRouter()
 
 const GENDER_OPTIONS = [
   { value: 'male', label: '男' },
@@ -73,6 +76,11 @@ const optionLabel = (options, value) =>
   options.find((item) => item.value === value)?.label || value || '-'
 
 const isSystemAccount = (employee) => employee?.source === 'user'
+
+const openRoughImages = (employee) => router.push({
+  path: '/materials/images',
+  query: { employee_id: employee.id, gallery: 'rough' }
+})
 
 const loginPortLabel = (ports) => {
   const selected = Array.isArray(ports) ? ports : []
@@ -326,6 +334,11 @@ onMounted(async () => {
           <template #default="{ record }">{{ loginPortLabel(record.login_port) }}</template>
         </a-table-column>
         <a-table-column title="角色" data-index="role" key="role" />
+        <a-table-column title="毛坯图上传数" key="rough_image_count" :width="140" align="center">
+          <template #default="{ record }">
+            <a-button type="link" @click="openRoughImages(record)">{{ record.rough_image_count ?? 0 }}</a-button>
+          </template>
+        </a-table-column>
         <a-table-column title="状态" key="enabled" :width="140">
           <template #default="{ record }">
             <div class="status-cell">

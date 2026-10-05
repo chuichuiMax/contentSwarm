@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { message, Modal } from 'ant-design-vue'
+import { useRoute, useRouter } from 'vue-router'
 import {
   ArrowLeft,
   Download,
@@ -27,6 +28,16 @@ import PageHeader from '@/components/shared/PageHeader.vue'
 import PosterOcrReviewModal from '@/components/content/PosterOcrReviewModal.vue'
 import VisualWorkspaceHeader from '@/components/content/VisualWorkspaceHeader.vue'
 
+const route = useRoute()
+const router = useRouter()
+const targetEmployeeId = computed(() => (
+  route.query.gallery === 'rough' && typeof route.query.employee_id === 'string'
+    ? route.query.employee_id
+    : ''
+))
+const isEmployeeRoughMode = computed(() => Boolean(targetEmployeeId.value))
+const targetEmployee = ref(null)
+
 const tabs = [
   { key: 'image', label: '素材图片', path: '/materials/images' }
 ]
@@ -35,6 +46,9 @@ const userStore = useUserStore()
 const materialScope = ref('private')
 const personalFolder = ref('')
 const personalFolders = ref([])
+const editingFixedFolder = ref(null)
+const fixedFolderName = ref('')
+const fixedFolderSaving = ref(false)
 const personalItems = ref([])
 const personalTotal = ref(0)
 const personalPage = ref(1)
@@ -119,7 +133,18 @@ const orderedCategories = computed(() => {
   const roots = categories.value.filter((item) => !item.parent_id)
   return roots.flatMap((root) => [root, ...categories.value.filter((item) => item.parent_id === root.id)])
 })
-const uploadCategories = computed(() => orderedCategories.value.filter((item) => (item.visibility || 'private') === (currentGallery.value?.visibility || materialScope.value)))
+const uploadCategories = computed(() => orderedCategories.value.filter((item) => {
+  if ((item.visibility || 'private') !== (currentGallery.value?.visibility || materialScope.value)) return false
+  if (materialType.value !== 'image' || item.visibility === 'enterprise') return true
+  return item.is_system || item.can_manage
+}))
+const canUploadCurrentLocation = computed(() => {
+  if (materialType.value !== 'image') return true
+  if (!activeGallery.value && !personalFolder.value) return false
+  if (materialScope.value === 'enterprise') return true
+  if (personalFolder.value) return ['rough', 'uploads'].includes(personalFolder.value)
+  return Boolean(currentGallery.value?.is_system || currentGallery.value?.can_manage)
+})
 const uploadFileLimit = computed(() => materialType.value === 'image' ? 50 : 100)
 const selectedFilesTotalBytes = computed(() => selectedFiles.value.reduce((sum, file) => sum + file.size, 0))
 const uploadProgressText = computed(() => {
@@ -172,6 +197,7 @@ const filteredPersonalGalleries = computed(() => {
   const personal = galleries.value.filter((item) =>
     !item.parent_id &&
     !item.is_system &&
+    item.is_global_personal &&
     (item.visibility || 'private') === 'private'
   )
   if (!term) return personal
@@ -199,7 +225,7 @@ const createCategoryTitle = computed(() => {
     return editingCategory.value?.parent_id ? '编辑二级图库' : '编辑图库'
   }
   if (materialType.value !== 'image') return '新增分类'
-  return categoryParentId.value ? '新建二级图库' : '新建图库'
+  return '新建图库'
 })
 
 function releasePreviews() {
@@ -208,7 +234,7 @@ function releasePreviews() {
 }
 
 async function blobPreview(id, key = id) {
-  const response = await materialLibraryApi.getItemThumbnail(id)
+  const response = await materialLibraryApi.getItemThumbnail(id, targetEmployeeId.value)
   const url = URL.createObjectURL(await response.blob())
   previewUrls.set(key, url)
   return url
@@ -216,17 +242,22 @@ async function blobPreview(id, key = id) {
 
 async function loadCategories() {
   const requestedType = materialType.value
-  const response = await materialLibraryApi.listCategories(requestedType)
+  const response = await materialLibraryApi.listCategories(requestedType, targetEmployeeId.value)
   if (materialType.value === requestedType) {
     categories.value = response.categories || []
     canCreateShared.value = Boolean(response.can_create_shared)
+    targetEmployee.value = response.target_employee || null
+    if (isEmployeeRoughMode.value && response.personal_rough_category_id) {
+      materialScope.value = 'private'
+      activeGallery.value = response.personal_rough_category_id
+    }
   }
 }
 
-function openCreateCategory(parentId = '') {
+function openCreateCategory() {
   categoryEditorMode.value = 'create'
   editingCategory.value = null
-  categoryParentId.value = typeof parentId === 'string' ? parentId : ''
+  categoryParentId.value = ''
   Object.assign(categoryForm, {
     name: '',
     description: '',
@@ -291,10 +322,12 @@ async function saveCategory() {
         material_type: materialType.value,
         parent_id: categoryParentId.value || null,
         ...payload
-      })
-      message.success(categoryParentId.value ? '二级图库已创建' : (materialType.value === 'image' ? '图库已创建' : '分类已创建'))
+      }, targetEmployeeId.value)
+      message.success(materialType.value === 'image' ? '图库已创建' : '分类已创建')
     } else {
-      const response = await materialLibraryApi.updateCategory(materialType.value, editingCategory.value.id, payload)
+      const response = await materialLibraryApi.updateCategory(
+        materialType.value, editingCategory.value.id, payload, targetEmployeeId.value
+      )
       if (activeGallery.value === editingCategory.value.id) activeGallery.value = response.category.id
       materialScope.value = response.category.visibility || 'private'
       message.success(materialType.value === 'image' ? '图库信息已更新' : '分类已更新')
@@ -327,7 +360,8 @@ async function confirmDeleteCategory() {
     await materialLibraryApi.deleteCategory(
       materialType.value,
       deletingCategory.value.id,
-      deleteTargetCategory.value || null
+      deleteTargetCategory.value || null,
+      targetEmployeeId.value
     )
     if (activeGallery.value === deletingCategory.value.id) activeGallery.value = ''
     if (categoryFilter.value === deletingCategory.value.id) categoryFilter.value = ''
@@ -345,7 +379,7 @@ async function confirmDeleteCategory() {
 async function loadGalleries() {
   loading.value = true
   try {
-    const response = await materialLibraryApi.listGalleries()
+    const response = await materialLibraryApi.listGalleries('', targetEmployeeId.value)
     await hydrateGalleries(response)
   } catch (error) {
     message.error(error.message || '图库加载失败')
@@ -376,7 +410,8 @@ async function loadItems() {
       query: query.value,
       sort: sort.value,
       page: page.value,
-      page_size: 24
+      page_size: 24,
+      employee_id: targetEmployeeId.value
     })
     const next = response.items || []
     releasePreviews()
@@ -397,7 +432,7 @@ async function loadPersonalFolders() {
   try {
     const [folderResponse, galleryResponse] = await Promise.all([
       materialLibraryApi.listPersonalFolders(),
-      materialLibraryApi.listGalleries(),
+      materialLibraryApi.listGalleries('', targetEmployeeId.value),
       loadCategories()
     ])
     personalFolders.value = folderResponse.folders || []
@@ -437,6 +472,41 @@ function enterPersonalFolder(folder) {
   void loadPersonalItems()
 }
 
+function openFixedFolderEditor(folder) {
+  editingFixedFolder.value = folder
+  fixedFolderName.value = folder.name
+}
+
+async function saveFixedFolderName() {
+  const name = fixedFolderName.value.trim()
+  if (!name) return message.warning('请输入图库名称')
+  fixedFolderSaving.value = true
+  try {
+    await materialLibraryApi.renamePersonalFolder(editingFixedFolder.value.id, name)
+    editingFixedFolder.value = null
+    await loadPersonalFolders()
+    message.success('图库名称已更新')
+  } catch (error) {
+    message.error(error.message || '保存失败')
+  } finally {
+    fixedFolderSaving.value = false
+  }
+}
+
+function askDeleteFixedFolder(folder) {
+  Modal.confirm({
+    title: `删除“${folder.name}”入口`,
+    content: '删除入口不会删除图库里的素材或文件；删除后该入口不会自动恢复。',
+    okText: '删除入口',
+    okType: 'danger',
+    async onOk() {
+      await materialLibraryApi.deletePersonalFolder(folder.id)
+      await loadPersonalFolders()
+      message.success('入口已删除，素材和文件已保留')
+    }
+  })
+}
+
 function leavePersonalFolder() {
   personalFolder.value = ''
   personalItems.value = []
@@ -461,6 +531,10 @@ function enterGallery(gallery) {
 }
 
 function leaveGallery() {
+  if (isEmployeeRoughMode.value) {
+    void router.push('/model-manage/employees')
+    return
+  }
   const targetGallery = currentGallery.value?.parent_id || ''
   activeGallery.value = targetGallery
   designStyleFilter.value = ''
@@ -718,7 +792,8 @@ async function uploadFiles() {
         selectedFiles.value,
         uploadCategory.value,
         uploadDesignStyle.value,
-        onProgress
+        onProgress,
+        targetEmployeeId.value
       )
     } else {
       response = await contentApi.importCoverPosterTemplates(selectedFiles.value, uploadCategory.value, onProgress)
@@ -811,7 +886,7 @@ async function saveEdit() {
   await materialLibraryApi.updateItem(editingItem.value.id, {
     name: editForm.name.trim(),
     category: editForm.category
-  })
+  }, targetEmployeeId.value)
   editOpen.value = false
   message.success('素材信息已更新')
   await loadItems()
@@ -820,7 +895,7 @@ async function saveEdit() {
 async function downloadItem(item) {
   const response = personalFolder.value === 'works'
     ? await materialLibraryApi.getWorkFile(item.id)
-    : await materialLibraryApi.getItemFile(item.id)
+    : await materialLibraryApi.getItemFile(item.id, targetEmployeeId.value)
   const blob = await response.blob()
   const url = URL.createObjectURL(blob)
   const anchor = document.createElement('a')
@@ -841,7 +916,7 @@ function removeItem(item) {
     okType: 'danger',
     cancelText: '取消',
     async onOk() {
-      await materialLibraryApi.deleteItem(item.id)
+      await materialLibraryApi.deleteItem(item.id, targetEmployeeId.value)
       selectedShareItemIds.value = selectedShareItemIds.value.filter((itemId) => itemId !== item.id)
       message.success('素材已删除')
       await loadItems()
@@ -889,7 +964,7 @@ async function createShare() {
   shareCreating.value = true
   shareUrlForManualCopy.value = ''
   try {
-    const response = await materialLibraryApi.createShare(selectedShareItemIds.value)
+    const response = await materialLibraryApi.createShare(selectedShareItemIds.value, targetEmployeeId.value)
     const shareUrl = currentPublicShareUrl(response.share.url || response.share.page_url || response.share.page_path)
     shareUrlForManualCopy.value = shareUrl
     await copyShareUrl(shareUrl)
@@ -928,6 +1003,14 @@ watch(materialScope, async () => {
   personalFolder.value = ''
   queryInput.value = ''
   personalPage.value = 1
+  await loadItems()
+})
+
+watch(targetEmployeeId, async () => {
+  targetEmployee.value = null
+  activeGallery.value = ''
+  items.value = []
+  await loadCategories()
   await loadItems()
 })
 
@@ -1099,14 +1182,14 @@ onBeforeUnmount(() => {
 <template>
   <div class="material-library-view layout-container">
     <VisualWorkspaceHeader subtitle="集中管理设计可直接使用的图片和封面模板" />
-    <PageHeader title="素材库" :tabs="tabs" :active-key="materialType" :loading="loading" show-border>
+    <PageHeader :title="isEmployeeRoughMode && targetEmployee ? `${targetEmployee.name}的素材库` : '素材库'" :tabs="tabs" :active-key="materialType" :loading="loading" show-border>
       <template #actions>
         <template v-if="materialType === 'image'">
           <a-button v-if="userStore.isAdmin" class="lucide-icon-btn" :loading="remoteSyncing" @click="syncRemoteMaterials">
             <RefreshCw :size="15" />同步远程素材
           </a-button>
-          <a-button v-if="(isGalleryRoot && !personalFolder && (materialScope === 'private' || canCreateShared)) || (isTopLevelGallery && !currentGallery?.is_system && currentGallery?.can_manage)" class="lucide-icon-btn" @click="openCreateCategory(isTopLevelGallery ? activeGallery : '')">
-            <FolderPlus :size="15" />{{ isTopLevelGallery ? '新建二级图库' : '新建图库' }}
+          <a-button v-if="isGalleryRoot && !personalFolder && userStore.isAdmin" class="lucide-icon-btn" @click="openCreateCategory">
+            <FolderPlus :size="15" />新建图库
           </a-button>
           <a-button v-if="isChildGallery" class="lucide-icon-btn" :disabled="!selectedShareItemIds.length" @click="shareOpen = true">
             <Share2 :size="15" />分享{{ selectedShareItemIds.length ? ` (${selectedShareItemIds.length})` : '' }}
@@ -1115,7 +1198,7 @@ onBeforeUnmount(() => {
         <a-button v-else class="lucide-icon-btn" @click="categoryManagerOpen = true">
           <Settings2 :size="15" />分类管理
         </a-button>
-        <a-button v-if="materialScope === 'enterprise' || !personalFolder || personalFolder === 'rough' || personalFolder === 'uploads'" type="primary" class="lucide-icon-btn" @click="openUpload">
+        <a-button v-if="canUploadCurrentLocation" type="primary" class="lucide-icon-btn" @click="openUpload">
           <Upload :size="15" />上传{{ materialType === 'image' ? '图片' : '模板' }}
         </a-button>
       </template>
@@ -1158,6 +1241,10 @@ onBeforeUnmount(() => {
                   <span class="gallery-cover"><span class="folder-art"><Folder :size="44" /><i></i></span><em>{{ folder.count }} 张</em></span>
                   <span class="gallery-copy"><strong>{{ folder.name }}</strong><small>暂未填写图库说明</small><em>装修与家居</em></span>
                 </button>
+                <div v-if="userStore.isAdmin" class="gallery-actions">
+                  <button type="button" :aria-label="`编辑图库 ${folder.name}`" title="编辑图库" @click="openFixedFolderEditor(folder)"><Pencil :size="15" /></button>
+                  <button type="button" class="danger" :aria-label="`删除图库 ${folder.name}`" title="删除图库" @click="askDeleteFixedFolder(folder)"><Trash2 :size="15" /></button>
+                </div>
               </article>
             </div>
           </div>
@@ -1202,16 +1289,16 @@ onBeforeUnmount(() => {
       </template>
       <template v-else>
       <div v-if="materialType === 'image'" class="context-head">
-        <button v-if="activeGallery" type="button" class="back-button" @click="leaveGallery"><ArrowLeft :size="16" />{{ parentGallery ? `返回${parentGallery.name}` : '返回图库' }}</button>
+        <button v-if="activeGallery" type="button" class="back-button" @click="leaveGallery"><ArrowLeft :size="16" />{{ isEmployeeRoughMode ? '返回员工管理' : (parentGallery ? `返回${parentGallery.name}` : '返回图库') }}</button>
         <div>
-          <a-radio-group v-if="isGalleryRoot" v-model:value="materialScope" button-style="solid" @change="activeGallery = ''; page = 1">
+          <a-radio-group v-if="isGalleryRoot && !isEmployeeRoughMode" v-model:value="materialScope" button-style="solid" @change="activeGallery = ''; page = 1">
             <a-radio-button value="private">我的素材</a-radio-button>
             <a-radio-button value="enterprise">企业共享</a-radio-button>
           </a-radio-group>
-          <a-tag v-else>{{ currentGallery?.visibility === 'enterprise' ? '企业共享' : '仅自己可见' }}</a-tag>
-          <h2>{{ activeGallery ? currentGallery?.name : (materialScope === 'enterprise' ? '企业共享图库' : '我的图库') }}</h2>
+          <a-tag v-else>{{ isEmployeeRoughMode ? '员工个人素材' : (currentGallery?.visibility === 'enterprise' ? '企业共享' : (currentGallery?.is_global_personal ? '我的素材 · 全员可见' : '仅自己可见')) }}</a-tag>
+          <h2>{{ isEmployeeRoughMode && targetEmployee ? `${targetEmployee.name} / 毛坯房图库` : (activeGallery ? currentGallery?.name : (materialScope === 'enterprise' ? '企业共享图库' : '我的图库')) }}</h2>
           <p v-if="parentGallery" class="gallery-path">{{ parentGallery.name }} / {{ currentGallery?.name }}</p>
-          <p>{{ activeGallery ? (currentGallery?.description || '这个图库还没有填写说明。') : '个人图库仅自己可见；企业共享图库供本站所有登录成员使用。' }}</p>
+          <p>{{ isEmployeeRoughMode && targetEmployee ? `员工编码：${targetEmployee.employee_code}；本页仅显示该员工个人毛坯房图库。` : (activeGallery ? (currentGallery?.description || '这个图库还没有填写说明。') : '我的素材包含四个固定入口和管理员发布的只读图库；企业共享图库保持现有使用规则。') }}</p>
         </div>
       </div>
       <div v-else class="context-head">
@@ -1271,7 +1358,7 @@ onBeforeUnmount(() => {
             </button>
             <div class="gallery-actions">
               <button v-if="gallery.can_manage" type="button" :aria-label="`编辑图库 ${gallery.name}`" title="编辑图库" @click="openEditCategory(gallery)"><Pencil :size="15" /></button>
-              <button v-if="!gallery.is_system && gallery.can_manage" type="button" class="danger" :aria-label="`删除图库 ${gallery.name}`" title="删除图库" @click="askDeleteCategory(gallery)"><Trash2 :size="15" /></button>
+              <button v-if="gallery.can_manage && (!gallery.is_system || ['reference', 'rough', 'generated'].includes(gallery.image_design_role))" type="button" class="danger" :aria-label="`删除图库 ${gallery.name}`" title="删除图库" @click="askDeleteCategory(gallery)"><Trash2 :size="15" /></button>
             </div>
           </article>
           </div>
@@ -1311,8 +1398,8 @@ onBeforeUnmount(() => {
         </div>
 
         <a-empty v-if="!loading && !filteredGalleries.length && (isGalleryRoot || !items.length)" :image="false" :description="isGalleryRoot ? '没有匹配的图库' : (query ? '未找到匹配素材' : (isTopLevelGallery ? '当前图库还没有图片或二级图库' : '当前图库还没有图片'))">
-          <a-button v-if="!query && isGalleryRoot && (materialScope === 'private' || canCreateShared)" type="primary" class="lucide-icon-btn" @click="openCreateCategory('')"><FolderPlus :size="15" />新建第一个图库</a-button>
-          <a-button v-else-if="!query" type="primary" class="lucide-icon-btn" @click="openUpload"><ImagePlus :size="15" />上传第一份素材</a-button>
+          <a-button v-if="!query && isGalleryRoot && userStore.isAdmin" type="primary" class="lucide-icon-btn" @click="openCreateCategory"><FolderPlus :size="15" />新建第一个图库</a-button>
+          <a-button v-else-if="!query && canUploadCurrentLocation" type="primary" class="lucide-icon-btn" @click="openUpload"><ImagePlus :size="15" />上传第一份素材</a-button>
         </a-empty>
       </a-spin>
       <a-pagination v-if="!isGalleryRoot && total > 24" v-model:current="page" :total="total" :page-size="24" show-less-items @change="loadItems" />
@@ -1334,6 +1421,10 @@ onBeforeUnmount(() => {
         <label><span>账号</span><a-input v-model:value="remoteConfigForm.username" :maxlength="255" autocomplete="off" placeholder="请输入远程素材库账号" /></label>
         <label><span>密码</span><a-input-password v-model:value="remoteConfigForm.password" :maxlength="500" autocomplete="new-password" placeholder="请输入远程素材库密码" /></label>
       </div>
+    </a-modal>
+
+    <a-modal :open="Boolean(editingFixedFolder)" title="编辑图库名称" :confirm-loading="fixedFolderSaving" ok-text="保存" @ok="saveFixedFolderName" @cancel="editingFixedFolder = null">
+      <a-input v-model:value="fixedFolderName" :maxlength="80" placeholder="图库名称" />
     </a-modal>
 
     <a-modal v-model:open="uploadOpen" :title="`上传${materialType === 'image' ? '素材图片' : '封面模板'}`" :confirm-loading="uploading" ok-text="开始上传" @ok="uploadFiles" @cancel="resetUpload">
@@ -1407,9 +1498,9 @@ onBeforeUnmount(() => {
         <label v-if="categoryEditorMode === 'create' && categoryParentId"><span>所属一级图库</span><a-input :value="categoryMap[categoryParentId]?.name" disabled /></label>
         <label v-if="materialType === 'image' && !categoryParentId && !editingCategory?.is_system"><span>可见范围</span>
           <a-radio-group v-model:value="categoryForm.visibility" :disabled="!canCreateShared">
-            <a-radio value="private">仅自己可见</a-radio><a-radio value="enterprise">企业共享</a-radio>
+            <a-radio value="private">我的素材（全员可见）</a-radio><a-radio value="enterprise">企业共享</a-radio>
           </a-radio-group>
-          <small>共享后，本图库及子图库中的素材可供本站所有登录成员使用。</small>
+          <small>放在“我的素材”的图库对所有用户显示，仅创建者可管理；企业共享保持现有使用规则。</small>
         </label>
         <label v-if="materialType === 'image' && !categoryParentId"><span>所属行业 <b>*</b></span><a-select v-model:value="categoryForm.industry_slug" placeholder="请选择一个行业">
           <a-select-option v-for="item in industries" :key="item.slug" :value="item.slug">{{ item.name }}</a-select-option>

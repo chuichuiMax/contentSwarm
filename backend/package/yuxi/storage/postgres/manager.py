@@ -429,6 +429,29 @@ class PostgresManager(metaclass=SingletonMeta):
             "ALTER TABLE IF EXISTS content_material_categories ADD COLUMN IF NOT EXISTS area VARCHAR(32)",
             "ALTER TABLE IF EXISTS content_material_categories ADD COLUMN IF NOT EXISTS image_design_role VARCHAR(20)",
             (
+                "DO $$ BEGIN IF EXISTS (SELECT 1 FROM pg_constraint WHERE "
+                "conname='ck_content_material_category_image_design_role' "
+                "AND conrelid='content_material_categories'::regclass "
+                "AND pg_get_constraintdef(oid) NOT LIKE '%generated%') THEN "
+                "ALTER TABLE content_material_categories DROP CONSTRAINT "
+                "ck_content_material_category_image_design_role; END IF; "
+                "IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE "
+                "conname='ck_content_material_category_image_design_role' "
+                "AND conrelid='content_material_categories'::regclass) THEN "
+                "ALTER TABLE content_material_categories ADD CONSTRAINT ck_content_material_category_image_design_role "
+                "CHECK (image_design_role IS NULL OR image_design_role IN ('reference','rough','generated')); "
+                "END IF; END $$"
+            ),
+            (
+                "ALTER TABLE IF EXISTS content_material_categories "
+                "ADD COLUMN IF NOT EXISTS is_global_personal BOOLEAN NOT NULL DEFAULT FALSE"
+            ),
+            (
+                "CREATE TABLE IF NOT EXISTS content_material_folder_settings ("
+                "folder_key VARCHAR(32) PRIMARY KEY, name VARCHAR(80) NOT NULL, "
+                "deleted_at TIMESTAMP, updated_by VARCHAR(255), updated_at TIMESTAMP)"
+            ),
+            (
                 "ALTER TABLE IF EXISTS content_material_categories ADD COLUMN IF NOT EXISTS "
                 "industry_slug VARCHAR(80) NOT NULL DEFAULT 'uncategorized'"
             ),

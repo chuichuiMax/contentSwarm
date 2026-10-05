@@ -14,12 +14,15 @@ from yuxi.services.material_library_service import (
     MaterialCategoryCreate,
     MaterialCategoryUpdate,
     MaterialShareCreate,
-    _make_image_thumbnail,
+    _can_manage_category,
+    _can_manage_item,
+    _is_target_rough_category,
     _make_share_card_cover,
     _make_share_display_webp,
     _normalize_image,
     create_material_share,
     create_material_category,
+    ensure_initial_enterprise_galleries,
     render_public_material_share_page,
     serialize_public_material_share,
     serialize_item,
@@ -418,16 +421,16 @@ def test_public_material_share_page_uses_snapshot_order_and_renders_share_card_m
     assert page.index("/images/1.webp") < page.index("/images/2.webp")
 
 
-@pytest.mark.parametrize("design_style", ["工业再造", "优雅缤纷", "极简侘寂", "仿生未来"])
 @pytest.mark.asyncio
-async def test_decoration_gallery_child_requires_and_persists_an_allowed_design_style(monkeypatch, design_style):
-    parent = ContentMaterialCategory(
+async def test_only_admin_can_create_image_gallery_and_manual_child_creation_is_disabled(monkeypatch):
+    fallback = ContentMaterialCategory(
         owner_uid="owner-1",
         material_type="image",
-        id="gallery-decoration",
-        industry_slug="decoration",
-        name="222",
+        id="uncategorized",
+        industry_slug="uncategorized",
+        name="未分类",
         sort_order=0,
+        is_system=True,
     )
 
     class FakeDB:
@@ -444,143 +447,197 @@ async def test_decoration_gallery_child_requires_and_persists_an_allowed_design_
         def __init__(self, _db, **_kwargs):
             pass
 
-        async def get_category(self, *_args, **_kwargs):
-            return parent
-
         async def create_category(self, **values):
             return ContentMaterialCategory(**values)
 
     async def ensure_categories(*_args, **_kwargs):
-        return [parent]
+        return [fallback]
 
     monkeypatch.setattr(material_library_service, "MaterialLibraryRepository", FakeRepo)
     monkeypatch.setattr(material_library_service, "ensure_material_categories", ensure_categories)
+    regular_user = SimpleNamespace(id="user-1", uid="owner-1", department_id=None, role="user")
+    admin_user = SimpleNamespace(id="admin-1", uid="owner-1", department_id=None, role="admin")
 
-    with pytest.raises(HTTPException) as missing_style:
+    with pytest.raises(HTTPException) as forbidden:
         await create_material_category(
             FakeDB(),
-            type("User", (), {"id": "user-1", "uid": "owner-1", "department_id": None})(),
-            MaterialCategoryCreate(material_type="image", name="客厅案例", parent_id=parent.id),
+            regular_user,
+            MaterialCategoryCreate(material_type="image", name="我的图库"),
         )
+    assert forbidden.value.status_code == 403
+    assert forbidden.value.detail["error"]["code"] == "MATERIAL_CATEGORY_FORBIDDEN"
 
-    assert missing_style.value.status_code == 422
-    assert missing_style.value.detail["error"]["code"] == "MATERIAL_DESIGN_STYLE_REQUIRED"
-
-    with pytest.raises(HTTPException) as invalid_style:
+    with pytest.raises(HTTPException) as child_disabled:
         await create_material_category(
             FakeDB(),
-            type("User", (), {"id": "user-1", "uid": "owner-1", "department_id": None})(),
-            MaterialCategoryCreate(
-                material_type="image",
-                name="卧室案例",
-                parent_id=parent.id,
-                design_style="不在列表中",
-            ),
+            admin_user,
+            MaterialCategoryCreate(material_type="image", name="二级图库", parent_id="gallery-parent"),
         )
-
-    assert invalid_style.value.status_code == 422
-    assert invalid_style.value.detail["error"]["code"] == "MATERIAL_DESIGN_STYLE_INVALID"
+    assert child_disabled.value.status_code == 422
+    assert child_disabled.value.detail["error"]["code"] == "MATERIAL_CATEGORY_DEPTH_DISABLED"
 
     created = await create_material_category(
         FakeDB(),
-        type("User", (), {"id": "user-1", "uid": "owner-1", "department_id": None})(),
-        MaterialCategoryCreate(
-            material_type="image",
-            name="书房案例",
-            parent_id=parent.id,
-            design_style=design_style,
-            building_name="洋湖天序",
-            area="120",
-        ),
+        admin_user,
+        MaterialCategoryCreate(material_type="image", name="全员图库", description="管理员发布"),
     )
+    assert created["category"]["name"] == "全员图库"
+    assert created["category"]["visibility"] == "private"
+    assert created["category"]["parent_id"] is None
+    assert created["category"]["is_global_personal"] is True
 
-    assert created["category"]["design_style"] == design_style
+    with pytest.raises(HTTPException) as target_forbidden:
+        await create_material_category(
+            FakeDB(),
+            regular_user,
+            MaterialCategoryCreate(material_type="image", name="员工的其他图库"),
+            actor_user=admin_user,
+            target_private=True,
+        )
+    assert target_forbidden.value.status_code == 403
 
 
 @pytest.mark.asyncio
-async def test_decoration_gallery_child_requires_and_persists_building_name_and_area(monkeypatch):
-    parent = ContentMaterialCategory(
-        owner_uid="owner-1",
-        material_type="image",
-        id="gallery-decoration",
-        industry_slug="decoration",
-        name="装修与家居",
-        sort_order=0,
-    )
+async def test_initial_enterprise_roles_survive_rename_and_soft_delete_without_recreation():
+    class Result:
+        def __init__(self, rows):
+            self.rows = rows
+
+        def scalars(self):
+            return self.rows
 
     class FakeDB:
-        def add(self, _entry):
+        def __init__(self):
+            self.rows = []
+            self.added = 0
+
+        async def execute(self, _query):
+            return Result(self.rows)
+
+        def add(self, category):
+            self.rows.append(category)
+            self.added += 1
+
+        async def flush(self):
             pass
 
-        async def commit(self):
-            pass
+    db = FakeDB()
+    await ensure_initial_enterprise_galleries(db)
+    assert db.added == 3
+    assert {row.image_design_role for row in db.rows} == {"reference", "rough", "generated"}
 
-        async def rollback(self):
-            pass
+    reference = next(row for row in db.rows if row.image_design_role == "reference")
+    reference.name = "客户案例"
+    rough = next(row for row in db.rows if row.image_design_role == "rough")
+    rough.deleted_at = material_library_service.utc_now_naive()
+    await ensure_initial_enterprise_galleries(db)
+    assert db.added == 3
+    assert reference.name == "客户案例"
+    assert rough.deleted_at is not None
 
-    class FakeRepo:
-        def __init__(self, _db, **_kwargs):
-            pass
 
-        async def get_category(self, *_args, **_kwargs):
-            return parent
+@pytest.mark.asyncio
+async def test_existing_enterprise_gallery_needs_reviewed_role_migration():
+    class Result:
+        def scalars(self):
+            return [
+                ContentMaterialCategory(
+                    owner_uid="admin-1",
+                    material_type="image",
+                    id="old-generated",
+                    visibility="enterprise",
+                    name="生图图库",
+                    is_system=True,
+                )
+            ]
 
-        async def create_category(self, **values):
-            return ContentMaterialCategory(**values)
+    class FakeDB:
+        added = 0
 
-    async def ensure_categories(*_args, **_kwargs):
-        return [parent]
+        async def execute(self, _query):
+            return Result()
 
-    monkeypatch.setattr(material_library_service, "MaterialLibraryRepository", FakeRepo)
-    monkeypatch.setattr(material_library_service, "ensure_material_categories", ensure_categories)
-    user = type("User", (), {"id": "user-1", "uid": "owner-1", "department_id": None})()
+        def add(self, _category):
+            self.added += 1
 
-    with pytest.raises(HTTPException) as missing_building_name:
-        await create_material_category(
-            FakeDB(),
-            user,
-            MaterialCategoryCreate(
-                material_type="image",
-                name="客厅案例",
-                parent_id=parent.id,
-                design_style="江南印象",
-            ),
-        )
+    db = FakeDB()
+    with pytest.raises(HTTPException) as migration_required:
+        await ensure_initial_enterprise_galleries(db)
+    assert migration_required.value.status_code == 409
+    assert migration_required.value.detail["error"]["code"] == "MATERIAL_GALLERY_MIGRATION_REQUIRED"
+    assert db.added == 0
 
-    assert missing_building_name.value.status_code == 422
-    assert missing_building_name.value.detail["error"]["code"] == "MATERIAL_BUILDING_NAME_REQUIRED"
 
-    with pytest.raises(HTTPException) as missing_area:
-        await create_material_category(
-            FakeDB(),
-            user,
-            MaterialCategoryCreate(
-                material_type="image",
-                name="卧室案例",
-                parent_id=parent.id,
-                design_style="江南印象",
-                building_name="洋湖天序",
-            ),
-        )
-
-    assert missing_area.value.status_code == 422
-    assert missing_area.value.detail["error"]["code"] == "MATERIAL_AREA_REQUIRED"
-
-    created = await create_material_category(
-        FakeDB(),
-        user,
-        MaterialCategoryCreate(
-            material_type="image",
-            name="书房案例",
-            parent_id=parent.id,
-            design_style="江南印象",
-            building_name="洋湖天序",
-            area="120",
-        ),
+def test_target_employee_category_scope_only_matches_private_rough_gallery():
+    rough = ContentMaterialCategory(
+        owner_uid="employee-1",
+        material_type="image",
+        id="mp-rough-private",
+        visibility="private",
+        name="已改名的毛坯图库",
     )
+    other = ContentMaterialCategory(
+        owner_uid="employee-1",
+        material_type="image",
+        id="other",
+        visibility="private",
+        name="私人上传",
+    )
+    assert _is_target_rough_category(rough, "employee-1")
+    assert not _is_target_rough_category(rough, "employee-2")
+    assert not _is_target_rough_category(other, "employee-1")
 
-    assert created["category"]["building_name"] == "洋湖天序"
-    assert created["category"]["area"] == "120"
+
+def test_image_gallery_management_requires_admin_owner_but_cover_categories_keep_owner_rule():
+    image_gallery = ContentMaterialCategory(
+        owner_uid="owner-1",
+        material_type="image",
+        id="gallery-1",
+        visibility="private",
+        name="管理员图库",
+        sort_order=0,
+    )
+    cover_category = ContentMaterialCategory(
+        owner_uid="owner-1",
+        material_type="cover_template",
+        id="cover-1",
+        visibility="private",
+        name="封面分类",
+        sort_order=0,
+    )
+    regular_owner = SimpleNamespace(uid="owner-1", role="user")
+    admin_owner = SimpleNamespace(uid="owner-1", role="admin")
+    other_admin = SimpleNamespace(uid="owner-2", role="superadmin")
+
+    assert not _can_manage_category(regular_owner, image_gallery)
+    assert _can_manage_category(admin_owner, image_gallery)
+    assert not _can_manage_category(other_admin, image_gallery)
+    assert _can_manage_category(regular_owner, cover_category)
+
+
+def test_global_personal_gallery_stays_visible_but_demoted_creator_cannot_write():
+    from yuxi.image_design.save_targets import can_contribute_to_category
+
+    gallery = ContentMaterialCategory(
+        owner_uid="owner-1",
+        material_type="image",
+        id="mlc-global",
+        visibility="private",
+        is_global_personal=True,
+        name="团队灵感",
+    )
+    item = ContentMaterialLibraryItem(owner_uid="owner-1")
+    admin = SimpleNamespace(uid="owner-1", role="admin")
+    demoted = SimpleNamespace(uid="owner-1", role="user")
+    other_admin = SimpleNamespace(uid="owner-2", role="superadmin")
+
+    assert can_contribute_to_category(admin, gallery)
+    assert _can_manage_item(admin, item, gallery)
+    assert gallery.is_global_personal is True
+    assert not can_contribute_to_category(demoted, gallery)
+    assert not _can_manage_item(demoted, item, gallery)
+    assert not can_contribute_to_category(other_admin, gallery)
+    assert not _can_manage_item(other_admin, item, gallery)
 
 
 def test_cover_template_item_exposes_linked_generation_status():

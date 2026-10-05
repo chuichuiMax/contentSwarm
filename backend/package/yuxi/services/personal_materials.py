@@ -15,14 +15,59 @@ from yuxi.storage.postgres.models_business import User
 from yuxi.storage.postgres.models_content import (
     ContentCoverAsset,
     ContentMaterialCategory,
+    ContentMaterialFolderSetting,
     ContentMaterialLibraryItem,
 )
 from yuxi.utils.datetime_utils import format_utc_datetime
 
 Folder = Literal["rough", "generated", "uploads"]
 FOLDER_NAMES = {"rough": "毛坯房图库", "generated": "生图图库", "uploads": "我的上传"}
+FIXED_FOLDER_NAMES = {**FOLDER_NAMES, "works": "我的作品"}
 PRIVATE_IDS = {"rough": "mp-rough-private", "uploads": "mp-uploads-private"}
 ROUGH_NAMES = {"毛坯房图库", "毛胚房图库"}
+
+
+async def fixed_folder_settings(db: AsyncSession) -> dict[str, ContentMaterialFolderSetting]:
+    rows = await db.execute(select(ContentMaterialFolderSetting))
+    return {setting.folder_key: setting for setting in rows.scalars()}
+
+
+async def rename_fixed_folder(db: AsyncSession, user: User, folder: str, name: str) -> dict:
+    if user.role not in {"admin", "superadmin"}:
+        raise HTTPException(403, "只有管理员可编辑固定图库")
+    if folder not in FIXED_FOLDER_NAMES:
+        raise HTTPException(404, "固定图库不存在")
+    normalized = name.strip()
+    if not normalized or len(normalized) > 80:
+        raise HTTPException(422, "图库名称必须为 1 至 80 个字符")
+    setting = (await fixed_folder_settings(db)).get(folder)
+    if setting is not None and setting.deleted_at is not None:
+        raise HTTPException(404, "固定图库不存在")
+    if setting is None:
+        setting = ContentMaterialFolderSetting(folder_key=folder, name=normalized)
+        db.add(setting)
+    else:
+        setting.name = normalized
+    setting.updated_by = str(user.uid)
+    await db.commit()
+    return {"id": folder, "name": normalized}
+
+
+async def delete_fixed_folder(db: AsyncSession, user: User, folder: str) -> dict:
+    if user.role not in {"admin", "superadmin"}:
+        raise HTTPException(403, "只有管理员可删除固定图库")
+    if folder not in FIXED_FOLDER_NAMES:
+        raise HTTPException(404, "固定图库不存在")
+    setting = (await fixed_folder_settings(db)).get(folder)
+    if setting is not None and setting.deleted_at is not None:
+        raise HTTPException(404, "固定图库不存在")
+    if setting is None:
+        setting = ContentMaterialFolderSetting(folder_key=folder, name=FIXED_FOLDER_NAMES[folder])
+        db.add(setting)
+    setting.deleted_at = datetime.now(UTC).replace(tzinfo=None)
+    setting.updated_by = str(user.uid)
+    await db.commit()
+    return {"success": True, "id": folder}
 
 
 def _is_rough_category(category: ContentMaterialCategory) -> bool:
@@ -44,11 +89,14 @@ async def folder_categories(db: AsyncSession, user: User) -> dict[str, list[Cont
     """Keep upload destinations under the owner's PC personal materials."""
     from yuxi.image_design.save_targets import ensure_scope_root
 
+    settings = await fixed_folder_settings(db)
     owner = str(user.uid)
     repo = MaterialLibraryRepository(db)
     categories = await repo.list_categories(owner, "image")
     values = []
     for folder, category_id in PRIVATE_IDS.items():
+        if settings.get(folder) is not None and settings[folder].deleted_at is not None:
+            continue
         if not any(
             c.owner_uid == owner
             and c.visibility == "private"
@@ -75,29 +123,38 @@ async def folder_categories(db: AsyncSession, user: User) -> dict[str, list[Cont
         await db.flush()
         categories = await repo.list_categories(owner, "image")
     private_fixed_rough = next(
-        c
-        for c in categories
-        if c.owner_uid == owner
-        and c.visibility == "private"
-        and (c.id == PRIVATE_IDS["rough"] or _is_rough_category(c))
+        (
+            c
+            for c in categories
+            if c.owner_uid == owner
+            and c.visibility == "private"
+            and (c.id == PRIVATE_IDS["rough"] or _is_rough_category(c))
+        ),
+        None,
     )
     private_fixed_upload = next(
-        c
-        for c in categories
-        if c.owner_uid == owner
-        and c.visibility == "private"
-        and (c.id == PRIVATE_IDS["uploads"] or c.name == "我的上传")
+        (
+            c
+            for c in categories
+            if c.owner_uid == owner
+            and c.visibility == "private"
+            and (c.id == PRIVATE_IDS["uploads"] or c.name == "我的上传")
+        ),
+        None,
     )
     return {
-        "rough": [private_fixed_rough],
+        "rough": [private_fixed_rough] if private_fixed_rough is not None else [],
         "generated": [await ensure_scope_root(db, user, "private")],
-        "uploads": [private_fixed_upload],
+        "uploads": [private_fixed_upload] if private_fixed_upload is not None else [],
     }
 
 
 async def upload_category(
     db: AsyncSession, user: User, folder: Literal["rough", "uploads"], channel: Literal["pc", "mp"]
 ) -> ContentMaterialCategory:
+    setting = (await fixed_folder_settings(db)).get(folder)
+    if setting is not None and setting.deleted_at is not None:
+        raise HTTPException(404, "固定图库不存在")
     categories = (await folder_categories(db, user))[folder]
     return next(c for c in categories if c.visibility == "private")
 
@@ -171,6 +228,9 @@ async def list_folder(
     date_from: date | None = None,
     date_to: date | None = None,
 ) -> dict:
+    setting = (await fixed_folder_settings(db)).get(folder)
+    if setting is not None and setting.deleted_at is not None:
+        raise HTTPException(404, "固定图库不存在")
     if date_from and date_to and date_from > date_to:
         raise HTTPException(422, "开始日期不能晚于结束日期")
     await folder_categories(db, user)
@@ -231,9 +291,13 @@ async def folder_counts(
 ) -> list[dict]:
     from yuxi.services.mp_service import visible_mp_works
 
+    settings = await fixed_folder_settings(db)
     await folder_categories(db, user)
     result = []
     for folder, name in FOLDER_NAMES.items():
+        setting = settings.get(folder)
+        if setting is not None and setting.deleted_at is not None:
+            continue
         listing = await list_folder(db, user, folder, page=1, page_size=1)
         first_item = next(iter(listing["items"]), None)
         if first_item and client == "pc":
@@ -245,13 +309,17 @@ async def folder_counts(
         result.append(
             {
                 "id": folder,
-                "name": name,
+                "name": setting.name if setting is not None else name,
                 "count": listing["total"],
                 "can_upload": folder in PRIVATE_IDS,
                 "cover_thumbnail_file_url": cover_thumbnail_file_url,
                 "cover_file_url": cover_file_url,
             }
         )
+    works_setting = settings.get("works")
+    if works_setting is not None and works_setting.deleted_at is not None:
+        await db.commit()
+        return result
     works = await visible_mp_works(db, str(user.uid))
     first_work_id = works[0]["id"] if works else None
     work_file_url = None
@@ -264,7 +332,7 @@ async def folder_counts(
     result.append(
         {
             "id": "works",
-            "name": "我的作品",
+            "name": works_setting.name if works_setting is not None else "我的作品",
             "count": len(works),
             "can_upload": False,
             "cover_thumbnail_file_url": work_file_url,

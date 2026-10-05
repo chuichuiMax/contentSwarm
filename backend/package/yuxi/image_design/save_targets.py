@@ -45,7 +45,11 @@ def can_contribute_to_category(user: User, category: ContentMaterialCategory) ->
     """Visible enterprise galleries accept contributions; private galleries stay owner-only."""
     return category.deleted_at is None and (
         category.visibility == "enterprise"
-        or (category.visibility == "private" and category.owner_uid == str(user.uid))
+        or (
+            category.visibility == "private"
+            and category.owner_uid == str(user.uid)
+            and (not category.is_global_personal or user.role in {"admin", "superadmin"})
+        )
     )
 
 
@@ -256,7 +260,10 @@ async def validate_mp_save_target(db, user: User, target: ImageDesignSaveTarget)
             category.id == target.gallery_id
             and category.visibility == "enterprise"
             and category.parent_id is None
-            and category.name == "生图图库"
+            and (
+                category.image_design_role == "generated"
+                or (category.image_design_role is None and category.name == "生图图库")
+            )
             for category in categories
         ):
             return
