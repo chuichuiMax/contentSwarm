@@ -21,19 +21,33 @@ INITIAL_ENTERPRISE = (("reference", "案例图库"), ("rough", "毛坯房图库"
 
 
 def reviewed_global_personal_updates(private: list[Mapping], requested: set[str]) -> tuple[set[str], set[str]]:
-    active = {f"{row['owner_uid']}:{row['id']}" for row in private if row["deleted_at"] is None}
+    active = {
+        f"{row['owner_uid']}:{row['id']}"
+        for row in private
+        if row["deleted_at"] is None and row.get("parent_id") is None
+    }
     invalid = requested - active
     if invalid:
         raise ValueError(f"指定的个人图库不是活动历史候选：{','.join(sorted(invalid))}")
+    family = set(requested)
+    while True:
+        children = {
+            f"{row['owner_uid']}:{row['id']}"
+            for row in private
+            if row["deleted_at"] is None and f"{row['owner_uid']}:{row.get('parent_id')}" in family
+        }
+        if children <= family:
+            break
+        family.update(children)
     pending = {
         f"{row['owner_uid']}:{row['id']}"
         for row in private
         if row["deleted_at"] is None and not row["is_global_personal"]
     }
-    return requested & pending, requested - pending
+    return family & pending, family - pending
 
 
-async def run(*, apply: bool, global_personal: list[str]) -> None:
+async def run(*, apply: bool, global_personal: list[str], owner_uids: list[str]) -> None:
     from yuxi.storage.postgres.manager import pg_manager
 
     pg_manager.initialize()
@@ -63,21 +77,29 @@ async def run(*, apply: bool, global_personal: list[str]) -> None:
                 )
             ).mappings()
         )
+        active_owners = set(
+            (await db.execute(text("SELECT uid FROM users WHERE is_deleted=0 AND deleted_at IS NULL"))).scalars()
+        )
+        if not owner_uids or set(owner_uids) - active_owners:
+            raise ValueError("必须通过 --owner-uid 明确指定存在且未注销的已审阅账号")
         global_column = "c.is_global_personal" if "is_global_personal" in columns else "FALSE AS is_global_personal"
         private = list(
             (
                 await db.execute(
                     text(
-                        f"SELECT c.owner_uid,c.id,c.name,c.deleted_at,u.role,{global_column} "
+                        f"SELECT c.owner_uid,c.id,c.name,c.parent_id,c.deleted_at,u.role,{global_column} "
                         "FROM content_material_categories c "
                         "LEFT JOIN users u ON u.uid=c.owner_uid "
                         "WHERE c.material_type='image' AND c.visibility='private' "
-                        "AND c.parent_id IS NULL AND c.id LIKE 'mlc_%'"
+                        "AND c.id LIKE 'mlc_%'"
                     )
                 )
             ).mappings()
         )
 
+        excluded_private = [row for row in private if row["owner_uid"] not in owner_uids]
+        private = [row for row in private if row["owner_uid"] in owner_uids]
+        print(f"SCOPE owners={','.join(owner_uids)} excluded_private_candidates={len(excluded_private)}")
         proposals = []
         ambiguous = []
         preserved = 0
@@ -114,7 +136,11 @@ async def run(*, apply: bool, global_personal: list[str]) -> None:
         for role, keys in ambiguous:
             print(f"REVIEW_AMBIGUOUS role={role} candidates={','.join(keys)}")
 
-        review_private = [row for row in private if row["deleted_at"] is None and not row["is_global_personal"]]
+        review_private = [
+            row
+            for row in private
+            if row["deleted_at"] is None and row["parent_id"] is None and not row["is_global_personal"]
+        ]
         for row in review_private:
             print(
                 f"REVIEW_GLOBAL_PERSONAL key={row['owner_uid']}:{row['id']} "
@@ -123,6 +149,10 @@ async def run(*, apply: bool, global_personal: list[str]) -> None:
 
         requested = set(global_personal)
         selected, already_selected = reviewed_global_personal_updates(private, requested)
+        for row in private:
+            key = f"{row['owner_uid']}:{row['id']}"
+            if key in selected:
+                print(f"PLAN_GLOBAL_PERSONAL key={key} name={row['name']} parent={row['parent_id'] or '-'}")
         if apply and ambiguous:
             raise RuntimeError("存在企业图库角色歧义，保持 review-only，未执行任何写入")
 
@@ -186,8 +216,11 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--apply", action="store_true", help="Write a reviewed plan; default is read-only dry-run")
     parser.add_argument("--global-personal", action="append", default=[], metavar="OWNER_UID:CATEGORY_ID")
+    parser.add_argument(
+        "--owner-uid", action="append", required=True, help="Reviewed account UID; repeat for each account"
+    )
     args = parser.parse_args()
     load_dotenv(APP_ROOT.parent / ".env", override=False)
     if not os.getenv("POSTGRES_URL"):
         parser.error("POSTGRES_URL is required")
-    asyncio.run(run(apply=args.apply, global_personal=args.global_personal))
+    asyncio.run(run(apply=args.apply, global_personal=args.global_personal, owner_uids=args.owner_uid))

@@ -30,3 +30,18 @@ def test_reviewed_global_personal_updates_reject_deleted_or_unknown_rows():
 
     with pytest.raises(ValueError, match="不是活动历史候选"):
         MODULE.reviewed_global_personal_updates(rows, {"admin:deleted"})
+
+
+def test_reviewed_family_follows_owner_and_parent_without_including_same_id_test_gallery():
+    rows = [
+        dict(owner_uid="real", id="root", parent_id=None, deleted_at=None, is_global_personal=True),
+        dict(owner_uid="real", id="child", parent_id="root", deleted_at=None, is_global_personal=False),
+        dict(owner_uid="real", id="deleted", parent_id="root", deleted_at="deleted", is_global_personal=False),
+        dict(owner_uid="test", id="root", parent_id=None, deleted_at=None, is_global_personal=False),
+        dict(owner_uid="test", id="child", parent_id="root", deleted_at=None, is_global_personal=False),
+    ]
+    selected, preserved = MODULE.reviewed_global_personal_updates(rows, {"real:root"})
+    assert selected == {"real:child"}
+    assert preserved == {"real:root"}
+    rows[1]["is_global_personal"] = True
+    assert MODULE.reviewed_global_personal_updates(rows, {"real:root"}) == (set(), {"real:root", "real:child"})

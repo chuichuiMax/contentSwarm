@@ -89,10 +89,14 @@ async def material_users(test_client):
         await db.commit()
 
     headers = []
-    for uid in credentials:
+    for uid in credentials[:2]:
         login = await test_client.post("/api/auth/token", data={"username": uid, "password": password})
         assert login.status_code == 200, login.text
         headers.append({"Authorization": f"Bearer {login.json()['access_token']}"})
+    # This fixture tests gallery permissions, not employee credential provisioning.
+    # Independent non-employee members cannot use the employee-only PC login path.
+    member_token = AuthUtils.create_access_token({"sub": str(user_ids[2])})
+    headers.append({"Authorization": f"Bearer {member_token}"})
     try:
         yield {
             "owner": headers[0],

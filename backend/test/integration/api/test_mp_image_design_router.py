@@ -352,7 +352,7 @@ async def test_pc_personal_materials_follow_mp_folder_rules(test_client, mp_acco
         await test_client.delete(f"/api/mp/content/gallery-items/{item_id}", headers=mp_headers)
 
 
-async def test_add_library_deduplicates_and_revokes_private_source(test_client, admin_headers, mp_accounts):
+async def test_add_library_deduplicates_and_revokes_deleted_source(test_client, admin_headers, mp_accounts):
     category = await test_client.post(
         "/api/material-library/categories",
         headers=admin_headers,
@@ -389,6 +389,12 @@ async def test_add_library_deduplicates_and_revokes_private_source(test_client, 
             json={"visibility": "private"},
         )
         assert changed.status_code == 200, changed.text
+        # Administrator-created personal galleries remain department-visible.
+        visible = await test_client.get(first.json()["item"]["file_url"], headers=mp_accounts[0]["headers"])
+        assert visible.status_code == 200, visible.text
+        deleted = await test_client.delete(f"/api/material-library/items/{item_id}", headers=admin_headers)
+        assert deleted.status_code == 200, deleted.text
+        item_id = None
         revoked = await test_client.get(first.json()["item"]["file_url"], headers=mp_accounts[0]["headers"])
         assert revoked.status_code == 404, revoked.text
         rejected = await test_client.post(

@@ -73,7 +73,19 @@ def historical_destination(asset, item, task, old_category, image_job=None) -> t
     return None
 
 
-async def run(*, apply: bool, owner_uid: str | None) -> None:
+def reviewed_users(users: list, owner_uids: list[str]) -> list:
+    """Require exact account selection instead of provisioning every historical login."""
+    requested = set(owner_uids)
+    if not requested:
+        raise ValueError("必须通过 --owner-uid 明确指定已审阅的真实账号")
+    by_uid = {str(user.uid): user for user in users}
+    missing = requested - by_uid.keys()
+    if missing:
+        raise ValueError(f"指定账号不存在或已注销：{','.join(sorted(missing))}")
+    return [by_uid[uid] for uid in sorted(requested)]
+
+
+async def run(*, apply: bool, owner_uids: list[str]) -> None:
     from yuxi.services.material_library_service import create_library_item_for_asset
     from yuxi.services.personal_materials import fixed_folder_settings, folder_categories, upload_category
     from yuxi.storage.postgres.manager import pg_manager
@@ -101,7 +113,9 @@ async def run(*, apply: bool, owner_uid: str | None) -> None:
             users = (
                 (await db.execute(select(User).where(User.is_deleted == 0, User.deleted_at.is_(None)))).scalars().all()
             )
-            users = [user for user in users if owner_uid is None or str(user.uid) == owner_uid]
+            all_users_count = len(users)
+            users = reviewed_users(users, owner_uids)
+            print(f"SCOPE selected={len(users)} excluded={all_users_count - len(users)} owners={','.join(owner_uids)}")
             category_state_query = select(
                 ContentMaterialCategory.owner_uid,
                 ContentMaterialCategory.id,
@@ -301,9 +315,11 @@ async def run(*, apply: bool, owner_uid: str | None) -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--apply", action="store_true", help="Apply the reviewed plan; default is dry-run")
-    parser.add_argument("--owner-uid", help="Restrict to one account")
+    parser.add_argument(
+        "--owner-uid", action="append", required=True, help="Reviewed account UID; repeat for each account"
+    )
     args = parser.parse_args()
     load_dotenv(APP_ROOT.parent / ".env", override=False)
     if not os.getenv("POSTGRES_URL"):
         parser.error("POSTGRES_URL is required; run with the deployment database configuration")
-    asyncio.run(run(apply=args.apply, owner_uid=args.owner_uid))
+    asyncio.run(run(apply=args.apply, owner_uids=args.owner_uid))
