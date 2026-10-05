@@ -234,7 +234,13 @@ async def test_real_preview_admin_and_member_see_expected_gallery_roots():
                     context = await browser.new_context(viewport={"width": 1440, "height": 1000})
                     await context.add_init_script(f'localStorage.setItem("user_token", {json.dumps(token)})')
                     page = await context.new_page()
-                    await page.goto("http://localhost:5173/materials/images")
+                    async with page.expect_response(
+                        lambda response: "/api/material-library/galleries" in response.url,
+                        timeout=60_000,
+                    ) as gallery_response:
+                        await page.goto("http://localhost:5173/materials/images", wait_until="domcontentloaded")
+                    response = await gallery_response.value
+                    assert response.status == 200, await response.text()
                     await expect(page.get_by_role("heading", name="素材库")).to_be_visible(timeout=20_000)
                     for name in ("生图图库", "毛坯房图库", "我的作品", "我的上传"):
                         await expect(page.locator("button.gallery-open").filter(has_text=name)).to_be_visible()
