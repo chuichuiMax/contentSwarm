@@ -44,8 +44,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Setup Pages
-        uses: actions/configure-pages@v4
       - name: Install dependencies
         run: npm install
         working-directory: docs
@@ -67,6 +65,8 @@ jobs:
     runs-on: ubuntu-latest
     name: Deploy
     steps:
+      - name: Setup Pages
+        uses: actions/configure-pages@v4
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4

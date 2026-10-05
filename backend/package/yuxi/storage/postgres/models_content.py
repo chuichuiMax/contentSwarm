@@ -1244,6 +1244,18 @@ class ContentMaterialShareItem(Base):
     __table_args__ = (Index("idx_content_material_share_items_share_order", "share_id", "display_order"),)
 
 
+class ContentMaterialFolderSetting(Base):
+    """Display state for the four fixed personal-material entrances."""
+
+    __tablename__ = "content_material_folder_settings"
+
+    folder_key = Column(String(32), primary_key=True)
+    name = Column(String(80), nullable=False)
+    deleted_at = Column(DateTime, nullable=True)
+    updated_by = Column(String(255), nullable=True)
+    updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
+
+
 class ContentMaterialCategory(Base):
     """用户维护的素材图片图库或封面模板分类。"""
 
@@ -1257,6 +1269,7 @@ class ContentMaterialCategory(Base):
     parent_id = Column(String(64), nullable=True, index=True)
     industry_slug = Column(String(80), nullable=False, default="uncategorized", index=True)
     image_design_role = Column(String(20), nullable=True)
+    is_global_personal = Column(Boolean, nullable=False, default=False, server_default="false")
     design_style = Column(String(32), nullable=True)
     building_name = Column(String(80), nullable=True)
     area = Column(String(32), nullable=True)
@@ -1272,6 +1285,10 @@ class ContentMaterialCategory(Base):
         CheckConstraint(
             "material_type IN ('image', 'cover_template')",
             name="ck_content_material_category_type",
+        ),
+        CheckConstraint(
+            "image_design_role IS NULL OR image_design_role IN ('reference', 'rough', 'generated')",
+            name="ck_content_material_category_image_design_role",
         ),
         Index(
             "uq_content_material_category_owner_type_name_active",
@@ -1307,6 +1324,7 @@ class ContentMaterialCategory(Base):
             "level": 2 if self.parent_id else 1,
             "industry_slug": self.industry_slug,
             "image_design_role": self.image_design_role,
+            "is_global_personal": self.is_global_personal,
             "design_style": self.design_style,
             "building_name": self.building_name,
             "area": self.area,

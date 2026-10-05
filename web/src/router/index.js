@@ -204,7 +204,7 @@ const router = createRouter({
           path: 'employees',
           name: 'EmployeeManageComp',
           component: () => import('../views/EmployeeManageView.vue'),
-          meta: { keepAlive: false, requiresAuth: true }
+          meta: { keepAlive: false, requiresAuth: true, requiresAdmin: true }
         }
       ]
     },

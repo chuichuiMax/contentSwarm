@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import func, or_, select, update
+from sqlalchemy import String, and_, cast, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -33,12 +33,54 @@ IMAGE_OCCUPANCY_ACTIVE_STATUSES = frozenset(
     }
 )
 IMAGE_OCCUPANCY_RELEASED_STATUSES = frozenset({"failed", "cancelled"})
+ROUGH_CATEGORY_NAMES = frozenset({"毛坯房图库", "毛胚房图库"})
 
 
 class MaterialLibraryRepository:
     def __init__(self, db: AsyncSession, *, include_shared: bool = False):
         self.db = db
         self.include_shared = include_shared
+
+    @staticmethod
+    def private_rough_filters(owner_uid: str | None = None):
+        filters = [
+            ContentMaterialCategory.visibility == "private",
+            ContentMaterialCategory.owner_uid == ContentMaterialLibraryItem.owner_uid,
+            func.coalesce(
+                ContentMaterialLibraryItem.category_owner_uid,
+                ContentMaterialLibraryItem.owner_uid,
+            )
+            == ContentMaterialCategory.owner_uid,
+            or_(
+                ContentMaterialCategory.id == "mp-rough-private",
+                ContentMaterialCategory.image_design_role == "rough",
+                ContentMaterialCategory.name.in_(ROUGH_CATEGORY_NAMES),
+            ),
+        ]
+        if owner_uid is not None:
+            filters.append(ContentMaterialLibraryItem.owner_uid == owner_uid)
+        return filters
+
+    async def count_private_rough_images_by_owner(self, owner_uids: list[str]) -> dict[str, int]:
+        if not owner_uids:
+            return {}
+        join = ContentMaterialLibraryItem.__table__.join(
+            ContentCoverAsset, ContentCoverAsset.id == ContentMaterialLibraryItem.asset_id
+        ).join(ContentMaterialCategory, self.category_join())
+        rows = await self.db.execute(
+            select(ContentMaterialLibraryItem.owner_uid, func.count(ContentMaterialLibraryItem.id))
+            .select_from(join)
+            .where(
+                ContentMaterialLibraryItem.owner_uid.in_(owner_uids),
+                ContentMaterialLibraryItem.material_type == "image",
+                ContentMaterialLibraryItem.status == "enabled",
+                ContentMaterialLibraryItem.deleted_at.is_(None),
+                ContentCoverAsset.deleted_at.is_(None),
+                *self.private_rough_filters(),
+            )
+            .group_by(ContentMaterialLibraryItem.owner_uid)
+        )
+        return {owner_uid: int(count) for owner_uid, count in rows.all()}
 
     async def get_remote_setting(self, *, for_update: bool = False) -> RemoteMaterialLibrarySetting | None:
         query = select(RemoteMaterialLibrarySetting).where(RemoteMaterialLibrarySetting.id == "global")
@@ -83,7 +125,15 @@ class MaterialLibraryRepository:
         own = ContentMaterialCategory.owner_uid == owner_uid
         if not self.include_shared:
             return own
-        return or_(own, ContentMaterialCategory.visibility == "enterprise")
+        requester_tenant = select(cast(User.department_id, String)).where(User.uid == owner_uid).scalar_subquery()
+        admin_personal = and_(
+            ContentMaterialCategory.material_type == "image",
+            ContentMaterialCategory.visibility == "private",
+            ContentMaterialCategory.is_global_personal.is_(True),
+            ContentMaterialCategory.tenant_id.is_not(None),
+            ContentMaterialCategory.tenant_id == requester_tenant,
+        )
+        return or_(own, ContentMaterialCategory.visibility == "enterprise", admin_personal)
 
     @staticmethod
     def category_join():
@@ -290,6 +340,26 @@ class MaterialLibraryRepository:
             query = query.with_for_update()
         return (await self.db.execute(query)).scalar_one_or_none()
 
+    async def get_private_rough_item_for_owner(
+        self,
+        item_id: str,
+        owner_uid: str,
+        *,
+        for_update: bool = False,
+    ) -> ContentMaterialLibraryItem | None:
+        query = (
+            select(ContentMaterialLibraryItem)
+            .join(ContentMaterialCategory, self.category_join())
+            .where(
+                ContentMaterialLibraryItem.id == item_id,
+                ContentMaterialLibraryItem.deleted_at.is_(None),
+                *self.private_rough_filters(owner_uid),
+            )
+        )
+        if for_update:
+            query = query.with_for_update()
+        return (await self.db.execute(query)).scalar_one_or_none()
+
     async def get_item_by_asset(self, asset_id: str) -> ContentMaterialLibraryItem | None:
         return (
             await self.db.execute(
@@ -411,6 +481,7 @@ class MaterialLibraryRepository:
         sort: str = "newest",
         scope: str | None = None,
         category_owner_uid: str | None = None,
+        private_rough_only: bool = False,
     ) -> tuple[list[tuple[ContentMaterialLibraryItem, ContentCoverAsset, ContentMaterialCategory]], int]:
         filters = [
             self.item_access(owner_uid),
@@ -429,6 +500,8 @@ class MaterialLibraryRepository:
                 func.coalesce(ContentMaterialLibraryItem.category_owner_uid, ContentMaterialLibraryItem.owner_uid)
                 == category_owner_uid
             )
+        if private_rough_only:
+            filters.extend(self.private_rough_filters(owner_uid))
         if status:
             filters.append(ContentMaterialLibraryItem.status == status)
         if query_text:

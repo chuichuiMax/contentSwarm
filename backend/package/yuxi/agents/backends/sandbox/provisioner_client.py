@@ -18,10 +18,10 @@ class ProvisionerClient:
         self._timeout = httpx.Timeout(timeout_seconds)
 
     def _request(self, method: str, path: str, **kwargs) -> httpx.Response:
+        kwargs.setdefault("timeout", self._timeout)
         return httpx.request(
             method=method,
             url=f"{self._base_url}{path}",
-            timeout=self._timeout,
             **kwargs,
         )
 
@@ -42,6 +42,9 @@ class ProvisionerClient:
         response = self._request(
             "POST",
             "/api/sandboxes",
+            # Provisioner readiness may take 300s; keep a short connection timeout
+            # but allow container creation and the readiness check to finish.
+            timeout=httpx.Timeout(360.0, connect=self._timeout.connect),
             json={
                 "sandbox_id": sandbox_id,
                 "thread_id": thread_id,

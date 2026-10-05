@@ -200,12 +200,14 @@ const mainList = computed(() => {
     activeIcon: Users
   })
 
-  items.push({
-    name: '员工管理',
-    path: '/model-manage/employees',
-    icon: IdCard,
-    activeIcon: IdCard
-  })
+  if (userStore.isAdmin) {
+    items.push({
+      name: '员工管理',
+      path: '/model-manage/employees',
+      icon: IdCard,
+      activeIcon: IdCard
+    })
+  }
 
   items.push({
     name: '配置管理',
