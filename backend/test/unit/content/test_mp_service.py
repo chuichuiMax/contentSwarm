@@ -4,6 +4,7 @@ import pytest
 from fastapi import HTTPException
 
 from yuxi.services.mp_service import (
+    MpCompileBriefPayload,
     REGION_TREE,
     REGIONS,
     _compact_run,
@@ -11,6 +12,7 @@ from yuxi.services.mp_service import (
     _cover_asset_ids,
     _cover_auto_resume_payload,
     _lock_decoration_visual_material,
+    _reject_review_notes_media,
     _mp_gallery_item,
     _mp_hycanvas_template_item,
     _visible_mp_run,
@@ -19,6 +21,7 @@ from yuxi.services.mp_service import (
     has_mp_content_code,
     list_mp_galleries,
     list_mp_gallery_items,
+    list_mp_viral_assets,
     lookup_frame_area_pricing,
     map_nrlx_to_ct_code,
     mask_phone,
@@ -543,6 +546,35 @@ async def test_read_hycanvas_template_overlay_rejects_invalid_id():
 
 
 @pytest.mark.asyncio
+async def test_list_mp_viral_assets_forwards_filters(monkeypatch):
+    captured = {}
+
+    async def fake_list_viral_assets(db, user, **kwargs):
+        captured.update(kwargs)
+        assert user is sentinel_user
+        return {"items": [{"id": "vav_test"}]}
+
+    sentinel_user = object()
+    monkeypatch.setattr("yuxi.services.mp_service.list_viral_assets", fake_list_viral_assets)
+    ctx = type("Ctx", (), {"user": sentinel_user})()
+    result = await list_mp_viral_assets(
+        None,
+        ctx,
+        industry_slug="decoration",
+        ready_only=True,
+        content_type_code="CT06",
+        limit=50,
+    )
+    assert result == {"items": [{"id": "vav_test"}]}
+    assert captured == {
+        "industry_slug": "decoration",
+        "ready_only": True,
+        "content_type_code": "CT06",
+        "limit": 50,
+    }
+
+
+@pytest.mark.asyncio
 async def test_list_mp_gallery_items_forwards_in_use(monkeypatch):
     async def fake_list_material_items(*args, **kwargs):
         return {
@@ -619,6 +651,14 @@ def test_cover_asset_ids_keep_order_and_reject_more_than_three():
     with pytest.raises(HTTPException) as exc:
         _cover_asset_ids("a", ["b", "c", "d"])
     assert exc.value.detail["error"]["code"] == "MP_COVER_LIMIT"
+
+
+def test_reject_review_notes_media_blocks_cover_upload():
+    with pytest.raises(HTTPException) as exc:
+        _reject_review_notes_media(
+            MpCompileBriefPayload(service_entry="好评笔记", cover_asset_id="asset-1"),
+        )
+    assert exc.value.detail["error"]["code"] == "MP_REVIEW_NOTES_NO_MEDIA"
 
 
 def test_build_mp_brief_payload_review_notes_has_no_photos():

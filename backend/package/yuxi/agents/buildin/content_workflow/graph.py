@@ -227,7 +227,12 @@ class ContentWorkflowAgent(BaseAgent):
                 )
                 return result
             try:
-                if node["type"] == "agent":
+                from yuxi.content.mp_workflow import mp_cover_pipeline_skip_result
+
+                skip_result = mp_cover_pipeline_skip_result(node_id, state)
+                if skip_result is not None:
+                    result = skip_result
+                elif node["type"] == "agent":
                     async with pg_manager.get_async_session_context() as db:
                         result = await AgentNodeHandler().execute(
                             db=db,
@@ -755,6 +760,14 @@ class ContentWorkflowAgent(BaseAgent):
             }
 
         if interrupt_type == "cover_selection":
+            from yuxi.content.mp_workflow import mp_skip_cover_selection
+
+            if mp_skip_cover_selection(state):
+                return {
+                    "selected_cover": {},
+                    "state_version": state_version + 1,
+                    "resume_parent_run_id": None,
+                }
             cover_job = state.get("cover_job") or {}
             asset_ids = list(cover_job.get("asset_ids") or [])
             if cover_job.get("status") != "succeeded" or not asset_ids:

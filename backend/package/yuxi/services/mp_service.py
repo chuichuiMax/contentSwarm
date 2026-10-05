@@ -17,8 +17,12 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.content.catalog import CONTENT_TYPES
+from yuxi.content.generation import DEFAULT_DIRECT_GENERATION_PROMPT
+from yuxi.content.mp_studio_direct import MP_DECORATION_DIRECT_UI, build_mp_decoration_direct_defaults
+from yuxi.content.mp_workflow import MP_REVIEW_NOTES_ENTRY, MP_REVIEW_NOTES_UI, mp_service_entry_from_brief
 from yuxi.content.schemas import (
     ContentBriefPayload,
+    ContentDirectGenerateCreate,
     ContentRunCreate,
     ContentRunResume,
     ContentTaskCreate,
@@ -43,6 +47,7 @@ from yuxi.services.content_cover_service import get_cover_asset_file, serialize_
 from yuxi.services.content_service import (
     create_content_run,
     create_content_task,
+    create_direct_content_run,
     delete_content_task,
     duplicate_content_task,
     get_content_run,
@@ -53,6 +58,7 @@ from yuxi.services.content_service import (
     save_content_brief,
 )
 from yuxi.services.content_type_service import ensure_default_content_types, list_content_types
+from yuxi.services.content_viral_assets import list_viral_assets
 from yuxi.services.material_library_service import (
     delete_material_item,
     get_material_file,
@@ -446,6 +452,8 @@ def build_mp_brief_payload(
     content_code: str,
     cover_asset_ids: list[str] | None = None,
     visual_material: ContentVisualMaterialSelection | None = None,
+    user_request: str = "",
+    content_type_code: str | None = None,
 ) -> ContentBriefPayload:
     values = {str(key): value for key, value in form_values.items()}
     values["mp_service_entry"] = service_entry
@@ -470,6 +478,8 @@ def build_mp_brief_payload(
     audience = mapped.get("audience") or []
     business_variables = {"persona_fact": persona_text} if persona_text else {}
     return ContentBriefPayload(
+        user_request=str(user_request or mapped.get("user_request") or "").strip(),
+        content_type_code=content_type_code,
         brand={"name": BRAND_NAME},
         audience=audience,
         business_variables=business_variables,
@@ -479,6 +489,18 @@ def build_mp_brief_payload(
         ],
         visual_material=visual_material,
     )
+
+
+def _mp_direct_run_response(direct: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "run_id": direct["run_id"],
+        "task_id": direct["task_id"],
+        "status": direct["status"],
+        "request_id": direct["request_id"],
+        "error_message": None,
+        "interrupt": None,
+        "stream_url": f"/api/mp/content/runs/{direct['run_id']}/events",
+    }
 
 
 def _extract_interrupt(events: list[dict[str, Any]]) -> dict[str, Any] | None:
@@ -888,6 +910,15 @@ async def _list_mp_hycanvas_templates() -> list[dict[str, Any]]:
     return [_mp_hycanvas_template_item(item) for item in catalog.get("templates") or []]
 
 
+def _reject_review_notes_media(payload: MpCompileBriefPayload) -> None:
+    if str(payload.cover_asset_id or "").strip() or payload.cover_asset_ids:
+        raise _mp_error(422, "MP_REVIEW_NOTES_NO_MEDIA", "好评笔记不需要上传图片")
+    if str(payload.image_item_id or "").strip():
+        raise _mp_error(422, "MP_REVIEW_NOTES_NO_MEDIA", "好评笔记不需要上传图片")
+    if payload.cover_mode or payload.hycanvas_template_id or payload.cover_template_id:
+        raise _mp_error(422, "MP_REVIEW_NOTES_NO_COVER", "好评笔记不生成封面")
+
+
 async def _lock_decoration_visual_material(
     db: AsyncSession,
     user: User,
@@ -973,7 +1004,11 @@ async def get_form_schema(
             port="app",
             select_options=select_options,
         )
-    covers = [_cover_template_item(item) for item in await CoverRepository(db).list_enabled()]
+    covers = (
+        [_cover_template_item(item) for item in await CoverRepository(db).list_enabled()]
+        if service_entry == "装修家居"
+        else []
+    )
     hycanvas_templates = (
         await _list_mp_hycanvas_templates() if include_hycanvas_templates and service_entry == "装修家居" else []
     )
@@ -1004,6 +1039,10 @@ async def get_form_schema(
         "region_tree": [{"city": city, "districts": list(districts)} for city, districts in REGION_TREE],
         "cover_templates": covers,
         "hycanvas_templates": hycanvas_templates,
+        "requires_cover": service_entry == "装修家居",
+        "requires_photo_upload": service_entry == "装修家居",
+        "direct_production": MP_DECORATION_DIRECT_UI if service_entry == "装修家居" else None,
+        "review_notes_production": MP_REVIEW_NOTES_UI if service_entry == MP_REVIEW_NOTES_ENTRY else None,
     }
 
 
@@ -1019,6 +1058,25 @@ async def list_cover_templates(db: AsyncSession) -> dict[str, Any]:
 
 async def list_hycanvas_templates() -> dict[str, Any]:
     return {"hycanvas_templates": await _list_mp_hycanvas_templates()}
+
+
+async def list_mp_viral_assets(
+    db: AsyncSession,
+    ctx: MpContext,
+    *,
+    industry_slug: str | None = None,
+    ready_only: bool = False,
+    content_type_code: str | None = None,
+    limit: int = 100,
+) -> dict[str, Any]:
+    return await list_viral_assets(
+        db,
+        ctx.user,
+        industry_slug=industry_slug,
+        ready_only=ready_only,
+        content_type_code=content_type_code,
+        limit=limit,
+    )
 
 
 def _mp_gallery_item(item: dict[str, Any]) -> dict[str, Any]:
@@ -1308,8 +1366,34 @@ async def compile_brief(db: AsyncSession, ctx: MpContext, payload: MpCompileBrie
             cover_mode=payload.cover_mode,
         )
     else:
+        _reject_review_notes_media(payload)
         cover_asset_id = None
     content_code = await _next_code_for_user(db, ctx.user)
+    merged_form_values = dict(payload.form_values or {})
+    merged_form_values["mp_content_type_id"] = selected_type["id"]
+    merged_form_values["mp_content_type_name"] = selected_type["name"]
+    if payload.service_entry == "装修家居":
+        try:
+            merged_form_values.update(
+                await build_mp_decoration_direct_defaults(
+                    db,
+                    ctx.employee,
+                    ctx.user,
+                    content_type_name=selected_type["name"],
+                    content_type_id=selected_type["id"],
+                    content_type_code=ct_code,
+                    business_variables=merged_form_values,
+                    industry_slug=INDUSTRY_SLUG,
+                )
+            )
+        except LookupError as exc:
+            raise _mp_error(
+                422,
+                "MP_VIRAL_ASSET_UNAVAILABLE",
+                "该内容类型暂无可用爆款原文，请联系运营准备",
+            ) from exc
+        except ValueError as exc:
+            raise _mp_error(422, "MP_CREATIVE_STYLE_UNAVAILABLE", "该内容类型暂无可用创作风格") from exc
     created = await create_content_task(
         db,
         ctx.user,
@@ -1318,13 +1402,14 @@ async def compile_brief(db: AsyncSession, ctx: MpContext, payload: MpCompileBrie
             mode="quick",
             content_goal=goal,
             content_type_code=ct_code,
+            creation_mode="viral_rewrite",
             name=f"{payload.service_entry}-{selected_type['name']}-{content_code}",
         ),
     )
     task_id = created["task"]["id"]
     brief = build_mp_brief_payload(
         service_entry=payload.service_entry,
-        form_values=payload.form_values,
+        form_values=merged_form_values,
         content_type_name=selected_type["name"],
         content_type_id=selected_type["id"],
         cover_asset_id=cover_asset_id,
@@ -1332,6 +1417,8 @@ async def compile_brief(db: AsyncSession, ctx: MpContext, payload: MpCompileBrie
         cover_template_id=payload.cover_template_id,
         content_code=content_code,
         visual_material=visual_material,
+        user_request=str(merged_form_values.get("user_request") or ""),
+        content_type_code=ct_code if payload.service_entry == "装修家居" else None,
     )
     saved = await save_content_brief(db, ctx.user, task_id, brief, compile_now=True)
     result = {
@@ -1345,6 +1432,23 @@ async def compile_brief(db: AsyncSession, ctx: MpContext, payload: MpCompileBrie
         run = await start_run(db, ctx, task_id, MpRunCreatePayload())
         result["run_id"] = run["run_id"]
         result["run_status"] = run["status"]
+    elif payload.service_entry == "装修家居":
+        viral_asset_id = str(merged_form_values.get("viral_asset_id") or "").strip()
+        direct = await create_direct_content_run(
+            db,
+            ctx.user,
+            task_id,
+            ContentDirectGenerateCreate(
+                request_id=str(uuid.uuid4()),
+                viral_asset_id=viral_asset_id,
+                generation_prompt=str(merged_form_values.get("generation_prompt") or DEFAULT_DIRECT_GENERATION_PROMPT),
+                user_request=str(merged_form_values.get("user_request") or ""),
+                creative_style=merged_form_values.get("creative_style"),
+            ),
+        )
+        result.update(_mp_direct_run_response(direct))
+        result["status"] = "direct_run_queued"
+        result["task_status"] = "queued"
     return result
 
 
@@ -1363,6 +1467,25 @@ async def get_task(db: AsyncSession, ctx: MpContext, task_id: str) -> dict[str, 
 
 async def start_run(db: AsyncSession, ctx: MpContext, task_id: str, payload: MpRunCreatePayload) -> dict[str, Any]:
     request_id = payload.request_id or str(uuid.uuid4())
+    task_result = await get_content_task(db, ctx.user, task_id)
+    brief = task_result["task"].get("brief") or {}
+    form_values = brief.get("form_values") or {}
+    viral_asset_id = str(form_values.get("viral_asset_id") or "").strip()
+    if viral_asset_id:
+        direct = await create_direct_content_run(
+            db,
+            ctx.user,
+            task_id,
+            ContentDirectGenerateCreate(
+                request_id=request_id,
+                viral_asset_id=viral_asset_id,
+                model_spec=payload.model_spec,
+                user_request=str(brief.get("user_request") or form_values.get("user_request") or ""),
+                generation_prompt=str(form_values.get("generation_prompt") or DEFAULT_DIRECT_GENERATION_PROMPT),
+                creative_style=form_values.get("creative_style"),
+            ),
+        )
+        return _mp_direct_run_response(direct)
     return await create_content_run(
         db, ctx.user, task_id, ContentRunCreate(request_id=request_id, model_spec=payload.model_spec)
     )
@@ -1382,9 +1505,16 @@ async def get_run(db: AsyncSession, ctx: MpContext, run_id: str) -> dict[str, An
         owner_uid=str(ctx.user.uid),
         interrupt=_extract_interrupt(events),
     )
-    resume_payload = _cover_auto_resume_payload(interrupt, str(visible["id"]))
+    brief_json = None if task is None else task.brief_json
+    service_entry = mp_service_entry_from_brief(brief_json)
+    resume_payload = None
     resume_key = "mp-cover-auto"
-    if resume_payload is None and has_mp_content_code(None if task is None else task.brief_json):
+    if service_entry != MP_REVIEW_NOTES_ENTRY:
+        resume_payload = _cover_auto_resume_payload(interrupt, str(visible["id"]))
+    if resume_payload is None and service_entry == MP_REVIEW_NOTES_ENTRY:
+        resume_payload = _content_approval_auto_resume_payload(interrupt, str(visible["id"]))
+        resume_key = "mp-approval-auto"
+    elif resume_payload is None and has_mp_content_code(brief_json):
         resume_payload = _content_approval_auto_resume_payload(interrupt, str(visible["id"]))
         resume_key = "mp-approval-auto"
     if resume_payload:

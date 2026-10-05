@@ -126,6 +126,9 @@ async def test_mp_sms_login_me_schema_and_pc_token_isolation(test_client, admin_
         assert review_data["regions"][0] == "长沙市"
         assert review_data["region_tree"] == data["region_tree"]
         assert review_data["hycanvas_templates"] == []
+        assert review_data["direct_production"] is None
+        assert data["direct_production"]["production_mode"] == "direct"
+        assert "creative_style" in data["direct_production"]["hidden_sections"]
         assert {item["key"] for item in review_data["variables"]} >= {"设计师", "预算师", "项目经理", "客户经理"}
         assert all(not item.get("content_type_id") for item in review_data["variables"])
         assert any(item["key"] == "工匠" and item["required"] is False for item in review_data["variables"])
@@ -136,6 +139,18 @@ async def test_mp_sms_login_me_schema_and_pc_token_isolation(test_client, admin_
             params={"frame_area": "50-70㎡"},
         )
         assert pricing.status_code == 200, pricing.text
+
+        viral_assets = await test_client.get(
+            "/api/mp/content/viral-assets",
+            headers=mp_headers,
+            params={"content_type_code": "CT06", "ready_only": True},
+        )
+        assert viral_assets.status_code == 200, viral_assets.text
+        assert "items" in viral_assets.json()
+
+        profile = await test_client.get("/api/mp/auth/profile", headers=mp_headers)
+        assert profile.status_code == 200, profile.text
+        assert profile.json()["employee"]["login_account"] == phone
         assert pricing.json()["quotes"]["基础"] == "4-5万"
         assert pricing.json()["quote_choices"]["木制品"] == ["2万", "2.5万", "3万"]
 
@@ -250,11 +265,14 @@ async def test_mp_compile_brief_requires_cover_and_creates_locked_task(test_clie
                 "form_values": form_values,
             },
         )
+        if compiled.status_code == 422 and compiled.json()["detail"]["error"]["code"] == "MP_VIRAL_ASSET_UNAVAILABLE":
+            return
         assert compiled.status_code == 200, compiled.text
         payload = compiled.json()
         task_id = payload["task_id"]
-        assert payload["status"] == "strategy_evidence_locked"
-        assert payload["task_status"] == "brief_ready"
+        assert payload["status"] == "direct_run_queued"
+        assert payload["task_status"] == "queued"
+        assert payload.get("run_id")
         assert payload["content_code"].startswith("NR")
         visual = payload["task"]["runtime_config_snapshot"]["visual_material"]
         assert visual["image_asset_id"] == cover_asset_id

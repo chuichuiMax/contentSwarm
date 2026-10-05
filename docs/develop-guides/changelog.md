@@ -1,5 +1,13 @@
 # 未发布
 
+- 小程序装修家居直生恢复 AI 封面走 image2（与 PC 直生一致）；内置 HyCanvas 模板封面不变。
+
+- 小程序好评笔记：表单 schema 声明无需封面/图片上传（`review_notes_production`），编译拒绝携带封面或图库参数；V3 跳过封面链路，成品仅保存标题与正文，不绑定封面资产。
+
+- 小程序装修家居对齐 PC 直生链路：编译简报时服务端随机选定创作风格与爆款原文，默认生成提示词为「使用我给你的一些元素，根据爆文 换一种表达方式 符合当地的口吻」，并按 PC 规则生成内容需求 JSON；编译完成后自动走 `content_direct` 生成。表单 schema 返回 `direct_production.hidden_sections`，客户端应隐藏创作风格、爆款原文、生成提示词与内容需求。
+
+- 小程序选择内容类型后拉取爆款库：补齐 `GET /api/mp/content/viral-assets`（按 `content_type_code`、`ready_only` 筛选，与 PC 爆款库同源）；兼容旧客户端的 `GET /api/mp/auth/profile`（等同 `/api/mp/me`）。
+
 - 直生标题硬截到 20 字时，若落在「费用」等常见双字词中间，会补全词尾（最多 +2 字），避免「真实费」这类残缺句式。
 
 - 修复直生保存成品时报 `name 'ContentArtifact' is not defined`：`content_direct_worker` 新建 artifact 时缺少 ORM 导入。

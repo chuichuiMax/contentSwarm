@@ -43,6 +43,7 @@ from yuxi.services.mp_service import (
     list_hycanvas_templates,
     list_mp_galleries,
     list_mp_gallery_items,
+    list_mp_viral_assets,
     list_mp_works,
     login_by_sms,
     login_by_wechat_code,
@@ -108,6 +109,11 @@ async def mp_get_me(ctx: MpContext = Depends(get_mp_context)):
     return await get_me(ctx)
 
 
+@mp.get("/auth/profile")
+async def mp_auth_profile(ctx: MpContext = Depends(get_mp_context)):
+    return await get_me(ctx)
+
+
 @mp.patch("/me")
 async def mp_update_me(
     payload: MeUpdatePayload,
@@ -130,6 +136,25 @@ async def mp_form_schema(
 @mp.get("/content/pricing")
 async def mp_pricing(frame_area: str = Query(...), _ctx: MpContext = Depends(get_mp_context)):
     return await get_pricing(frame_area)
+
+
+@mp.get("/content/viral-assets")
+async def mp_viral_assets(
+    content_type_code: str | None = Query(default=None, pattern=r"^CT0[1-7]$"),
+    industry_slug: str | None = None,
+    ready_only: bool = Query(default=False),
+    limit: int = Query(default=100, ge=1, le=100),
+    ctx: MpContext = Depends(get_mp_context),
+    db: AsyncSession = Depends(get_db),
+):
+    return await list_mp_viral_assets(
+        db,
+        ctx,
+        industry_slug=industry_slug,
+        ready_only=ready_only,
+        content_type_code=content_type_code,
+        limit=limit,
+    )
 
 
 @mp.get("/content/cover-templates")
