@@ -6,6 +6,7 @@ import argparse
 import asyncio
 import os
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -17,6 +18,19 @@ for path in (APP_ROOT, APP_ROOT / "package"):
         sys.path.insert(0, str(path))
 
 INITIAL_ENTERPRISE = (("reference", "案例图库"), ("rough", "毛坯房图库"), ("generated", "生图图库"))
+
+
+def reviewed_global_personal_updates(private: list[Mapping], requested: set[str]) -> tuple[set[str], set[str]]:
+    active = {f"{row['owner_uid']}:{row['id']}" for row in private if row["deleted_at"] is None}
+    invalid = requested - active
+    if invalid:
+        raise ValueError(f"指定的个人图库不是活动历史候选：{','.join(sorted(invalid))}")
+    pending = {
+        f"{row['owner_uid']}:{row['id']}"
+        for row in private
+        if row["deleted_at"] is None and not row["is_global_personal"]
+    }
+    return requested & pending, requested - pending
 
 
 async def run(*, apply: bool, global_personal: list[str]) -> None:
@@ -108,10 +122,7 @@ async def run(*, apply: bool, global_personal: list[str]) -> None:
             )
 
         requested = set(global_personal)
-        active_private = {f"{row['owner_uid']}:{row['id']}" for row in private if row["deleted_at"] is None}
-        invalid = requested - active_private
-        if invalid:
-            raise ValueError(f"指定的个人图库不是活动历史候选：{','.join(sorted(invalid))}")
+        selected, already_selected = reviewed_global_personal_updates(private, requested)
         if apply and ambiguous:
             raise RuntimeError("存在企业图库角色歧义，保持 review-only，未执行任何写入")
 
@@ -138,13 +149,13 @@ async def run(*, apply: bool, global_personal: list[str]) -> None:
                         ),
                         {"owner": owner, "id": category_id, "role": role, "name": name, "sort_order": index * 10},
                     )
-            for key in requested:
+            for key in sorted(selected):
                 owner, category_id = key.split(":", 1)
                 await db.execute(
                     text(
                         "UPDATE content_material_categories SET is_global_personal=TRUE "
                         "WHERE owner_uid=:owner AND material_type='image' AND id=:id "
-                        "AND visibility='private' AND deleted_at IS NULL"
+                        "AND visibility='private' AND deleted_at IS NULL AND is_global_personal=FALSE"
                     ),
                     {"owner": owner, "id": category_id},
                 )
@@ -164,7 +175,8 @@ async def run(*, apply: bool, global_personal: list[str]) -> None:
             f"SUMMARY apply={apply} proposed_add={sum(action == 'add' for action, *_ in proposals)} "
             f"proposed_role_tag={sum(action == 'tag' for action, *_ in proposals)} "
             f"proposed_rename=0 proposed_soft_delete=0 ambiguous={len(ambiguous)} "
-            f"review_global_personal={len(review_private)} explicitly_selected={len(requested)} "
+            f"review_global_personal={len(review_private)} explicitly_selected={len(selected)} "
+            f"already_selected={len(already_selected)} "
             f"preserved={preserved} failed=0 " + " ".join(f"{key}={value}" for key, value in counts.items())
         )
     await pg_manager.close()

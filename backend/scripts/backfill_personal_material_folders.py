@@ -89,6 +89,9 @@ async def run(*, apply: bool, owner_uid: str | None) -> None:
 
     pg_manager.initialize()
     changed = 0
+    storage_categories_created = 0
+    storage_categories_updated = 0
+    storage_owners_changed = 0
     review = []
     review_shared = []
     review_deleted = []
@@ -99,6 +102,22 @@ async def run(*, apply: bool, owner_uid: str | None) -> None:
                 (await db.execute(select(User).where(User.is_deleted == 0, User.deleted_at.is_(None)))).scalars().all()
             )
             users = [user for user in users if owner_uid is None or str(user.uid) == owner_uid]
+            category_state_query = select(
+                ContentMaterialCategory.owner_uid,
+                ContentMaterialCategory.id,
+                ContentMaterialCategory.tenant_id,
+                ContentMaterialCategory.visibility,
+                ContentMaterialCategory.parent_id,
+                ContentMaterialCategory.industry_slug,
+                ContentMaterialCategory.name,
+                ContentMaterialCategory.description,
+                ContentMaterialCategory.sort_order,
+                ContentMaterialCategory.is_system,
+                ContentMaterialCategory.deleted_at,
+            ).where(ContentMaterialCategory.material_type == "image")
+            category_state_before = {
+                (row.owner_uid, row.id): tuple(row[2:]) for row in (await db.execute(category_state_query)).all()
+            }
             for user in users:
                 uid = str(user.uid)
                 tenant_id = str(user.department_id) if user.department_id is not None else None
@@ -238,6 +257,28 @@ async def run(*, apply: bool, owner_uid: str | None) -> None:
                                 .values(source_gallery_id=target.id)
                             )
                     changed += 1
+            category_state_after = {
+                (row.owner_uid, row.id): tuple(row[2:]) for row in (await db.execute(category_state_query)).all()
+            }
+            created_keys = category_state_after.keys() - category_state_before.keys()
+            updated_keys = {
+                key
+                for key in category_state_after.keys() & category_state_before.keys()
+                if category_state_after[key] != category_state_before[key]
+            }
+            created_by_owner: dict[str, list[str]] = {}
+            for created_owner, category_id in sorted(created_keys):
+                created_by_owner.setdefault(created_owner, []).append(category_id)
+            updated_by_owner: dict[str, list[str]] = {}
+            for updated_owner, category_id in sorted(updated_keys):
+                updated_by_owner.setdefault(updated_owner, []).append(category_id)
+            for created_owner, category_ids in created_by_owner.items():
+                print(f"CREATE_FIXED owner={created_owner} categories={','.join(category_ids)}")
+            for updated_owner, category_ids in updated_by_owner.items():
+                print(f"UPDATE_FIXED owner={updated_owner} categories={','.join(category_ids)}")
+            storage_categories_created = sum(len(category_ids) for category_ids in created_by_owner.values())
+            storage_categories_updated = sum(len(category_ids) for category_ids in updated_by_owner.values())
+            storage_owners_changed = len(created_by_owner.keys() | updated_by_owner.keys())
             if not apply:
                 await db.rollback()
     finally:
@@ -250,7 +291,10 @@ async def run(*, apply: bool, owner_uid: str | None) -> None:
         print(f"REVIEW_DELETED owner={uid} asset={asset_id} item={item_id} folder={folder}")
     print(
         f"SUMMARY apply={apply} changes={changed} ambiguous_private={len(review)} "
-        f"ambiguous_shared={len(review_shared)} deleted_folder={len(review_deleted)}"
+        f"ambiguous_shared={len(review_shared)} deleted_folder={len(review_deleted)} "
+        f"storage_categories_created={storage_categories_created} "
+        f"storage_categories_updated={storage_categories_updated} "
+        f"storage_owners_changed={storage_owners_changed}"
     )
 
 
