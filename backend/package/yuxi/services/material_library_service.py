@@ -9,6 +9,7 @@ import logging
 import os
 import re
 import uuid
+from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any, Literal
 
@@ -57,7 +58,7 @@ from yuxi.storage.postgres.models_content import (
     ContentMaterialShare,
     ContentMaterialShareItem,
 )
-from yuxi.utils.datetime_utils import utc_now_naive
+from yuxi.utils.datetime_utils import SHANGHAI_TZ, utc_now_naive
 from yuxi.utils.upload_utils import read_upload_with_limit
 
 logger = logging.getLogger(__name__)
@@ -1119,7 +1120,19 @@ async def list_material_items(
     root_only: bool = False,
     exclude_task_id: str | None = None,
     personal_folder: Literal["rough"] | None = None,
+    date_from: date | None = None,
+    date_to: date | None = None,
 ) -> dict[str, Any]:
+    if date_from and date_to and date_from > date_to:
+        raise _error(422, "MATERIAL_DATE_RANGE_INVALID", "开始日期不能晚于结束日期")
+    uploaded_from = (
+        datetime.combine(date_from, time.min, SHANGHAI_TZ).astimezone(UTC).replace(tzinfo=None) if date_from else None
+    )
+    uploaded_before = (
+        datetime.combine(date_to + timedelta(days=1), time.min, SHANGHAI_TZ).astimezone(UTC).replace(tzinfo=None)
+        if date_to
+        else None
+    )
     if material_type not in {"image", "cover_template"}:
         raise _error(422, "MATERIAL_TYPE_INVALID", "素材类型不存在")
     if sort not in {"newest", "oldest", "name"}:
@@ -1177,6 +1190,8 @@ async def list_material_items(
         sort=sort,
         scope=scope,
         private_rough_only=personal_folder == "rough",
+        uploaded_from=uploaded_from,
+        uploaded_before=uploaded_before,
     )
     uploader_names = await MaterialLibraryRepository(db).uploader_names([item.owner_uid for item, _, _ in rows])
     posters_by_asset: dict[str, ContentCoverPosterTemplate] = {}

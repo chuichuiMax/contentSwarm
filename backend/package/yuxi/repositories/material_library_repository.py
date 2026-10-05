@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import String, and_, cast, func, or_, select, update
@@ -482,6 +483,8 @@ class MaterialLibraryRepository:
         scope: str | None = None,
         category_owner_uid: str | None = None,
         private_rough_only: bool = False,
+        uploaded_from: datetime | None = None,
+        uploaded_before: datetime | None = None,
     ) -> tuple[list[tuple[ContentMaterialLibraryItem, ContentCoverAsset, ContentMaterialCategory]], int]:
         filters = [
             self.item_access(owner_uid),
@@ -502,6 +505,10 @@ class MaterialLibraryRepository:
             )
         if private_rough_only:
             filters.extend(self.private_rough_filters(owner_uid))
+        if uploaded_from is not None:
+            filters.append(ContentCoverAsset.created_at >= uploaded_from)
+        if uploaded_before is not None:
+            filters.append(ContentCoverAsset.created_at < uploaded_before)
         if status:
             filters.append(ContentMaterialLibraryItem.status == status)
         if query_text:

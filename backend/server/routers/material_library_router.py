@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 from typing import Literal
 from urllib.parse import quote
 
@@ -252,6 +253,8 @@ async def personal_material_items(
     folder: Literal["rough", "generated", "uploads", "works"],
     page: int = Query(1, ge=1),
     page_size: int = Query(24, ge=1, le=100),
+    date_from: date | None = Query(None),
+    date_to: date | None = Query(None),
     current_user: User = Depends(get_required_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -277,7 +280,9 @@ async def personal_material_items(
             "page": page,
             "page_size": page_size,
         }
-    result = await list_folder(db, current_user, folder, page=page, page_size=page_size)
+    result = await list_folder(
+        db, current_user, folder, page=page, page_size=page_size, date_from=date_from, date_to=date_to
+    )
     for item in result["items"]:
         item["file_url"] = f"/api/material-library/items/{item['id']}/file"
         item["thumbnail_file_url"] = f"/api/material-library/items/{item['id']}/thumbnail"
@@ -395,6 +400,8 @@ async def material_items(
     scope: Literal["private", "enterprise"] | None = Query(None),
     exclude_task_id: str | None = Query(None),
     employee_id: str | None = Query(None),
+    date_from: date | None = Query(None),
+    date_to: date | None = Query(None),
     current_user: User = Depends(get_required_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -412,6 +419,8 @@ async def material_items(
         scope=scope,
         exclude_task_id=exclude_task_id,
         personal_folder="rough" if target is not None else None,
+        date_from=date_from,
+        date_to=date_to,
     )
 
 

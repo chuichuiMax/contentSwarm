@@ -52,6 +52,7 @@ const fixedFolderSaving = ref(false)
 const personalItems = ref([])
 const personalTotal = ref(0)
 const personalPage = ref(1)
+const uploadDateRange = ref([])
 const personalFolderName = computed(() => personalFolders.value.find((folder) => folder.id === personalFolder.value)?.name || '')
 const personalFolderOrder = ['generated', 'rough', 'works', 'uploads']
 const filteredPersonalFolders = computed(() => personalFolders.value
@@ -127,6 +128,11 @@ const supportedImageTypes = new Set(['image/png', 'image/jpeg', 'image/webp'])
 const categoryMap = computed(() => Object.fromEntries(categories.value.map((item) => [item.code, item])))
 const currentGallery = computed(() => categoryMap.value[activeGallery.value])
 const parentGallery = computed(() => categoryMap.value[currentGallery.value?.parent_id] || null)
+const isRoughGallery = computed(() => personalFolder.value === 'rough' || isEmployeeRoughMode.value ||
+  currentGallery.value?.image_design_role === 'rough' || parentGallery.value?.image_design_role === 'rough')
+const uploadDateParams = computed(() => isRoughGallery.value && uploadDateRange.value?.length === 2
+  ? { date_from: uploadDateRange.value[0], date_to: uploadDateRange.value[1] }
+  : {})
 const isTopLevelGallery = computed(() => Boolean(currentGallery.value && !currentGallery.value.parent_id))
 const isChildGallery = computed(() => Boolean(currentGallery.value?.parent_id))
 const orderedCategories = computed(() => {
@@ -411,7 +417,8 @@ async function loadItems() {
       sort: sort.value,
       page: page.value,
       page_size: 24,
-      employee_id: targetEmployeeId.value
+      employee_id: targetEmployeeId.value,
+      ...uploadDateParams.value
     })
     const next = response.items || []
     releasePreviews()
@@ -447,7 +454,7 @@ async function loadPersonalFolders() {
 async function loadPersonalItems() {
   loading.value = true
   try {
-    const response = await materialLibraryApi.listPersonalItems(personalFolder.value, personalPage.value)
+    const response = await materialLibraryApi.listPersonalItems(personalFolder.value, personalPage.value, 24, uploadDateParams.value)
     releasePreviews()
     personalItems.value = await Promise.all((response.items || []).map(async (item) => {
       const file = personalFolder.value === 'works'
@@ -466,6 +473,7 @@ async function loadPersonalItems() {
 }
 
 function enterPersonalFolder(folder) {
+  uploadDateRange.value = []
   personalFolder.value = folder.id
   personalPage.value = 1
   personalItems.value = []
@@ -508,6 +516,7 @@ function askDeleteFixedFolder(folder) {
 }
 
 function leavePersonalFolder() {
+  uploadDateRange.value = []
   personalFolder.value = ''
   personalItems.value = []
   void loadPersonalFolders()
@@ -521,6 +530,7 @@ function search() {
 }
 
 function enterGallery(gallery) {
+  uploadDateRange.value = []
   activeGallery.value = gallery.code
   designStyleFilter.value = ''
   selectedShareItemIds.value = []
@@ -531,6 +541,7 @@ function enterGallery(gallery) {
 }
 
 function leaveGallery() {
+  uploadDateRange.value = []
   if (isEmployeeRoughMode.value) {
     void router.push('/model-manage/employees')
     return
@@ -983,6 +994,7 @@ function formatSize(bytes) {
 }
 
 watch(materialType, async () => {
+  uploadDateRange.value = []
   activeGallery.value = ''
   designStyleFilter.value = ''
   categoryFilter.value = ''
@@ -999,6 +1011,7 @@ watch(materialType, async () => {
 }, { immediate: true })
 
 watch(materialScope, async () => {
+  uploadDateRange.value = []
   activeGallery.value = ''
   personalFolder.value = ''
   queryInput.value = ''
@@ -1007,6 +1020,7 @@ watch(materialScope, async () => {
 })
 
 watch(targetEmployeeId, async () => {
+  uploadDateRange.value = []
   targetEmployee.value = null
   activeGallery.value = ''
   items.value = []
@@ -1018,6 +1032,12 @@ watch(uploadCategory, (id) => {
   const gallery = categoryMap.value[id]
   if (gallery?.design_style) uploadDesignStyle.value = gallery.design_style
 })
+
+function changeUploadDateRange() {
+  page.value = 1
+  personalPage.value = 1
+  void loadItems()
+}
 
 const remoteSyncPhaseLabel = computed(() => {
   const phase = remoteSyncJob.value?.phase
@@ -1229,6 +1249,10 @@ onBeforeUnmount(() => {
           <a-input v-if="!personalFolder" v-model:value="queryInput" allow-clear placeholder="搜索图库名称">
             <template #prefix><Search :size="15" /></template>
           </a-input>
+          <span v-if="isRoughGallery" class="date-range-label">日期区间</span>
+          <a-range-picker v-if="isRoughGallery" v-model:value="uploadDateRange" class="date-range-filter"
+            value-format="YYYY-MM-DD" :placeholder="['开始日期', '结束日期']" allow-clear
+            aria-label="日期区间" @change="changeUploadDateRange" />
           <a-button class="lucide-icon-btn" :loading="loading" @click="loadItems"><RefreshCw :size="15" />刷新</a-button>
         </div>
         <a-spin :spinning="loading">
@@ -1321,6 +1345,10 @@ onBeforeUnmount(() => {
           <a-select-option value="oldest">最早上传</a-select-option>
           <a-select-option value="name">名称排序</a-select-option>
         </a-select>
+        <span v-if="isRoughGallery" class="date-range-label">日期区间</span>
+        <a-range-picker v-if="isRoughGallery" v-model:value="uploadDateRange" class="date-range-filter"
+          value-format="YYYY-MM-DD" :placeholder="['开始日期', '结束日期']" allow-clear
+          aria-label="日期区间" @change="changeUploadDateRange" />
         <a-button v-if="!isGalleryRoot" @click="search">查询</a-button>
         <a-button class="lucide-icon-btn" :loading="loading" @click="loadItems"><RefreshCw :size="15" />刷新</a-button>
       </div>
@@ -1568,6 +1596,8 @@ onBeforeUnmount(() => {
 .toolbar { display: flex; gap: 8px; max-width: 920px; margin-bottom: 20px; }
 .toolbar :deep(.ant-input-affix-wrapper) { max-width: 380px; }
 .category-filter { width: 170px; }.sort-filter { width: 130px; }
+.date-range-filter { width: 280px; flex-shrink: 0; }
+.date-range-label { display: flex; align-items: center; white-space: nowrap; }
 .gallery-section, .material-section { margin-bottom: 22px; }
 .gallery-section h3, .material-section h3 { margin: 0 0 12px; color: var(--color-text); font-size: 15px; }
 .design-style-filter { display: flex; gap: 24px; margin: -2px 0 16px; overflow-x: auto; border-bottom: 1px solid var(--gray-100); white-space: nowrap; }

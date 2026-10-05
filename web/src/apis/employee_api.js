@@ -10,6 +10,7 @@ const encodeQuery = (params = {}) => {
 }
 
 export const employeeApi = {
+  exportEmployees: () => apiGet('/api/employees/export', {}, true, 'blob'),
   getMyEmployee: () => apiGet('/api/employees/me'),
   listEmployees: (params) => apiGet(`/api/employees${encodeQuery(params)}`),
   createEmployee: (payload) => apiPost('/api/employees', payload),

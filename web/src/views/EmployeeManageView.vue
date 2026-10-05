@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { message, Modal } from 'ant-design-vue'
-import { Plus, Search } from 'lucide-vue-next'
+import { Download, Plus, Search } from 'lucide-vue-next'
 import { useRouter } from 'vue-router'
 
 import { employeeApi } from '@/apis/employee_api'
@@ -35,6 +35,7 @@ const emptyForm = () => ({
 
 const loading = ref(false)
 const saving = ref(false)
+const exporting = ref(false)
 const togglingId = ref('')
 const keywordInput = ref('')
 const keyword = ref('')
@@ -122,6 +123,23 @@ const handleSearch = () => {
   keyword.value = keywordInput.value.trim()
   page.value = 1
   void loadEmployees()
+}
+
+const exportEmployees = async () => {
+  exporting.value = true
+  try {
+    const response = await employeeApi.exportEmployees()
+    const url = URL.createObjectURL(await response.blob())
+    const link = document.createElement('a')
+    link.href = url
+    link.download = '员工管理.xlsx'
+    link.click()
+    URL.revokeObjectURL(url)
+  } catch (error) {
+    message.error(error.message || '导出员工失败')
+  } finally {
+    exporting.value = false
+  }
 }
 
 const handleRoleFilterChange = () => {
@@ -302,10 +320,15 @@ onMounted(async () => {
           </a-select>
           <a-button type="primary" @click="handleSearch">查询</a-button>
         </div>
-        <a-button type="primary" class="lucide-icon-btn" @click="openCreate">
-          <Plus :size="14" />
-          新增员工
-        </a-button>
+        <a-space>
+          <a-button class="lucide-icon-btn" :loading="exporting" @click="exportEmployees">
+            <Download :size="14" />导出
+          </a-button>
+          <a-button type="primary" class="lucide-icon-btn" @click="openCreate">
+            <Plus :size="14" />
+            新增员工
+          </a-button>
+        </a-space>
       </div>
 
       <a-table

@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import uuid
 from dataclasses import dataclass
 from typing import Any, Literal
 
 from fastapi import HTTPException
+from openpyxl import Workbook
+from openpyxl.styles import Font
 from pydantic import BaseModel, Field
 from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
@@ -274,6 +277,60 @@ async def list_employees(db: AsyncSession, keyword: str | None = None) -> dict[s
     rows.sort(key=lambda item: item[0] or utc_now_naive(), reverse=True)
     items = [row for _, row in rows]
     return {"employees": items, "total": len(items)}
+
+
+async def export_employees(db: AsyncSession) -> bytes:
+    listing = await list_employees(db)
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "员工管理"
+    sheet.append(
+        [
+            "序号",
+            "员工编码",
+            "姓名",
+            "当前分部",
+            "当前部门",
+            "登录账号",
+            "性别",
+            "年龄",
+            "登录端口",
+            "角色",
+            "毛坯图上传数",
+            "状态",
+        ]
+    )
+    for index, employee in enumerate(listing["employees"], start=1):
+        ports = employee.get("login_port") or []
+        sheet.append(
+            [
+                index,
+                employee["employee_code"],
+                employee["name"],
+                employee.get("current_branch"),
+                employee.get("current_department"),
+                employee["login_account"],
+                {"male": "男", "female": "女"}.get(employee.get("gender"), employee.get("gender") or "-"),
+                employee["age"] if employee.get("age") is not None else "-",
+                "&".join(label for port, label in (("pc", "PC"), ("app", "APP")) if port in ports) or "-",
+                employee["role"],
+                employee["rough_image_count"],
+                "启用" if employee["enabled"] else "禁用",
+            ]
+        )
+        # 原表文本保持文本类型，保留账号前导零，也不将名称当作 Excel 公式。
+        for cell in sheet[index + 1]:
+            if isinstance(cell.value, str):
+                cell.data_type = "s"
+    for cell in sheet[1]:
+        cell.font = Font(bold=True)
+    for column, width in zip("ABCDEFGHIJKL", (8, 24, 22, 22, 22, 22, 10, 10, 16, 18, 18, 12), strict=True):
+        sheet.column_dimensions[column].width = width
+    sheet.freeze_panes = "A2"
+    sheet.auto_filter.ref = sheet.dimensions
+    output = io.BytesIO()
+    workbook.save(output)
+    return output.getvalue()
 
 
 async def create_employee(db: AsyncSession, user: User, payload: EmployeeCreate) -> dict[str, Any]:

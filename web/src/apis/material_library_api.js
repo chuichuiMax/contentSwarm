@@ -28,8 +28,8 @@ export const materialLibraryApi = {
     apiPatch(`/api/material-library/my-materials/folders/${encodeURIComponent(folder)}`, { name }),
   deletePersonalFolder: (folder) =>
     apiDelete(`/api/material-library/my-materials/folders/${encodeURIComponent(folder)}`),
-  listPersonalItems: (folder, page = 1, pageSize = 24) =>
-    apiGet(`/api/material-library/my-materials/${encodeURIComponent(folder)}${encodeQuery({ page, page_size: pageSize })}`),
+  listPersonalItems: (folder, page = 1, pageSize = 24, dateParams = {}) =>
+    apiGet(`/api/material-library/my-materials/${encodeURIComponent(folder)}${encodeQuery({ page, page_size: pageSize, ...dateParams })}`),
   getWorkFile: (assetId) =>
     apiGet(`/api/content/covers/assets/${encodeURIComponent(assetId)}/file`, {}, true, 'blob'),
   getRemoteConfig: () => apiGet('/api/material-library/remote-config'),
