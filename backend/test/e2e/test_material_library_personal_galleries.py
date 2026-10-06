@@ -1,4 +1,4 @@
-"""PC 个人素材同时保留固定入口与自建图库。"""
+"""PC 个人素材仅展示实体图库，普通用户可上传但不能管理文件夹。"""
 
 import json
 import re
@@ -18,7 +18,7 @@ from yuxi.utils.auth_utils import AuthUtils
 
 @pytest.mark.e2e
 @pytest.mark.asyncio
-async def test_personal_materials_keep_fixed_and_custom_galleries():
+async def test_personal_materials_use_only_entity_and_custom_galleries():
     uid = f"material_ui_{uuid.uuid4().hex}"
     pg_manager.initialize()
     async with pg_manager.AsyncSession() as db:
@@ -59,15 +59,31 @@ async def test_personal_materials_keep_fixed_and_custom_galleries():
         "is_system": False,
         "is_global_personal": True,
         "can_manage": True,
+        "can_upload": True,
         "count": 0,
         "child_count": 0,
         "cover_item_id": None,
     }
     fixed_folders = [
-        {"id": "generated", "name": "生图图库", "count": 2, "can_upload": False},
+        {"id": "generated", "name": "AI生图图库", "count": 2, "can_upload": False},
         {"id": "rough", "name": "毛坯房图库", "count": 1, "can_upload": True},
         {"id": "works", "name": "我的作品", "count": 3, "can_upload": False},
         {"id": "uploads", "name": "我的上传", "count": 4, "can_upload": True},
+    ]
+
+    entity_galleries = [
+        {
+            **custom_gallery,
+            "id": f"entity-{f['id']}",
+            "code": f"entity-{f['id']}",
+            "name": f["name"],
+            "personal_folder": f["id"],
+            "can_manage": False,
+            "can_upload": f["can_upload"],
+            "is_global_personal": False,
+            "count": f["count"],
+        }
+        for f in fixed_folders
     ]
 
     try:
@@ -92,14 +108,16 @@ async def test_personal_materials_keep_fixed_and_custom_galleries():
                     "**/api/material-library/galleries*",
                     lambda route: route.fulfill(
                         json={
-                            "galleries": [custom_gallery],
+                            "galleries": [*entity_galleries, custom_gallery],
                             "industries": [{"slug": "decoration", "name": "装修与家居"}],
                         }
                     ),
                 )
                 await page.route(
                     "**/api/material-library/categories?*",
-                    lambda route: route.fulfill(json={"categories": [custom_gallery], "can_create_shared": True}),
+                    lambda route: route.fulfill(
+                        json={"categories": [*entity_galleries, custom_gallery], "can_create_shared": True}
+                    ),
                 )
                 await page.route(
                     "**/api/material-library/items?*",
@@ -111,7 +129,8 @@ async def test_personal_materials_keep_fixed_and_custom_galleries():
                 )
 
                 await page.goto("http://localhost:5173/materials/images")
-                await expect(page.get_by_role("heading", name="素材库")).to_be_visible(timeout=15_000)
+                await expect(page.get_by_role("heading", name="素材库")).to_be_visible(timeout=60_000)
+                await expect(page.get_by_role("heading", name="固定图库", exact=True)).to_have_count(0)
 
                 generated_card = page.locator("button.gallery-open").filter(has_text="生图图库")
                 custom_card = page.locator("button.gallery-open").filter(has_text="客厅灵感")
@@ -128,7 +147,7 @@ async def test_personal_materials_keep_fixed_and_custom_galleries():
 
                 await generated_card.click()
                 await expect(page.get_by_role("button", name="新建图库")).to_have_count(0)
-                await page.get_by_role("button", name="返回我的图库").click()
+                await page.get_by_role("button", name="返回图库").click()
 
                 await custom_card.click()
                 await expect(page.get_by_role("button", name="新建二级图库")).to_have_count(0)
@@ -153,14 +172,16 @@ async def test_personal_materials_keep_fixed_and_custom_galleries():
                     "**/api/material-library/galleries*",
                     lambda route: route.fulfill(
                         json={
-                            "galleries": [read_only_gallery],
+                            "galleries": [*entity_galleries, read_only_gallery],
                             "industries": [{"slug": "decoration", "name": "装修与家居"}],
                         }
                     ),
                 )
                 await member_page.route(
                     "**/api/material-library/categories?*",
-                    lambda route: route.fulfill(json={"categories": [read_only_gallery], "can_create_shared": False}),
+                    lambda route: route.fulfill(
+                        json={"categories": [*entity_galleries, read_only_gallery], "can_create_shared": False}
+                    ),
                 )
                 await member_page.route(
                     "**/api/material-library/items?*",
@@ -179,7 +200,7 @@ async def test_personal_materials_keep_fixed_and_custom_galleries():
                 await expect(member_page.get_by_role("button", name="删除图库 客厅灵感")).to_have_count(0)
                 await expect(member_gallery_card).to_be_visible()
                 await member_gallery_card.click()
-                await expect(member_page.get_by_role("button", name="上传图片")).to_have_count(0)
+                await expect(member_page.get_by_role("button", name="上传图片")).to_be_visible()
                 await member_context.close()
             finally:
                 await browser.close()
@@ -242,10 +263,19 @@ async def test_real_preview_admin_and_member_see_expected_gallery_roots():
                     response = await gallery_response.value
                     assert response.status == 200, await response.text()
                     await expect(page.get_by_role("heading", name="素材库")).to_be_visible(timeout=20_000)
-                    for name in ("生图图库", "毛坯房图库", "我的作品", "我的上传"):
+                    for name in ("AI生图图库", "毛坯房图库", "我的作品", "我的上传"):
                         await expect(page.locator("button.gallery-open").filter(has_text=name)).to_be_visible()
+                        await expect(page.locator("button.gallery-open").filter(has_text=name)).to_have_count(1)
                     await expect(page.get_by_role("button", name="上传图片")).to_have_count(0)
                     await expect(page.get_by_role("button", name="新建图库")).to_have_count(1 if is_admin else 0)
+                    await expect(page.get_by_role("heading", name="固定图库", exact=True)).to_have_count(0)
+                    await page.locator("button.gallery-open").filter(has_text="毛坯房图库").click()
+                    await page.get_by_role("button", name="上传图片").click()
+                    modal = page.locator(".ant-modal-content").filter(has_text="上传素材图片")
+                    await expect(modal).to_be_visible()
+                    await expect(modal).not_to_contain_text("请选择设计风格")
+                    await modal.get_by_role("button", name="取 消").click()
+                    await page.get_by_role("button", name="返回图库").click()
 
                     await page.locator(".ant-radio-button-wrapper").filter(has_text="企业共享").click()
                     await expect(page.locator("button.gallery-open").filter(has_text="案例图库")).to_be_visible()

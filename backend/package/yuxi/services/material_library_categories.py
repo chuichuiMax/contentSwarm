@@ -32,7 +32,25 @@ MATERIAL_CATEGORIES: dict[MaterialType, tuple[dict[str, str], ...]] = {
 # Legacy PC defaults remain valid storage categories, but the material-library UI
 # now exposes the four fixed personal entries instead of these old cards.
 DEFAULT_IMAGE_CATEGORY_IDS = frozenset(item["code"] for item in MATERIAL_CATEGORIES["image"])
-RETIRED_PRIVATE_IMAGE_CATEGORY_IDS = DEFAULT_IMAGE_CATEGORY_IDS
+RETIRED_PRIVATE_IMAGE_CATEGORY_IDS = DEFAULT_IMAGE_CATEGORY_IDS - {"product"}
+
+PERSONAL_IMAGE_FOLDERS = {
+    "rough": ("mp-rough-private", "毛坯房图库"),
+    "uploads": ("mp-uploads-private", "我的上传"),
+    "generated": ("mp-generated-private", "AI生图图库"),
+    "works": ("mp-works-private", "我的作品"),
+}
+
+
+def personal_folder_key(category) -> str | None:
+    if category.material_type != "image" or category.visibility != "private" or category.parent_id:
+        return None
+    for key, (category_id, name) in PERSONAL_IMAGE_FOLDERS.items():
+        if category.id == category_id or category.name in {name, f"{name}（个人）"}:
+            return key
+    if category.name in {"生图图库", "毛胚房图库"}:
+        return "generated" if category.name == "生图图库" else "rough"
+    return None
 
 
 def _aliases(material_type: MaterialType) -> dict[str, str]:

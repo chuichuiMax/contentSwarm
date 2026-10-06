@@ -4,7 +4,7 @@ from datetime import date
 from typing import Literal
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, Query, Request, UploadFile, status
 from fastapi.responses import HTMLResponse, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -33,11 +33,9 @@ from yuxi.services.material_library_service import (
     update_material_category,
     update_material_item,
 )
-from yuxi.services.mp_service import visible_mp_works
 from yuxi.services.employee_service import EmployeeMaterialOwner, resolve_employee_material_owner
 from yuxi.services.personal_materials import (
     delete_fixed_folder,
-    fixed_folder_settings,
     folder_counts,
     list_folder,
     rename_fixed_folder,
@@ -50,7 +48,6 @@ from yuxi.services.remote_material_library_service import (
     verify_and_save_remote_material_config,
 )
 from yuxi.storage.postgres.models_business import User
-from yuxi.utils.datetime_utils import format_utc_datetime
 
 from server.utils.auth_middleware import get_admin_user, get_db, get_required_user, get_superadmin_user
 from server.utils.public_url import request_public_base_url
@@ -250,7 +247,7 @@ async def remove_personal_material_folder(
 
 @material_library.get("/my-materials/{folder}")
 async def personal_material_items(
-    folder: Literal["rough", "generated", "uploads", "works"],
+    folder: str,
     page: int = Query(1, ge=1),
     page_size: int = Query(24, ge=1, le=100),
     date_from: date | None = Query(None),
@@ -258,32 +255,13 @@ async def personal_material_items(
     current_user: User = Depends(get_required_user),
     db: AsyncSession = Depends(get_db),
 ):
-    if folder == "works":
-        setting = (await fixed_folder_settings(db)).get("works")
-        if setting is not None and setting.deleted_at is not None:
-            raise HTTPException(404, "固定图库不存在")
-        works = await visible_mp_works(db, str(current_user.uid))
-        start = (page - 1) * page_size
-        return {
-            "items": [
-                {
-                    **work,
-                    "name": f"作品 {work['id'][:8]}",
-                    "uploaded_at": format_utc_datetime(work["uploaded_at"]),
-                    "file_url": f"/api/content/covers/assets/{work['id']}/file",
-                    "thumbnail_file_url": f"/api/content/covers/assets/{work['id']}/file",
-                    "can_manage": False,
-                }
-                for work in works[start : start + page_size]
-            ],
-            "total": len(works),
-            "page": page,
-            "page_size": page_size,
-        }
     result = await list_folder(
         db, current_user, folder, page=page, page_size=page_size, date_from=date_from, date_to=date_to
     )
     for item in result["items"]:
+        if item.get("work_asset_id"):
+            item["file_url"] = item["thumbnail_file_url"] = f"/api/content/covers/assets/{item['work_asset_id']}/file"
+            continue
         item["file_url"] = f"/api/material-library/items/{item['id']}/file"
         item["thumbnail_file_url"] = f"/api/material-library/items/{item['id']}/thumbnail"
     return result

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import HTTPException
@@ -27,7 +28,7 @@ def test_private_folder_uses_distinct_storage_name_when_owner_already_has_shared
 
 
 @pytest.mark.asyncio
-async def test_fixed_folders_share_pc_sources_but_keep_mini_uploads_private():
+async def test_real_personal_folders_keep_pc_and_mini_uploads_private(monkeypatch):
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
@@ -189,23 +190,22 @@ async def test_fixed_folders_share_pc_sources_but_keep_mini_uploads_private():
         bob = SimpleNamespace(uid="bob", department_id="tenant-1", role="employee")
         a_uploads = await list_folder(db, alice, "uploads", page=1, page_size=1)
         a_uploads_next = await list_folder(db, alice, "uploads", page=2, page_size=1)
-        assert a_uploads["total"] == 2
+        assert a_uploads["total"] == 1
         assert {item["asset_id"] for item in a_uploads["items"] + a_uploads_next["items"]} == {
             "alice-upload",
-            "pc-upload",
         }
         assert {
             item["asset_id"] for item in (await list_folder(db, bob, "uploads", page=1, page_size=10))["items"]
         } == {"bob-upload", "pc-upload"}
         assert {
             item["asset_id"] for item in (await list_folder(db, alice, "rough", page=1, page_size=10))["items"]
-        } == {"alice-rough", "pc-rough"}
+        } == {"alice-rough"}
         assert {item["asset_id"] for item in (await list_folder(db, bob, "rough", page=1, page_size=10))["items"]} == {
             "pc-rough"
         }
         assert {
             item["asset_id"] for item in (await list_folder(db, alice, "generated", page=1, page_size=10))["items"]
-        } == {"pc-generated", "mp-generated"}
+        } == {"mp-generated"}
         rough_on_14 = await list_folder(
             db,
             alice,
@@ -218,40 +218,11 @@ async def test_fixed_folders_share_pc_sources_but_keep_mini_uploads_private():
         assert rough_on_14["total"] == 1
         assert rough_on_14["items"][0]["asset_id"] == "alice-rough"
         assert rough_on_14["items"][0]["uploaded_at"].startswith("2026-09-13T16:30:00")
-        assert (
-            await list_folder(
-                db,
-                alice,
-                "rough",
-                page=1,
-                page_size=10,
-                date_from=date(2026, 9, 15),
-                date_to=date(2026, 9, 15),
-            )
-        )["items"][0]["asset_id"] == "pc-rough"
-        rough_page_1 = await list_folder(
-            db,
-            alice,
-            "rough",
-            page=1,
-            page_size=1,
-            date_from=date(2026, 9, 14),
-            date_to=date(2026, 9, 15),
+        empty_day = await list_folder(
+            db, alice, "rough", page=1, page_size=10, date_from=date(2026, 9, 15), date_to=date(2026, 9, 15)
         )
-        rough_page_2 = await list_folder(
-            db,
-            alice,
-            "rough",
-            page=2,
-            page_size=1,
-            date_from=date(2026, 9, 14),
-            date_to=date(2026, 9, 15),
-        )
-        assert rough_page_1["total"] == rough_page_2["total"] == 2
-        assert [rough_page_1["items"][0]["asset_id"], rough_page_2["items"][0]["asset_id"]] == [
-            "pc-rough",
-            "alice-rough",
-        ]
+        assert empty_day["total"] == 0
+        assert empty_day["items"] == []
         with pytest.raises(HTTPException) as error:
             await list_folder(
                 db,
@@ -265,10 +236,10 @@ async def test_fixed_folders_share_pc_sources_but_keep_mini_uploads_private():
         assert error.value.status_code == 422
         folders = {folder["id"]: folder for folder in await folder_counts(db, alice)}
         counts = {folder_id: folder["count"] for folder_id, folder in folders.items()}
-        assert counts == {"rough": 2, "generated": 2, "uploads": 2, "works": 1}
-        assert folders["rough"]["cover_thumbnail_file_url"].endswith("/item-pc-rough/thumbnail")
-        assert folders["generated"]["cover_thumbnail_file_url"].endswith("/item-pc-generated/thumbnail")
-        assert folders["uploads"]["cover_thumbnail_file_url"].endswith("/item-pc-upload/thumbnail")
+        assert counts == {"rough": 1, "generated": 1, "uploads": 1, "works": 1}
+        assert folders["rough"]["cover_thumbnail_file_url"].endswith("/item-alice-rough/thumbnail")
+        assert folders["generated"]["cover_thumbnail_file_url"].endswith("/item-mp-generated/thumbnail")
+        assert folders["uploads"]["cover_thumbnail_file_url"].endswith("/item-alice-upload/thumbnail")
         assert folders["works"]["cover_file_url"].endswith("/alice-work/file")
         bob_folders = {folder["id"]: folder for folder in await folder_counts(db, bob)}
         assert bob_folders["works"]["cover_thumbnail_file_url"] is None
@@ -280,12 +251,58 @@ async def test_fixed_folders_share_pc_sources_but_keep_mini_uploads_private():
         assert (
             await MaterialLibraryRepository(db, include_shared=True).get_item_for_user("item-bob-upload", "alice")
         ) is None
-        shared = next(item for item in a_uploads["items"] + a_uploads_next["items"] if item["asset_id"] == "pc-upload")
-        assert shared["can_manage"] is False
+        own = a_uploads["items"][0]
+        assert own["can_manage"] is True
         assert "enterprise-rough" not in {
             item["asset_id"] for item in (await list_folder(db, alice, "rough", page=1, page_size=10))["items"]
         }
         assert "enterprise-upload" not in {
             item["asset_id"] for item in (await list_folder(db, alice, "uploads", page=1, page_size=10))["items"]
         }
+        from yuxi.services.material_library_service import get_material_categories, list_material_items
+        from yuxi.services.personal_materials import folder_categories
+
+        monkeypatch.setattr("yuxi.services.material_library_service.ensure_initial_enterprise_galleries", AsyncMock())
+        mapping = await folder_categories(db, alice)
+        actual_generated_id = mapping["generated"][0].id
+        params = dict(
+            material_type="image",
+            category=actual_generated_id,
+            status="enabled",
+            query=None,
+            page=1,
+            page_size=10,
+            sort="newest",
+        )
+        pc_generated = await list_material_items(db, alice, **params, scope="private")
+        assert [row["asset_id"] for row in pc_generated["items"]] == ["mp-generated"]
+        assert pc_generated["items"][0]["in_use"] is False
+        assert pc_generated["items"][0]["file_url"].startswith("/api/material-library/items/")
+        assert (await list_material_items(db, alice, **params, scope="enterprise"))["total"] == 0
+        categories = (await get_material_categories(db, alice, "image"))["categories"]
+        assert next(c for c in categories if c.get("personal_folder") == "generated")["count"] == 1
+        assert next(c for c in categories if c.get("personal_folder") == "works")["count"] == 1
+        pc_folders = {row["id"]: row for row in await folder_counts(db, alice, client="pc")}
+        assert pc_folders["generated"]["cover_file_url"].startswith("/api/material-library/items/")
+        assert pc_folders["works"]["cover_file_url"].startswith("/api/content/covers/assets/")
+        # An actual works item and its successful task refer to the same asset only once.
+        db.add(
+            ContentMaterialLibraryItem(
+                id="actual-work-item",
+                owner_uid="alice",
+                asset_id="alice-work",
+                material_type="image",
+                category=mapping["works"][0].id,
+                category_owner_uid="alice",
+                display_name="原有作品",
+            )
+        )
+        await db.commit()
+        deduplicated_works = await list_folder(db, alice, "works", page=1, page_size=10)
+        assert deduplicated_works["total"] == 1
+        assert deduplicated_works["items"][0]["work_asset_id"] == "alice-work"
+        work_asset = await db.get(ContentCoverAsset, "alice-work")
+        work_asset.hidden_from_works_at = datetime(2026, 10, 6)
+        await db.commit()
+        assert (await list_folder(db, alice, "works", page=1, page_size=10))["total"] == 0
     await engine.dispose()

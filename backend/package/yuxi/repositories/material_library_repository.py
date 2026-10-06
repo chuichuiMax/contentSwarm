@@ -3,11 +3,11 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import String, and_, cast, func, or_, select, update
+from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
-
 from yuxi.storage.postgres.models_business import User
+
 from yuxi.storage.postgres.models_content import (
     ContentCoverAsset,
     ContentCoverPosterTemplate,
@@ -20,6 +20,7 @@ from yuxi.storage.postgres.models_content import (
     RemoteMaterialLibrarySetting,
 )
 from yuxi.utils.datetime_utils import utc_now_naive
+from yuxi.services.material_library_categories import PERSONAL_IMAGE_FOLDERS
 
 # 仅生成中或生成成功的任务占用图库图片；草稿、编译未开跑、失败、取消、审核拦截不占用。
 IMAGE_OCCUPANCY_ACTIVE_STATUSES = frozenset(
@@ -126,13 +127,16 @@ class MaterialLibraryRepository:
         own = ContentMaterialCategory.owner_uid == owner_uid
         if not self.include_shared:
             return own
-        requester_tenant = select(cast(User.department_id, String)).where(User.uid == owner_uid).scalar_subquery()
         admin_personal = and_(
             ContentMaterialCategory.material_type == "image",
             ContentMaterialCategory.visibility == "private",
             ContentMaterialCategory.is_global_personal.is_(True),
-            ContentMaterialCategory.tenant_id.is_not(None),
-            ContentMaterialCategory.tenant_id == requester_tenant,
+            ContentMaterialCategory.id.not_in([value[0] for value in PERSONAL_IMAGE_FOLDERS.values()]),
+            ContentMaterialCategory.name.not_in(
+                [name for _, name in PERSONAL_IMAGE_FOLDERS.values()]
+                + [f"{name}（个人）" for _, name in PERSONAL_IMAGE_FOLDERS.values()]
+                + ["生图图库", "毛胚房图库"]
+            ),
         )
         return or_(own, ContentMaterialCategory.visibility == "enterprise", admin_personal)
 
@@ -156,6 +160,13 @@ class MaterialLibraryRepository:
             .where(
                 self.category_join(),
                 self.category_access(owner_uid),
+                or_(
+                    ContentMaterialCategory.visibility == "enterprise",
+                    and_(
+                        ContentMaterialCategory.visibility == "private",
+                        ContentMaterialLibraryItem.owner_uid == owner_uid,
+                    ),
+                ),
             )
             .correlate(ContentMaterialLibraryItem)
             .exists()
@@ -187,7 +198,8 @@ class MaterialLibraryRepository:
                 )
             )
             if category is None:
-                self.db.add(ContentMaterialCategory(**value))
+                # Source folders and save targets are loaded in parallel by the mini-program.
+                await self.db.execute(pg_insert(ContentMaterialCategory).values(value).on_conflict_do_nothing())
                 continue
             for key in (
                 "tenant_id",
@@ -555,33 +567,32 @@ class MaterialLibraryRepository:
 
     async def category_summaries(
         self, owner_uid: str, *, material_type: str
-    ) -> dict[str, tuple[int, ContentMaterialLibraryItem | None]]:
+    ) -> dict[tuple[str, str], tuple[int, ContentMaterialLibraryItem | None]]:
         filters = [
             self.item_access(owner_uid),
             ContentMaterialLibraryItem.material_type == material_type,
             ContentMaterialLibraryItem.deleted_at.is_(None),
             ContentCoverAsset.deleted_at.is_(None),
         ]
+        owner = func.coalesce(ContentMaterialLibraryItem.category_owner_uid, ContentMaterialLibraryItem.owner_uid)
         counts = (
             await self.db.execute(
-                select(ContentMaterialLibraryItem.category, func.count(ContentMaterialLibraryItem.id))
+                select(owner, ContentMaterialLibraryItem.category, func.count(ContentMaterialLibraryItem.id))
                 .join(ContentCoverAsset, ContentCoverAsset.id == ContentMaterialLibraryItem.asset_id)
                 .where(*filters)
-                .group_by(ContentMaterialLibraryItem.category)
+                .group_by(owner, ContentMaterialLibraryItem.category)
             )
         ).all()
-        result: dict[str, tuple[int, ContentMaterialLibraryItem | None]] = {}
-        for category, count in counts:
-            latest = (
-                await self.db.execute(
-                    select(ContentMaterialLibraryItem)
-                    .join(ContentCoverAsset, ContentCoverAsset.id == ContentMaterialLibraryItem.asset_id)
-                    .where(*filters, ContentMaterialLibraryItem.category == category)
-                    .order_by(ContentMaterialLibraryItem.created_at.desc())
-                    .limit(1)
-                )
-            ).scalar_one_or_none()
-            result[category] = (int(count), latest)
+        result = {}
+        for category_owner, category_id, count in counts:
+            latest = await self.db.scalar(
+                select(ContentMaterialLibraryItem)
+                .join(ContentCoverAsset, ContentCoverAsset.id == ContentMaterialLibraryItem.asset_id)
+                .where(*filters, owner == category_owner, ContentMaterialLibraryItem.category == category_id)
+                .order_by(ContentMaterialLibraryItem.created_at.desc())
+                .limit(1)
+            )
+            result[(category_owner, category_id)] = (int(count), latest)
         return result
 
     async def category_item_count(self, owner_uid: str, material_type: str, category_id: str) -> int:

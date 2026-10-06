@@ -87,7 +87,7 @@ def reviewed_users(users: list, owner_uids: list[str]) -> list:
 
 async def run(*, apply: bool, owner_uids: list[str]) -> None:
     from yuxi.services.material_library_service import create_library_item_for_asset
-    from yuxi.services.personal_materials import fixed_folder_settings, folder_categories, upload_category
+    from yuxi.services.personal_materials import folder_categories, upload_category
     from yuxi.storage.postgres.manager import pg_manager
     from yuxi.storage.postgres.models_business import User
     from yuxi.storage.postgres.models_content import (
@@ -106,10 +106,8 @@ async def run(*, apply: bool, owner_uids: list[str]) -> None:
     storage_owners_changed = 0
     review = []
     review_shared = []
-    review_deleted = []
     try:
         async with pg_manager.get_async_session_context() as db:
-            folder_settings = await fixed_folder_settings(db)
             users = (
                 (await db.execute(select(User).where(User.is_deleted == 0, User.deleted_at.is_(None)))).scalars().all()
             )
@@ -204,10 +202,6 @@ async def run(*, apply: bool, owner_uids: list[str]) -> None:
                     if folder == "review_shared":
                         review_shared.append((uid, asset.id, item.id, old.name if old else "unknown"))
                         continue
-                    setting = folder_settings.get(folder)
-                    if setting is not None and setting.deleted_at is not None:
-                        review_deleted.append((uid, asset.id, item.id if item else "-", folder))
-                        continue
                     target = (
                         folders["generated"][0]
                         if folder == "generated"
@@ -222,7 +216,7 @@ async def run(*, apply: bool, owner_uids: list[str]) -> None:
                     if folder == "generated":
                         metadata["source"] = "image_design" if channel == "mp" else "content_production"
                     if folder == "generated" and channel == "mp":
-                        saved_target = {"scope": "private", "gallery_id": None}
+                        saved_target = {"scope": "private", "gallery_id": target.id}
                         metadata.update(resolved_save_target=saved_target, save_target_version=2)
                         asset_metadata["resolved_save_target"] = saved_target
                     moved = item is not None and (
@@ -301,11 +295,9 @@ async def run(*, apply: bool, owner_uids: list[str]) -> None:
         print(f"REVIEW_PRIVATE owner={uid} asset={asset_id} item={item_id} gallery={name}")
     for uid, asset_id, item_id, name in review_shared:
         print(f"REVIEW_SHARED owner={uid} asset={asset_id} item={item_id} gallery={name}")
-    for uid, asset_id, item_id, folder in review_deleted:
-        print(f"REVIEW_DELETED owner={uid} asset={asset_id} item={item_id} folder={folder}")
     print(
         f"SUMMARY apply={apply} changes={changed} ambiguous_private={len(review)} "
-        f"ambiguous_shared={len(review_shared)} deleted_folder={len(review_deleted)} "
+        f"ambiguous_shared={len(review_shared)} "
         f"storage_categories_created={storage_categories_created} "
         f"storage_categories_updated={storage_categories_updated} "
         f"storage_owners_changed={storage_owners_changed}"

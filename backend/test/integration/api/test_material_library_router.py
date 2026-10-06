@@ -172,6 +172,20 @@ async def _insert_existing_child_gallery(material_users, parent: dict, **values)
 
 async def test_material_image_round_trip_uses_private_image_bucket(test_client, material_users):
     owner_headers = material_users["owner"]
+    # 产品商品是已有分类；新账号不再自动创建旧的默认图片分类。
+    engine = create_async_engine(os.environ["POSTGRES_URL"])
+    async with async_sessionmaker(engine)() as db:
+        db.add(
+            ContentMaterialCategory(
+                owner_uid=material_users["owner_uid"],
+                material_type="image",
+                id="product",
+                name="产品商品",
+                visibility="private",
+            )
+        )
+        await db.commit()
+    await engine.dispose()
     uploaded = await test_client.post(
         "/api/material-library/images/import",
         headers=owner_headers,
@@ -207,7 +221,7 @@ async def test_material_image_round_trip_uses_private_image_bucket(test_client, 
 
     categories = await test_client.get("/api/material-library/categories?material_type=image", headers=owner_headers)
     assert categories.status_code == 200, categories.text
-    assert "product" not in {entry["code"] for entry in categories.json()["categories"]}
+    assert "product" in {entry["code"] for entry in categories.json()["categories"]}
     cover_categories, cover_categories_again = await asyncio.gather(
         test_client.get(
             "/api/material-library/categories?material_type=cover_template",
@@ -226,7 +240,7 @@ async def test_material_image_round_trip_uses_private_image_bucket(test_client, 
     }
     galleries = await test_client.get("/api/material-library/galleries", headers=owner_headers)
     assert galleries.status_code == 200, galleries.text
-    assert "product" not in {entry["code"] for entry in galleries.json()["galleries"]}
+    assert "product" in {entry["code"] for entry in galleries.json()["galleries"]}
 
     downloaded = await test_client.get(item["file_url"], headers=owner_headers)
     assert downloaded.status_code == 200, downloaded.text
@@ -315,9 +329,19 @@ async def test_image_gallery_crud_and_safe_item_reassignment(test_client, materi
         "/api/material-library/images/import",
         headers=material_users["member"],
         data={"category": gallery["id"]},
-        files=[("files", ("forbidden.png", _png(), "image/png"))],
+        files=[("files", ("member.png", _png(), "image/png"))],
     )
-    assert member_upload.status_code == 403, member_upload.text
+    assert member_upload.status_code == 201, member_upload.text
+    member_item = member_upload.json()["items"][0]
+    sharing = await test_client.patch(
+        f"/api/material-library/categories/{gallery['id']}?material_type=image",
+        headers=headers,
+        json={"visibility": "enterprise"},
+    )
+    assert sharing.status_code == 409, sharing.text
+    for file_route in ("file", "thumbnail"):
+        denied = await test_client.get(f"/api/material-library/items/{member_item['id']}/{file_route}", headers=headers)
+        assert denied.status_code == 404, denied.text
 
     member_delete = await test_client.request(
         "DELETE",
@@ -366,7 +390,13 @@ async def test_image_gallery_crud_and_safe_item_reassignment(test_client, materi
             json={"target_category_id": "uncategorized"},
         )
         assert removed.status_code == 200, removed.text
-        assert removed.json()["moved"] == 1
+        assert removed.json()["moved"] == 2
+        member_uploads = await test_client.get(
+            "/api/material-library/my-materials/uploads", headers=material_users["member"]
+        )
+        assert member_item["id"] in {entry["id"] for entry in member_uploads.json()["items"]}
+        assert (await test_client.get(member_item["file_url"], headers=material_users["member"])).status_code == 200
+        assert (await test_client.get(member_item["file_url"], headers=headers)).status_code == 404
         listed = await test_client.get(
             "/api/material-library/items?material_type=image&category=uncategorized&query=spring",
             headers=headers,
@@ -374,9 +404,10 @@ async def test_image_gallery_crud_and_safe_item_reassignment(test_client, materi
         assert [entry["id"] for entry in listed.json()["items"]] == [item["id"]]
     finally:
         await test_client.delete(f"/api/material-library/items/{item['id']}", headers=headers)
+        await test_client.delete(f"/api/material-library/items/{member_item['id']}", headers=material_users["member"])
 
 
-async def test_fixed_and_enterprise_entrance_rename_delete_does_not_restore(test_client, material_users):
+async def test_personal_presets_are_immutable_and_enterprise_deletion_does_not_restore(test_client, material_users):
     admin = material_users["owner"]
     member = material_users["member"]
     initial = await test_client.get("/api/material-library/my-materials/folders", headers=admin)
@@ -402,8 +433,7 @@ async def test_fixed_and_enterprise_entrance_rename_delete_does_not_restore(test
         fixed_rename = await test_client.patch(
             "/api/material-library/my-materials/folders/rough", headers=admin, json={"name": "装修毛坯"}
         )
-        assert fixed_rename.status_code == 200, fixed_rename.text
-        assert fixed_rename.json() == {"id": "rough", "name": "装修毛坯"}
+        assert fixed_rename.status_code == 409, fixed_rename.text
 
         enterprise_rename = await test_client.patch(
             f"/api/material-library/categories/{reference['id']}?material_type=image",
@@ -414,7 +444,7 @@ async def test_fixed_and_enterprise_entrance_rename_delete_does_not_restore(test
         assert enterprise_rename.json()["category"]["image_design_role"] == "reference"
 
         fixed_delete = await test_client.delete("/api/material-library/my-materials/folders/rough", headers=admin)
-        assert fixed_delete.status_code == 200, fixed_delete.text
+        assert fixed_delete.status_code == 409, fixed_delete.text
         enterprise_delete = await test_client.request(
             "DELETE",
             f"/api/material-library/categories/{reference['id']}?material_type=image",
@@ -427,7 +457,8 @@ async def test_fixed_and_enterprise_entrance_rename_delete_does_not_restore(test
             folders = await test_client.get("/api/material-library/my-materials/folders", headers=admin)
             galleries = await test_client.get("/api/material-library/galleries", headers=admin)
             assert folders.status_code == galleries.status_code == 200
-            assert "rough" not in {item["id"] for item in folders.json()["folders"]}
+            assert "rough" in {item["id"] for item in folders.json()["folders"]}
+            assert sum(item.get("personal_folder") == "rough" for item in galleries.json()["galleries"]) == 1
             assert reference["id"] not in {item["id"] for item in galleries.json()["galleries"]}
 
         async with async_sessionmaker(engine, expire_on_commit=False)() as db:
@@ -439,7 +470,7 @@ async def test_fixed_and_enterprise_entrance_rename_delete_does_not_restore(test
                     ContentMaterialCategory.id == reference["id"],
                 )
             )
-            assert setting is not None and setting.deleted_at is not None
+            assert setting is None
             assert category is not None and category.deleted_at is not None
             assert category.image_design_role == "reference"
     finally:
@@ -461,7 +492,9 @@ async def test_fixed_and_enterprise_entrance_rename_delete_does_not_restore(test
         await engine.dispose()
 
 
-async def test_global_personal_gallery_keeps_tenant_and_role_boundaries(test_client, material_users):
+async def test_global_personal_gallery_is_visible_across_departments_and_preserves_folder_permissions(
+    test_client, material_users
+):
     created = await test_client.post(
         "/api/material-library/categories",
         headers=material_users["owner"],
@@ -504,12 +537,12 @@ async def test_global_personal_gallery_keeps_tenant_and_role_boundaries(test_cli
         other_tenant = await test_client.get("/api/material-library/galleries", headers=outsider_headers)
         assert same_tenant.status_code == other_tenant.status_code == 200
         assert gallery["id"] in {item["id"] for item in same_tenant.json()["galleries"]}
-        assert gallery["id"] not in {item["id"] for item in other_tenant.json()["galleries"]}
+        assert gallery["id"] in {item["id"] for item in other_tenant.json()["galleries"]}
         async with factory() as db:
             unassigned_categories = await MaterialLibraryRepository(db, include_shared=True).list_categories(
                 unassigned.uid, "image"
             )
-        assert gallery["id"] not in {item.id for item in unassigned_categories}
+        assert gallery["id"] in {item.id for item in unassigned_categories}
 
         async with factory() as db:
             owner = await db.scalar(select(User).where(User.uid == material_users["owner_uid"]))
@@ -529,7 +562,7 @@ async def test_global_personal_gallery_keeps_tenant_and_role_boundaries(test_cli
             data={"category": gallery["id"]},
             files=[("files", ("forbidden.png", _png(), "image/png"))],
         )
-        assert denied_upload.status_code == 403, denied_upload.text
+        assert denied_upload.status_code == 201, denied_upload.text
     finally:
         async with factory() as db:
             owner = await db.scalar(select(User).where(User.uid == material_users["owner_uid"]))

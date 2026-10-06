@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import pytest
-from unittest.mock import AsyncMock
 from fastapi import HTTPException
 from pydantic import ValidationError
 
@@ -15,7 +14,6 @@ from yuxi.image_design.save_targets import (
     resolve_writable_save_target,
     list_mp_save_targets,
     validate_mp_save_target,
-    is_storage_root,
 )
 from yuxi.storage.postgres.models_content import ContentMaterialCategory
 
@@ -77,6 +75,7 @@ class FakeMaterialLibraryRepository:
         category_id: str,
         category_owner_uid: str | None = None,
         visibility: str | None = None,
+        for_update: bool = False,
     ):
         for category in self.categories:
             if category.material_type != material_type or category.id != category_id:
@@ -232,7 +231,7 @@ async def test_writable_target_list_hides_storage_roots_and_keeps_scope_paths(or
     assert private["label"] == "我的素材"
     assert enterprise["label"] == "企业图库"
     private_by_id = {folder["id"]: folder for folder in private["folders"]}
-    assert "product" not in private_by_id
+    assert "mp-generated-private" in private_by_id
     assert "uncategorized" not in private_by_id
     assert private_by_id["private-parent"]["path"] == "我的一级图库"
     assert private_by_id["private-child"]["path"] == "我的一级图库 / 我的二级图库"
@@ -251,22 +250,26 @@ async def test_writable_target_list_hides_storage_roots_and_keeps_scope_paths(or
 
 
 @pytest.mark.asyncio
-async def test_mp_targets_resolve_generation_to_pc_personal_root(ordinary_user):
-    db = type("Db", (), {"flush": AsyncMock()})()
+async def test_mp_targets_use_both_real_destinations(ordinary_user):
+    db = object()
     FakeMaterialLibraryRepository.categories = [
-        _category("ordinary-user", "uncategorized", visibility="private", name="我的图库", is_system=True),
+        _category("ordinary-user", "product", visibility="private", name="AI生图图库"),
         _category("admin", "generated-real-id", visibility="enterprise", name="生图图库"),
         _category("admin", "case", visibility="enterprise", name="案例图库"),
     ]
     scopes = (await list_mp_save_targets(db, ordinary_user))["scopes"]
-    assert scopes == [{"scope": "private", "label": "我的素材", "can_write_root": True, "folders": []}]
-    assert not is_storage_root(FakeMaterialLibraryRepository.categories[0])
-    resolved = await resolve_writable_save_target(object(), ordinary_user, SaveTarget(scope="private"))
-    assert resolved.category_id == "private-root"
-    mp_resolved = await resolve_mp_save_target(db, ordinary_user, SaveTarget(scope="private"))
-    assert mp_resolved.category_id == "private-root"
-    assert mp_resolved.public_target == {"scope": "private", "gallery_id": None}
-    await validate_mp_save_target(db, ordinary_user, SaveTarget(scope="enterprise", gallery_id="generated-real-id"))
+    assert [s["scope"] for s in scopes] == ["private", "enterprise"]
+    assert scopes[0]["folders"][0]["id"] == "product"
+    assert scopes[1]["folders"][0]["id"] == "generated-real-id"
+    for gallery_id in (None, "private-root", "product"):
+        saved = await resolve_mp_save_target(db, ordinary_user, SaveTarget(scope="private", gallery_id=gallery_id))
+        assert saved.public_target == {"scope": "private", "gallery_id": "product"}
+        assert saved.category_owner_uid == "ordinary-user"
+    saved = await resolve_mp_save_target(
+        db, ordinary_user, SaveTarget(scope="enterprise", gallery_id="generated-real-id")
+    )
+    assert saved.public_target == {"scope": "enterprise", "gallery_id": "generated-real-id"}
+    assert saved.category_owner_uid == "admin"
     for target in [
         SaveTarget(scope="enterprise"),
         SaveTarget(scope="enterprise", gallery_id="case"),
@@ -278,10 +281,29 @@ async def test_mp_targets_resolve_generation_to_pc_personal_root(ordinary_user):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("count", [0, 2])
-async def test_enterprise_generated_galleries_do_not_change_mp_personal_target(ordinary_user, count):
-    db = type("Db", (), {"flush": AsyncMock()})()
+async def test_missing_or_ambiguous_enterprise_is_unavailable_and_never_redirected(ordinary_user, count):
     FakeMaterialLibraryRepository.categories = [
         _category(f"admin-{i}", f"generated-{i}", visibility="enterprise", name="生图图库") for i in range(count)
     ]
-    scopes = (await list_mp_save_targets(db, ordinary_user))["scopes"]
-    assert scopes == [{"scope": "private", "label": "我的素材", "can_write_root": True, "folders": []}]
+    scopes = (await list_mp_save_targets(object(), ordinary_user))["scopes"]
+    assert scopes[0]["folders"][0]["id"] == "mp-generated-private"
+    assert scopes[1]["folders"] == [] and scopes[1]["error"]
+    assert scopes[1]["can_write_root"] is False
+    with pytest.raises(HTTPException):
+        await resolve_mp_save_target(object(), ordinary_user, SaveTarget(scope="enterprise", gallery_id="generated-0"))
+
+
+@pytest.mark.asyncio
+async def test_old_product_gallery_is_preserved_and_independent_ai_gallery_is_provisioned(ordinary_user):
+    old = _category("ordinary-user", "product", visibility="private", name="产品商品")
+    other = _category("other-user", "product", visibility="private", name="AI生图图库")
+    FakeMaterialLibraryRepository.categories = [old, other]
+    saved = await resolve_mp_save_target(object(), ordinary_user, SaveTarget(scope="private"))
+    assert saved.category_id == "mp-generated-private"
+    assert saved.category_owner_uid == "ordinary-user"
+    assert old.name == "产品商品" and old.id == "product"
+    assert other.owner_uid == "other-user" and other.name == "AI生图图库"
+    await resolve_mp_save_target(object(), ordinary_user, SaveTarget(scope="private"))
+    assert len([c for c in FakeMaterialLibraryRepository.categories if c.id == "mp-generated-private"]) == 1
+    with pytest.raises(HTTPException):
+        await resolve_mp_save_target(object(), ordinary_user, SaveTarget(scope="private", gallery_id="product"))

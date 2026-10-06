@@ -1114,6 +1114,12 @@ async def list_mp_viral_assets(
 
 
 def _mp_gallery_item(item: dict[str, Any]) -> dict[str, Any]:
+    if item.get("work_asset_id"):
+        return {
+            **item,
+            "file_url": f"/api/mp/image/works/{item['work_asset_id']}/file",
+            "thumbnail_file_url": f"/api/mp/image/works/{item['work_asset_id']}/file",
+        }
     item_id = str(item["id"])
     return {
         **item,
@@ -1135,13 +1141,18 @@ async def list_mp_galleries(
         if scope and visibility != scope:
             continue
         cover_item_id = item.get("cover_item_id")
+        cover_work_id = item.get("cover_work_asset_id")
         galleries.append(
             {
                 **item,
                 "visibility": visibility,
-                "cover_file_url": f"/api/mp/content/gallery-items/{cover_item_id}/file" if cover_item_id else None,
+                "cover_file_url": f"/api/mp/image/works/{cover_work_id}/file"
+                if cover_work_id
+                else (f"/api/mp/content/gallery-items/{cover_item_id}/file" if cover_item_id else None),
                 "cover_thumbnail_file_url": (
-                    f"/api/mp/content/gallery-items/{cover_item_id}/thumbnail" if cover_item_id else None
+                    f"/api/mp/image/works/{cover_work_id}/file"
+                    if cover_work_id
+                    else (f"/api/mp/content/gallery-items/{cover_item_id}/thumbnail" if cover_item_id else None)
                 ),
             }
         )
@@ -1201,20 +1212,9 @@ async def visible_mp_works(db: AsyncSession, owner_uid: str) -> list[dict[str, A
 
 
 async def list_mp_works(db: AsyncSession, ctx: MpContext, *, page: int, page_size: int) -> dict[str, Any]:
-    flattened = await visible_mp_works(db, str(ctx.user.uid))
-    total = len(flattened)
-    start = (page - 1) * page_size
-    items = []
-    for item in flattened[start : start + page_size]:
-        asset_id = item["id"]
-        items.append({
-            **item,
-            "created_at": format_utc_datetime(item["created_at"]),
-            "uploaded_at": format_utc_datetime(item["uploaded_at"]),
-            "file_url": f"/api/mp/image/works/{asset_id}/file",
-            "thumbnail_file_url": f"/api/mp/image/works/{asset_id}/file",
-        })
-    return {"items": items, "total": total, "page": page, "page_size": page_size}
+    from yuxi.services.personal_materials import list_folder
+
+    return await list_folder(db, ctx.user, "works", page=page, page_size=page_size)
 
 
 async def hide_mp_work(db: AsyncSession, ctx: MpContext, asset_id: str) -> dict[str, bool]:
@@ -1250,8 +1250,13 @@ async def upload_cover(
     resolved_category = (category or "uncategorized").strip() or "uncategorized"
     try:
         imported = await import_material_images(
-            db, ctx.user, [file], category=resolved_category, design_style=design_style,
-            source_channel="mp", source_folder=folder,
+            db,
+            ctx.user,
+            [file],
+            category=resolved_category,
+            design_style=design_style,
+            source_channel="mp",
+            source_folder=folder,
         )
     except HTTPException:
         raise
