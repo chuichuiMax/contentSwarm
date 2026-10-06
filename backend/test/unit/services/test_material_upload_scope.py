@@ -5,11 +5,38 @@ import pytest
 from fastapi import HTTPException
 
 from yuxi.services import material_library_service
+from yuxi.storage.postgres.models_content import ContentMaterialCategory
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("name", ["毛坯房图库", "我的上传"])
+async def test_personal_presets_upload_directly_without_project_style_children(monkeypatch, name):
+    gallery = ContentMaterialCategory(
+        owner_uid="owner",
+        id="existing",
+        material_type="image",
+        visibility="private",
+        name=name,
+        industry_slug="decoration",
+    )
+    monkeypatch.setattr(material_library_service, "resolve_material_category", AsyncMock(return_value=gallery))
+    resolved, style = await material_library_service._resolve_upload_category(
+        object(), SimpleNamespace(uid="owner", department_id=None), "existing", None
+    )
+    assert resolved is gallery
+    assert style is None
 
 
 @pytest.mark.asyncio
 async def test_pc_uncategorized_upload_keeps_private_category(monkeypatch):
-    category = SimpleNamespace(id="uncategorized", owner_uid="owner", visibility="private", deleted_at=None)
+    category = SimpleNamespace(
+        id="uncategorized",
+        owner_uid="owner",
+        visibility="private",
+        deleted_at=None,
+        image_design_role=None,
+        name="未分类",
+    )
     resolve = AsyncMock(return_value=(category, None))
     recheck = AsyncMock(return_value=category)
     monkeypatch.setattr(material_library_service, "_resolve_upload_category", resolve)
@@ -45,6 +72,7 @@ async def test_pc_fallback_created_after_mini_program_gallery(monkeypatch):
             normalized.append(_args[-1])
 
     monkeypatch.setattr(material_library_service, "MaterialLibraryRepository", lambda _db: Repository())
+    monkeypatch.setattr("yuxi.services.personal_materials.folder_categories", AsyncMock(return_value={}))
     result = await material_library_service.ensure_material_categories(
         object(), owner_uid="owner", tenant_id=None, material_type="image"
     )

@@ -7,13 +7,17 @@ from sqlalchemy import update, delete
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 
 from yuxi.storage.postgres.models_business import Department, User
-from test.integration.api.test_material_library_router import material_users as material_users, _png
+from test.integration.api.test_material_library_router import (
+    material_users as material_users,
+    _png,
+    _insert_existing_child_gallery,
+)
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 
 
-async def test_enterprise_gallery_sharing(test_client, material_users):
-    owner, member = material_users["owner"], material_users["other"]
+async def test_enterprise_gallery_sharing(test_client, material_users):  # noqa: F811
+    owner, member = material_users["owner"], material_users["member"]
     # fixture 创建普通成员；只提升本测试创建的账号。
     me = await test_client.get("/api/auth/me", headers=owner)
     assert me.status_code == 200, me.text
@@ -80,7 +84,7 @@ async def test_enterprise_gallery_sharing(test_client, material_users):
         json={"visibility": "private"},
     )
     assert rejected.status_code == 409, rejected.text
-    for target, expected_visibility in (("product", "private"), (category["id"], "enterprise")):
+    for target, expected_visibility in (("mp-uploads-private", "private"), (category["id"], "enterprise")):
         moved = await test_client.patch(
             f"/api/material-library/items/{own_id}", headers=member, json={"category": target}
         )
@@ -97,17 +101,34 @@ async def test_enterprise_gallery_sharing(test_client, material_users):
     private = await test_client.post(
         "/api/material-library/images/import",
         headers=member,
-        data={"category": "product"},
+        data={"category": "mp-uploads-private"},
         files=[("files", ("private.png", _png(), "image/png"))],
     )
     assert private.status_code == 201, private.text
     private_id = private.json()["items"][0]["id"]
     denied = await test_client.get(f"/api/material-library/items/{private_id}/file", headers=owner)
     assert denied.status_code == 404, denied.text
-    # 删除个人图库并迁入企业图库也必须留下共享历史，不能再物理删除原图。
+    # 自建个人图库迁入企业图库仍保留共享历史；预设图库本身不可删除。
+    member_uid = (await test_client.get("/api/auth/me", headers=member)).json()["uid"]
+    engine = create_async_engine(os.environ["POSTGRES_URL"])
+    async with async_sessionmaker(engine)() as db:
+        await db.execute(update(User).where(User.uid == member_uid).values(role="admin"))
+        await db.commit()
+    await engine.dispose()
+    private_gallery = await test_client.post(
+        "/api/material-library/categories",
+        headers=member,
+        json={"material_type": "image", "name": "待共享个人图库"},
+    )
+    assert private_gallery.status_code == 201, private_gallery.text
+    private_category_id = private_gallery.json()["category"]["id"]
+    relocated = await test_client.patch(
+        f"/api/material-library/items/{private_id}", headers=member, json={"category": private_category_id}
+    )
+    assert relocated.status_code == 200, relocated.text
     migrated = await test_client.request(
         "DELETE",
-        "/api/material-library/categories/product",
+        f"/api/material-library/categories/{private_category_id}",
         headers=member,
         params={"material_type": "image"},
         json={"target_category_id": category["id"]},
@@ -121,7 +142,7 @@ async def test_enterprise_gallery_sharing(test_client, material_users):
     await test_client.delete(f"/api/material-library/items/{item['id']}", headers=owner)
 
 
-async def test_share_legacy_gallery_inherits_children_and_preserves_item_ids(test_client, material_users):
+async def test_share_legacy_gallery_inherits_children_and_preserves_item_ids(test_client, material_users):  # noqa: F811
     owner, member = material_users["owner"], material_users["other"]
     me = (await test_client.get("/api/auth/me", headers=owner)).json()
     other = (await test_client.get("/api/auth/me", headers=member)).json()
@@ -137,17 +158,18 @@ async def test_share_legacy_gallery_inherits_children_and_preserves_item_ids(tes
         await db.commit()
     await engine.dispose()
     try:
-        child = await test_client.post(
+        parent = await test_client.post(
             "/api/material-library/categories",
             headers=owner,
             json={
                 "material_type": "image",
-                "name": "私有子图库",
-                "parent_id": "product",
+                "name": "私有历史图库",
             },
         )
-        assert child.status_code == 201, child.text
-        child_id = child.json()["category"]["id"]
+        assert parent.status_code == 201, parent.text
+        parent_category = parent.json()["category"]
+        child = await _insert_existing_child_gallery(material_users, parent_category, name="私有子图库")
+        child_id = child["id"]
         uploaded = await test_client.post(
             "/api/material-library/images/import",
             headers=owner,
@@ -158,7 +180,7 @@ async def test_share_legacy_gallery_inherits_children_and_preserves_item_ids(tes
         before = await test_client.get(f"/api/material-library/items/{item['id']}/file", headers=member)
         assert before.status_code == 404
         shared = await test_client.patch(
-            "/api/material-library/categories/product?material_type=image",
+            f"/api/material-library/categories/{parent_category['id']}?material_type=image",
             headers=owner,
             json={"visibility": "enterprise"},
         )
@@ -166,7 +188,8 @@ async def test_share_legacy_gallery_inherits_children_and_preserves_item_ids(tes
         new_id = shared.json()["category"]["id"]
         assert new_id.startswith("mlc_")
         galleries = (await test_client.get("/api/material-library/galleries", headers=member)).json()["galleries"]
-        inherited = next(g for g in galleries if g["id"] == child_id)
+        inherited = next(g for g in galleries if g["name"] == "私有子图库" and g["parent_id"] == new_id)
+        child_id = inherited["id"]
         assert inherited["visibility"] == "enterprise"
         assert inherited["parent_id"] == new_id
         available = await test_client.get(f"/api/material-library/items/{item['id']}/file", headers=member)

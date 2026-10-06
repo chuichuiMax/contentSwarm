@@ -165,9 +165,16 @@ async def test_save_targets_offer_fixed_destinations_and_reject_pc_token(test_cl
     assert pc.status_code == 401, pc.text
     response = await test_client.get("/api/mp/image-design/save-targets", headers=mp_accounts[0]["headers"])
     assert response.status_code == 200, response.text
-    assert response.json()["scopes"] == [
-        {"scope": "private", "label": "我的素材", "can_write_root": True, "folders": []}
+    private, enterprise = response.json()["scopes"]
+    assert private["scope"] == "private" and private["label"] == "我的素材"
+    assert private["folders"] == [
+        {"id": "mp-generated-private", "name": "AI生图图库", "personal_folder": "generated"}
     ]
+    assert enterprise["scope"] == "enterprise" and enterprise["label"] == "企业共享"
+    assert enterprise["can_write_root"] is False
+    assert (len(enterprise["folders"]) == 1 and not enterprise["error"]) or (
+        not enterprise["folders"] and enterprise["error"]
+    )
 
 
 async def test_drafts_are_normalized_and_account_isolated(test_client, mp_accounts):
@@ -331,12 +338,12 @@ async def test_pc_personal_materials_follow_mp_folder_rules(test_client, mp_acco
         assert pc_rough.status_code == 200, pc_rough.text
         assert pc_item_id in {item["id"] for item in mp_rough.json()["items"]}
         assert pc_item_id in {item["id"] for item in pc_rough.json()["items"]}
-        assert pc_item_id in {item["id"] for item in other_mp_rough.json()["items"]}
-        assert pc_item_id in {item["id"] for item in other_pc_rough.json()["items"]}
+        assert pc_item_id not in {item["id"] for item in other_mp_rough.json()["items"]}
+        assert pc_item_id not in {item["id"] for item in other_pc_rough.json()["items"]}
         shared_file = await test_client.get(
             f"/api/mp/content/gallery-items/{pc_item_id}/thumbnail", headers=mp_accounts[1]["headers"]
         )
-        assert shared_file.status_code == 200, shared_file.text
+        assert shared_file.status_code == 404, shared_file.text
         forbidden_delete = await test_client.delete(
             f"/api/mp/content/gallery-items/{pc_item_id}", headers=mp_accounts[1]["headers"]
         )
@@ -389,9 +396,9 @@ async def test_add_library_deduplicates_and_revokes_deleted_source(test_client, 
             json={"visibility": "private"},
         )
         assert changed.status_code == 200, changed.text
-        # Administrator-created personal galleries remain department-visible.
+        # 文件夹可见不代表其他用户可以读取其中的个人图片。
         visible = await test_client.get(first.json()["item"]["file_url"], headers=mp_accounts[0]["headers"])
-        assert visible.status_code == 200, visible.text
+        assert visible.status_code == 404, visible.text
         deleted = await test_client.delete(f"/api/material-library/items/{item_id}", headers=admin_headers)
         assert deleted.status_code == 200, deleted.text
         item_id = None

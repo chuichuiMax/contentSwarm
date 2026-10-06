@@ -15,329 +15,267 @@ from yuxi.storage.postgres.models_business import User
 from yuxi.storage.postgres.models_content import (
     ContentCoverAsset,
     ContentMaterialCategory,
-    ContentMaterialFolderSetting,
     ContentMaterialLibraryItem,
 )
 from yuxi.utils.datetime_utils import format_utc_datetime
-
-Folder = Literal["rough", "generated", "uploads"]
-FOLDER_NAMES = {"rough": "毛坯房图库", "generated": "生图图库", "uploads": "我的上传"}
-FIXED_FOLDER_NAMES = {**FOLDER_NAMES, "works": "我的作品"}
-PRIVATE_IDS = {"rough": "mp-rough-private", "uploads": "mp-uploads-private"}
-ROUGH_NAMES = {"毛坯房图库", "毛胚房图库"}
-
-
-async def fixed_folder_settings(db: AsyncSession) -> dict[str, ContentMaterialFolderSetting]:
-    rows = await db.execute(select(ContentMaterialFolderSetting))
-    return {setting.folder_key: setting for setting in rows.scalars()}
+from yuxi.services.material_library_categories import PERSONAL_IMAGE_FOLDERS, personal_folder_key
 
 
 async def rename_fixed_folder(db: AsyncSession, user: User, folder: str, name: str) -> dict:
     if user.role not in {"admin", "superadmin"}:
         raise HTTPException(403, "只有管理员可编辑固定图库")
-    if folder not in FIXED_FOLDER_NAMES:
+    if folder not in PERSONAL_IMAGE_FOLDERS:
         raise HTTPException(404, "固定图库不存在")
-    normalized = name.strip()
-    if not normalized or len(normalized) > 80:
-        raise HTTPException(422, "图库名称必须为 1 至 80 个字符")
-    setting = (await fixed_folder_settings(db)).get(folder)
-    if setting is not None and setting.deleted_at is not None:
-        raise HTTPException(404, "固定图库不存在")
-    if setting is None:
-        setting = ContentMaterialFolderSetting(folder_key=folder, name=normalized)
-        db.add(setting)
-    else:
-        setting.name = normalized
-    setting.updated_by = str(user.uid)
-    await db.commit()
-    return {"id": folder, "name": normalized}
+    raise HTTPException(409, "预设个人图库名称不能修改")
 
 
 async def delete_fixed_folder(db: AsyncSession, user: User, folder: str) -> dict:
     if user.role not in {"admin", "superadmin"}:
         raise HTTPException(403, "只有管理员可删除固定图库")
-    if folder not in FIXED_FOLDER_NAMES:
+    if folder not in PERSONAL_IMAGE_FOLDERS:
         raise HTTPException(404, "固定图库不存在")
-    setting = (await fixed_folder_settings(db)).get(folder)
-    if setting is not None and setting.deleted_at is not None:
-        raise HTTPException(404, "固定图库不存在")
-    if setting is None:
-        setting = ContentMaterialFolderSetting(folder_key=folder, name=FIXED_FOLDER_NAMES[folder])
-        db.add(setting)
-    setting.deleted_at = datetime.now(UTC).replace(tzinfo=None)
-    setting.updated_by = str(user.uid)
-    await db.commit()
-    return {"success": True, "id": folder}
-
-
-def _is_rough_category(category: ContentMaterialCategory) -> bool:
-    return category.image_design_role == "rough" or category.name in ROUGH_NAMES
+    raise HTTPException(409, "预设个人图库不能删除")
 
 
 def _private_category_name(folder: str, categories: list[ContentMaterialCategory], owner: str) -> str:
     used = {c.name for c in categories if c.owner_uid == owner}
-    name = FOLDER_NAMES[folder]
+    name = PERSONAL_IMAGE_FOLDERS[folder][1]
     if name not in used:
         return name
     name = f"{name}（个人）"
     if name not in used:
         return name
-    return f"{name}-{PRIVATE_IDS[folder]}"
+    return f"{name}-{PERSONAL_IMAGE_FOLDERS[folder][0]}"
 
 
 async def folder_categories(db: AsyncSession, user: User) -> dict[str, list[ContentMaterialCategory]]:
-    """Keep upload destinations under the owner's PC personal materials."""
-    from yuxi.image_design.save_targets import ensure_scope_root
-
-    settings = await fixed_folder_settings(db)
+    """Reuse the user's existing real galleries, provisioning only missing folders."""
     owner = str(user.uid)
     repo = MaterialLibraryRepository(db)
     categories = await repo.list_categories(owner, "image")
+    result = {key: [] for key in PERSONAL_IMAGE_FOLDERS}
+    for category in categories:
+        key = personal_folder_key(category)
+        if key:
+            result[key].append(category)
     values = []
-    for folder, category_id in PRIVATE_IDS.items():
-        if settings.get(folder) is not None and settings[folder].deleted_at is not None:
+    for index, (key, (category_id, name)) in enumerate(PERSONAL_IMAGE_FOLDERS.items()):
+        if len(result[key]) > 1:
+            raise HTTPException(409, f"个人图库 {name} 存在多个历史候选，请先核对归属")
+        if result[key]:
             continue
-        if not any(
-            c.owner_uid == owner
-            and c.visibility == "private"
-            and (c.id == category_id or (folder == "rough" and _is_rough_category(c)) or c.name == FOLDER_NAMES[folder])
-            for c in categories
-        ):
-            values.append(
-                dict(
-                    owner_uid=owner,
-                    id=category_id,
-                    tenant_id=str(user.department_id) if getattr(user, "department_id", None) is not None else None,
-                    material_type="image",
-                    visibility="private",
-                    parent_id=None,
-                    industry_slug="uncategorized",
-                    name=_private_category_name(folder, categories, owner),
-                    description="个人素材上传",
-                    sort_order=10,
-                    is_system=True,
-                )
+        values.append(
+            dict(
+                owner_uid=owner,
+                id=category_id,
+                material_type="image",
+                visibility="private",
+                tenant_id=str(user.department_id) if getattr(user, "department_id", None) is not None else None,
+                parent_id=None,
+                industry_slug="decoration",
+                name=_private_category_name(key, categories, owner),
+                description="",
+                sort_order=index * 10,
+                is_system=True,
             )
+        )
     if values:
         await repo.sync_system_categories(values)
-        await db.flush()
         categories = await repo.list_categories(owner, "image")
-    private_fixed_rough = next(
-        (
-            c
-            for c in categories
-            if c.owner_uid == owner
-            and c.visibility == "private"
-            and (c.id == PRIVATE_IDS["rough"] or _is_rough_category(c))
-        ),
-        None,
-    )
-    private_fixed_upload = next(
-        (
-            c
-            for c in categories
-            if c.owner_uid == owner
-            and c.visibility == "private"
-            and (c.id == PRIVATE_IDS["uploads"] or c.name == "我的上传")
-        ),
-        None,
-    )
-    return {
-        "rough": [private_fixed_rough] if private_fixed_rough is not None else [],
-        "generated": [await ensure_scope_root(db, user, "private")],
-        "uploads": [private_fixed_upload] if private_fixed_upload is not None else [],
-    }
+        result = {key: [c for c in categories if personal_folder_key(c) == key] for key in PERSONAL_IMAGE_FOLDERS}
+    return result
 
 
 async def upload_category(
     db: AsyncSession, user: User, folder: Literal["rough", "uploads"], channel: Literal["pc", "mp"]
 ) -> ContentMaterialCategory:
-    setting = (await fixed_folder_settings(db)).get(folder)
-    if setting is not None and setting.deleted_at is not None:
-        raise HTTPException(404, "固定图库不存在")
-    categories = (await folder_categories(db, user))[folder]
-    return next(c for c in categories if c.visibility == "private")
+    return (await folder_categories(db, user))[folder][0]
 
 
-def folder_source_filter(user: User, folder: Folder):
-    """Share designated PC sources while keeping mini-program originals personal."""
+def folder_source_filter(user: User, folder: str):
+    """Private galleries and historical root saves belong to their uploader only."""
     item = ContentMaterialLibraryItem
-    asset = ContentCoverAsset
     category = ContentMaterialCategory
-    owner_uid = str(user.uid)
-    requester_tenant_id = getattr(user, "department_id", None)
-    shared_with_requester = item.owner_uid == owner_uid
-    if requester_tenant_id is not None:
-        item_tenant_id = func.coalesce(item.tenant_id, asset.tenant_id, category.tenant_id)
-        shared_with_requester = or_(
-            shared_with_requester,
-            item_tenant_id == str(requester_tenant_id),
-        )
-    channel = func.coalesce(
-        item.metadata_json["source_channel"].as_string(),
-        asset.metadata_json["source_channel"].as_string(),
-        "",
-    )
-    source = func.coalesce(
-        item.metadata_json["source_folder"].as_string(),
-        asset.metadata_json["source_folder"].as_string(),
-        "",
-    )
+    category_id, name = PERSONAL_IMAGE_FOLDERS[folder]
+    names = {name, f"{name}（个人）"}
     if folder == "generated":
-        origin = item.metadata_json["source"].as_string()
-        allowed = and_(
-            shared_with_requester,
-            or_(
-                and_(channel == "pc", origin == "content_production"),
-                and_(channel == "mp", origin == "image_design"),
+        names.add("生图图库")
+    if folder == "rough":
+        names.add("毛胚房图库")
+    destination = or_(category.id == category_id, category.name.in_(names))
+    if folder == "generated":
+        destination = or_(
+            destination,
+            and_(
+                category.id.in_(["private-root", "uncategorized"]),
+                or_(
+                    item.metadata_json["source_folder"].as_string() == "generated",
+                    item.metadata_json["source"].as_string().in_(["image_design", "content_production"]),
+                ),
             ),
         )
-    else:
-        allowed = or_(
-            and_(channel == "pc", shared_with_requester),
-            and_(channel == "mp", item.owner_uid == owner_uid),
-        )
-    return and_(category.visibility == "private", source == folder, allowed)
+    return and_(category.visibility == "private", item.owner_uid == str(user.uid), destination)
 
 
 async def can_read_fixed_item(db: AsyncSession, user: User, item_id: str) -> bool:
-    item = ContentMaterialLibraryItem
-    asset = ContentCoverAsset
-    category = ContentMaterialCategory
-    join = item.__table__.join(asset, asset.id == item.asset_id).join(
-        category, MaterialLibraryRepository.category_join()
+    return (
+        await MaterialLibraryRepository(db, include_shared=True).get_item_for_user(item_id, str(user.uid)) is not None
     )
-    filters = (
-        item.id == item_id,
-        item.material_type == "image",
-        item.status == "enabled",
-        item.deleted_at.is_(None),
-        asset.deleted_at.is_(None),
-        or_(*(folder_source_filter(user, folder) for folder in FOLDER_NAMES)),
-    )
-    return (await db.scalar(select(item.id).select_from(join).where(*filters).limit(1))) is not None
 
 
 async def list_folder(
     db: AsyncSession,
     user: User,
-    folder: Folder,
+    folder: str,
     *,
     page: int,
     page_size: int,
     date_from: date | None = None,
     date_to: date | None = None,
+    query_text: str | None = None,
+    sort: str = "newest",
+    status: str | None = "enabled",
 ) -> dict:
-    setting = (await fixed_folder_settings(db)).get(folder)
-    if setting is not None and setting.deleted_at is not None:
-        raise HTTPException(404, "固定图库不存在")
     if date_from and date_to and date_from > date_to:
         raise HTTPException(422, "开始日期不能晚于结束日期")
-    await folder_categories(db, user)
-    item = ContentMaterialLibraryItem
-    asset = ContentCoverAsset
-    category = ContentMaterialCategory
-    join = item.__table__.join(asset, asset.id == item.asset_id).join(
-        category, MaterialLibraryRepository.category_join()
+    mapping = await folder_categories(db, user)
+    repo = MaterialLibraryRepository(db, include_shared=True)
+    categories = await repo.list_categories(str(user.uid), "image")
+    own = next(
+        (c for c in categories if c.id == folder and c.owner_uid == str(user.uid) and c.visibility == "private"), None
     )
-    filters = (
-        folder_source_filter(user, folder),
+    gallery = (
+        mapping[folder][0]
+        if folder in mapping
+        else own
+        or next((c for c in categories if c.id == folder and c.visibility == "private" and c.is_global_personal), None)
+    )
+    if gallery is None:
+        raise HTTPException(404, "个人图库不存在")
+    key = personal_folder_key(gallery)
+    item, asset, category = ContentMaterialLibraryItem, ContentCoverAsset, ContentMaterialCategory
+    destination = and_(item.category == gallery.id, category.owner_uid == gallery.owner_uid)
+    if key == "generated":
+        destination = or_(
+            destination,
+            and_(
+                category.owner_uid == str(user.uid),
+                category.id.in_(["private-root", "uncategorized"]),
+                folder_source_filter(user, "generated"),
+            ),
+        )
+    filters = [
+        repo.item_access(str(user.uid)),
+        destination,
+        category.visibility == "private",
         item.material_type == "image",
-        item.status == "enabled",
         item.deleted_at.is_(None),
         asset.deleted_at.is_(None),
-        category.deleted_at.is_(None),
-    )
+    ]
+    if status:
+        filters.append(item.status == status)
     shanghai = timezone(timedelta(hours=8))
     if date_from:
-        start_utc = datetime.combine(date_from, time.min, shanghai).astimezone(UTC).replace(tzinfo=None)
-        filters += (asset.created_at >= start_utc,)
-    if date_to:
-        end_utc = datetime.combine(date_to + timedelta(days=1), time.min, shanghai).astimezone(UTC).replace(tzinfo=None)
-        filters += (asset.created_at < end_utc,)
-    total = (await db.execute(select(func.count(item.id)).select_from(join).where(*filters))).scalar_one()
-    rows = (
-        await db.execute(
-            select(item, asset, category)
-            .select_from(join)
-            .where(*filters)
-            .order_by(asset.created_at.desc(), item.id.desc())
-            .offset((page - 1) * page_size)
-            .limit(page_size)
+        filters.append(
+            asset.created_at >= datetime.combine(date_from, time.min, shanghai).astimezone(UTC).replace(tzinfo=None)
         )
-    ).all()
-    return {
-        "items": [
-            {
-                **serialize_item(row, source, group),
-                "uploaded_at": format_utc_datetime(source.created_at),
-                "can_manage": _can_manage_item(user, row, group),
-                "file_url": f"/api/mp/content/gallery-items/{row.id}/file",
-                "thumbnail_file_url": f"/api/mp/content/gallery-items/{row.id}/thumbnail",
-            }
-            for row, source, group in rows
-        ],
-        "total": total,
-        "page": page,
-        "page_size": page_size,
-    }
+    if date_to:
+        filters.append(
+            asset.created_at
+            < datetime.combine(date_to + timedelta(days=1), time.min, shanghai).astimezone(UTC).replace(tzinfo=None)
+        )
+    if key == "works":
+        filters.append(asset.hidden_from_works_at.is_(None))
+    elif query_text:
+        filters.append(item.display_name.ilike(f"%{query_text.strip()}%"))
+    join = item.__table__.join(asset, asset.id == item.asset_id).join(category, repo.category_join())
+    order = {"newest": asset.created_at.desc(), "oldest": asset.created_at.asc(), "name": item.display_name.asc()}[sort]
+    query = select(item, asset, category).select_from(join).where(*filters).order_by(order, item.id.desc())
+    total = int(await db.scalar(select(func.count(item.id)).select_from(join).where(*filters)))
+    if key != "works":
+        query = query.offset((page - 1) * page_size).limit(page_size)
+    rows = (await db.execute(query)).all()
+    items = [
+        {
+            **serialize_item(row, source, group),
+            "uploaded_at": format_utc_datetime(source.created_at),
+            "can_manage": _can_manage_item(user, row, group),
+            "file_url": f"/api/mp/content/gallery-items/{row.id}/file",
+            "thumbnail_file_url": f"/api/mp/content/gallery-items/{row.id}/thumbnail",
+        }
+        for row, source, group in rows
+    ]
+    if key == "works":
+        from yuxi.services.mp_service import visible_mp_works
+
+        seen = {row["asset_id"] for row in items}
+        for work in await visible_mp_works(db, str(user.uid)) if status in {None, "enabled"} else []:
+            uploaded = work["uploaded_at"].replace(tzinfo=UTC).astimezone(shanghai).date()
+            if work["id"] in seen:
+                existing = next(row for row in items if row["asset_id"] == work["id"])
+                existing.update(
+                    work_asset_id=work["id"],
+                    can_manage=False,
+                    file_url=f"/api/mp/image/works/{work['id']}/file",
+                    thumbnail_file_url=f"/api/mp/image/works/{work['id']}/file",
+                )
+                continue
+            if (date_from and uploaded < date_from) or (date_to and uploaded > date_to):
+                continue
+            items.append(
+                {
+                    **work,
+                    "asset_id": work["id"],
+                    "work_asset_id": work["id"],
+                    "name": f"作品 {work['id'][:8]}",
+                    "uploaded_at": format_utc_datetime(work["uploaded_at"]),
+                    "created_at": format_utc_datetime(work["created_at"]),
+                    "can_manage": False,
+                    "file_url": f"/api/mp/image/works/{work['id']}/file",
+                    "thumbnail_file_url": f"/api/mp/image/works/{work['id']}/file",
+                }
+            )
+        if query_text:
+            items = [row for row in items if query_text.strip().casefold() in row["name"].casefold()]
+        items.sort(key=lambda row: row["name"] if sort == "name" else row["uploaded_at"], reverse=sort == "newest")
+        total = len(items)
+        items = items[(page - 1) * page_size : page * page_size]
+    return {"items": items, "total": total, "page": page, "page_size": page_size, "gallery_id": gallery.id}
 
 
-async def folder_counts(
-    db: AsyncSession,
-    user: User,
-    *,
-    client: Literal["mp", "pc"] = "mp",
-) -> list[dict]:
-    from yuxi.services.mp_service import visible_mp_works
-
-    settings = await fixed_folder_settings(db)
-    await folder_categories(db, user)
+async def folder_counts(db: AsyncSession, user: User, *, client: Literal["pc", "mp"] = "mp") -> list[dict]:
+    mapping = await folder_categories(db, user)
+    categories = await MaterialLibraryRepository(db, include_shared=True).list_categories(str(user.uid), "image")
+    galleries = [values[0] for values in mapping.values()]
+    galleries += [
+        c
+        for c in categories
+        if c.visibility == "private" and not c.parent_id and c.is_global_personal and not personal_folder_key(c)
+    ]
     result = []
-    for folder, name in FOLDER_NAMES.items():
-        setting = settings.get(folder)
-        if setting is not None and setting.deleted_at is not None:
-            continue
-        listing = await list_folder(db, user, folder, page=1, page_size=1)
-        first_item = next(iter(listing["items"]), None)
-        if first_item and client == "pc":
-            cover_thumbnail_file_url = f"/api/material-library/items/{first_item['id']}/thumbnail"
-            cover_file_url = f"/api/material-library/items/{first_item['id']}/file"
-        else:
-            cover_thumbnail_file_url = first_item["thumbnail_file_url"] if first_item else None
-            cover_file_url = first_item["file_url"] if first_item else None
+    for gallery in galleries:
+        key = personal_folder_key(gallery)
+        listing = await list_folder(db, user, key or gallery.id, page=1, page_size=1)
+        first = next(iter(listing["items"]), None)
+        if first and client == "pc":
+            if first.get("work_asset_id"):
+                first["file_url"] = first["thumbnail_file_url"] = (
+                    f"/api/content/covers/assets/{first['work_asset_id']}/file"
+                )
+            else:
+                first["file_url"] = f"/api/material-library/items/{first['id']}/file"
+                first["thumbnail_file_url"] = f"/api/material-library/items/{first['id']}/thumbnail"
         result.append(
             {
-                "id": folder,
-                "name": setting.name if setting is not None else name,
+                "id": key or gallery.id,
+                "gallery_id": gallery.id,
+                "owner_uid": gallery.owner_uid,
+                "name": PERSONAL_IMAGE_FOLDERS[key][1] if key else gallery.name,
                 "count": listing["total"],
-                "can_upload": folder in PRIVATE_IDS,
-                "cover_thumbnail_file_url": cover_thumbnail_file_url,
-                "cover_file_url": cover_file_url,
+                "can_upload": key in {"rough", "uploads"} or key is None,
+                "cover_thumbnail_file_url": first["thumbnail_file_url"] if first else None,
+                "cover_file_url": first["file_url"] if first else None,
             }
         )
-    works_setting = settings.get("works")
-    if works_setting is not None and works_setting.deleted_at is not None:
-        await db.commit()
-        return result
-    works = await visible_mp_works(db, str(user.uid))
-    first_work_id = works[0]["id"] if works else None
-    work_file_url = None
-    if first_work_id:
-        work_file_url = (
-            f"/api/content/covers/assets/{first_work_id}/file"
-            if client == "pc"
-            else f"/api/mp/image/works/{first_work_id}/file"
-        )
-    result.append(
-        {
-            "id": "works",
-            "name": works_setting.name if works_setting is not None else "我的作品",
-            "count": len(works),
-            "can_upload": False,
-            "cover_thumbnail_file_url": work_file_url,
-            "cover_file_url": work_file_url,
-        }
-    )
     await db.commit()
     return result

@@ -66,7 +66,7 @@ class MemoryRepository:
             category.deleted_at = None
 
     async def get_category_exact(
-        self, *, requester_uid, material_type, category_id, category_owner_uid=None, visibility=None
+        self, *, requester_uid, material_type, category_id, category_owner_uid=None, visibility=None, for_update=False
     ):
         return next(
             (
@@ -188,7 +188,7 @@ async def test_mp_worker_does_not_fallback_when_generated_gallery_disappears(db)
 
 
 @pytest.mark.asyncio
-async def test_mp_worker_accepts_old_target_but_saves_to_pc_personal_root(db):
+async def test_mp_worker_saves_enterprise_target_to_actual_enterprise_gallery(db):
     db.categories.append(
         ContentMaterialCategory(
             id="actual-generated-id",
@@ -207,9 +207,9 @@ async def test_mp_worker_accepts_old_target_but_saves_to_pc_personal_root(db):
         workflow="room_adapt",
         mp_fixed_target=True,
     )
-    assert resolved.public_target == {"scope": "private", "gallery_id": None}
-    assert item.category == "private-root"
-    assert item.category_owner_uid == "employee"
+    assert resolved.public_target == {"scope": "enterprise", "gallery_id": "actual-generated-id"}
+    assert item.category == "actual-generated-id"
+    assert item.category_owner_uid == "admin"
     assert item.metadata_json["source_channel"] == "mp"
     assert item.metadata_json["source_folder"] == "generated"
     assert db.design_library_items[0].source_material_item_id == item.id
@@ -228,7 +228,7 @@ async def test_mp_worker_accepts_old_target_but_saves_to_pc_personal_root(db):
 
 
 @pytest.mark.asyncio
-async def test_mp_worker_saves_private_option_to_pc_personal_root(db):
+async def test_mp_worker_saves_private_option_to_personal_generated_gallery(db):
     resolved, item = await worker.attach_generated_asset(
         db,
         user=db.user,
@@ -238,8 +238,8 @@ async def test_mp_worker_saves_private_option_to_pc_personal_root(db):
         workflow="room_adapt",
         mp_fixed_target=True,
     )
-    assert resolved.public_target == {"scope": "private", "gallery_id": None}
-    assert item.category == "private-root"
+    assert resolved.public_target == {"scope": "private", "gallery_id": "mp-generated-private"}
+    assert item.category == "mp-generated-private"
 
 
 @pytest.mark.asyncio

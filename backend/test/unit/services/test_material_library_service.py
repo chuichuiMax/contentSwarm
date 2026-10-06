@@ -484,7 +484,7 @@ async def test_only_admin_can_create_image_gallery_and_manual_child_creation_is_
     assert created["category"]["name"] == "全员图库"
     assert created["category"]["visibility"] == "private"
     assert created["category"]["parent_id"] is None
-    assert created["category"]["is_global_personal"] is True
+    assert created["category"]["is_global_personal"] is False
 
     with pytest.raises(HTTPException) as target_forbidden:
         await create_material_category(
@@ -615,7 +615,7 @@ def test_image_gallery_management_requires_admin_owner_but_cover_categories_keep
     assert _can_manage_category(regular_owner, cover_category)
 
 
-def test_global_personal_gallery_stays_visible_but_demoted_creator_cannot_write():
+def test_global_personal_gallery_contributions_stay_private_after_creator_demotion():
     from yuxi.image_design.save_targets import can_contribute_to_category
 
     gallery = ContentMaterialCategory(
@@ -634,9 +634,10 @@ def test_global_personal_gallery_stays_visible_but_demoted_creator_cannot_write(
     assert can_contribute_to_category(admin, gallery)
     assert _can_manage_item(admin, item, gallery)
     assert gallery.is_global_personal is True
-    assert not can_contribute_to_category(demoted, gallery)
-    assert not _can_manage_item(demoted, item, gallery)
-    assert not can_contribute_to_category(other_admin, gallery)
+    assert can_contribute_to_category(demoted, gallery)
+    assert _can_manage_item(demoted, item, gallery)
+    assert not _can_manage_category(demoted, gallery)
+    assert can_contribute_to_category(other_admin, gallery)
     assert not _can_manage_item(other_admin, item, gallery)
 
 

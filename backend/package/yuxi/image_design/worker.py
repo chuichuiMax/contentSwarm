@@ -191,7 +191,7 @@ async def attach_generated_asset(db, *, user, asset, requested, job_id, workflow
 
     # An inaccessible or re-scoped folder is not a deleted folder. Do not hide
     # a permission change behind the resolver's missing-folder fallback.
-    if requested.gallery_id is not None:
+    if not mp_fixed_target and requested.gallery_id is not None:
         category = await db.scalar(
             select(ContentMaterialCategory)
             .where(
@@ -204,8 +204,6 @@ async def attach_generated_asset(db, *, user, asset, requested, job_id, workflow
         allow_fallback = category is None
     else:
         allow_fallback = False
-    if mp_fixed_target:
-        await validate_mp_save_target(db, user, requested)
     resolved = (
         await resolve_mp_save_target(db, user, requested)
         if mp_fixed_target

@@ -214,7 +214,7 @@ async def mp_my_material_folders(
 
 @mp.get("/content/my-materials/{folder}")
 async def mp_my_material_items(
-    folder: Literal["rough", "generated", "uploads"],
+    folder: str,
     page: int = Query(1, ge=1),
     page_size: int = Query(30, ge=1, le=100),
     date_from: date | None = Query(None),
@@ -222,8 +222,7 @@ async def mp_my_material_items(
     ctx: MpContext = Depends(get_mp_context),
     db: AsyncSession = Depends(get_db),
 ):
-    return await list_folder(db, ctx.user, folder, page=page, page_size=page_size,
-                             date_from=date_from, date_to=date_to)
+    return await list_folder(db, ctx.user, folder, page=page, page_size=page_size, date_from=date_from, date_to=date_to)
 
 
 @mp.get("/content/gallery-items/{item_id}/file")
@@ -280,8 +279,9 @@ async def mp_work_file(
     db: AsyncSession = Depends(get_db),
 ):
     data, content_type, file_name = await read_mp_work_file(db, ctx, asset_id)
-    return Response(content=data, media_type=content_type,
-                    headers={"Content-Disposition": f'inline; filename="{file_name}"'})
+    return Response(
+        content=data, media_type=content_type, headers={"Content-Disposition": f'inline; filename="{file_name}"'}
+    )
 
 
 @mp.delete("/image/works/{asset_id}")
