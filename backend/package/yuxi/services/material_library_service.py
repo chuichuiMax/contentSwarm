@@ -241,10 +241,8 @@ async def material_access_mode(db: AsyncSession, user: User) -> Literal["full", 
     from yuxi.services.role_service import effective_permission_grants
 
     grants = await effective_permission_grants(db, user)
-    if grants is None:
+    if not grants or "material_rough.upload" not in grants:
         return "full"
-    if "material_rough.upload" not in grants:
-        raise _error(403, "MATERIAL_PERMISSION_DENIED", "当前岗位无权访问素材库")
     return "rough_upload"
 
 

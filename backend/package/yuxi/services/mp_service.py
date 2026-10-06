@@ -1663,6 +1663,7 @@ def _list_item(
         "method": _creation_methods_label(snapshot),
         "viral_title_formula": str(title_formula.get("name") or title_formula.get("code") or ""),
         "title": artifact.title if artifact else "",
+        "body": (artifact.body if artifact else "") or "",
         "content_formula": str(body_formula.get("name") or body_formula.get("code") or ""),
         "formula": str(body_formula.get("name") or body_formula.get("code") or ""),
         "status": task.status,
