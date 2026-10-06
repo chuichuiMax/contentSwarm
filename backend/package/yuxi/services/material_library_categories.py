@@ -29,10 +29,10 @@ MATERIAL_CATEGORIES: dict[MaterialType, tuple[dict[str, str], ...]] = {
     ),
 }
 
-# Legacy PC defaults remain valid storage categories, but the material-library UI
-# now exposes the four fixed personal entries instead of these old cards.
+# Historical IDs remain compatible with storage. Lists expose fixed personal
+# folders instead of legacy cards; obsolete product galleries use an explicit purge.
 DEFAULT_IMAGE_CATEGORY_IDS = frozenset(item["code"] for item in MATERIAL_CATEGORIES["image"])
-RETIRED_PRIVATE_IMAGE_CATEGORY_IDS = DEFAULT_IMAGE_CATEGORY_IDS - {"product"}
+RETIRED_PRIVATE_IMAGE_CATEGORY_IDS = DEFAULT_IMAGE_CATEGORY_IDS
 
 PERSONAL_IMAGE_FOLDERS = {
     "rough": ("mp-rough-private", "毛坯房图库"),

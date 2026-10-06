@@ -1457,6 +1457,7 @@ async def get_material_categories(
             material_type != "image"
             or category.visibility != "private"
             or category.id not in RETIRED_PRIVATE_IMAGE_CATEGORY_IDS
+            or personal_folder_key(category)
         )
         and (
             include_private_defaults
@@ -1834,7 +1835,11 @@ async def list_image_galleries(
         if not rough_upload_only or _designer_may_see_category(category)
         if personal_folder != "rough" or _is_target_rough_category(category, _owner_uid(user))
         if not is_storage_root(category)
-        and (category.visibility != "private" or category.id not in RETIRED_PRIVATE_IMAGE_CATEGORY_IDS)
+        and (
+            category.visibility != "private"
+            or category.id not in RETIRED_PRIVATE_IMAGE_CATEGORY_IDS
+            or personal_folder_key(category)
+        )
         and (
             include_private_defaults
             or category.visibility != "private"
