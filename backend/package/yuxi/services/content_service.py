@@ -37,6 +37,7 @@ from yuxi.content.service_entry_form import (
     is_quote_content_type_name,
 )
 from yuxi.services.business_variable_service import list_business_variables
+from yuxi.services.content_photo_composition import GALLERY_SOURCE_ASSET_ROLES
 from yuxi.services.content_type_service import list_content_types
 from yuxi.services.process_standard_service import (
     list_enabled_process_names_by_type,
@@ -1700,7 +1701,7 @@ async def save_content_brief(
                 "所选图库图片不存在、已停用或无权访问",
             )
         image_asset = await material_repo.get_asset(image_item.asset_id, image_item.owner_uid, for_update=True)
-        if image_asset is None or image_asset.role not in {"source", "library_image"}:
+        if image_asset is None or image_asset.role not in GALLERY_SOURCE_ASSET_ROLES:
             raise _content_error(422, "CONTENT_IMAGE_ASSET_INVALID", "所选图库图片的文件记录无效")
         await ContentCoverRepository(db).retain_material_use([image_asset.id], owner_uid)
         visual_snapshot = {

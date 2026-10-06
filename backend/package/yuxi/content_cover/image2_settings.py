@@ -5,6 +5,7 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from yuxi.content_cover.constants import IMAGE2_SHARED_OWNER_UID
 from yuxi.content_cover.image2_client import Image2Client, Image2Config, Image2Error
 from yuxi.repositories.content_cover_repository import ContentCoverRepository
 from yuxi.utils.datetime_utils import utc_now_naive
@@ -28,8 +29,13 @@ def _max_concurrent(setting=None) -> int:
         return 1
 
 
-async def resolve_image2_config(db: AsyncSession, *, owner_uid: str) -> Image2Config:
-    setting = await ContentCoverRepository(db).get_image2_setting(owner_uid)
+async def _shared_image2_setting(db: AsyncSession, *, for_update: bool = False):
+    return await ContentCoverRepository(db).get_shared_image2_setting(for_update=for_update)
+
+
+async def resolve_image2_config(db: AsyncSession, *, owner_uid: str | None = None) -> Image2Config:
+    del owner_uid
+    setting = await _shared_image2_setting(db)
     if setting:
         return Image2Config.from_values(
             base_url=setting.base_url,
@@ -40,11 +46,12 @@ async def resolve_image2_config(db: AsyncSession, *, owner_uid: str) -> Image2Co
     return Image2Config.from_env()
 
 
-async def get_image2_config_state(db: AsyncSession, *, owner_uid: str) -> dict[str, Any]:
-    setting = await ContentCoverRepository(db).get_image2_setting(owner_uid)
+async def get_image2_config_state(db: AsyncSession, *, owner_uid: str | None = None) -> dict[str, Any]:
+    del owner_uid
+    setting = await _shared_image2_setting(db)
     source = "database" if setting else "environment"
     try:
-        config = await resolve_image2_config(db, owner_uid=owner_uid)
+        config = await resolve_image2_config(db)
     except Image2Error:
         return {
             "configured": False,
@@ -81,19 +88,21 @@ async def save_image2_config(
     api_key: str | None,
     model: str = IMAGE2_DEFAULT_MODEL,
     max_concurrent: int | None = None,
-    owner_uid: str,
+    owner_uid: str | None = None,
 ) -> None:
+    del owner_uid
     repo = ContentCoverRepository(db)
-    setting = await repo.get_image2_setting(owner_uid, for_update=True)
-    effective_api_key = api_key or _effective_api_key(setting)
+    setting = await repo.get_image2_setting(IMAGE2_SHARED_OWNER_UID, for_update=True)
+    hint = setting if setting is not None else await repo.get_shared_image2_setting()
+    effective_api_key = api_key or _effective_api_key(hint)
     validated = Image2Config.from_values(
         base_url=base_url,
         api_key=effective_api_key,
         model=model,
-        max_concurrent=max_concurrent if max_concurrent is not None else getattr(setting, "max_concurrent", None),
+        max_concurrent=max_concurrent if max_concurrent is not None else getattr(hint, "max_concurrent", None),
     )
     await repo.upsert_image2_setting(
-        owner_uid=owner_uid,
+        owner_uid=IMAGE2_SHARED_OWNER_UID,
         base_url=validated.base_url,
         api_key=validated.api_key,
         model=validated.model,
@@ -112,24 +121,26 @@ async def verify_image2_config(
     api_key: str | None,
     model: str,
     max_concurrent: int | None,
-    owner_uid: str,
+    owner_uid: str | None = None,
 ) -> dict[str, Any]:
     """Probe a draft config and persist only a successful, reachable profile."""
+    del owner_uid
     repo = ContentCoverRepository(db)
-    setting = await repo.get_image2_setting(owner_uid, for_update=True)
-    effective_api_key = api_key or _effective_api_key(setting)
+    setting = await repo.get_image2_setting(IMAGE2_SHARED_OWNER_UID, for_update=True)
+    hint = setting if setting is not None else await repo.get_shared_image2_setting()
+    effective_api_key = api_key or _effective_api_key(hint)
     config = Image2Config.from_values(
         base_url=base_url,
         api_key=effective_api_key,
         model=model,
-        max_concurrent=max_concurrent if max_concurrent is not None else getattr(setting, "max_concurrent", None),
+        max_concurrent=max_concurrent if max_concurrent is not None else getattr(hint, "max_concurrent", None),
     )
     async with Image2Client(config) as client:
         profile = await client.probe_capabilities()
     values = profile.model_dump(mode="json")
     verified_at = utc_now_naive()
     await repo.upsert_image2_setting(
-        owner_uid=owner_uid,
+        owner_uid=IMAGE2_SHARED_OWNER_UID,
         base_url=config.base_url,
         api_key=config.api_key,
         model=config.model,
@@ -141,5 +152,5 @@ async def verify_image2_config(
     await db.commit()
     return {
         "profile": values,
-        "state": await get_image2_config_state(db, owner_uid=owner_uid),
+        "state": await get_image2_config_state(db),
     }

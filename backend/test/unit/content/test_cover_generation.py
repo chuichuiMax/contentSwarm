@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import httpx
 import pytest
 import yuxi.content_cover.image2_settings as image2_settings
+from yuxi.content_cover.constants import IMAGE2_SHARED_OWNER_UID
 import yuxi.content_cover.renderer as content_cover_renderer
 import yuxi.services.content_cover_worker as content_cover_worker
 import yuxi.services.xiaohongshu_service as xiaohongshu_service
@@ -50,6 +51,7 @@ from yuxi.services.content_cover_service import (
     _normalize_upload,
     _template_texts,
     create_cover_generate_job,
+    create_hycanvas_cover_job,
     ensure_hycanvas_reference_asset,
 )
 from yuxi.storage.postgres.models_content import ContentCoverAsset, ContentCoverJob
@@ -367,15 +369,15 @@ async def test_saved_image2_settings_do_not_inherit_environment_provider_edit_co
     }.items():
         monkeypatch.setenv(key, value)
 
-    async def get_setting(_repo, owner_uid):
-        assert owner_uid == "alice"
+    async def get_shared_setting(_self, *, for_update=False):
+        del for_update
         return (
             SimpleNamespace(base_url="https://relay.example.com/v1", api_key="saved-secret", model="gpt-image-2")
             if has_saved_setting
             else None
         )
 
-    monkeypatch.setattr(ContentCoverRepository, "get_image2_setting", get_setting)
+    monkeypatch.setattr(ContentCoverRepository, "get_shared_image2_setting", get_shared_setting)
     config = await image2_settings.resolve_image2_config(object(), owner_uid="alice")
     captured = {}
 
@@ -429,11 +431,15 @@ async def test_global_image2_config_preserves_saved_key_and_never_returns_it(
             del db
 
         async def get_image2_setting(self, owner_uid, *, for_update=False):
-            assert owner_uid == "alice"
+            assert owner_uid == IMAGE2_SHARED_OWNER_UID
             del for_update
             return setting
 
+        async def get_shared_image2_setting(self, *, for_update=False):
+            return await self.get_image2_setting(IMAGE2_SHARED_OWNER_UID, for_update=for_update)
+
         async def upsert_image2_setting(self, **values):
+            assert values["owner_uid"] == IMAGE2_SHARED_OWNER_UID
             captured["values"] = values
             setting.base_url = values["base_url"]
             setting.api_key = values["api_key"]
@@ -477,11 +483,15 @@ async def test_global_image2_config_reuses_environment_key_when_database_setting
             del db
 
         async def get_image2_setting(self, owner_uid, *, for_update=False):
-            assert owner_uid == "alice"
+            assert owner_uid == IMAGE2_SHARED_OWNER_UID
             del for_update
             return None
 
+        async def get_shared_image2_setting(self, *, for_update=False):
+            return None
+
         async def upsert_image2_setting(self, **values):
+            assert values["owner_uid"] == IMAGE2_SHARED_OWNER_UID
             captured["values"] = values
             return SimpleNamespace(**values)
 
@@ -579,6 +589,62 @@ def test_image2_copy_mode_normalizes_tags_and_requires_single_image_mode():
             prompt="生成带文字的封面",
             idempotency_key="request-5678",
         )
+
+
+@pytest.mark.asyncio
+async def test_hycanvas_cover_accepts_generated_library_image(monkeypatch: pytest.MonkeyPatch):
+    source = SimpleNamespace(role="output")
+
+    class FakeRepository:
+        def __init__(self, _db):
+            pass
+
+        async def get_asset_for_user(self, *_args, **_kwargs):
+            return source
+
+    captured = {}
+
+    async def fake_create_job(_db, _user, **kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(), False
+
+    service_globals = create_hycanvas_cover_job.__globals__
+    monkeypatch.setitem(service_globals, "ContentCoverRepository", FakeRepository)
+    monkeypatch.setitem(service_globals, "_create_job", fake_create_job)
+    monkeypatch.setitem(service_globals, "serialize_job", lambda _job: {"id": "job"})
+
+    result = await create_hycanvas_cover_job(
+        object(),
+        SimpleNamespace(uid="alice"),
+        content_task_id="task-1",
+        source_asset_id="cca-generated",
+        template_id="tpl",
+        title="标题",
+        fields={},
+        image_field_label=None,
+        idempotency_key="key-1234",
+        parameters={},
+    )
+
+    assert result == {"job": {"id": "job"}, "deduplicated": False}
+    assert captured["mode"] == "hycanvas"
+    assert captured["request"]["source_asset_ids"] == ["cca-generated"]
+
+    source.role = "poster_template"
+    with pytest.raises(HTTPException) as exc_info:
+        await create_hycanvas_cover_job(
+            object(),
+            SimpleNamespace(uid="alice"),
+            content_task_id="task-1",
+            source_asset_id="cca-generated",
+            template_id="tpl",
+            title="标题",
+            fields={},
+            image_field_label=None,
+            idempotency_key="key-1234",
+            parameters={},
+        )
+    assert exc_info.value.status_code == 422
 
 
 def test_ai_cover_prompt_reserves_top_and_bottom_exclusion_zones():

@@ -724,15 +724,29 @@ async def login_by_sms(db: AsyncSession, payload: SmsLoginPayload) -> dict[str, 
     return await _issue_token(db, employee)
 
 
-async def _wechat_access_token(appid: str, secret: str) -> str:
+_WECHAT_ACCESS_TOKEN_INVALID = {40001, 40014, 42001}
+
+
+async def _invalidate_wechat_access_token() -> None:
     redis = await get_redis_client()
-    cached = await redis.get("mp:wx:access_token")
-    if cached:
-        return cached.decode() if isinstance(cached, bytes) else str(cached)
+    await redis.delete("mp:wx:access_token")
+
+
+async def _wechat_access_token(appid: str, secret: str, *, force_refresh: bool = False) -> str:
+    redis = await get_redis_client()
+    if not force_refresh:
+        cached = await redis.get("mp:wx:access_token")
+        if cached:
+            return cached.decode() if isinstance(cached, bytes) else str(cached)
     async with httpx.AsyncClient(timeout=10.0) as client:
-        response = await client.get(
-            "https://api.weixin.qq.com/cgi-bin/token",
-            params={"grant_type": "client_credential", "appid": appid, "secret": secret},
+        response = await client.post(
+            "https://api.weixin.qq.com/cgi-bin/stable_token",
+            json={
+                "grant_type": "client_credential",
+                "appid": appid,
+                "secret": secret,
+                "force_refresh": force_refresh,
+            },
         )
     body = response.json()
     token = body.get("access_token")
@@ -741,6 +755,34 @@ async def _wechat_access_token(appid: str, secret: str) -> str:
     expires = max(int(body.get("expires_in") or 7200) - 200, 60)
     await redis.setex("mp:wx:access_token", expires, token)
     return token
+
+
+async def _wechat_phone_by_code(appid: str, secret: str, phone_code: str) -> str:
+    token = await _wechat_access_token(appid, secret)
+    body = await _request_wechat_phone_number(token, phone_code)
+    errcode = int(body.get("errcode") or 0)
+    if errcode in _WECHAT_ACCESS_TOKEN_INVALID:
+        await _invalidate_wechat_access_token()
+        token = await _wechat_access_token(appid, secret, force_refresh=True)
+        body = await _request_wechat_phone_number(token, phone_code)
+        errcode = int(body.get("errcode") or 0)
+    if errcode:
+        raise _mp_error(422, "WECHAT_PHONE_INVALID", body.get("errmsg") or "微信手机号授权失败")
+    info = body.get("phone_info") or {}
+    phone = info.get("purePhoneNumber") or info.get("phoneNumber")
+    if not phone:
+        raise _mp_error(422, "WECHAT_PHONE_REQUIRED", "微信未返回手机号")
+    return _require_phone(str(phone))
+
+
+async def _request_wechat_phone_number(access_token: str, phone_code: str) -> dict[str, Any]:
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        response = await client.post(
+            "https://api.weixin.qq.com/wxa/business/getuserphonenumber",
+            params={"access_token": access_token},
+            json={"code": phone_code},
+        )
+    return response.json()
 
 
 def _decrypt_wechat_phone(session_key: str, encrypted_data: str, iv: str) -> str:
@@ -774,23 +816,15 @@ async def _resolve_wechat_phone(payload: WechatPhonePayload, session: dict[str, 
             if fallback_phone:
                 return _require_phone(fallback_phone)
             raise _mp_error(422, "WECHAT_PHONE_REQUIRED", "未读取到微信手机号")
-        token = await _wechat_access_token(appid, secret)
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.post(
-                "https://api.weixin.qq.com/wxa/business/getuserphonenumber",
-                params={"access_token": token},
-                json={"code": code},
-            )
-        body = response.json()
-        if body.get("errcode"):
+        try:
+            return await _wechat_phone_by_code(appid, secret, code)
+        except HTTPException as exc:
             if fallback_phone and not _is_production():
-                return _require_phone(fallback_phone)
-            raise _mp_error(422, "WECHAT_PHONE_INVALID", body.get("errmsg") or "微信手机号授权失败")
-        info = body.get("phone_info") or {}
-        phone = info.get("purePhoneNumber") or info.get("phoneNumber")
-        if not phone:
-            raise _mp_error(422, "WECHAT_PHONE_REQUIRED", "微信未返回手机号")
-        return _require_phone(str(phone))
+                detail = exc.detail if isinstance(exc.detail, dict) else {}
+                error = detail.get("error") if isinstance(detail.get("error"), dict) else {}
+                if error.get("code") == "WECHAT_PHONE_INVALID":
+                    return _require_phone(fallback_phone)
+            raise
     if payload.encrypted_data and payload.iv and session.get("session_key"):
         return _decrypt_wechat_phone(str(session["session_key"]), payload.encrypted_data, payload.iv)
     if fallback_phone and not _is_production():

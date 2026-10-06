@@ -37,6 +37,7 @@ CONTENT_ANALYZER_PARAMS = {"type": "chinese"}
 VECTOR_METRIC_TYPE = "COSINE"
 MILVUS_CHUNK_EMBED_BATCH_SIZE = 200
 MILVUS_QUERY_OFFLOAD_LIMIT = 8
+MILVUS_LOAD_TIMEOUT_SECONDS = 30
 _milvus_query_offload_semaphore_refs: dict[
     int,
     tuple[weakref.ReferenceType[asyncio.AbstractEventLoop], weakref.ReferenceType[asyncio.Semaphore]],
@@ -469,7 +470,9 @@ class MilvusKB(KnowledgeBase):
     async def _initialize_kb_instance(self, instance: Any) -> None:
         """初始化 Milvus 集合（加载到内存）"""
         try:
-            instance.load()
+            # load() 是同步 gRPC。放在事件循环上会占住唯一的 API 进程，
+            # 集合停在 Loading 时这次调用不会返回，登录等请求一起卡住。
+            await _run_milvus_query_io(instance.load, timeout=MILVUS_LOAD_TIMEOUT_SECONDS)
             logger.info("Milvus collection loaded into memory")
         except Exception as e:
             logger.warning(f"Failed to load collection into memory: {e}")
@@ -606,7 +609,7 @@ class MilvusKB(KnowledgeBase):
 
     async def _delete_file_chunks_from_milvus(self, collection: Collection, file_id: str) -> None:
         expr = f'file_id == "{file_id}"'
-        results = collection.query(expr=expr, output_fields=["id"], limit=1)
+        results = await _run_milvus_query_io(collection.query, expr=expr, output_fields=["id"], limit=1)
 
         if not results:
             logger.info(f"File {file_id} not found in Milvus, skipping delete operation")

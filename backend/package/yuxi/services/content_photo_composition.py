@@ -6,6 +6,9 @@ from yuxi.content_cover.photo_composition import PhotoComposition
 from yuxi.repositories.content_cover_repository import ContentCoverRepository
 from yuxi.repositories.material_library_repository import MaterialLibraryRepository
 
+# 上传图是 source / library_image；生图结果入库后角色仍是 output。
+GALLERY_SOURCE_ASSET_ROLES = frozenset({"source", "library_image", "output"})
+
 
 async def resolve_photo_composition(db, user, composition: PhotoComposition, primary_id: str, *, complete: bool):
     if complete:
@@ -22,7 +25,7 @@ async def resolve_photo_composition(db, user, composition: PhotoComposition, pri
             if item is None or item.material_type != "image" or item.status != "enabled":
                 raise HTTPException(status_code=422, detail="组合图片不存在、已停用或无权访问")
             asset = await repo.get_asset(item.asset_id, item.owner_uid)
-            if asset is None or asset.role not in {"source", "library_image"}:
+            if asset is None or asset.role not in GALLERY_SOURCE_ASSET_ROLES:
                 raise HTTPException(status_code=422, detail="组合图片文件不可用")
             await ContentCoverRepository(db).retain_material_use([asset.id], str(user.uid))
             resolved.update(asset_id=asset.id, sha256=asset.sha256)

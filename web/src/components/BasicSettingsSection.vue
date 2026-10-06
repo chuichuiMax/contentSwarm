@@ -137,7 +137,7 @@
       <div class="settings-panel">
         <div class="image2-panel-header">
           <p class="section-description">
-            配置 AI 封面与图片设计使用的 image2 中转站。配置按当前账号保存，环境变量仅作为未配置时的兜底。
+            配置 AI 封面与图片设计使用的 image2 中转站。全站共享一份配置，环境变量仅作为未配置时的兜底。
           </p>
           <span class="image2-status" :data-status="image2VerificationStatus">
             {{ image2StatusText }}
@@ -184,7 +184,7 @@
             style="width: 100%"
           />
           <span class="setting-help">
-            当前账号在单个 Worker 中同时执行的 AI 封面任务数，范围 1–10；超过限制的任务自动排队。
+            全站在单个 Worker 中同时执行的 AI 封面任务数，范围 1–10；超过限制的任务自动排队。
           </span>
         </div>
         <div v-if="image2State?.capabilities?.message" class="image2-capability-message">

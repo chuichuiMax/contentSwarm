@@ -711,7 +711,7 @@ onBeforeUnmount(() => {
       @ok="saveImage2Config"
     >
       <div class="image2-config-modal">
-        <p>管理员可在“基本设置”中统一维护此配置；当前账号配置会持续用于所有封面 image2 任务。</p>
+        <p>管理员可在“基本设置”中统一维护此配置；全站共享，所有封面 image2 任务共用。</p>
         <label>
           <span>中转站 Base URL</span>
           <input v-model.trim="image2ConfigForm.baseUrl" type="url" maxlength="500" autocomplete="off" placeholder="例如：https://relay.example.com/v1" :disabled="!canManageImage2" />
