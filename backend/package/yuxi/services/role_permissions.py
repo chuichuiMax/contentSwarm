@@ -13,6 +13,8 @@ def _entry(list_key: str, label: str, items: tuple[tuple[str, str], ...]) -> dic
     return {"list_key": list_key, "list": label, "actions": _actions(list_key, items)}
 
 
+ROUGH_UPLOAD_PERMISSION = "material_rough.upload"
+
 PERMISSION_CATALOG: list[dict[str, Any]] = [
     {
         "module_key": "chat",
@@ -23,6 +25,11 @@ PERMISSION_CATALOG: list[dict[str, Any]] = [
         "module_key": "content",
         "module": "内容生产",
         "lists": [_entry("content", "内容生产", (("generate", "内容生成"), ("copy", "复制")))],
+    },
+    {
+        "module_key": "visual",
+        "module": "视觉创作",
+        "lists": [_entry("material_rough", "素材库-企业共享-毛坯房图库", (("upload", "上传"),))],
     },
     {
         "module_key": "workspace",

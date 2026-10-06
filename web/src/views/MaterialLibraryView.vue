@@ -174,14 +174,24 @@ const isCaseGalleryUpload = computed(() =>
   materialType.value === 'image' &&
   isEnterpriseCaseGallery(uploadTargetGallery.value, uploadTargetParent.value)
 )
+function isEnterpriseRoughRoot(gallery) {
+  return gallery?.visibility === 'enterprise' && !gallery.parent_id && (
+    gallery.image_design_role === 'rough' || gallery.name === '毛坯房图库' || gallery.name === '毛胚房图库'
+  )
+}
+
+const designerEnterpriseScope = computed(() => userStore.roughUploadOnly && materialScope.value === 'enterprise')
+
 const filteredGalleries = computed(() => {
+  if (designerEnterpriseScope.value && !isGalleryRoot.value) return []
   const term = queryInput.value.trim().toLowerCase()
   const scoped = isGalleryRoot.value
     ? galleries.value.filter((item) => !item.parent_id && (item.visibility || 'private') === materialScope.value)
     : (isTopLevelGallery.value ? galleries.value.filter((item) => item.parent_id === activeGallery.value) : [])
+  const roughScoped = designerEnterpriseScope.value ? scoped.filter(isEnterpriseRoughRoot) : scoped
   const styleScoped = isCaseGalleryPage.value && designStyleFilter.value
-    ? scoped.filter((item) => item.design_style === designStyleFilter.value)
-    : scoped
+    ? roughScoped.filter((item) => item.design_style === designStyleFilter.value)
+    : roughScoped
   const industryScoped = isGalleryRoot.value && industryFilter.value
     ? styleScoped.filter((item) => (item.industry_slug || 'uncategorized') === industryFilter.value)
     : styleScoped
@@ -199,6 +209,7 @@ function groupGalleriesByIndustry(items) {
 }
 
 const galleryGroups = computed(() => {
+  if (designerEnterpriseScope.value && !isGalleryRoot.value) return []
   if (!isGalleryRoot.value) return [{ slug: 'children', name: '二级图库', galleries: filteredGalleries.value }]
   return groupGalleriesByIndustry(filteredGalleries.value)
 })
@@ -1127,7 +1138,7 @@ onBeforeUnmount(() => {
           <a-tag v-else>{{ isEmployeeRoughMode ? '员工个人素材' : (currentGallery?.visibility === 'enterprise' ? '企业共享' : (currentGallery?.is_global_personal ? '我的素材 · 文件夹全员可见，图片仅自己可见' : '仅自己可见')) }}</a-tag>
           <h2>{{ isEmployeeRoughMode && targetEmployee ? `${targetEmployee.name} / 毛坯房图库` : (activeGallery ? currentGallery?.name : (materialScope === 'enterprise' ? '企业共享图库' : '我的图库')) }}</h2>
           <p v-if="parentGallery" class="gallery-path">{{ parentGallery.name }} / {{ currentGallery?.name }}</p>
-          <p>{{ isEmployeeRoughMode && targetEmployee ? `员工编码：${targetEmployee.employee_code}；本页仅显示该员工个人毛坯房图库。` : (activeGallery ? (currentGallery?.description || '这个图库还没有填写说明。') : '我的素材中的图片仅自己可见；超管新建文件夹向所有用户显示。企业共享保持现有使用规则。') }}</p>
+          <p>{{ isEmployeeRoughMode && targetEmployee ? `员工编码：${targetEmployee.employee_code}；本页仅显示该员工个人毛坯房图库。` : (designerEnterpriseScope && !activeGallery ? '企业共享仅可上传毛坯房图库。' : (activeGallery ? (currentGallery?.description || '这个图库还没有填写说明。') : '我的素材中的图片仅自己可见；超管新建文件夹向所有用户显示。企业共享保持现有使用规则。')) }}</p>
         </div>
       </div>
       <div v-else class="context-head">
@@ -1138,7 +1149,7 @@ onBeforeUnmount(() => {
         <a-input v-model:value="queryInput" allow-clear :placeholder="isGalleryRoot ? '搜索图库名称' : '搜索素材名称'" @pressEnter="search" @clear="search">
           <template #prefix><Search :size="15" /></template>
         </a-input>
-        <a-select v-if="isGalleryRoot" v-model:value="industryFilter" class="category-filter" placeholder="全部行业" allow-clear>
+        <a-select v-if="isGalleryRoot && !designerEnterpriseScope" v-model:value="industryFilter" class="category-filter" placeholder="全部行业" allow-clear>
           <a-select-option v-for="item in industries" :key="item.slug" :value="item.slug">{{ item.name }}</a-select-option>
           <a-select-option value="uncategorized">未分类行业</a-select-option>
         </a-select>
@@ -1223,8 +1234,8 @@ onBeforeUnmount(() => {
               <button type="button" title="预览" @click="previewItem = item"><Eye :size="15" /></button>
               <button v-if="materialType === 'cover_template'" type="button" title="校对 OCR 识别结果" @click="openOcrReview(item)"><ScanText :size="15" /></button>
               <button type="button" title="下载" @click="downloadItem(item)"><Download :size="15" /></button>
-              <button v-if="item.can_manage" type="button" title="编辑名称和分类" @click="showEdit(item)"><Pencil :size="15" /></button>
-              <button v-if="item.can_manage" type="button" class="danger" title="删除" @click="removeItem(item)"><Trash2 :size="15" /></button>
+              <button v-if="item.can_manage && !designerEnterpriseScope" type="button" title="编辑名称和分类" @click="showEdit(item)"><Pencil :size="15" /></button>
+              <button v-if="item.can_manage && !designerEnterpriseScope" type="button" class="danger" title="删除" @click="removeItem(item)"><Trash2 :size="15" /></button>
             </div>
           </article>
           </div>

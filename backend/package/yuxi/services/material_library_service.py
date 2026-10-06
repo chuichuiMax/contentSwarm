@@ -224,6 +224,43 @@ def _is_admin(user: User) -> bool:
     return user.role in {"admin", "superadmin"}
 
 
+def is_enterprise_rough_root(category: ContentMaterialCategory | None) -> bool:
+    return bool(
+        category
+        and category.material_type == "image"
+        and category.visibility == "enterprise"
+        and not category.parent_id
+        and (
+            category.image_design_role == "rough"
+            or category.name in {"毛坯房图库", "毛胚房图库"}
+        )
+    )
+
+
+async def material_access_mode(db: AsyncSession, user: User) -> Literal["full", "rough_upload"]:
+    from yuxi.services.role_service import effective_permission_grants
+
+    grants = await effective_permission_grants(db, user)
+    if grants is None:
+        return "full"
+    if "material_rough.upload" not in grants:
+        raise _error(403, "MATERIAL_PERMISSION_DENIED", "当前岗位无权访问素材库")
+    return "rough_upload"
+
+
+def _designer_may_see_category(category: ContentMaterialCategory | None) -> bool:
+    if category is None or category.material_type != "image":
+        return False
+    if category.visibility == "private":
+        return True
+    return is_enterprise_rough_root(category)
+
+
+def _reject_outside_rough_upload(category: ContentMaterialCategory | None) -> None:
+    if not _designer_may_see_category(category):
+        raise _error(403, "MATERIAL_PERMISSION_DENIED", "当前岗位只能上传企业共享毛坯房图库，或使用自己的素材")
+
+
 def _can_manage_category(user: User, category: ContentMaterialCategory) -> bool:
     if category.material_type == "image":
         if category.visibility == "enterprise":
@@ -702,6 +739,7 @@ async def import_material_images(
 ) -> dict[str, Any]:
     if not files or len(files) > 50:
         raise _error(422, "MATERIAL_FILE_COUNT_INVALID", "每次必须上传 1–50 张图片")
+    rough_upload_only = await material_access_mode(db, actor_user or user) == "rough_upload"
     owner_uid = _owner_uid(user)
     if source_channel == "mp":
         from yuxi.services.personal_materials import upload_category
@@ -747,6 +785,8 @@ async def import_material_images(
             raise _error(422, "MATERIAL_CATEGORY_INVALID", "图库不存在或共享范围已变更")
         if manage_target_private and not _is_target_rough_category(resolved_category, owner_uid):
             raise _error(403, "MATERIAL_TARGET_SCOPE_FORBIDDEN", "员工素材模式只能管理该员工的个人图库")
+        if rough_upload_only:
+            _reject_outside_rough_upload(resolved_category)
         if not can_contribute_to_category(user, resolved_category):
             raise _error(403, "MATERIAL_UPLOAD_FORBIDDEN", "不能向该图库上传素材")
         if not file.filename:
@@ -833,6 +873,8 @@ async def create_material_share(
     actor_user: User | None = None,
     target_private: bool = False,
 ) -> dict[str, Any]:
+    if await material_access_mode(db, actor_user or user) == "rough_upload":
+        raise _error(403, "MATERIAL_PERMISSION_DENIED", "当前岗位只能上传企业共享毛坯房图库")
     owner_uid = _owner_uid(user)
     repo = MaterialLibraryRepository(db, include_shared=True)
     rows = await repo.list_image_items_with_assets_and_categories(owner_uid, payload.item_ids)
@@ -1136,6 +1178,7 @@ async def list_material_items(
     date_from: date | None = None,
     date_to: date | None = None,
 ) -> dict[str, Any]:
+    rough_upload_only = await material_access_mode(db, user) == "rough_upload"
     if date_from and date_to and date_from > date_to:
         raise _error(422, "MATERIAL_DATE_RANGE_INVALID", "开始日期不能晚于结束日期")
     uploaded_from = (
@@ -1178,6 +1221,8 @@ async def list_material_items(
         if category
         else None
     )
+    if rough_upload_only:
+        _reject_outside_rough_upload(resolved_category)
     if (
         resolved_category is not None
         and personal_folder_key(resolved_category) in {"generated", "works"}
@@ -1291,6 +1336,10 @@ async def update_material_item(
     previous_category = await repo.get_category(
         item.category_owner_uid or item.owner_uid, item.material_type, item.category
     )
+    if await material_access_mode(db, actor_user or user) == "rough_upload" and (
+        previous_category is None or previous_category.visibility != "private"
+    ):
+        raise _error(403, "MATERIAL_PERMISSION_DENIED", "企业共享毛坯房图库仅可上传")
     if previous_category is None or not _can_manage_item(user, item, previous_category):
         raise _error(403, "MATERIAL_MANAGE_FORBIDDEN", "只能管理自己上传的素材，管理员可管理企业共享素材")
     changes = payload.model_dump(exclude_unset=True)
@@ -1399,9 +1448,11 @@ async def get_material_categories(
         tenant_id=_tenant_id(user),
         material_type=material_type,
     )
+    rough_upload_only = await material_access_mode(db, user) == "rough_upload"
     categories = [
         category
         for category in await repo.list_categories(_owner_uid(user), material_type)
+        if not rough_upload_only or _designer_may_see_category(category)
         if personal_folder != "rough" or _is_target_rough_category(category, _owner_uid(user))
         if not is_storage_root(category)
         and (
@@ -1468,6 +1519,8 @@ async def create_material_category(
     actor_user: User | None = None,
     target_private: bool = False,
 ) -> dict[str, Any]:
+    if await material_access_mode(db, actor_user or user) == "rough_upload":
+        raise _error(403, "MATERIAL_PERMISSION_DENIED", "当前岗位只能上传企业共享毛坯房图库")
     if target_private:
         raise _error(403, "MATERIAL_TARGET_SCOPE_FORBIDDEN", "员工素材模式只能管理该员工的毛坯房图库")
     if payload.material_type == "image" and not _is_admin(user):
@@ -1545,6 +1598,8 @@ async def update_material_category(
     actor_user: User | None = None,
     target_private: bool = False,
 ) -> dict[str, Any]:
+    if await material_access_mode(db, actor_user or user) == "rough_upload":
+        raise _error(403, "MATERIAL_PERMISSION_DENIED", "当前岗位只能上传企业共享毛坯房图库")
     if material_type not in {"image", "cover_template"}:
         raise _error(422, "MATERIAL_TYPE_INVALID", "素材类型不存在")
     if material_type == "image":
@@ -1678,6 +1733,8 @@ async def delete_material_category(
     actor_user: User | None = None,
     target_private: bool = False,
 ) -> dict[str, Any]:
+    if await material_access_mode(db, actor_user or user) == "rough_upload":
+        raise _error(403, "MATERIAL_PERMISSION_DENIED", "当前岗位只能上传企业共享毛坯房图库")
     if material_type not in {"image", "cover_template"}:
         raise _error(422, "MATERIAL_TYPE_INVALID", "素材类型不存在")
     if material_type == "image":
@@ -1772,9 +1829,11 @@ async def list_image_galleries(
         material_type="image",
     )
     repo = MaterialLibraryRepository(db, include_shared=True)
+    rough_upload_only = await material_access_mode(db, user) == "rough_upload"
     categories = [
         category
         for category in await repo.list_categories(_owner_uid(user), "image")
+        if not rough_upload_only or _designer_may_see_category(category)
         if personal_folder != "rough" or _is_target_rough_category(category, _owner_uid(user))
         if not is_storage_root(category)
         and (category.visibility != "private" or category.id not in RETIRED_PRIVATE_IMAGE_CATEGORY_IDS)
@@ -1867,6 +1926,9 @@ async def get_material_file(
             item = await db.get(ContentMaterialLibraryItem, item_id)
     if item is None:
         raise _error(404, "MATERIAL_NOT_FOUND", "素材不存在")
+    if await material_access_mode(db, user) == "rough_upload":
+        category = await repo.get_category(item.category_owner_uid or item.owner_uid, item.material_type, item.category)
+        _reject_outside_rough_upload(category)
     asset = await repo.get_asset(item.asset_id, item.owner_uid)
     if asset is None:
         raise _error(404, "MATERIAL_ASSET_MISSING", "素材文件不存在")
@@ -1893,6 +1955,9 @@ async def get_material_thumbnail(
             item = await db.get(ContentMaterialLibraryItem, item_id)
     if item is None:
         raise _error(404, "MATERIAL_NOT_FOUND", "素材不存在")
+    if await material_access_mode(db, user) == "rough_upload":
+        category = await repo.get_category(item.category_owner_uid or item.owner_uid, item.material_type, item.category)
+        _reject_outside_rough_upload(category)
     asset = await repo.get_asset(item.asset_id, item.owner_uid)
     if asset is None:
         raise _error(404, "MATERIAL_ASSET_MISSING", "素材文件不存在")
@@ -1923,6 +1988,10 @@ async def delete_material_item(
     if item is None:
         raise _error(404, "MATERIAL_NOT_FOUND", "素材不存在")
     category = await repo.get_category(item.category_owner_uid or item.owner_uid, item.material_type, item.category)
+    if await material_access_mode(db, actor_user or user) == "rough_upload" and (
+        category is None or category.visibility != "private"
+    ):
+        raise _error(403, "MATERIAL_PERMISSION_DENIED", "企业共享毛坯房图库仅可上传")
     if category is None or not _can_manage_item(user, item, category):
         raise _error(403, "MATERIAL_MANAGE_FORBIDDEN", "只能删除自己上传的素材，管理员可删除企业共享素材")
     if (item.metadata_json or {}).get("ever_shared") or (item.metadata_json or {}).get("retain_asset_on_delete"):

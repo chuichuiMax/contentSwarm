@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from yuxi.repositories.employee_repository import EmployeeRepository
 from yuxi.repositories.role_repository import RoleRepository
 from yuxi.repositories.user_repository import UserRepository
-from yuxi.services.role_permissions import PERMISSION_CATALOG, normalize_grants
+from yuxi.services.role_permissions import PERMISSION_CATALOG, ROUGH_UPLOAD_PERMISSION, normalize_grants
 from yuxi.storage.postgres.models_business import User
 from yuxi.storage.postgres.models_content import ContentRole
 
@@ -22,6 +22,9 @@ DEFAULT_ROLES: tuple[tuple[str, str], ...] = (
     ("JS0004", "新渠道"),
     ("JS0005", "网销"),
 )
+DESIGNER_ROLE_CODE = "JS0006"
+DESIGNER_ROLE_NAME = "设计师"
+DESIGNER_DEFAULT_GRANTS = (ROUGH_UPLOAD_PERMISSION,)
 
 SYSTEM_ROLES: tuple[tuple[str, str], ...] = (
     ("user", "普通用户"),
@@ -118,6 +121,52 @@ async def ensure_default_roles(db: AsyncSession) -> None:
                 }
             )
     await ensure_system_roles(db)
+    await ensure_designer_role(db)
+
+
+async def ensure_designer_role(db: AsyncSession) -> ContentRole:
+    """设计师岗位默认只有企业共享毛坯房图库的上传权限。"""
+
+    repo = RoleRepository(db)
+    role = await repo.get_by_name(DESIGNER_ROLE_NAME)
+    if role is None:
+        codes = set(await repo.list_codes())
+        role_code = DESIGNER_ROLE_CODE if DESIGNER_ROLE_CODE not in codes else next_role_code(list(codes))
+        return await repo.create(
+            {
+                "id": str(uuid.uuid4()),
+                "role_code": role_code,
+                "name": DESIGNER_ROLE_NAME,
+                "role_type": "新增",
+                "enabled": True,
+                "permissions": list(DESIGNER_DEFAULT_GRANTS),
+                "created_by": "system",
+            }
+        )
+    if not role.permissions:
+        return await repo.update(role, {"permissions": list(DESIGNER_DEFAULT_GRANTS)})
+    return role
+
+
+async def effective_permission_grants(db: AsyncSession, user: User) -> list[str] | None:
+    """空权限保持原有全量菜单；已配置权限时只放行授权项。管理员不受岗位权限表限制。"""
+
+    if user.role in SYSTEM_ROLE_CODES or user.role in SYSTEM_ROLE_NAMES:
+        return None
+    if user.role == DESIGNER_ROLE_NAME:
+        await ensure_designer_role(db)
+    role = await RoleRepository(db).get_by_code_or_name(user.role)
+    if role is None:
+        return None
+    grants = normalize_grants(role.permissions, strict=False)
+    return grants or None
+
+
+async def permission_snapshot(db: AsyncSession, user: User) -> tuple[bool, list[str]]:
+    grants = await effective_permission_grants(db, user)
+    if grants is None:
+        return False, []
+    return True, grants
 
 
 async def require_role(db: AsyncSession, name: str, *, allow_disabled: bool = False) -> ContentRole:

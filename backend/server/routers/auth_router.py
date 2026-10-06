@@ -24,7 +24,7 @@ from yuxi.services.operation_log_service import log_operation
 from yuxi.services.employee_service import ensure_platform_user, get_pc_login_employee
 from yuxi.storage.minio import upload_image_to_minio
 from yuxi.utils.datetime_utils import utc_now_naive
-from yuxi.services.role_service import resolve_stored_user_role
+from yuxi.services.role_service import permission_snapshot, resolve_stored_user_role
 
 # OIDC 认证相关导入
 from yuxi.services.oidc_service import (
@@ -50,6 +50,8 @@ class Token(BaseModel):
     role: str
     department_id: int | None = None
     department_name: str | None = None
+    permissions: list[str] = []
+    permission_scoped: bool = False
 
 
 class UserCreate(BaseModel):
@@ -85,6 +87,8 @@ class UserResponse(BaseModel):
     department_name: str | None = None  # 部门名称
     created_at: str
     last_login: str | None = None
+    permissions: list[str] = []
+    permission_scoped: bool = False
 
 
 class UserAccessOption(BaseModel):
@@ -243,6 +247,7 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
         result = await db.execute(select(Department.name).filter(Department.id == user.department_id))
         department_name = result.scalar_one_or_none()
 
+    permission_scoped, permissions = await permission_snapshot(db, user)
     return {
         "access_token": access_token,
         "token_type": "bearer",
@@ -254,6 +259,8 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
         "role": user.role,
         "department_id": user.department_id,
         "department_name": department_name,
+        "permissions": permissions,
+        "permission_scoped": permission_scoped,
     }
 
 
@@ -355,6 +362,9 @@ async def read_users_me(current_user: User = Depends(get_required_user), db: Asy
         result = await db.execute(select(Department.name).filter(Department.id == current_user.department_id))
         user_dict["department_name"] = result.scalar_one_or_none()
 
+    permission_scoped, permissions = await permission_snapshot(db, current_user)
+    user_dict["permissions"] = permissions
+    user_dict["permission_scoped"] = permission_scoped
     return user_dict
 
 
@@ -916,6 +926,7 @@ async def impersonate_user(
     # 控制台警告日志
     logger.warning(f"⚠️ [危险操作] 超级管理员 {current_user.username} 模拟登录用户: {target_user.username}")
 
+    permission_scoped, permissions = await permission_snapshot(db, target_user)
     return {
         "access_token": access_token,
         "token_type": "bearer",
@@ -927,6 +938,8 @@ async def impersonate_user(
         "role": target_user.role,
         "department_id": target_user.department_id,
         "department_name": department_name,
+        "permissions": permissions,
+        "permission_scoped": permission_scoped,
     }
 
 

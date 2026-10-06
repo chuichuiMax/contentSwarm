@@ -1,6 +1,9 @@
 <script setup>
+import { computed } from 'vue'
 import { Image, PanelsTopLeft } from 'lucide-vue-next'
 import { useRoute, useRouter } from 'vue-router'
+
+import { useUserStore } from '@/stores/user'
 
 defineProps({
   subtitle: { type: String, default: '设计、模板与品牌素材' }
@@ -8,10 +11,15 @@ defineProps({
 
 const route = useRoute()
 const router = useRouter()
-const sections = [
-  { label: '设计工作台', path: '/hycanvas', icon: PanelsTopLeft },
-  { label: '素材库', path: '/materials/images', icon: Image }
-]
+const userStore = useUserStore()
+const sections = computed(() => {
+  const items = [
+    { label: '设计工作台', path: '/hycanvas', icon: PanelsTopLeft },
+    { label: '素材库', path: '/materials/images', icon: Image }
+  ]
+  if (!userStore.isPermissionScoped) return items
+  return items.filter((item) => item.path.startsWith('/materials') && userStore.roughUploadOnly)
+})
 
 const isActive = (path) => path === '/hycanvas'
   ? route.path.startsWith('/hycanvas')

@@ -455,6 +455,15 @@ const handleLogin = async () => {
     const redirectPath = sessionStorage.getItem('redirect') || '/'
     sessionStorage.removeItem('redirect') // 清除重定向信息
 
+    if (userStore.isPermissionScoped) {
+      const target =
+        redirectPath === '/' || !userStore.canAccessPath(redirectPath)
+          ? userStore.homePath
+          : redirectPath
+      router.push(target)
+      return
+    }
+
     // 根据用户角色决定重定向目标
     if (redirectPath === '/') {
       // 统一跳转到聊天页面（管理员与普通用户共享同一聊天界面）
