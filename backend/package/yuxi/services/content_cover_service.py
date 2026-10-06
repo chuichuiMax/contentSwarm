@@ -68,6 +68,7 @@ from yuxi.services.material_library_service import (
     ensure_material_categories,
     resolve_material_category,
 )
+from yuxi.services.content_photo_composition import GALLERY_SOURCE_ASSET_ROLES
 from yuxi.services.run_queue_service import (
     get_arq_pool,
     get_last_run_stream_seq,
@@ -1559,7 +1560,7 @@ async def create_cover_compose_job(db: AsyncSession, user: User, payload: CoverC
         for_update=True,
         allow_material_use=True,
     )
-    if len(assets) != len(payload.asset_ids) or any(item.role not in {"source", "library_image"} for item in assets):
+    if len(assets) != len(payload.asset_ids) or any(item.role not in GALLERY_SOURCE_ASSET_ROLES for item in assets):
         raise _error(422, "COVER_SOURCE_ASSET_INVALID", "拼图素材不存在或角色不正确")
     artifact = await _resolve_artifact(db, user, payload.content_task_id)
     request = payload.model_dump()
@@ -1592,7 +1593,7 @@ async def create_hycanvas_cover_job(
     source = await ContentCoverRepository(db).get_asset_for_user(
         source_asset_id, _owner_uid(user), allow_material_use=True
     )
-    if source is None or source.role not in {"source", "library_image"}:
+    if source is None or source.role not in GALLERY_SOURCE_ASSET_ROLES:
         raise _error(422, "COVER_SOURCE_ASSET_INVALID", "HyCanvas 主图不存在或角色不正确")
     job, deduplicated = await _create_job(
         db,
@@ -1670,7 +1671,7 @@ async def _resolve_poster_context(
     product_asset = await repo.get_asset_for_user(
         product_asset_id, owner_uid, for_update=for_update, allow_material_use=True
     )
-    if product_asset is None or product_asset.role not in {"source", "library_image"}:
+    if product_asset is None or product_asset.role not in GALLERY_SOURCE_ASSET_ROLES:
         raise _error(422, "POSTER_PRODUCT_ASSET_INVALID", "产品图片不存在或素材角色不正确")
     return template_record, template_asset, product_asset
 
@@ -1845,7 +1846,7 @@ async def create_cover_generate_job(db: AsyncSession, user: User, payload: Cover
         payload.source_asset_ids, owner_uid, for_update=True, allow_material_use=True
     )
     if len(source_assets) != len(payload.source_asset_ids) or any(
-        item.role not in {"source", "library_image"} for item in source_assets
+        item.role not in GALLERY_SOURCE_ASSET_ROLES for item in source_assets
     ):
         raise _error(422, "COVER_SOURCE_ASSET_INVALID", "原图不存在或角色不正确")
     template = None

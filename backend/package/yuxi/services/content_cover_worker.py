@@ -12,6 +12,7 @@ from yuxi.content_cover import COVER_PROCESSING_VERSION
 from yuxi.content_cover.editor_renderer import CoverEditorRenderError, render_editor_scene
 from yuxi.content_cover.image2_client import Image2Client, Image2Config, Image2Error
 from yuxi.content_cover.image2_concurrency import image2_concurrency_limiter
+from yuxi.content_cover.constants import IMAGE2_SHARED_OWNER_UID
 from yuxi.content_cover.image2_settings import resolve_image2_config
 from yuxi.content_cover.poster_billboard import (
     PosterBillboardError,
@@ -43,6 +44,7 @@ from yuxi.content_cover.template_replication import (
 )
 from yuxi.content_cover.templates import COVER_SIZES
 from yuxi.repositories.content_cover_repository import ContentCoverRepository
+from yuxi.services.content_photo_composition import GALLERY_SOURCE_ASSET_ROLES
 from yuxi.services.run_queue_service import (
     append_run_stream_event,
     clear_cancel_signal,
@@ -426,9 +428,10 @@ def _open_worker_image(data: bytes) -> Image.Image:
         raise TemplateReplicationError("模板复刻素材不是有效图片") from exc
 
 
-async def _load_image2_config(owner_uid: str):
+async def _load_image2_config(_owner_uid: str | None = None):
+    del _owner_uid
     async with pg_manager.get_async_session_context() as db:
-        return await resolve_image2_config(db, owner_uid=owner_uid)
+        return await resolve_image2_config(db)
 
 
 async def _poll_image2(
@@ -885,7 +888,7 @@ async def _run_poster_billboard(job: ContentCoverJob, image2_config: Image2Confi
         repo = ContentCoverRepository(db)
         product_asset = await repo.get_asset_for_user(product_asset_id, job.owner_uid, allow_material_use=True)
         template_asset = await repo.get_asset_for_user(template_asset_id, job.owner_uid)
-    if product_asset is None or product_asset.role not in {"source", "library_image"}:
+    if product_asset is None or product_asset.role not in GALLERY_SOURCE_ASSET_ROLES:
         raise PosterBillboardError("大字报任务引用的产品图已不存在")
     if template_asset is None or template_asset.role != "poster_template":
         raise PosterBillboardError("大字报任务引用的蒙版已不存在")
@@ -1045,13 +1048,15 @@ async def process_content_cover_job(ctx: dict, job_id: str) -> None:
         elif job.mode == "poster_billboard":
             if (job.request_json or {}).get("enhance_with_image2"):
                 image2_config = await _load_image2_config(job.owner_uid)
-                async with image2_concurrency_limiter.slot(job.owner_uid, image2_config.max_concurrent):
+                async with image2_concurrency_limiter.slot(
+                    IMAGE2_SHARED_OWNER_UID, image2_config.max_concurrent
+                ):
                     outputs = await _run_poster_billboard(job, image2_config)
             else:
                 outputs = await _run_poster_billboard(job)
         else:
             image2_config = await _load_image2_config(job.owner_uid)
-            async with image2_concurrency_limiter.slot(job.owner_uid, image2_config.max_concurrent):
+            async with image2_concurrency_limiter.slot(IMAGE2_SHARED_OWNER_UID, image2_config.max_concurrent):
                 outputs = await _run_image2(job, image2_config)
         await _check_cancelled(job_id)
         await _set_job(job_id, status="saving", progress=92)

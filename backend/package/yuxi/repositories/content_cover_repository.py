@@ -7,6 +7,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
+from yuxi.content_cover.constants import IMAGE2_SHARED_OWNER_UID
 from yuxi.storage.postgres.models_content import (
     ContentArtifact,
     ContentArtifactVersion,
@@ -36,6 +37,20 @@ class ContentCoverRepository:
         query = select(ContentCoverImage2Setting).where(ContentCoverImage2Setting.owner_uid == owner_uid)
         if for_update:
             query = query.with_for_update()
+        return (await self.db.execute(query)).scalar_one_or_none()
+
+    async def get_shared_image2_setting(self, *, for_update: bool = False) -> ContentCoverImage2Setting | None:
+        shared = await self.get_image2_setting(IMAGE2_SHARED_OWNER_UID, for_update=for_update)
+        if shared is not None:
+            return shared
+        if for_update:
+            return None
+        query = (
+            select(ContentCoverImage2Setting)
+            .where(ContentCoverImage2Setting.owner_uid != IMAGE2_SHARED_OWNER_UID)
+            .order_by(ContentCoverImage2Setting.updated_at.desc())
+            .limit(1)
+        )
         return (await self.db.execute(query)).scalar_one_or_none()
 
     async def upsert_image2_setting(

@@ -199,6 +199,29 @@ async def test_lists_automatic_layout_templates_before_other_builtin_templates()
 
 
 @pytest.mark.asyncio
+async def test_system_cover_template_preview_uses_render_png():
+    template_id = "system-cover-personalized-template-1-top-left"
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == f"/api/v1/templates/{template_id}/render.png"
+        assert request.headers["Authorization"] == "Bearer hyk_test"
+        return httpx.Response(200, content=b"png", headers={"content-type": "image/png"})
+
+    client = HyCanvasClient(
+        base_url="http://hycanvas",
+        public_url="http://canvas.example",
+        api_key="hyk_test",
+        workspace_id="ws-1",
+        transport=httpx.MockTransport(handler),
+    )
+
+    content, content_type = await client.fetch_template_preview(template_id)
+
+    assert content == b"png"
+    assert content_type == "image/png"
+
+
+@pytest.mark.asyncio
 async def test_renders_custom_template_preview_through_hycanvas():
     template_id = "8bc32ed9-f80a-47e2-8e2b-913e35c125c8"
 

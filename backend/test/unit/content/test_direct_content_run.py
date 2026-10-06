@@ -158,3 +158,5 @@ async def test_direct_run_preserves_selected_reference_access_error(direct_run):
 def test_direct_run_requires_explicit_reference_id():
     with pytest.raises(ValidationError):
         ContentDirectGenerateCreate(request_id="request-1")
+
+

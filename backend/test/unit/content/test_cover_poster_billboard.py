@@ -529,7 +529,7 @@ def test_poster_template_display_uses_material_library_name_and_category():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("product_role", ["source", "library_image"])
+@pytest.mark.parametrize("product_role", ["source", "library_image", "output"])
 async def test_worker_runs_deterministic_poster_without_image2(
     monkeypatch: pytest.MonkeyPatch,
     product_role: str,

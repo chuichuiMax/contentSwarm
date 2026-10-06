@@ -136,10 +136,18 @@ class HyCanvasClient:
         return {"configured": True, "templates": templates, "total": len(templates)}
 
     async def fetch_template_preview(self, template_id: str) -> tuple[bytes, str]:
-        if _WORKSPACE_TEMPLATE_ID.fullmatch(template_id):
+        if _WORKSPACE_TEMPLATE_ID.fullmatch(template_id) or template_id.startswith("system-cover-"):
             return await self.render_template_png(template_id)
-        response = await self._send("GET", f"/template-previews/{quote(template_id, safe='')}-p0.png")
-        return response.content, response.headers.get("content-type", "image/png")
+        try:
+            response = await self._send(
+                "GET", f"/template-previews/{quote(template_id, safe='')}-p0.png"
+            )
+            return response.content, response.headers.get("content-type", "image/png")
+        except HTTPException as exc:
+            detail = exc.detail if isinstance(exc.detail, dict) else {}
+            if detail.get("upstream_status") == 404:
+                return await self.render_template_png(template_id)
+            raise
 
     async def get_xiaohongshu_template(self, template_id: str) -> dict | None:
         try:

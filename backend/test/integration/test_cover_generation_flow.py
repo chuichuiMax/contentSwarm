@@ -67,7 +67,7 @@ async def isolate_postgres_event_loop():
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_image2_global_settings_persist_per_account_without_returning_key():
+async def test_image2_shared_settings_visible_to_all_accounts_without_returning_key():
     pg_manager.initialize()
     await pg_manager.create_business_tables()
     owner_a = f"cover-config-a-{uuid.uuid4().hex}"
@@ -78,39 +78,32 @@ async def test_image2_global_settings_persist_per_account_without_returning_key(
             await save_image2_config(
                 db,
                 owner_uid=owner_a,
-                base_url="https://relay-a.example.com/v1",
-                api_key="secret-a",
-                max_concurrent=3,
-            )
-            await save_image2_config(
-                db,
-                owner_uid=owner_b,
-                base_url="https://relay-b.example.com/v1",
-                api_key="secret-b",
+                base_url="https://relay-shared.example.com/v1",
+                api_key="secret-shared",
                 max_concurrent=5,
             )
             config_a = await resolve_image2_config(db, owner_uid=owner_a)
             config_b = await resolve_image2_config(db, owner_uid=owner_b)
-            state_a = await get_image2_config_state(db, owner_uid=owner_a)
+            state_b = await get_image2_config_state(db, owner_uid=owner_b)
 
         assert (config_a.base_url, config_a.api_key) == (
-            "https://relay-a.example.com/v1",
-            "secret-a",
+            "https://relay-shared.example.com/v1",
+            "secret-shared",
         )
-        assert (config_b.base_url, config_b.api_key) == (
-            "https://relay-b.example.com/v1",
-            "secret-b",
-        )
-        assert config_a.max_concurrent == 3
-        assert config_b.max_concurrent == 5
-        assert state_a["source"] == "database"
-        assert state_a["api_key_configured"] is True
-        assert state_a["max_concurrent"] == 3
-        assert "api_key" not in state_a
+        assert config_a == config_b
+        assert config_a.max_concurrent == 5
+        assert state_b["source"] == "database"
+        assert state_b["api_key_configured"] is True
+        assert state_b["max_concurrent"] == 5
+        assert "api_key" not in state_b
     finally:
         async with pg_manager.get_async_session_context() as db:
+            from yuxi.content_cover.constants import IMAGE2_SHARED_OWNER_UID
+
             await db.execute(
-                delete(ContentCoverImage2Setting).where(ContentCoverImage2Setting.owner_uid.in_([owner_a, owner_b]))
+                delete(ContentCoverImage2Setting).where(
+                    ContentCoverImage2Setting.owner_uid == IMAGE2_SHARED_OWNER_UID
+                )
             )
             await db.commit()
 
