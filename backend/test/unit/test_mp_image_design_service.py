@@ -8,10 +8,12 @@ from pydantic import ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from yuxi.image_design.mp_schemas import MpLibraryCreate
+from yuxi.storage.postgres.models_business import User
 
 from yuxi.storage.postgres.models_content import (
     ContentCoverAsset,
     ContentMaterialCategory,
+    ContentMaterialFolderSetting,
     ContentMaterialLibraryItem,
     ImageDesignLibraryItem,
     ImageDesignMpDraft,
@@ -24,8 +26,10 @@ async def db():
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     async with engine.begin() as connection:
         for model in (
+            User,
             ContentCoverAsset,
             ContentMaterialCategory,
+            ContentMaterialFolderSetting,
             ContentMaterialLibraryItem,
             ImageDesignLibraryItem,
             ImageDesignMpDraft,

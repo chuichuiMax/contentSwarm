@@ -21,6 +21,7 @@ from server.utils.auth_middleware import (
 from yuxi.utils.auth_utils import AuthUtils
 from yuxi.services.user_identity_service import generate_unique_uid, validate_username, is_valid_phone_number
 from yuxi.services.operation_log_service import log_operation
+from yuxi.services.employee_service import ensure_platform_user, get_pc_login_employee
 from yuxi.storage.minio import upload_image_to_minio
 from yuxi.utils.datetime_utils import utc_now_naive
 from yuxi.services.role_service import resolve_stored_user_role
@@ -146,24 +147,39 @@ class OIDCLoginResponse(BaseModel):
 
 @auth.post("/token", response_model=Token)
 async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db: AsyncSession = Depends(get_db)):
-    # 查找用户 - 支持user_id和phone_number登录
-    login_identifier = form_data.username  # OAuth2表单中的username字段作为登录标识符
+    login_identifier = (form_data.username or "").strip()
+    auth_headers = {"WWW-Authenticate": "Bearer"}
+    employee = await get_pc_login_employee(db, login_identifier)
+    user = None
 
-    # 尝试通过user_id查找
-    result = await db.execute(select(User).filter(User.uid == login_identifier))
-    user = result.scalar_one_or_none()
-
-    # 如果通过user_id没找到，尝试通过phone_number查找
-    if not user:
-        result = await db.execute(select(User).filter(User.phone_number == login_identifier))
+    if employee is not None:
+        if not employee.enabled:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="员工账号已禁用",
+                headers=auth_headers,
+            )
+        if "pc" not in (employee.login_port or []):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="该员工未开通 PC 登录",
+                headers=auth_headers,
+            )
+        user = await ensure_platform_user(db, employee)
+    else:
+        result = await db.execute(select(User).filter(User.uid == login_identifier))
         user = result.scalar_one_or_none()
+        if user is None:
+            result = await db.execute(select(User).filter(User.phone_number == login_identifier))
+            user = result.scalar_one_or_none()
+        if user is not None and user.role != "superadmin":
+            user = None
 
-    # 如果用户不存在，为防止用户名枚举攻击，返回通用错误信息
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="登录标识或密码错误",
-            headers={"WWW-Authenticate": "Bearer"},
+            headers=auth_headers,
         )
 
     # 检查用户是否已被删除
@@ -210,6 +226,8 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
     # 登录成功，重置失败计数器
     user.reset_failed_login()
     user.last_login = utc_now_naive()
+    if employee is not None:
+        employee.last_login_at = utc_now_naive()
     await db.commit()
 
     # 生成访问令牌

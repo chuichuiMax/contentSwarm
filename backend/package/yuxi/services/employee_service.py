@@ -1,16 +1,21 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import uuid
+from dataclasses import dataclass
 from typing import Any, Literal
 
 from fastapi import HTTPException
+from openpyxl import Workbook
+from openpyxl.styles import Font
 from pydantic import BaseModel, Field
 from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.repositories.employee_repository import EmployeeRepository
+from yuxi.repositories.material_library_repository import MaterialLibraryRepository
 from yuxi.services.role_service import SYSTEM_ROLES, require_role, resolve_stored_user_role
 from yuxi.storage.postgres.models_business import Department, User
 from yuxi.storage.postgres.models_content import ContentEmployee
@@ -22,6 +27,23 @@ LoginPort = Literal["pc", "app"]
 LOGIN_PORT_ORDER: tuple[LoginPort, ...] = ("pc", "app")
 DEFAULT_EMPLOYEE_PASSWORD = "123456"
 SYSTEM_ROLE_LABELS = {code: name for code, name in SYSTEM_ROLES}
+
+
+@dataclass(frozen=True)
+class EmployeeMaterialOwner:
+    user: User
+    reference: str
+    source: Literal["employee", "user"]
+    name: str
+    employee_code: str
+
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "id": self.reference,
+            "source": self.source,
+            "name": self.name,
+            "employee_code": self.employee_code,
+        }
 
 
 class EmployeeCreate(BaseModel):
@@ -165,13 +187,14 @@ async def _soft_delete_employee_user(db: AsyncSession, employee: ContentEmployee
     await db.flush()
 
 
-def _employee_row(employee: ContentEmployee) -> dict[str, Any]:
+def _employee_row(employee: ContentEmployee, rough_image_count: int = 0) -> dict[str, Any]:
     data = employee.to_dict()
     data["source"] = "employee"
+    data["rough_image_count"] = rough_image_count
     return data
 
 
-def _user_row(user: User) -> dict[str, Any]:
+def _user_row(user: User, rough_image_count: int = 0) -> dict[str, Any]:
     return {
         "id": f"user:{user.uid}",
         "employee_code": user.uid,
@@ -191,7 +214,42 @@ def _user_row(user: User) -> dict[str, Any]:
         "created_by": "",
         "created_at": format_utc_datetime(user.created_at),
         "updated_at": format_utc_datetime(user.created_at),
+        "rough_image_count": rough_image_count,
     }
+
+
+async def resolve_employee_material_owner(db: AsyncSession, employee_ref: str) -> EmployeeMaterialOwner:
+    if employee_ref.startswith("user:"):
+        uid = employee_ref.removeprefix("user:")
+        result = await db.execute(select(User).where(User.uid == uid, User.is_deleted == 0))
+        user = result.scalar_one_or_none()
+        if user is None:
+            raise _employee_error(404, "EMPLOYEE_NOT_FOUND", "员工不存在")
+        return EmployeeMaterialOwner(
+            user=user,
+            reference=employee_ref,
+            source="user",
+            name=user.username,
+            employee_code=user.uid,
+        )
+
+    employee = await EmployeeRepository(db).get(employee_ref)
+    if employee is None:
+        raise _employee_error(404, "EMPLOYEE_NOT_FOUND", "员工不存在")
+    uid = _platform_uid(employee)
+    result = await db.execute(select(User).where(User.uid == uid, User.is_deleted == 0))
+    user = result.scalar_one_or_none()
+    if user is None:
+        user = await ensure_platform_user(db, employee)
+        await db.commit()
+        await db.refresh(user)
+    return EmployeeMaterialOwner(
+        user=user,
+        reference=employee.id,
+        source="employee",
+        name=employee.name,
+        employee_code=employee.employee_code,
+    )
 
 
 async def list_employees(db: AsyncSession, keyword: str | None = None) -> dict[str, Any]:
@@ -210,11 +268,69 @@ async def list_employees(db: AsyncSession, keyword: str | None = None) -> dict[s
             )
         )
     users = list((await db.execute(query)).scalars().all())
-    rows: list[tuple[Any, dict[str, Any]]] = [(item.created_at, _employee_row(item)) for item in employees]
-    rows.extend((user.created_at, _user_row(user)) for user in users)
+    owner_uids = [*(_platform_uid(employee) for employee in employees), *(str(user.uid) for user in users)]
+    counts = await MaterialLibraryRepository(db).count_private_rough_images_by_owner(owner_uids)
+    rows: list[tuple[Any, dict[str, Any]]] = [
+        (item.created_at, _employee_row(item, counts.get(_platform_uid(item), 0))) for item in employees
+    ]
+    rows.extend((user.created_at, _user_row(user, counts.get(str(user.uid), 0))) for user in users)
     rows.sort(key=lambda item: item[0] or utc_now_naive(), reverse=True)
     items = [row for _, row in rows]
     return {"employees": items, "total": len(items)}
+
+
+async def export_employees(db: AsyncSession) -> bytes:
+    listing = await list_employees(db)
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "员工管理"
+    sheet.append(
+        [
+            "序号",
+            "员工编码",
+            "姓名",
+            "当前分部",
+            "当前部门",
+            "登录账号",
+            "性别",
+            "年龄",
+            "登录端口",
+            "角色",
+            "毛坯图上传数",
+            "状态",
+        ]
+    )
+    for index, employee in enumerate(listing["employees"], start=1):
+        ports = employee.get("login_port") or []
+        sheet.append(
+            [
+                index,
+                employee["employee_code"],
+                employee["name"],
+                employee.get("current_branch"),
+                employee.get("current_department"),
+                employee["login_account"],
+                {"male": "男", "female": "女"}.get(employee.get("gender"), employee.get("gender") or "-"),
+                employee["age"] if employee.get("age") is not None else "-",
+                "&".join(label for port, label in (("pc", "PC"), ("app", "APP")) if port in ports) or "-",
+                employee["role"],
+                employee["rough_image_count"],
+                "启用" if employee["enabled"] else "禁用",
+            ]
+        )
+        # 原表文本保持文本类型，保留账号前导零，也不将名称当作 Excel 公式。
+        for cell in sheet[index + 1]:
+            if isinstance(cell.value, str):
+                cell.data_type = "s"
+    for cell in sheet[1]:
+        cell.font = Font(bold=True)
+    for column, width in zip("ABCDEFGHIJKL", (8, 24, 22, 22, 22, 22, 10, 10, 16, 18, 18, 12), strict=True):
+        sheet.column_dimensions[column].width = width
+    sheet.freeze_panes = "A2"
+    sheet.auto_filter.ref = sheet.dimensions
+    output = io.BytesIO()
+    workbook.save(output)
+    return output.getvalue()
 
 
 async def create_employee(db: AsyncSession, user: User, payload: EmployeeCreate) -> dict[str, Any]:

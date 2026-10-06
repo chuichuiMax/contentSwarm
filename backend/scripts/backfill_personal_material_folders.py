@@ -73,9 +73,21 @@ def historical_destination(asset, item, task, old_category, image_job=None) -> t
     return None
 
 
-async def run(*, apply: bool, owner_uid: str | None) -> None:
+def reviewed_users(users: list, owner_uids: list[str]) -> list:
+    """Require exact account selection instead of provisioning every historical login."""
+    requested = set(owner_uids)
+    if not requested:
+        raise ValueError("必须通过 --owner-uid 明确指定已审阅的真实账号")
+    by_uid = {str(user.uid): user for user in users}
+    missing = requested - by_uid.keys()
+    if missing:
+        raise ValueError(f"指定账号不存在或已注销：{','.join(sorted(missing))}")
+    return [by_uid[uid] for uid in sorted(requested)]
+
+
+async def run(*, apply: bool, owner_uids: list[str]) -> None:
     from yuxi.services.material_library_service import create_library_item_for_asset
-    from yuxi.services.personal_materials import folder_categories, upload_category
+    from yuxi.services.personal_materials import fixed_folder_settings, folder_categories, upload_category
     from yuxi.storage.postgres.manager import pg_manager
     from yuxi.storage.postgres.models_business import User
     from yuxi.storage.postgres.models_content import (
@@ -89,14 +101,37 @@ async def run(*, apply: bool, owner_uid: str | None) -> None:
 
     pg_manager.initialize()
     changed = 0
+    storage_categories_created = 0
+    storage_categories_updated = 0
+    storage_owners_changed = 0
     review = []
     review_shared = []
+    review_deleted = []
     try:
         async with pg_manager.get_async_session_context() as db:
+            folder_settings = await fixed_folder_settings(db)
             users = (
                 (await db.execute(select(User).where(User.is_deleted == 0, User.deleted_at.is_(None)))).scalars().all()
             )
-            users = [user for user in users if owner_uid is None or str(user.uid) == owner_uid]
+            all_users_count = len(users)
+            users = reviewed_users(users, owner_uids)
+            print(f"SCOPE selected={len(users)} excluded={all_users_count - len(users)} owners={','.join(owner_uids)}")
+            category_state_query = select(
+                ContentMaterialCategory.owner_uid,
+                ContentMaterialCategory.id,
+                ContentMaterialCategory.tenant_id,
+                ContentMaterialCategory.visibility,
+                ContentMaterialCategory.parent_id,
+                ContentMaterialCategory.industry_slug,
+                ContentMaterialCategory.name,
+                ContentMaterialCategory.description,
+                ContentMaterialCategory.sort_order,
+                ContentMaterialCategory.is_system,
+                ContentMaterialCategory.deleted_at,
+            ).where(ContentMaterialCategory.material_type == "image")
+            category_state_before = {
+                (row.owner_uid, row.id): tuple(row[2:]) for row in (await db.execute(category_state_query)).all()
+            }
             for user in users:
                 uid = str(user.uid)
                 tenant_id = str(user.department_id) if user.department_id is not None else None
@@ -169,6 +204,10 @@ async def run(*, apply: bool, owner_uid: str | None) -> None:
                     if folder == "review_shared":
                         review_shared.append((uid, asset.id, item.id, old.name if old else "unknown"))
                         continue
+                    setting = folder_settings.get(folder)
+                    if setting is not None and setting.deleted_at is not None:
+                        review_deleted.append((uid, asset.id, item.id if item else "-", folder))
+                        continue
                     target = (
                         folders["generated"][0]
                         if folder == "generated"
@@ -232,6 +271,28 @@ async def run(*, apply: bool, owner_uid: str | None) -> None:
                                 .values(source_gallery_id=target.id)
                             )
                     changed += 1
+            category_state_after = {
+                (row.owner_uid, row.id): tuple(row[2:]) for row in (await db.execute(category_state_query)).all()
+            }
+            created_keys = category_state_after.keys() - category_state_before.keys()
+            updated_keys = {
+                key
+                for key in category_state_after.keys() & category_state_before.keys()
+                if category_state_after[key] != category_state_before[key]
+            }
+            created_by_owner: dict[str, list[str]] = {}
+            for created_owner, category_id in sorted(created_keys):
+                created_by_owner.setdefault(created_owner, []).append(category_id)
+            updated_by_owner: dict[str, list[str]] = {}
+            for updated_owner, category_id in sorted(updated_keys):
+                updated_by_owner.setdefault(updated_owner, []).append(category_id)
+            for created_owner, category_ids in created_by_owner.items():
+                print(f"CREATE_FIXED owner={created_owner} categories={','.join(category_ids)}")
+            for updated_owner, category_ids in updated_by_owner.items():
+                print(f"UPDATE_FIXED owner={updated_owner} categories={','.join(category_ids)}")
+            storage_categories_created = sum(len(category_ids) for category_ids in created_by_owner.values())
+            storage_categories_updated = sum(len(category_ids) for category_ids in updated_by_owner.values())
+            storage_owners_changed = len(created_by_owner.keys() | updated_by_owner.keys())
             if not apply:
                 await db.rollback()
     finally:
@@ -240,17 +301,25 @@ async def run(*, apply: bool, owner_uid: str | None) -> None:
         print(f"REVIEW_PRIVATE owner={uid} asset={asset_id} item={item_id} gallery={name}")
     for uid, asset_id, item_id, name in review_shared:
         print(f"REVIEW_SHARED owner={uid} asset={asset_id} item={item_id} gallery={name}")
+    for uid, asset_id, item_id, folder in review_deleted:
+        print(f"REVIEW_DELETED owner={uid} asset={asset_id} item={item_id} folder={folder}")
     print(
-        f"SUMMARY apply={apply} changes={changed} ambiguous_private={len(review)} ambiguous_shared={len(review_shared)}"
+        f"SUMMARY apply={apply} changes={changed} ambiguous_private={len(review)} "
+        f"ambiguous_shared={len(review_shared)} deleted_folder={len(review_deleted)} "
+        f"storage_categories_created={storage_categories_created} "
+        f"storage_categories_updated={storage_categories_updated} "
+        f"storage_owners_changed={storage_owners_changed}"
     )
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--apply", action="store_true", help="Apply the reviewed plan; default is dry-run")
-    parser.add_argument("--owner-uid", help="Restrict to one account")
+    parser.add_argument(
+        "--owner-uid", action="append", required=True, help="Reviewed account UID; repeat for each account"
+    )
     args = parser.parse_args()
     load_dotenv(APP_ROOT.parent / ".env", override=False)
     if not os.getenv("POSTGRES_URL"):
         parser.error("POSTGRES_URL is required; run with the deployment database configuration")
-    asyncio.run(run(apply=args.apply, owner_uid=args.owner_uid))
+    asyncio.run(run(apply=args.apply, owner_uids=args.owner_uid))
