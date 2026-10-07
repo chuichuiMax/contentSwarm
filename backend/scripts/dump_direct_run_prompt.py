@@ -4,7 +4,7 @@ from pathlib import Path
 
 from sqlalchemy import text
 
-from yuxi.content.generation import DEFAULT_DIRECT_GENERATION_PROMPT, DIRECT_TITLE_MAX_CHARS
+from yuxi.content.generation import DEFAULT_DIRECT_GENERATION_PROMPT, DIRECT_TITLE_MAX_CHARS, NATURAL_CLOSING_INSTRUCTION
 from yuxi.storage.postgres.manager import pg_manager
 
 TASK_ID = "ct_35f81b1a3ff94360a0e1c9543f0a9347"
@@ -30,17 +30,14 @@ def build_direct_human_prompt(
     return (
         "请根据以下输入直接创作一篇内容。返回字段 title、body、topics；"
         "不要输出解释、审核意见或额外字段。\n\n"
-        "参考爆款原文的开头切入、段落顺序、信息推进、结尾收束和口语节奏，"
+        "参考爆款原文的开头切入、段落顺序、信息推进和口语节奏，结尾按自然转化来写，不要照搬原文里的引流收尾。"
         "在这些位置用用户提供的事实改写，不能逐句照抄。"
         "创作风格只决定表达手法，不得因此杜撰其他人的报价、节省金额、"
         "客户经历或施工结果；原文有而用户未提供的事实，用已提供的信息自然替换或略去。"
         "用户输入的金额、单位、面积、数量及报价明细必须准确保留，不自行换算或补造。"
         f"标题不超过{DIRECT_TITLE_MAX_CHARS}个字，汉字、数字、字母、标点、单位和 Emoji 都各计 1 个字，"
         "并且必须是完整表达。正文分段使用真实换行，不要输出反斜杠和字母 n。"
-        "引流收尾必须使用这段原文，并且只能放在正文最后，不要插在中间：\n"
-        "📩在下方留下【小区＋面积】\n"
-        "我们将为你提供相关案例及费用参考，\n"
-        "💕让装修预算更清楚，让装修更透明！\n\n"
+        f"{NATURAL_CLOSING_INSTRUCTION}\n\n"
         f"{style_block}"
         "爆款原文：\n"
         f"{json.dumps(viral_source, ensure_ascii=False)}\n\n"

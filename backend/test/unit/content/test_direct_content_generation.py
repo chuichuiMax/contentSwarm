@@ -58,12 +58,7 @@ async def test_direct_generation_uses_only_requested_inputs(monkeypatch):
     )
 
     assert result.title == "费用标题"
-    assert result.body == (
-        "费用正文\n\n"
-        "📩在下方留下【小区＋面积】\n"
-        "我们将为你提供相关案例及费用参考，\n"
-        "💕让装修预算更清楚，让装修更透明！"
-    )
+    assert result.body == "费用正文"
     assert result.topics == ["费用"]
     assert load_model_calls == [
         {
@@ -93,7 +88,7 @@ async def test_direct_generation_uses_only_requested_inputs(monkeypatch):
     assert "爆款正文" in prompt
     assert '"serialNo":"002"' in prompt
     assert "使用给定元素仿写，并符合北京本地口吻" in prompt
-    assert "参考爆款原文的开头切入、段落顺序、信息推进、结尾收束和口语节奏" in prompt
+    assert "结尾按自然转化来写，不要照搬原文里的引流收尾" in prompt
     assert "不得因此杜撰其他人的报价、节省金额、客户经历或施工结果" in prompt
     assert "金额、单位、面积、数量及报价明细必须准确保留" in prompt
     assert "封禁词替换表" in prompt
@@ -101,6 +96,9 @@ async def test_direct_generation_uses_only_requested_inputs(monkeypatch):
     assert "排版与表情要求" in prompt
     assert "不得用 Emoji 替代价格、数字、面积、时间、单位、品牌名或专业信息" in prompt
     assert "标题不超过20个字" in prompt
+    assert "最近有打算装修的朋友，有什么问题都可以一起聊一聊" in prompt
+    assert "不要硬凑引流话术" in prompt
+    assert "在下方留下" not in prompt
 
 
 @pytest.mark.unit
@@ -157,12 +155,7 @@ def test_limit_content_title_completes_trailing_word_after_hard_limit():
     assert not limited.endswith("真实费")
 
 
-def test_place_closing_cta_moves_lead_copy_to_the_end():
-    body = "开头说明。\n\n📩在下方留下【小区＋面积】\n我们将为你提供相关案例及费用参考，\n中间还有工艺说明。\n💕让装修预算更清楚，让装修更透明！"
-    placed = generation.place_closing_cta(body)
-    assert placed.startswith("开头说明。\n\n中间还有工艺说明。\n\n📩在下方留下")
-    assert placed.endswith("💕让装修预算更清楚，让装修更透明！")
-    assert placed.count("在下方留下") == 1
+def test_normalize_escaped_newlines_keeps_real_breaks():
     assert generation.normalize_escaped_newlines("开工\\n先聊") == "开工\n先聊"
     assert "\\n" not in generation.normalize_escaped_newlines("开工\\n先聊")
 

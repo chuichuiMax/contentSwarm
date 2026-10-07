@@ -2003,6 +2003,13 @@ async def create_direct_content_run(
         raise _content_error(409, "CONTENT_COVER_MATERIAL_REQUIRED", "请选择封面图片和封面方式")
     if not visual_material.get("image_asset_id") and not visual_material.get("hycanvas_template_id"):
         raise _content_error(409, "CONTENT_COVER_IMAGE_REQUIRED", "请选择一张图库图片作为封面原图")
+    image_item_id = task.selected_image_item_id or visual_material.get("image_item_id")
+    if image_item_id and await MaterialLibraryRepository(db, include_shared=True).item_is_selected_by_task(
+        image_item_id,
+        str(user.uid),
+        exclude_task_id=task.id,
+    ):
+        raise _content_error(409, "CONTENT_COVER_IN_USE", "该图库图片已被其他内容任务使用")
 
     model_spec = _validate_model_spec(payload.model_spec)
     template = await repo.get_template(task.industry_template_version_id)

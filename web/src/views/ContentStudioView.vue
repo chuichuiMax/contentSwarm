@@ -1716,6 +1716,15 @@ const scrollWorkflowToEnd = () => {
 }
 
 watch(
+  () => store.directStream.body,
+  async () => {
+    if (!isDirectRun.value || workflowCompleted.value) return
+    await nextTick()
+    scrollWorkflowToEnd()
+  }
+)
+
+watch(
   () => store.task,
   (task) => {
     if (!task) return
@@ -3698,8 +3707,14 @@ const returnToContentCreation = async () => {
                       <h2 v-if="store.directStream.title" class="direct-stream-title">
                         {{ store.directStream.title }}
                       </h2>
+                      <div
+                        v-if="store.directStream.body && store.directStream.phase === 'generating'"
+                        class="direct-stream-body direct-stream-plain"
+                      >
+                        {{ store.directStream.body }}
+                      </div>
                       <MarkdownPreview
-                        v-if="store.directStream.body"
+                        v-else-if="store.directStream.body"
                         class="direct-stream-body"
                         :content="store.directStream.body"
                       />
@@ -6451,6 +6466,12 @@ const returnToContentCreation = async () => {
 }
 .direct-stream-body {
   color: var(--color-text);
+}
+.direct-stream-plain {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 15px;
+  line-height: 1.75;
 }
 .direct-stream-topics {
   display: flex;

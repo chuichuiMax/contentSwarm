@@ -22,7 +22,8 @@ from yuxi.storage.postgres.models_content import (
 from yuxi.utils.datetime_utils import utc_now_naive
 from yuxi.services.material_library_categories import PERSONAL_IMAGE_FOLDERS
 
-# 仅生成中或生成成功的任务占用图库图片；草稿、编译未开跑、失败、取消、审核拦截不占用。
+# 排队中、生成中、生成成功占用图库图片。直生成功状态是 generated。
+# 草稿、编译未开跑、失败、取消、审核拦截不占用，失败后可再次选择。
 IMAGE_OCCUPANCY_ACTIVE_STATUSES = frozenset(
     {
         "queued",
@@ -31,6 +32,7 @@ IMAGE_OCCUPANCY_ACTIVE_STATUSES = frozenset(
         "waiting_external",
         "review_required",
         "reviewed",
+        "generated",
         "completed",
     }
 )

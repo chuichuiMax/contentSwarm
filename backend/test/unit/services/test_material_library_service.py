@@ -56,6 +56,7 @@ def test_only_generating_or_succeeded_tasks_occupy_images():
             "waiting_external",
             "review_required",
             "reviewed",
+            "generated",
             "completed",
         }
     )

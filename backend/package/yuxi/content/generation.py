@@ -10,13 +10,18 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.utils.json import parse_partial_json
 
 from yuxi.agents import load_chat_model, resolve_chat_model_spec
-from yuxi.utils.line_breaks import normalize_escaped_newlines, place_closing_cta
+from yuxi.utils.line_breaks import normalize_escaped_newlines
 from yuxi.content.model.forbidden_words import replace_forbidden_words
 from yuxi.content.schemas import ContentArtifactAIEditOutput, ReviewReport
 from yuxi.utils.logging_config import logger
 
 SKILLS_ROOT = Path(__file__).resolve().parents[1] / "agents" / "skills" / "buildin"
 DEFAULT_DIRECT_GENERATION_PROMPT = "使用我给你的一些元素，根据爆文 换一种表达方式 符合当地的口吻"
+NATURAL_CLOSING_INSTRUCTION = (
+    "结尾要自然转化，像跟准备装修的朋友聊天，不要硬凑引流话术。"
+    "不要要求对方留下小区和面积，也不要承诺马上提供案例或费用。"
+    "用一两句口语收束即可，例如：最近有打算装修的朋友，有什么问题都可以一起聊一聊。"
+)
 DIRECT_TITLE_MAX_CHARS = 20
 SKILL_VERSIONS = {
     "content-value-analyzer": "1.3.0",
@@ -157,17 +162,14 @@ async def generate_direct_content(
     prompt = (
         "请根据以下输入直接创作一篇内容。返回字段 title、body、topics；"
         "不要输出解释、审核意见或额外字段。\n\n"
-        "参考爆款原文的开头切入、段落顺序、信息推进、结尾收束和口语节奏，"
+        "参考爆款原文的开头切入、段落顺序、信息推进和口语节奏，结尾按自然转化来写，不要照搬原文里的引流收尾。"
         "在这些位置用用户提供的事实改写，不能逐句照抄。"
         "创作风格只决定表达手法，不得因此杜撰其他人的报价、节省金额、"
         "客户经历或施工结果；原文有而用户未提供的事实，用已提供的信息自然替换或略去。"
         "用户输入的金额、单位、面积、数量及报价明细必须准确保留，不自行换算或补造。"
         f"标题不超过{DIRECT_TITLE_MAX_CHARS}个字，汉字、数字、字母、标点、单位和 Emoji 都各计 1 个字，"
         "并且必须是完整表达。正文分段使用真实换行，不要输出反斜杠和字母 n。"
-        "引流收尾必须使用这段原文，并且只能放在正文最后，不要插在中间：\n"
-        "📩在下方留下【小区＋面积】\n"
-        "我们将为你提供相关案例及费用参考，\n"
-        "💕让装修预算更清楚，让装修更透明！\n\n"
+        f"{NATURAL_CLOSING_INSTRUCTION}\n\n"
         f"{style_block}"
         "爆款原文：\n"
         f"{json.dumps(viral_source, ensure_ascii=False)}\n\n"
@@ -255,9 +257,7 @@ async def generate_direct_content(
         title=limit_content_title(
             normalize_escaped_newlines(replace_forbidden_words(raw_output.title, forbidden_replacements))
         ),
-        body=place_closing_cta(
-            normalize_escaped_newlines(replace_forbidden_words(raw_output.body, forbidden_replacements))
-        ),
+        body=normalize_escaped_newlines(replace_forbidden_words(raw_output.body, forbidden_replacements)),
         topics=[
             normalize_escaped_newlines(replace_forbidden_words(topic, forbidden_replacements))
             for topic in raw_output.topics
