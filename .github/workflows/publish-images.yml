@@ -153,6 +153,10 @@ jobs:
           pnpm exec eslint .
           pnpm run build
 
+      - name: Test Vite public share proxy
+        working-directory: web
+        run: PROXY_TEST_WEB_ROOT="$PWD" node --test ../backend/test/e2e/test_share_public_proxy.mjs
+
       - name: Reclaim runner disk before image builds
         run: |
           docker rm -f yuxi-ci-postgres yuxi-ci-minio yuxi-ci-redis
@@ -220,6 +224,21 @@ jobs:
             -v "$GITHUB_WORKSPACE/backend/test:/app/test:ro" \
             "$API_IMAGE:$CANDIDATE_TAG" \
             python -m pytest test/e2e/test_xiaohongshu_runtime.py -q
+
+      - name: Test production share routes across TLS and internal Nginx
+        env:
+          CANDIDATE_TAG: ${{ inputs.version }}-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          docker pull nginx:1.31.2-alpine@sha256:35cd77497979abe70dc8d26f5ae60811eea233a2eb5dc03c2ee30972caeb303e
+          docker run --rm \
+            --add-host=host.docker.internal:host-gateway \
+            -e SHARE_NGINX_API_IMAGE="$API_IMAGE:$CANDIDATE_TAG" \
+            -e SHARE_NGINX_SOURCE_ROOT=/source \
+            -e SHARE_NGINX_DOCKER_HOST=host.docker.internal \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "$GITHUB_WORKSPACE:/source:ro" \
+            "$API_IMAGE:$CANDIDATE_TAG" \
+            python -m pytest /source/backend/test/e2e/test_share_nginx.py -q
 
       - name: Set up Docker Buildx for web
         uses: docker/setup-buildx-action@v3

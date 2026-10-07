@@ -44,22 +44,26 @@ test('share and API proxies preserve the public origin across TLS termination', 
 
   for (const path of ['/share/case/test-token', '/api/mp/share/cases']) {
     for (const forwardedHost of [undefined, 'public.example.test']) {
-      await t.test(`${path} with ${forwardedHost || 'no existing forwarded host'}`, async () => {
-        const headers = { Host: 'ai.hi-run.net', 'X-Forwarded-Proto': 'https' }
-        if (forwardedHost) headers['X-Forwarded-Host'] = forwardedHost
-        const response = await new Promise((resolve, reject) => {
-          const call = httpRequest(`${origin}${path}`, { headers }, resolve)
-          call.on('error', reject)
-          call.end()
+      for (const prefix of ['', '/boyun']) {
+        await t.test(`${path} with ${forwardedHost || 'no existing forwarded host'} and prefix ${prefix || '/'}`, async () => {
+          const headers = { Host: 'ai.hi-run.net', 'X-Forwarded-Proto': 'https' }
+          if (forwardedHost) headers['X-Forwarded-Host'] = forwardedHost
+          if (prefix) headers['X-Forwarded-Prefix'] = prefix
+          const response = await new Promise((resolve, reject) => {
+            const call = httpRequest(`${origin}${path}`, { headers }, resolve)
+            call.on('error', reject)
+            call.end()
+          })
+          assert.equal(response.statusCode, 200)
+          let body = ''
+          for await (const chunk of response) body += chunk
+          const received = JSON.parse(body)
+          assert.equal(received.path, path)
+          assert.equal(received.headers['x-forwarded-host'], forwardedHost || 'ai.hi-run.net')
+          assert.equal(received.headers['x-forwarded-proto'].split(',')[0], 'https')
+          assert.equal(received.headers['x-forwarded-prefix'] || '', prefix)
         })
-        assert.equal(response.statusCode, 200)
-        let body = ''
-        for await (const chunk of response) body += chunk
-        const received = JSON.parse(body)
-        assert.equal(received.path, path)
-        assert.equal(received.headers['x-forwarded-host'], forwardedHost || 'ai.hi-run.net')
-        assert.equal(received.headers['x-forwarded-proto'].split(',')[0], 'https')
-      })
+      }
     }
   }
 })
