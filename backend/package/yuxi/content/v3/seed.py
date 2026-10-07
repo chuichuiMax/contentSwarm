@@ -18,6 +18,7 @@ from yuxi.content.model.workflows.definition import workflow_definition_hash
 from yuxi.content.rules import BODY_FORMULAS, INDUSTRIES, METHODS, TITLE_FORMULAS
 from yuxi.content.v3.fixtures import load_decoration_matrix
 from yuxi.content.v3.modular_rules import (
+    LEGACY_EXPRESSION_GUIDANCE_WORKFLOW_ID,
     SINGLE_BLUEPRINT_WORKFLOW_ID,
     STANDARDIZED_FACTORY_WORKFLOW_V1_ID,
     STANDARDIZED_FACTORY_WORKFLOW_V2_ID,
@@ -847,6 +848,7 @@ async def _activate_v3_seed_data(db: AsyncSession) -> None:
                     PLATFORM_WORKFLOW_PRICE_RECOVERY_ID,
                     PLATFORM_WORKFLOW_VIRAL_AUTHOR_ID,
                     PLATFORM_WORKFLOW_MODULAR_AUTHOR_ID,
+                    LEGACY_EXPRESSION_GUIDANCE_WORKFLOW_ID,
                     PLATFORM_WORKFLOW_EXPRESSION_GUIDANCE_ID,
                     PLATFORM_WORKFLOW_DETERMINISTIC_PLAN_ID,
                     STANDARDIZED_FACTORY_WORKFLOW_V1_ID,

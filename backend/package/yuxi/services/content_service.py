@@ -1210,6 +1210,7 @@ async def create_content_task(db: AsyncSession, user: User, payload: ContentTask
     if schema_version != 3:
         raise _content_error(409, "CONTENT_WORKFLOW_V3_REQUIRED", "新任务只能使用 V3 工作流")
     from yuxi.content.v3.joint_workflow import (
+        LEGACY_EXPRESSION_GUIDANCE_WORKFLOW_ID,
         PLATFORM_WORKFLOW_DETERMINISTIC_PLAN_ID,
         PLATFORM_WORKFLOW_EXPRESSION_GUIDANCE_ID,
         PLATFORM_WORKFLOW_MODULAR_AUTHOR_ID,
@@ -1224,6 +1225,7 @@ async def create_content_task(db: AsyncSession, user: User, payload: ContentTask
         PLATFORM_WORKFLOW_VIRAL_AUTHOR_ID,
         PLATFORM_WORKFLOW_MODULAR_AUTHOR_ID,
         PLATFORM_WORKFLOW_EXPRESSION_GUIDANCE_ID,
+        LEGACY_EXPRESSION_GUIDANCE_WORKFLOW_ID,
         PLATFORM_WORKFLOW_DETERMINISTIC_PLAN_ID,
         PLATFORM_WORKFLOW_STANDARDIZED_FACTORY_ID,
     }:
