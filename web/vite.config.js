@@ -17,11 +17,22 @@ export default defineConfig(({ mode }) => {
       proxy: {
         '^/api': {
           target: env.VITE_API_URL || 'http://api:5050',
-          changeOrigin: true
+          changeOrigin: true,
+          xfwd: true
+          configure: (proxy) => {
+            proxy.on('proxyRes', (proxyRes) => {
+              const contentType = String(proxyRes.headers['content-type'] || '')
+              if (contentType.includes('text/event-stream')) {
+                proxyRes.headers['cache-control'] = 'no-cache, no-transform'
+                proxyRes.headers['x-accel-buffering'] = 'no'
+              }
+            })
+          }
         },
         '^/share': {
           target: env.VITE_API_URL || 'http://api:5050',
-          changeOrigin: true
+          changeOrigin: true,
+          xfwd: true
         },
         '^/public': {
           target: env.VITE_MINIO_URL || 'http://minio:9000',

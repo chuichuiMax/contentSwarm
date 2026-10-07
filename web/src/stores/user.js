@@ -3,6 +3,7 @@ import { ref, computed } from 'vue'
 import { useAgentStore } from './agent'
 import { apiUrl } from '@/utils/apiUrl'
 import { assetUrl } from '@/utils/assetUrl'
+import { canAccessScopedPath, hasAnyPermission, homePathForGrants } from '@/utils/permissions'
 
 export const useUserStore = defineStore('user', () => {
   const authFetch = (url, options) => fetch(apiUrl(url), options)
@@ -16,11 +17,37 @@ export const useUserStore = defineStore('user', () => {
   const userRole = ref('')
   const departmentId = ref(null)
   const departmentName = ref('')
+  const permissions = ref([])
+  const permissionScoped = ref(false)
 
   // 计算属性
   const isLoggedIn = computed(() => !!token.value)
   const isAdmin = computed(() => userRole.value === 'admin' || userRole.value === 'superadmin')
   const isSuperAdmin = computed(() => userRole.value === 'superadmin')
+  const isPermissionScoped = computed(() => permissionScoped.value && !isAdmin.value)
+  const homePath = computed(() => homePathForGrants(isPermissionScoped.value, permissions.value))
+  const roughUploadOnly = computed(
+    () => isPermissionScoped.value && permissions.value.includes('material_rough.upload')
+  )
+
+  function applyPermissionState(data) {
+    permissions.value = Array.isArray(data?.permissions) ? data.permissions : []
+    permissionScoped.value = Boolean(data?.permission_scoped)
+  }
+
+  function can(key) {
+    if (!isPermissionScoped.value) return true
+    return permissions.value.includes(key)
+  }
+
+  function canAny(keys) {
+    if (!isPermissionScoped.value) return true
+    return hasAnyPermission(permissions.value, keys)
+  }
+
+  function canAccessPath(path) {
+    return canAccessScopedPath(isPermissionScoped.value, permissions.value, path)
+  }
 
   // 动作
   async function login(credentials) {
@@ -72,6 +99,7 @@ export const useUserStore = defineStore('user', () => {
       userRole.value = data.role
       departmentId.value = data.department_id || null
       departmentName.value = data.department_name || ''
+      applyPermissionState(data)
 
       // 只保存 token 到本地存储
       localStorage.setItem('user_token', data.access_token)
@@ -94,6 +122,8 @@ export const useUserStore = defineStore('user', () => {
     userRole.value = ''
     departmentId.value = null
     departmentName.value = ''
+    permissions.value = []
+    permissionScoped.value = false
 
     // 清除 agentStore 状态，确保重新登录时能正确加载数据
     const agentStore = useAgentStore()
@@ -130,6 +160,7 @@ export const useUserStore = defineStore('user', () => {
       userRole.value = data.role
       departmentId.value = data.department_id || null
       departmentName.value = data.department_name || ''
+      applyPermissionState(data)
 
       // 只保存 token 到本地存储
       localStorage.setItem('user_token', data.access_token)
@@ -343,6 +374,7 @@ export const useUserStore = defineStore('user', () => {
       userRole.value = userData.role
       departmentId.value = userData.department_id || null
       departmentName.value = userData.department_name || ''
+      applyPermissionState(userData)
 
       return userData
     } catch (error) {
@@ -396,11 +428,16 @@ export const useUserStore = defineStore('user', () => {
     userRole,
     departmentId,
     departmentName,
+    permissions,
+    permissionScoped,
 
     // 计算属性
     isLoggedIn,
     isAdmin,
     isSuperAdmin,
+    isPermissionScoped,
+    homePath,
+    roughUploadOnly,
 
     // 方法
     login,
@@ -415,7 +452,10 @@ export const useUserStore = defineStore('user', () => {
     validateUsernameAndGenerateUid,
     uploadAvatar,
     getCurrentUser,
-    updateProfile
+    updateProfile,
+    can,
+    canAny,
+    canAccessPath
   }
 })
 

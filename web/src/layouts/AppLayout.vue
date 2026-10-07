@@ -132,7 +132,8 @@ const mainList = computed(() => {
       icon: MessageCirclePlus,
       activeIcon: MessageCirclePlus,
       action: true,
-      exactActive: true
+      exactActive: true,
+      permissionAny: ['chat.access']
     }
   ]
 
@@ -141,30 +142,35 @@ const mainList = computed(() => {
     path: '/content/new',
     activePaths: ['/content/new', '/content/tasks', '/content/history', '/content/results', '/content/accounts', '/content/admin'],
     icon: FilePenLine,
-    activeIcon: FilePenLine
+    activeIcon: FilePenLine,
+    permissionAny: ['content.generate', 'content.copy']
   })
 
   items.push({
     name: '视觉创作',
-    path: '/hycanvas',
+    path: userStore.isPermissionScoped ? '/materials/images' : '/hycanvas',
     activePaths: ['/hycanvas', '/materials'],
     icon: PanelsTopLeft,
-    activeIcon: PanelsTopLeft
+    activeIcon: PanelsTopLeft,
+    permissionAny: ['material_rough.upload']
   })
 
-  items.push({
-    name: '图片设计',
-    path: '/content/image-design',
-    activePaths: ['/content/image-design'],
-    icon: ImagePlus,
-    activeIcon: ImagePlus
-  })
+  if (!userStore.isPermissionScoped) {
+    items.push({
+      name: '图片设计',
+      path: '/content/image-design',
+      activePaths: ['/content/image-design'],
+      icon: ImagePlus,
+      activeIcon: ImagePlus
+    })
+  }
 
   items.push({
     name: '工作区',
     path: '/workspace',
     icon: FolderKanban,
-    activeIcon: FolderKanban
+    activeIcon: FolderKanban,
+    permissionAny: ['workspace.view_list']
   })
 
   if (userStore.isAdmin) {
@@ -182,7 +188,8 @@ const mainList = computed(() => {
     path: '/extensions',
     activePaths: ['/extensions'],
     icon: LibraryBig,
-    activeIcon: LibraryBig
+    activeIcon: LibraryBig,
+    permissionAny: ['extensions.view_list']
   })
 
   items.push({
@@ -190,14 +197,16 @@ const mainList = computed(() => {
     path: '/model-manage',
     icon: Box,
     activeIcon: Box,
-    exactActive: true
+    exactActive: true,
+    permissionAny: ['agent.view_list', 'agent.create', 'agent.view', 'agent.delete']
   })
 
   items.push({
     name: '账号管理',
     path: '/model-manage/accounts',
     icon: Users,
-    activeIcon: Users
+    activeIcon: Users,
+    permissionAny: ['account.view_list', 'account.create', 'account.view', 'account.delete']
   })
 
   if (userStore.isAdmin) {
@@ -219,49 +228,57 @@ const mainList = computed(() => {
         name: '人设管理',
         path: '/config-manage/personas',
         icon: UserRoundPen,
-        activeIcon: UserRoundPen
+        activeIcon: UserRoundPen,
+        permissionAny: ['persona.view_list', 'persona.create', 'persona.view', 'persona.delete']
       },
       {
         name: '权限配置',
         path: '/config-manage/permissions',
         icon: ShieldCheck,
-        activeIcon: ShieldCheck
+        activeIcon: ShieldCheck,
+        permissionAny: ['permission.view_list', 'permission.create', 'permission.view', 'permission.delete']
       },
       {
         name: '内容类型配置',
         path: '/config-manage/content-types',
         icon: Layers,
-        activeIcon: Layers
+        activeIcon: Layers,
+        permissionAny: ['content_type.view_list', 'content_type.create', 'content_type.view', 'content_type.delete']
       },
       {
         name: '目标人群配置',
         path: '/config-manage/target-audiences',
         icon: UsersRound,
-        activeIcon: UsersRound
+        activeIcon: UsersRound,
+        permissionAny: ['target_audience.view_list', 'target_audience.create', 'target_audience.view', 'target_audience.delete']
       },
       {
         name: '居住人口配置',
         path: '/config-manage/resident-populations',
         icon: House,
-        activeIcon: House
+        activeIcon: House,
+        permissionAny: ['resident_population.view_list', 'resident_population.create', 'resident_population.view', 'resident_population.delete']
       },
       {
         name: '业务参数配置',
         path: '/config-manage/variables',
         icon: Braces,
-        activeIcon: Braces
+        activeIcon: Braces,
+        permissionAny: ['variable.view_list', 'variable.create', 'variable.view', 'variable.delete']
       },
       {
         name: '业务变量配置',
         path: '/config-manage/business-variables',
         icon: ListTree,
-        activeIcon: ListTree
+        activeIcon: ListTree,
+        permissionAny: ['business_variable.view_list', 'business_variable.create', 'business_variable.view', 'business_variable.delete']
       },
       {
         name: '工艺类型列表',
         path: '/config-manage/process-standards',
         icon: Hammer,
-        activeIcon: Hammer
+        activeIcon: Hammer,
+        permissionAny: ['process_standard.view_list', 'process_standard.create', 'process_standard.view', 'process_standard.delete']
       }
     ]
   })
@@ -275,7 +292,13 @@ const mainList = computed(() => {
     })
   }
 
-  return items
+  const allowed = (item) => !userStore.isPermissionScoped || userStore.canAny(item.permissionAny || [])
+  return items.flatMap((item) => {
+    if (!item.children) return allowed(item) ? [item] : []
+    if (!userStore.isPermissionScoped) return [item]
+    const children = item.children.filter(allowed)
+    return children.length ? [{ ...item, children }] : []
+  })
 })
 
 const expandedGroups = ref({ 配置管理: true })
@@ -417,7 +440,7 @@ provide('settingsModal', {
   <div class="app-layout" :class="{ 'sidebar-collapsed': sidebarCollapsed }">
     <div class="header">
       <div class="sidebar-brand" @click.stop>
-        <router-link v-if="!sidebarCollapsed" to="/" class="brand-link">
+        <router-link v-if="!sidebarCollapsed" :to="userStore.isPermissionScoped ? userStore.homePath : '/'" class="brand-link">
           <img src="/contentflow-logo.svg" alt="ContentFlow" class="brand-logo" />
         </router-link>
         <button
@@ -535,7 +558,7 @@ provide('settingsModal', {
       </div>
       <div class="fill">
         <ConversationNavSection
-          v-if="!sidebarCollapsed && !isContentRoute"
+          v-if="!sidebarCollapsed && !isContentRoute && userStore.can('chat.access')"
           class="sidebar-conversations"
           :current-chat-id="activeConversationThreadId"
           :chats-list="threads"
@@ -548,7 +571,7 @@ provide('settingsModal', {
           @load-more-chats="() => chatThreadsStore.loadMoreThreads()"
         />
         <RecentContentNavSection
-          v-else-if="!sidebarCollapsed"
+          v-else-if="!sidebarCollapsed && userStore.canAny(['content.generate', 'content.copy'])"
           class="sidebar-conversations"
           :current-task-id="activeContentTaskId"
           :items="recentContentTasks"

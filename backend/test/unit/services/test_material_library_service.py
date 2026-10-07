@@ -56,6 +56,7 @@ def test_only_generating_or_succeeded_tasks_occupy_images():
             "waiting_external",
             "review_required",
             "reviewed",
+            "generated",
             "completed",
         }
     )
@@ -240,7 +241,7 @@ async def test_material_share_rejects_legacy_decoration_gallery_without_project_
     with pytest.raises(HTTPException) as error:
         await create_material_share(
             object(),
-            SimpleNamespace(id="user-1", uid="owner-1", department_id=None),
+            SimpleNamespace(id="user-1", uid="owner-1", department_id=None, role="user"),
             MaterialShareCreate(item_ids=["item-1"]),
         )
 

@@ -11,7 +11,8 @@ from typing import Any
 from yuxi.content.rules import brief_variable_map
 
 MODULAR_WORKFLOW_ID = "content-workflow-blueprint-first-v4"
-EXPRESSION_GUIDANCE_WORKFLOW_ID = "content-workflow-blueprint-first-v5"
+LEGACY_EXPRESSION_GUIDANCE_WORKFLOW_ID = "content-workflow-blueprint-first-v5"
+EXPRESSION_GUIDANCE_WORKFLOW_ID = "content-workflow-expression-guidance-v1"
 DETERMINISTIC_PLAN_WORKFLOW_ID = "content-workflow-deterministic-plan-v1"
 STANDARDIZED_FACTORY_WORKFLOW_V1_ID = "content-workflow-standardized-factory-v1"
 STANDARDIZED_FACTORY_WORKFLOW_V2_ID = "content-workflow-standardized-factory-v2"
@@ -30,6 +31,7 @@ MODULAR_WORKFLOW_IDS = frozenset(
     {
         *SINGLE_BLUEPRINT_WORKFLOW_IDS,
         MODULAR_WORKFLOW_ID,
+        LEGACY_EXPRESSION_GUIDANCE_WORKFLOW_ID,
         EXPRESSION_GUIDANCE_WORKFLOW_ID,
         DETERMINISTIC_PLAN_WORKFLOW_ID,
         STANDARDIZED_FACTORY_WORKFLOW_V1_ID,

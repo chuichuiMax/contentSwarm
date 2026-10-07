@@ -41,6 +41,12 @@ def test_content_roles_store_display_name_for_users():
     assert stored_user_role(role) == "运营"
 
 
+def test_designer_default_grant_is_enterprise_rough_upload():
+    from yuxi.services.role_service import DESIGNER_DEFAULT_GRANTS
+
+    assert DESIGNER_DEFAULT_GRANTS == ("material_rough.upload",)
+
+
 def test_permission_catalog_keys_are_unique():
     keys = list(all_permission_keys())
     assert "employee.view_list" in keys
@@ -51,6 +57,7 @@ def test_permission_catalog_keys_are_unique():
     assert "variable.view_list" in keys
     assert "business_variable.view_list" in keys
     assert "process_standard.view_list" in keys
+    assert "material_rough.upload" in keys
     assert not any(key.startswith("cover.") for key in keys)
     assert len(keys) == len(set(keys))
 

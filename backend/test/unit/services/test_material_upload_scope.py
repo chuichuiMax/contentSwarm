@@ -48,7 +48,10 @@ async def test_pc_uncategorized_upload_keeps_private_category(monkeypatch):
 
     with pytest.raises(HTTPException) as error:
         await material_library_service.import_material_images(
-            object(), SimpleNamespace(uid="owner"), [SimpleNamespace(filename="")], category="uncategorized"
+            object(),
+            SimpleNamespace(uid="owner", role="user"),
+            [SimpleNamespace(filename="")],
+            category="uncategorized",
         )
 
     assert error.value.status_code == 400
