@@ -18,7 +18,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.content.catalog import CONTENT_TYPES
 from yuxi.content.generation import DEFAULT_DIRECT_GENERATION_PROMPT
-from yuxi.content.mp_studio_direct import MP_DECORATION_DIRECT_UI, build_mp_decoration_direct_defaults
+from yuxi.content.mp_studio_direct import (
+    MP_DECORATION_DIRECT_UI,
+    build_mp_decoration_direct_defaults,
+    build_mp_review_notes_direct_defaults,
+)
 from yuxi.content.mp_workflow import MP_REVIEW_NOTES_ENTRY, MP_REVIEW_NOTES_UI, mp_service_entry_from_brief
 from yuxi.content.schemas import (
     ContentBriefPayload,
@@ -1412,7 +1416,18 @@ async def compile_brief(db: AsyncSession, ctx: MpContext, payload: MpCompileBrie
     merged_form_values = dict(payload.form_values or {})
     merged_form_values["mp_content_type_id"] = selected_type["id"]
     merged_form_values["mp_content_type_name"] = selected_type["name"]
-    if payload.service_entry == "装修家居":
+    if payload.service_entry == "好评笔记":
+        merged_form_values.update(
+            build_mp_review_notes_direct_defaults(
+                ctx.employee,
+                ctx.user,
+                content_type_name=selected_type["name"],
+                content_type_id=selected_type["id"],
+                content_type_code=ct_code,
+                business_variables=merged_form_values,
+            )
+        )
+    elif payload.service_entry == "装修家居":
         try:
             merged_form_values.update(
                 await build_mp_decoration_direct_defaults(
@@ -1458,7 +1473,7 @@ async def compile_brief(db: AsyncSession, ctx: MpContext, payload: MpCompileBrie
         content_code=content_code,
         visual_material=visual_material,
         user_request=str(merged_form_values.get("user_request") or ""),
-        content_type_code=ct_code if payload.service_entry == "装修家居" else None,
+        content_type_code=ct_code if payload.service_entry in {"装修家居", "好评笔记"} else None,
     )
     saved = await save_content_brief(db, ctx.user, task_id, brief, compile_now=True)
     result = {
@@ -1468,11 +1483,7 @@ async def compile_brief(db: AsyncSession, ctx: MpContext, payload: MpCompileBrie
         "content_code": content_code,
         "task": saved["task"],
     }
-    if payload.service_entry == "好评笔记":
-        run = await start_run(db, ctx, task_id, MpRunCreatePayload())
-        result["run_id"] = run["run_id"]
-        result["run_status"] = run["status"]
-    elif payload.service_entry == "装修家居":
+    if payload.service_entry in {"装修家居", "好评笔记"}:
         viral_asset_id = str(merged_form_values.get("viral_asset_id") or "").strip()
         direct = await create_direct_content_run(
             db,

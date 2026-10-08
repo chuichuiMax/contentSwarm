@@ -63,3 +63,37 @@ async def load_forbidden_words(uid: str, name: str) -> dict:
         json.dumps(snapshot, ensure_ascii=False, sort_keys=True).encode()
     ).hexdigest()
     return snapshot
+
+
+async def load_knowledge_base_text(uid: str, name: str, *, limit: int = 12000) -> str:
+    """读取指定名称的唯一可访问知识库正文，按文件和切片顺序拼接。"""
+
+    from yuxi import knowledge_base
+
+    user = await UserRepository().get_by_uid(uid)
+    if not user:
+        raise ValueError(f"必须能访问唯一的“{name}”，当前找到 0 个")
+    user_info = {"uid": user.uid, "role": user.role, "department_id": user.department_id}
+    rows = await KnowledgeBaseRepository().list_by_name(name)
+    matches = [
+        row
+        for row in rows
+        if knowledge_base._database_info_accessible(
+            user_info,
+            {
+                "created_by": row.created_by,
+                "share_config": row.share_config or DEFAULT_SHARE_CONFIG.copy(),
+            },
+        )
+    ]
+    if len(matches) != 1:
+        raise ValueError(f"必须能访问唯一的“{name}”，当前找到 {len(matches)} 个")
+    chunks = await KnowledgeChunkRepository().list_by_kb_id(matches[0].kb_id)
+    text = "\n\n".join(
+        chunk.content.strip()
+        for chunk in sorted(chunks, key=lambda item: (item.file_id, item.chunk_index))
+        if chunk.content and chunk.content.strip()
+    ).strip()
+    if not text:
+        raise ValueError(f"“{name}”没有可读取的内容")
+    return text[:limit]

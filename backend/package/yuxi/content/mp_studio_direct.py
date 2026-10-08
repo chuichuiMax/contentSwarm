@@ -346,6 +346,29 @@ async def pick_random_ready_viral_asset_id(
     return str(random.choice(items)["id"])
 
 
+def build_mp_review_notes_direct_defaults(
+    employee: ContentEmployee,
+    user: User,
+    *,
+    content_type_name: str,
+    content_type_id: str,
+    content_type_code: str,
+    business_variables: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "generation_prompt": "站在业主角度写好评笔记，用好评笔记知识库里的真实服务场景填充标题、正文和话题。",
+        "creative_style": {},
+        "user_request": format_content_request_json(
+            employee=employee,
+            user=user,
+            content_type_name=content_type_name,
+            content_type_id=content_type_id,
+            content_type_code=content_type_code,
+            business_variables=business_variables,
+        ),
+    }
+
+
 async def build_mp_decoration_direct_defaults(
     db: AsyncSession,
     employee: ContentEmployee,

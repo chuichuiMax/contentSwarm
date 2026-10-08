@@ -115,3 +115,32 @@ async def test_build_mp_decoration_direct_defaults(monkeypatch):
     assert result["generation_prompt"] == DEFAULT_DIRECT_GENERATION_PROMPT
     assert result["creative_style"]["name"] == "本地信任型"
     assert result["user_request"].startswith("{")
+
+
+def test_build_mp_review_notes_direct_defaults_uses_owner_knowledge():
+    from yuxi.content import mp_studio_direct as module
+
+    employee = SimpleNamespace(
+        name="李四",
+        employee_code="E002",
+        login_account="13900000001",
+        gender="female",
+        age=28,
+        role="设计师",
+        current_branch="",
+        current_department="",
+    )
+    user = SimpleNamespace(uid="u2", username="李四", phone_number="13900000001", role="设计师", department_id=None)
+    result = module.build_mp_review_notes_direct_defaults(
+        employee,
+        user,
+        content_type_name="人设自荐",
+        content_type_id="ct7",
+        content_type_code="CT07",
+        business_variables={"设计师": "张三", "项目经理": "王五"},
+    )
+    assert "viral_asset_id" not in result
+    assert result["creative_style"] == {}
+    assert "好评笔记知识库" in result["generation_prompt"]
+    assert "业主角度" in result["generation_prompt"]
+    assert '"设计师": "张三"' in result["user_request"] or "张三" in result["user_request"]

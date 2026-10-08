@@ -93,7 +93,7 @@ class ContentDirectGenerateCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     request_id: str
-    viral_asset_id: str = Field(min_length=1)
+    viral_asset_id: str | None = None
     model_spec: str | None = None
     user_request: str | None = None
     creative_style: dict[str, Any] | None = None

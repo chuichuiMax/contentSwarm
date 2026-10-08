@@ -437,8 +437,8 @@ def test_map_service_entry_form_values_review_notes_uses_owner_voice():
     )
     assert mapped["project_type"] == "业主好评笔记"
     assert mapped["voice"] == "业主第一人称"
-    assert "style_excerpts" in mapped["writing_instruction"]
-    assert "标题不要出现楼盘" in mapped["writing_instruction"]
+    assert "好评笔记知识库" in mapped["writing_instruction"]
+    assert "不要出现楼盘" in mapped["writing_instruction"]
     assert "所属店面" in mapped["writing_instruction"]
     assert mapped["audience"] == ["业主"]
     assert mapped["location"] == "长沙市"

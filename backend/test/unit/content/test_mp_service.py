@@ -677,7 +677,7 @@ def test_build_mp_brief_payload_review_notes_has_no_photos():
     assert not brief.form_values.get("cover_asset_ids")
     assert brief.audience == ["业主"]
     assert brief.form_values["project_type"] == "业主好评笔记"
-    assert "style_excerpts" in brief.form_values["writing_instruction"]
+    assert "好评笔记知识库" in brief.form_values["writing_instruction"]
     assert "不要写成获客" in brief.form_values["writing_instruction"]
     assert brief.form_values["voice"] == "业主第一人称"
 

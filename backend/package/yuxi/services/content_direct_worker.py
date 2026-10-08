@@ -23,7 +23,7 @@ from yuxi.services.content_cover_service import (
     ensure_hycanvas_reference_asset,
     set_current_cover,
 )
-from yuxi.services.content_forbidden_words_service import load_forbidden_words
+from yuxi.services.content_forbidden_words_service import load_forbidden_words, load_knowledge_base_text
 from yuxi.services.run_queue_service import append_run_stream_event, clear_cancel_signal, has_cancel_signal
 from yuxi.storage.postgres.manager import pg_manager
 from yuxi.storage.postgres.models_business import User
@@ -64,6 +64,9 @@ async def process_direct_content_run(ctx, run_id: str):
         if await has_cancel_signal(run_id):
             raise asyncio.CancelledError
         forbidden_snapshot = await load_forbidden_words(str(run.uid), "封禁词库")
+        knowledge_context = ""
+        if payload.get("skip_cover"):
+            knowledge_context = await load_knowledge_base_text(str(run.uid), "好评笔记知识库")
         stream_values = {"title": "", "body": "", "topics": []}
         published_values = {"title": "", "body": "", "topics": []}
         last_publish_at = asyncio.get_running_loop().time()
@@ -109,6 +112,7 @@ async def process_direct_content_run(ctx, run_id: str):
             user_request=str(payload.get("user_request") or ""),
             generation_prompt=str(payload.get("generation_prompt", DEFAULT_DIRECT_GENERATION_PROMPT)),
             forbidden_lexicon=forbidden_snapshot["alternatives"],
+            knowledge_context=knowledge_context,
             on_delta=handle_content_delta,
         )
         await publish_stream_values()
@@ -190,11 +194,20 @@ async def process_direct_content_run(ctx, run_id: str):
                 review_snapshot=review,
                 created_by=run.uid,
             )
-            task.status = "running"
+            skip_cover = bool(payload.get("skip_cover"))
+            task.status = "generated" if skip_cover else "running"
             task.current_stage = "generation"
             task.review_json = review
             task.selected_title_json = {"text": output.title}
             task.error_json = None
+            if skip_cover:
+                await repo.track(
+                    "content_direct_run_completed",
+                    uid=run.uid,
+                    task_id=task.id,
+                    run_id=run.id,
+                    properties={"artifact_id": artifact.id, "review_status": "not_run"},
+                )
             await db.commit()
             artifact_id = artifact.id
         await append_run_stream_event(
@@ -203,6 +216,15 @@ async def process_direct_content_run(ctx, run_id: str):
             {"task_id": run.thread_id, "artifact_id": artifact_id},
             thread_id=run.thread_id,
         )
+        if payload.get("skip_cover"):
+            await _set_run_terminal(run_id, "completed")
+            await append_run_stream_event(
+                run_id,
+                "end",
+                {"status": "completed", "task_id": run.thread_id, "artifact_id": artifact_id},
+                thread_id=run.thread_id,
+            )
+            return
         cover_job = await _create_direct_cover_job(run, output)
         await _wait_for_direct_cover(run, cover_job["id"])
         await _set_run_terminal(run_id, "completed")

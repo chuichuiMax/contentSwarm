@@ -3,8 +3,6 @@ from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import HTTPException
-from pydantic import ValidationError
-
 from yuxi.content.schemas import ContentDirectGenerateCreate
 from yuxi.services import content_service as service
 
@@ -21,6 +19,7 @@ def direct_run(monkeypatch):
             "visual_material": {"image_asset_id": "image-1", "cover_mode": "ai"},
         },
         runtime_config_snapshot_json={},
+        selected_image_item_id=None,
     )
     asset = SimpleNamespace(
         id="selected-asset",
@@ -155,8 +154,57 @@ async def test_direct_run_preserves_selected_reference_access_error(direct_run):
 
 
 @pytest.mark.unit
-def test_direct_run_requires_explicit_reference_id():
-    with pytest.raises(ValidationError):
-        ContentDirectGenerateCreate(request_id="request-1")
+@pytest.mark.asyncio
+async def test_review_notes_direct_run_does_not_require_cover(direct_run):
+    ctx = direct_run
+    ctx.task.content_type_code = "CT07"
+    ctx.task.brief_json = {
+        "user_request": '{"persona":"业主评价"}',
+        "form_values": {"mp_service_entry": "好评笔记", "creative_style": {"name": "理性设计师"}},
+    }
+    ctx.asset.prepared_json["reference_card"]["content_type_code"] = "CT07"
+
+    result = await service.create_direct_content_run(ctx.db, ctx.user, ctx.task.id, ctx.payload)
+
+    assert result == {"run_id": "run-1"}
+    frozen = ctx.run_repo.create_run.call_args.kwargs["input_payload"]
+    assert frozen["skip_cover"] is True
+    assert frozen["visual_material"] == {}
+    ctx.queue.enqueue_job.assert_awaited_once()
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_direct_run_requires_explicit_reference_id(direct_run):
+    ctx = direct_run
+    ctx.payload = ContentDirectGenerateCreate(request_id="request-1")
+
+    with pytest.raises(HTTPException) as exc:
+        await service.create_direct_content_run(ctx.db, ctx.user, ctx.task.id, ctx.payload)
+
+    assert exc.value.status_code == 409
+    ctx.asset_lookup.assert_not_awaited()
+    ctx.run_repo.create_run.assert_not_awaited()
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_review_notes_direct_run_does_not_require_viral_asset(direct_run):
+    ctx = direct_run
+    ctx.task.content_type_code = "CT07"
+    ctx.task.brief_json = {
+        "user_request": '{"persona":"业主评价"}',
+        "form_values": {"mp_service_entry": "好评笔记"},
+    }
+    ctx.payload = ContentDirectGenerateCreate(request_id="request-2")
+
+    result = await service.create_direct_content_run(ctx.db, ctx.user, ctx.task.id, ctx.payload)
+
+    assert result == {"run_id": "run-1"}
+    ctx.asset_lookup.assert_not_awaited()
+    frozen = ctx.run_repo.create_run.call_args.kwargs["input_payload"]
+    assert frozen["skip_cover"] is True
+    assert frozen["viral_asset_id"] is None
+    assert frozen["viral_source"] == {"title": "", "body": ""}
 
 

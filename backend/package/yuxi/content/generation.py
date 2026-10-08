@@ -132,6 +132,70 @@ async def _invoke_json(model_spec: str | None, *, skill_slug: str, prompt: str) 
     return _parse_json(_response_text(response))
 
 
+def _direct_generation_prompt(
+    *,
+    style_block: str,
+    viral_source: dict[str, Any],
+    user_request: str,
+    generation_prompt: str,
+    forbidden_lexicon: dict[str, list[str]],
+    knowledge_context: str,
+) -> str:
+    shared_tail = (
+        "排版与表情要求：\n"
+        "正文要自然分段，使用适合移动端阅读的短句、空行和必要的 Markdown 排版；"
+        "根据语义加入少量合适的 Emoji，位置要自然，不能堆砌或连续重复；"
+        "不得用 Emoji 替代价格、数字、面积、时间、单位、品牌名或专业信息。\n\n"
+        "封禁词替换表（不要在成品中解释替换过程）：\n"
+        f"{json.dumps(forbidden_lexicon, ensure_ascii=False)}\n"
+        "存在候选表达时选择符合上下文的写法；候选为空时改写整句，避免出现问题词。"
+    )
+    if knowledge_context:
+        return (
+            "请站在业主角度，用第一人称写一篇好评笔记。返回字段 title、body、topics；"
+            "不要输出解释、审核意见或额外字段。\n\n"
+            "标题是业主自己的一句结论，不超过"
+            f"{DIRECT_TITLE_MAX_CHARS}个字，不要出现楼盘、小区或项目案名。\n"
+            "正文用短段落写自己看到的服务和现场，可以按设计师、预算师、项目经理、客户经理、工匠展开；"
+            "表单里已有的人名、岗位、店面和区域必须沿用，不要改成知识库里另一户的人。"
+            "用户输入里的 persona 是当前登录员工，只用来核对岗位和店面；正文必须是业主在评价他们。\n"
+            "用好评笔记知识库里的业主口吻、服务场景和工艺细节来填充。"
+            "知识库中另一户的金额、退款、小区、工期和人名，表单没有就不要写入这篇。\n"
+            "话题写 8 到 10 个，像装修日记标签，包含鸿扬家装，不要带 # 号。\n"
+            "不要写成员工自荐、销售转化，也不要让读者留下小区和面积。"
+            "结尾用业主自己的一句感受收住。\n"
+            "正文分段使用真实换行，不要输出反斜杠和字母 n。\n\n"
+            f"{style_block}"
+            "业主表单：\n"
+            f"{user_request}\n\n"
+            "本次生成提示词：\n"
+            f"{generation_prompt.strip()}\n\n"
+            "好评笔记知识库：\n"
+            f"{knowledge_context}\n\n"
+            f"{shared_tail}"
+        )
+    return (
+        "请根据以下输入直接创作一篇内容。返回字段 title、body、topics；"
+        "不要输出解释、审核意见或额外字段。\n\n"
+        "参考爆款原文的开头切入、段落顺序、信息推进和口语节奏，结尾按自然转化来写，不要照搬原文里的引流收尾。"
+        "在这些位置用用户提供的事实改写，不能逐句照抄。"
+        "创作风格只决定表达手法，不得因此杜撰其他人的报价、节省金额、"
+        "客户经历或施工结果；原文有而用户未提供的事实，用已提供的信息自然替换或略去。"
+        "用户输入的金额、单位、面积、数量及报价明细必须准确保留，不自行换算或补造。"
+        f"标题不超过{DIRECT_TITLE_MAX_CHARS}个字，汉字、数字、字母、标点、单位和 Emoji 都各计 1 个字，"
+        "并且必须是完整表达。正文分段使用真实换行，不要输出反斜杠和字母 n。"
+        f"{NATURAL_CLOSING_INSTRUCTION}\n\n"
+        f"{style_block}"
+        "爆款原文：\n"
+        f"{json.dumps(viral_source, ensure_ascii=False)}\n\n"
+        "用户输入数据（原样保留并结合其中信息写作）：\n"
+        f"{user_request}\n\n"
+        "本次生成提示词：\n"
+        f"{generation_prompt.strip()}\n\n"
+        f"{shared_tail}"
+    )
+
+
 async def generate_direct_content(
     *,
     model_spec: str | None,
@@ -140,6 +204,7 @@ async def generate_direct_content(
     user_request: str,
     generation_prompt: str = DEFAULT_DIRECT_GENERATION_PROMPT,
     forbidden_lexicon: dict[str, list[str]] | None = None,
+    knowledge_context: str = "",
     on_delta: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
 ) -> ContentArtifactAIEditOutput:
     """用创作风格、爆款原文和用户原始输入直接生成内容，不执行工作流审核。"""
@@ -159,31 +224,13 @@ async def generate_direct_content(
     )
     forbidden_lexicon = forbidden_lexicon or {}
     forbidden_replacements = {term: alternatives[0] for term, alternatives in forbidden_lexicon.items() if alternatives}
-    prompt = (
-        "请根据以下输入直接创作一篇内容。返回字段 title、body、topics；"
-        "不要输出解释、审核意见或额外字段。\n\n"
-        "参考爆款原文的开头切入、段落顺序、信息推进和口语节奏，结尾按自然转化来写，不要照搬原文里的引流收尾。"
-        "在这些位置用用户提供的事实改写，不能逐句照抄。"
-        "创作风格只决定表达手法，不得因此杜撰其他人的报价、节省金额、"
-        "客户经历或施工结果；原文有而用户未提供的事实，用已提供的信息自然替换或略去。"
-        "用户输入的金额、单位、面积、数量及报价明细必须准确保留，不自行换算或补造。"
-        f"标题不超过{DIRECT_TITLE_MAX_CHARS}个字，汉字、数字、字母、标点、单位和 Emoji 都各计 1 个字，"
-        "并且必须是完整表达。正文分段使用真实换行，不要输出反斜杠和字母 n。"
-        f"{NATURAL_CLOSING_INSTRUCTION}\n\n"
-        f"{style_block}"
-        "爆款原文：\n"
-        f"{json.dumps(viral_source, ensure_ascii=False)}\n\n"
-        "用户输入数据（原样保留并结合其中信息写作）：\n"
-        f"{user_request}\n\n"
-        "本次生成提示词：\n"
-        f"{generation_prompt.strip()}\n\n"
-        "排版与表情要求：\n"
-        "正文要自然分段，使用适合移动端阅读的短句、空行和必要的 Markdown 排版；"
-        "根据语义加入少量合适的 Emoji，位置要自然，不能堆砌或连续重复；"
-        "不得用 Emoji 替代价格、数字、面积、时间、单位、品牌名或专业信息。\n\n"
-        "封禁词替换表（不要在成品中解释替换过程）：\n"
-        f"{json.dumps(forbidden_lexicon, ensure_ascii=False)}\n"
-        "存在候选表达时选择符合上下文的写法；候选为空时改写整句，避免出现问题词。"
+    prompt = _direct_generation_prompt(
+        style_block=style_block,
+        viral_source=viral_source,
+        user_request=user_request,
+        generation_prompt=generation_prompt,
+        forbidden_lexicon=forbidden_lexicon,
+        knowledge_context=knowledge_context.strip(),
     )
     messages = [
         HumanMessage(content=prompt),

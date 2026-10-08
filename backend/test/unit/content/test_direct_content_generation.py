@@ -139,6 +139,50 @@ async def test_direct_generation_omits_empty_creative_style(monkeypatch):
     assert "爆款正文" in prompt
 
 
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_review_notes_generation_uses_owner_voice_and_knowledge(monkeypatch):
+    calls = []
+
+    class FakeModel:
+        def bind_tools(self, schemas, **kwargs):
+            return self
+
+        async def astream(self, messages):
+            calls.append(messages)
+            yield AIMessageChunk(
+                content="",
+                tool_call_chunks=[
+                    {
+                        "name": "ContentArtifactAIEditOutput",
+                        "args": '{"title":"看工地才放心","body":"我去工地看了水电。","topics":["装修日记"]}',
+                        "id": "call-1",
+                        "index": 0,
+                    }
+                ],
+            )
+
+    monkeypatch.setattr(generation, "resolve_chat_model_spec", lambda value: value or "default")
+    monkeypatch.setattr(generation, "load_chat_model", lambda **kwargs: FakeModel())
+
+    await generation.generate_direct_content(
+        model_spec=None,
+        creative_style={},
+        viral_source={"title": "", "body": ""},
+        user_request='{"项目经理":"王五"}',
+        generation_prompt="站在业主角度写好评笔记",
+        knowledge_context="业主去未完工的工地看隐蔽工程",
+    )
+
+    prompt = calls[0][0].content
+    assert "站在业主角度" in prompt
+    assert "好评笔记知识库" in prompt
+    assert "业主去未完工的工地看隐蔽工程" in prompt
+    assert '"项目经理":"王五"' in prompt
+    assert "爆款原文" not in prompt
+    assert "留下小区和面积" in prompt
+
+
 def test_limit_content_title_stops_at_sentence_end():
     title = "邵阳洋湖1号165㎡装修要花多少？鸿扬家装真实费用明细来啦"
     limited = generation.limit_content_title(title)

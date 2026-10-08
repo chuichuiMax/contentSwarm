@@ -23,6 +23,7 @@ from yuxi.content.generation import (
 )
 from yuxi.utils.line_breaks import normalize_escaped_newlines
 from yuxi.content.model.industry.pack import CONTENT_TYPE_CODES, IndustryPackPolicy
+from yuxi.content.mp_workflow import MP_REVIEW_NOTES_ENTRY, mp_service_entry_from_brief
 from yuxi.content.model.workflows.definition import WorkflowCatalog, WorkflowDefinitionPolicy, workflow_definition_hash
 from yuxi.content.rules import CONTENT_GOALS
 from yuxi.content.service_entry_form import (
@@ -2001,42 +2002,51 @@ async def create_direct_content_run(
     if not user_request:
         raise _content_error(409, "CONTENT_TASK_NOT_READY", "请先填写内容需求")
     visual_material = brief.get("visual_material") or {}
-    if not visual_material:
-        raise _content_error(409, "CONTENT_COVER_MATERIAL_REQUIRED", "请选择封面图片和封面方式")
-    if not visual_material.get("image_asset_id") and not visual_material.get("hycanvas_template_id"):
-        raise _content_error(409, "CONTENT_COVER_IMAGE_REQUIRED", "请选择一张图库图片作为封面原图")
-    image_item_id = task.selected_image_item_id or visual_material.get("image_item_id")
-    if image_item_id and await MaterialLibraryRepository(db, include_shared=True).item_is_selected_by_task(
-        image_item_id,
-        str(user.uid),
-        exclude_task_id=task.id,
-    ):
-        raise _content_error(409, "CONTENT_COVER_IN_USE", "该图库图片已被其他内容任务使用")
+    skip_cover = mp_service_entry_from_brief(brief) == MP_REVIEW_NOTES_ENTRY
+    if not skip_cover:
+        if not visual_material:
+            raise _content_error(409, "CONTENT_COVER_MATERIAL_REQUIRED", "请选择封面图片和封面方式")
+        if not visual_material.get("image_asset_id") and not visual_material.get("hycanvas_template_id"):
+            raise _content_error(409, "CONTENT_COVER_IMAGE_REQUIRED", "请选择一张图库图片作为封面原图")
+        image_item_id = task.selected_image_item_id or visual_material.get("image_item_id")
+        if image_item_id and await MaterialLibraryRepository(db, include_shared=True).item_is_selected_by_task(
+            image_item_id,
+            str(user.uid),
+            exclude_task_id=task.id,
+        ):
+            raise _content_error(409, "CONTENT_COVER_IN_USE", "该图库图片已被其他内容任务使用")
 
     model_spec = _validate_model_spec(payload.model_spec)
-    template = await repo.get_template(task.industry_template_version_id)
-    reference = await require_asset(db, user, payload.viral_asset_id)
-    prepared = reference.prepared_json or {}
-    card = prepared.get("reference_card") or {}
-    if (
-        not template
-        or reference.industry_slug != template.slug
-        or reference.status != "ready"
-        or reference.preparation_skill_hash != preparation_skill_hash()
-        or not asset_has_approved_review(reference)
-        or card.get("schema_version") != 2
-        or card.get("content_type_code") != task.content_type_code
-        or reference_card_variable_codes(prepared) - await published_variable_codes(db)
-        or not await check_asset_source(db, reference)
-    ):
-        raise _content_error(409, "CONTENT_VIRAL_REFERENCE_MISSING", "所选爆款原文已不可用，请重新选择")
-    source_json = reference.source_json or {}
-    viral_source = {
-        "title": source_json.get("title") or "",
-        "body": source_json.get("body") or "",
-    }
-    if not viral_source["body"]:
-        raise _content_error(409, "CONTENT_VIRAL_REFERENCE_MISSING", "匹配的爆款资产缺少原文")
+    viral_asset_id = str(payload.viral_asset_id or "").strip()
+    if viral_asset_id:
+        template = await repo.get_template(task.industry_template_version_id)
+        reference = await require_asset(db, user, viral_asset_id)
+        prepared = reference.prepared_json or {}
+        card = prepared.get("reference_card") or {}
+        if (
+            not template
+            or reference.industry_slug != template.slug
+            or reference.status != "ready"
+            or reference.preparation_skill_hash != preparation_skill_hash()
+            or not asset_has_approved_review(reference)
+            or card.get("schema_version") != 2
+            or card.get("content_type_code") != task.content_type_code
+            or reference_card_variable_codes(prepared) - await published_variable_codes(db)
+            or not await check_asset_source(db, reference)
+        ):
+            raise _content_error(409, "CONTENT_VIRAL_REFERENCE_MISSING", "所选爆款原文已不可用，请重新选择")
+        source_json = reference.source_json or {}
+        viral_source = {
+            "title": source_json.get("title") or "",
+            "body": source_json.get("body") or "",
+        }
+        if not viral_source["body"]:
+            raise _content_error(409, "CONTENT_VIRAL_REFERENCE_MISSING", "匹配的爆款资产缺少原文")
+        viral_asset_id = reference.id
+    elif skip_cover:
+        viral_source = {"title": "", "body": ""}
+    else:
+        raise _content_error(409, "CONTENT_VIRAL_REFERENCE_MISSING", "请选择爆款原文")
 
     request_id = payload.request_id
     run_repo = AgentRunRepository(db)
@@ -2055,10 +2065,11 @@ async def create_direct_content_run(
         "creative_style": creative_style,
         "generation_prompt": generation_prompt,
         "user_request": user_request,
-        "viral_asset_id": reference.id,
+        "viral_asset_id": viral_asset_id or None,
         "viral_source": viral_source,
         "content_brief": brief,
         "visual_material": visual_material,
+        "skip_cover": skip_cover,
         "trusted_external_material_snapshot": (task.runtime_config_snapshot_json or {}).get(
             "trusted_external_material_snapshot"
         ),
@@ -2083,7 +2094,7 @@ async def create_direct_content_run(
             uid=str(user.uid),
             task_id=task.id,
             run_id=run.id,
-            properties={"viral_asset_id": reference.id},
+            properties={"viral_asset_id": viral_asset_id or None},
         )
         await db.commit()
     except IntegrityError:
