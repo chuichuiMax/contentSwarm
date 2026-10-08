@@ -240,12 +240,11 @@ async def _set_run_running(run_id: str) -> None:
         await AgentRunRepository(db).mark_running(run_id)
 
 
-def _cover_text(output) -> tuple[str, str, list[str]]:
+def _cover_text(output) -> tuple[str, str]:
     title = normalize_escaped_newlines(str(output.title)).strip()[:60]
     paragraphs = [item.strip() for item in re.split(r"\n+", str(output.body)) if item.strip()]
     subtitle = (paragraphs[0] if paragraphs else title)[:120]
-    topics = [str(item).strip() for item in output.topics if str(item).strip()][:10]
-    return title, subtitle, topics
+    return title, subtitle
 
 
 def _fit_template_text(value: str, declarations: list[dict], role: str, default_limit: int) -> str:
@@ -264,7 +263,7 @@ async def _create_direct_cover_job(run, output) -> dict:
     payload = run.input_payload or {}
     visual_material = payload.get("visual_material") or {}
     content_brief = payload.get("content_brief") or {}
-    title, subtitle, topics = _cover_text(output)
+    title, subtitle = _cover_text(output)
     idempotency_key = f"content-direct-cover:{run.id}"
 
     async with pg_manager.get_async_session_context() as db:
@@ -342,7 +341,6 @@ async def _create_direct_cover_job(run, output) -> dict:
                     source_asset_ids=[image_asset_id],
                     title=title,
                     subtitle=subtitle,
-                    tags=topics,
                     render_copy_with_image2=True,
                     prompt=AI_COVER_PROMPT,
                     size="1080x1440",

@@ -674,8 +674,8 @@ async def create_content_cover_job(
         elif visual_material.get("cover_mode") == "ai":
             if not locked_image_asset_id:
                 raise ValueError("AI 封面创作需要一张图库背景图")
-            if len(text) < 3 or any(not str(value).strip() for value in text[:3]):
-                raise ValueError("AI 封面需要封面 Agent 提供标题、副标题和标签")
+            if len(text) < 2 or any(not str(value).strip() for value in text[:2]):
+                raise ValueError("AI 封面需要封面 Agent 提供标题和副标题")
             result = await create_cover_generate_job(
                 db,
                 user,
@@ -685,7 +685,6 @@ async def create_content_cover_job(
                     source_asset_ids=[locked_image_asset_id],
                     title=text[0],
                     subtitle=text[1],
-                    tags=[str(value).strip() for value in text[2:] if str(value).strip()],
                     render_copy_with_image2=True,
                     prompt=AI_COVER_PROMPT,
                     size="1080x1440",

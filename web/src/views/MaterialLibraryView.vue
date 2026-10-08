@@ -155,7 +155,10 @@ const isDecorationGalleryChild = computed(() =>
   ['create', 'edit'].includes(categoryEditorMode.value) &&
   materialType.value === 'image' &&
   categoryParentId.value &&
-  categoryMap.value[categoryParentId.value]?.industry_slug === 'decoration'
+  (
+    categoryMap.value[categoryParentId.value]?.industry_slug === 'decoration' ||
+    isEnterpriseCaseGallery(categoryMap.value[categoryParentId.value])
+  )
 )
 function isEnterpriseCaseGallery(gallery, parent = null) {
   const root = gallery?.parent_id ? parent : gallery
@@ -167,6 +170,12 @@ const isCaseGalleryPage = computed(() =>
   materialType.value === 'image' &&
   isTopLevelGallery.value &&
   isEnterpriseCaseGallery(currentGallery.value)
+)
+const canCreateChildGallery = computed(() =>
+  isTopLevelGallery.value &&
+  userStore.isAdmin &&
+  !isEmployeeRoughMode.value &&
+  !currentGallery.value?.personal_folder
 )
 const uploadTargetGallery = computed(() => categoryMap.value[uploadCategory.value] || null)
 const uploadTargetParent = computed(() => categoryMap.value[uploadTargetGallery.value?.parent_id] || null)
@@ -219,7 +228,7 @@ const createCategoryTitle = computed(() => {
     return editingCategory.value?.parent_id ? '编辑二级图库' : '编辑图库'
   }
   if (materialType.value !== 'image') return '新增分类'
-  return '新建图库'
+  return categoryParentId.value ? '新建二级图库' : '新建图库'
 })
 
 function releasePreviews() {
@@ -248,15 +257,16 @@ async function loadCategories() {
   }
 }
 
-function openCreateCategory() {
+function openCreateCategory(parentId = '') {
   categoryEditorMode.value = 'create'
   editingCategory.value = null
-  categoryParentId.value = ''
+  categoryParentId.value = parentId || ''
+  const parent = categoryMap.value[categoryParentId.value]
   Object.assign(categoryForm, {
     name: '',
     description: '',
-    visibility: categoryParentId.value ? categoryMap.value[categoryParentId.value]?.visibility : materialScope.value,
-    industry_slug: categoryParentId.value ? (categoryMap.value[categoryParentId.value]?.industry_slug || '') : '',
+    visibility: parent?.visibility || materialScope.value,
+    industry_slug: parent?.industry_slug || '',
     design_style: '',
     building_name: '',
     area: ''
@@ -317,7 +327,11 @@ async function saveCategory() {
         parent_id: categoryParentId.value || null,
         ...payload
       }, targetEmployeeId.value)
-      message.success(materialType.value === 'image' ? '图库已创建' : '分类已创建')
+      message.success(
+        materialType.value === 'image'
+          ? (categoryParentId.value ? '二级图库已创建' : '图库已创建')
+          : '分类已创建'
+      )
     } else {
       const response = await materialLibraryApi.updateCategory(
         materialType.value, editingCategory.value.id, payload, targetEmployeeId.value
@@ -1103,8 +1117,11 @@ onBeforeUnmount(() => {
           <a-button v-if="userStore.isAdmin" class="lucide-icon-btn" :loading="remoteSyncing" @click="syncRemoteMaterials">
             <RefreshCw :size="15" />同步远程素材
           </a-button>
-          <a-button v-if="isGalleryRoot && userStore.isAdmin" class="lucide-icon-btn" @click="openCreateCategory">
+          <a-button v-if="isGalleryRoot && userStore.isAdmin" class="lucide-icon-btn" @click="openCreateCategory()">
             <FolderPlus :size="15" />新建图库
+          </a-button>
+          <a-button v-if="canCreateChildGallery" class="lucide-icon-btn" @click="openCreateCategory(activeGallery)">
+            <FolderPlus :size="15" />新建二级图库
           </a-button>
           <a-button v-if="isChildGallery" class="lucide-icon-btn" :disabled="!selectedShareItemIds.length" @click="shareOpen = true">
             <Share2 :size="15" />分享{{ selectedShareItemIds.length ? ` (${selectedShareItemIds.length})` : '' }}

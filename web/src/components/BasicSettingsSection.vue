@@ -133,6 +133,30 @@
     </template>
 
     <template v-if="userStore.isAdmin">
+      <div class="section-title">素材水印</div>
+      <div class="settings-panel">
+        <p class="section-description">
+          选择一个一级图库。之后上传到这个图库及其全部二级图库的图片，会在底部居中加上鸿扬家装水印。
+        </p>
+        <div class="setting-row">
+          <div class="setting-label">水印图库</div>
+          <a-select
+            :value="watermarkGalleryValue || undefined"
+            allow-clear
+            show-search
+            option-filter-prop="label"
+            placeholder="选择需要加水印的图库"
+            :options="watermarkGalleryOptions"
+            :loading="watermarkGalleryLoading"
+            style="width: 100%"
+            @change="saveWatermarkGallery"
+          />
+          <span class="setting-help">只列出一级图库。选中后，它下面的二级图库上传同样加水印。</span>
+        </div>
+      </div>
+    </template>
+
+    <template v-if="userStore.isAdmin">
       <div class="section-title">image2 封面模型配置</div>
       <div class="settings-panel">
         <div class="image2-panel-header">
@@ -291,6 +315,7 @@ import { Globe } from 'lucide-vue-next'
 import ModelSelectorComponent from '@/components/ModelSelectorComponent.vue'
 import EmbeddingModelSelector from '@/components/EmbeddingModelSelector.vue'
 import RerankModelSelector from '@/components/RerankModelSelector.vue'
+import { materialLibraryApi } from '@/apis/material_library_api'
 
 const configStore = useConfigStore()
 const coverGenerationStore = useCoverGenerationStore()
@@ -310,6 +335,26 @@ const image2Form = reactive({
   apiKey: '',
   model: 'gpt-image-2',
   maxConcurrent: 1
+})
+const watermarkGalleries = ref([])
+const watermarkGalleryLoading = ref(false)
+const watermarkGalleryValue = computed(() => {
+  const galleryId = configStore.config?.material_watermark_gallery_id || ''
+  const ownerUid = configStore.config?.material_watermark_gallery_owner_uid || ''
+  return galleryId && ownerUid ? `${ownerUid}||${galleryId}` : ''
+})
+const watermarkGalleryOptions = computed(() => {
+  const options = watermarkGalleries.value
+    .filter((item) => !item.parent_id)
+    .map((item) => {
+      const scope = item.visibility === 'enterprise' ? '企业共享' : '我的素材'
+      return { value: `${item.owner_uid}||${item.id}`, label: `${scope} / ${item.name}` }
+    })
+  if (watermarkGalleryValue.value && !options.some((item) => item.value === watermarkGalleryValue.value)) {
+    const galleryId = configStore.config?.material_watermark_gallery_id
+    options.unshift({ value: watermarkGalleryValue.value, label: `已配置图库（${galleryId}）` })
+  }
+  return options
 })
 const image2State = computed(() => coverGenerationStore.bootstrap?.image2 || null)
 const image2VerificationStatus = computed(() => image2State.value?.verification_status || 'unverified')
@@ -335,6 +380,34 @@ watch(
 
 const handleChange = (key, e) => {
   configStore.setConfigValue(key, e)
+}
+
+const loadWatermarkGalleries = async () => {
+  if (!userStore.isAdmin) return
+  watermarkGalleryLoading.value = true
+  try {
+    const response = await materialLibraryApi.listGalleries()
+    watermarkGalleries.value = response.galleries || []
+  } catch (error) {
+    message.error(error.message || '图库列表加载失败')
+  } finally {
+    watermarkGalleryLoading.value = false
+  }
+}
+
+const saveWatermarkGallery = async (value) => {
+  const marker = typeof value === 'string' ? value.indexOf('||') : -1
+  const ownerUid = marker >= 0 ? value.slice(0, marker) : ''
+  const galleryId = marker >= 0 ? value.slice(marker + 2) : ''
+  try {
+    await configStore.setConfigValues({
+      material_watermark_gallery_id: galleryId,
+      material_watermark_gallery_owner_uid: ownerUid
+    })
+    message.success(galleryId ? '水印图库已保存' : '已取消水印图库')
+  } catch (error) {
+    message.error(error.message || '水印图库保存失败')
+  }
 }
 
 const handleChatModelSelect = (spec) => {
@@ -471,7 +544,10 @@ const testImage2Settings = async () => {
   }
 }
 
-onMounted(loadImage2Settings)
+onMounted(() => {
+  loadImage2Settings()
+  loadWatermarkGalleries()
+})
 
 const openLink = (url) => {
   window.open(url, '_blank')

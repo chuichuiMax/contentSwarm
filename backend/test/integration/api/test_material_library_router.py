@@ -631,7 +631,7 @@ async def test_target_employee_rough_gallery_revalidates_scope_on_every_operatio
         assert deleted.status_code == 200, deleted.text
 
 
-async def test_manual_second_level_gallery_creation_is_disabled(test_client, material_users):
+async def test_admin_can_create_second_level_gallery(test_client, material_users):
     headers = material_users["owner"]
     parent_response = await test_client.post(
         "/api/material-library/categories",
@@ -653,8 +653,15 @@ async def test_manual_second_level_gallery_creation_is_disabled(test_client, mat
             "area": "120",
         },
     )
-    assert child_response.status_code == 422, child_response.text
-    assert child_response.json()["detail"]["error"]["code"] == "MATERIAL_CATEGORY_DEPTH_DISABLED"
+    assert child_response.status_code == 201, child_response.text
+    child = child_response.json()["category"]
+    assert child["parent_id"] == parent["id"]
+    assert child["design_style"] == "江南印象"
+    assert child["building_name"] == "测试楼盘"
+    assert child["area"] == "120"
+    galleries = await test_client.get("/api/material-library/galleries", headers=headers)
+    assert galleries.status_code == 200, galleries.text
+    assert any(item["id"] == child["id"] and item["parent_id"] == parent["id"] for item in galleries.json()["galleries"])
 
     cover_child = await test_client.post(
         "/api/material-library/categories",

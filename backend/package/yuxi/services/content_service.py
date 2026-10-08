@@ -2155,6 +2155,12 @@ async def retry_content_node(
 async def get_content_run(db: AsyncSession, user: User, run_id: str) -> dict[str, Any]:
     run_repo = AgentRunRepository(db)
     run = await run_repo.get_run_for_user(run_id, str(user.uid))
+    if run is None:
+        candidate = await run_repo.get_run(run_id)
+        if candidate is not None and candidate.run_type in {"content", "content_resume", "content_direct"}:
+            visible_task = await ContentRepository(db).get_task_for_user(candidate.thread_id, user)
+            if visible_task is not None:
+                run = candidate
     if run is None or run.run_type not in {"content", "content_resume", "content_direct"}:
         raise _content_error(404, "CONTENT_RUN_NOT_FOUND", "内容运行不存在")
     root, content_runs, delegated_runs = await run_repo.list_content_run_family(run)

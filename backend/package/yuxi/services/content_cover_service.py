@@ -1951,8 +1951,6 @@ async def create_cover_generate_job(db: AsyncSession, user: User, payload: Cover
             copy_lines.append(f"标题：{title}")
         if payload.subtitle.strip():
             copy_lines.append(f"副标题：{payload.subtitle.strip()}")
-        if payload.tags:
-            copy_lines.append(f"标签：{'、'.join(payload.tags)}")
         copy_clause = "\n".join(copy_lines)
         output_guidance = (
             "以参考原图作为完整背景，只添加文字及必要的局部明暗调整；保留空间结构、家具、材质、"

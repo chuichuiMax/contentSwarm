@@ -44,6 +44,8 @@ class Config(BaseModel):
     dangjia_callback_base_url: str = Field(default="", description="当家内容生成结果回调地址")
     dangjia_callback_api_key: str = Field(default="", description="当家内容生成结果回调 API Key")
     dangjia_media_public_base_url: str = Field(default="", description="当家最终封面公开地址")
+    material_watermark_gallery_id: str = Field(default="", description="素材水印图库")
+    material_watermark_gallery_owner_uid: str = Field(default="", description="素材水印图库所属账号")
 
     default_agent_id: str = Field(default="ChatbotAgent", description="默认智能体ID")
 
@@ -189,6 +191,20 @@ class Config(BaseModel):
                 value = os.getenv(env_name) or ""
             resolved[field_name] = str(value).strip()
         return resolved
+
+    def resolve_material_watermark_gallery(self) -> tuple[str, str]:
+        """读取基本设置里选定的水印图库，上传请求能立刻用到刚保存的图库 ID。"""
+
+        persisted: dict[str, Any] = {}
+        if self._config_file and self._config_file.exists():
+            try:
+                with open(self._config_file, "rb") as f:
+                    persisted = tomli.load(f)
+            except Exception as exc:
+                logger.error(f"Failed to reload material watermark config from {self._config_file}: {exc}")
+        gallery_id = persisted.get("material_watermark_gallery_id", self.material_watermark_gallery_id)
+        owner_uid = persisted.get("material_watermark_gallery_owner_uid", self.material_watermark_gallery_owner_uid)
+        return str(gallery_id or "").strip(), str(owner_uid or "").strip()
 
     def update(self, other: dict[str, Any]) -> None:
         for key, value in other.items():

@@ -638,7 +638,7 @@ async def test_cover_tool_routes_ai_mode_to_single_image_image2_copy(monkeypatch
     assert payload.template_asset_id is None
     assert payload.title == "89㎡老房焕新"
     assert payload.subtitle == "收纳与动线细节分析"
-    assert payload.tags == ["旧房改造"]
+    assert payload.tags == []
     assert payload.render_copy_with_image2 is True
     assert payload.prompt == AI_COVER_PROMPT
     assert payload.size == "1080x1440"

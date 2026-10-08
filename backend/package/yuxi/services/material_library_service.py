@@ -50,6 +50,7 @@ from yuxi.services.material_upload_queue import (
     stage_material_bytes,
     stage_material_thumb,
 )
+from yuxi.services.material_watermark import watermark_upload_bytes
 from yuxi.storage.minio import StorageError, get_minio_client
 from yuxi.storage.postgres.models_business import OperationLog, User
 from yuxi.storage.postgres.models_content import (
@@ -224,6 +225,16 @@ def _is_admin(user: User) -> bool:
     return user.role in {"admin", "superadmin"}
 
 
+def is_enterprise_case_root(category: ContentMaterialCategory | None) -> bool:
+    return bool(
+        category
+        and category.material_type == "image"
+        and category.visibility == "enterprise"
+        and not category.parent_id
+        and (category.image_design_role == "reference" or category.name == "案例图库")
+    )
+
+
 def is_enterprise_rough_root(category: ContentMaterialCategory | None) -> bool:
     return bool(
         category
@@ -257,6 +268,16 @@ def _designer_may_see_category(category: ContentMaterialCategory | None) -> bool
 def _reject_outside_rough_upload(category: ContentMaterialCategory | None) -> None:
     if not _designer_may_see_category(category):
         raise _error(403, "MATERIAL_PERMISSION_DENIED", "当前岗位只能上传企业共享毛坯房图库，或使用自己的素材")
+
+
+def _designer_may_browse_case(category: ContentMaterialCategory | None, parent: ContentMaterialCategory | None) -> bool:
+    return is_enterprise_case_root(category) or is_enterprise_case_root(parent)
+
+
+async def _load_case_parent(repo, category: ContentMaterialCategory | None) -> ContentMaterialCategory | None:
+    if category is None or not category.parent_id:
+        return None
+    return await repo.get_category(category.owner_uid, category.material_type, category.parent_id)
 
 
 def _can_manage_category(user: User, category: ContentMaterialCategory) -> bool:
@@ -798,6 +819,12 @@ async def import_material_images(
         except ValueError as exc:
             raise _error(400, "MATERIAL_IMAGE_TOO_LARGE", str(exc)) from exc
         normalized, width, height, content_type = _normalize_image(raw)
+        normalized = watermark_upload_bytes(
+            normalized,
+            category_id=resolved_category.id,
+            owner_uid=resolved_category.owner_uid,
+            parent_id=resolved_category.parent_id,
+        )
         if len(normalized) > MAX_MATERIAL_BYTES:
             raise _error(400, "MATERIAL_IMAGE_TOO_LARGE", "图片规范化后超过 100 MB")
         asset_id = f"cca_{uuid.uuid4().hex}"
@@ -1172,6 +1199,7 @@ async def list_material_items(
     include_descendants: bool = False,
     root_only: bool = False,
     exclude_task_id: str | None = None,
+    include_case_for_designer: bool = False,
     personal_folder: Literal["rough"] | None = None,
     date_from: date | None = None,
     date_to: date | None = None,
@@ -1220,7 +1248,11 @@ async def list_material_items(
         else None
     )
     if rough_upload_only:
-        _reject_outside_rough_upload(resolved_category)
+        case_parent = None
+        if include_case_for_designer:
+            case_parent = await _load_case_parent(MaterialLibraryRepository(db, include_shared=True), resolved_category)
+        if not _designer_may_browse_case(resolved_category, case_parent):
+            _reject_outside_rough_upload(resolved_category)
     if (
         resolved_category is not None
         and personal_folder_key(resolved_category) in {"generated", "works"}
@@ -1492,7 +1524,8 @@ async def get_material_categories(
                 if personal_folder_key(category)
                 else category.name,
                 "can_upload": can_contribute_to_category(user, category)
-                and personal_folder_key(category) not in {"generated", "works"},
+                and personal_folder_key(category) not in {"generated", "works"}
+                and (not rough_upload_only or _designer_may_see_category(category)),
                 "can_manage": _can_manage_category(user, category),
                 "is_global_personal": category.is_global_personal,
                 "industry_slug": effective_industry,
@@ -1524,8 +1557,8 @@ async def create_material_category(
         raise _error(403, "MATERIAL_TARGET_SCOPE_FORBIDDEN", "员工素材模式只能管理该员工的毛坯房图库")
     if payload.material_type == "image" and not _is_admin(user):
         raise _error(403, "MATERIAL_CATEGORY_FORBIDDEN", "只有管理员可新建图片图库")
-    if payload.material_type == "image" and payload.parent_id:
-        raise _error(422, "MATERIAL_CATEGORY_DEPTH_DISABLED", "不支持手工创建二级图库")
+    if payload.material_type != "image" and payload.parent_id:
+        raise _error(422, "MATERIAL_CATEGORY_DEPTH_INVALID", "封面模板分类不支持层级")
     repo = MaterialLibraryRepository(db, include_shared=True)
     categories = await ensure_material_categories(
         db,
@@ -1539,9 +1572,31 @@ async def create_material_category(
     design_style = None
     building_name = None
     area = None
-    if payload.parent_id:
-        raise _error(422, "MATERIAL_CATEGORY_DEPTH_INVALID", "封面模板分类不支持层级")
-    if payload.material_type == "image":
+    if payload.material_type == "image" and payload.parent_id:
+        parent = await repo.get_category(_owner_uid(user), "image", payload.parent_id)
+        if parent is None or parent.parent_id:
+            raise _error(422, "MATERIAL_CATEGORY_PARENT_INVALID", "只能在一级图库下新建二级图库")
+        if not _can_manage_category(user, parent):
+            raise _error(403, "MATERIAL_CATEGORY_FORBIDDEN", "只有管理员可新建图片图库")
+        visibility = parent.visibility
+        industry_slug = parent.industry_slug
+        if industry_slug == DECORATION_GALLERY_INDUSTRY_SLUG or is_enterprise_case_root(parent):
+            design_style = (payload.design_style or "").strip()
+            building_name = (payload.building_name or "").strip()
+            area = (payload.area or "").strip()
+            if design_style not in DECORATION_GALLERY_DESIGN_STYLES:
+                raise _error(422, "MATERIAL_DESIGN_STYLE_REQUIRED", "请选择设计风格")
+            if not building_name:
+                raise _error(422, "MATERIAL_BUILDING_NAME_REQUIRED", "请输入楼盘名称")
+            if not area:
+                raise _error(422, "MATERIAL_AREA_REQUIRED", "请输入面积")
+        elif payload.design_style or payload.building_name or payload.area:
+            raise _error(
+                422,
+                "MATERIAL_GALLERY_DETAILS_PARENT_INVALID",
+                "设计风格、楼盘名称和面积仅适用于装修与家居二级图库",
+            )
+    elif payload.material_type == "image":
         if payload.design_style or payload.building_name or payload.area:
             raise _error(
                 422,
@@ -1681,7 +1736,9 @@ async def update_material_category(
                 )
         else:
             parent = await repo.get_category(_owner_uid(user), material_type, category.parent_id)
-            if parent is None or parent.industry_slug != DECORATION_GALLERY_INDUSTRY_SLUG:
+            if parent is None or not (
+                parent.industry_slug == DECORATION_GALLERY_INDUSTRY_SLUG or is_enterprise_case_root(parent)
+            ):
                 if any(changes.get(field) for field in detail_fields):
                     raise _error(
                         422,
@@ -1819,6 +1876,7 @@ async def list_image_galleries(
     *,
     include_private_defaults: bool = True,
     personal_folder: Literal["rough"] | None = None,
+    include_case_for_designer: bool = False,
 ) -> dict[str, Any]:
     await ensure_initial_enterprise_galleries(db)
     categories = await ensure_material_categories(
@@ -1829,10 +1887,17 @@ async def list_image_galleries(
     )
     repo = MaterialLibraryRepository(db, include_shared=True)
     rough_upload_only = await material_access_mode(db, user) == "rough_upload"
+    listed_categories = await repo.list_categories(_owner_uid(user), "image")
+    case_root_ids = {category.id for category in listed_categories if is_enterprise_case_root(category)}
     categories = [
         category
-        for category in await repo.list_categories(_owner_uid(user), "image")
-        if not rough_upload_only or _designer_may_see_category(category)
+        for category in listed_categories
+        if not rough_upload_only
+        or _designer_may_see_category(category)
+        or (
+            include_case_for_designer
+            and (category.id in case_root_ids or category.parent_id in case_root_ids)
+        )
         if personal_folder != "rough" or _is_target_rough_category(category, _owner_uid(user))
         if not is_storage_root(category)
         and (
@@ -1891,7 +1956,8 @@ async def list_image_galleries(
                 if personal_folder_key(category)
                 else category.name,
                 "can_upload": can_contribute_to_category(user, category)
-                and personal_folder_key(category) not in {"generated", "works"},
+                and personal_folder_key(category) not in {"generated", "works"}
+                and (not rough_upload_only or _designer_may_see_category(category)),
                 "can_manage": _can_manage_category(user, category),
                 "is_global_personal": category.is_global_personal,
                 "industry_slug": effective_industry,
@@ -1914,7 +1980,12 @@ async def list_image_galleries(
 
 
 async def get_material_file(
-    db: AsyncSession, user: User, item_id: str, *, target_private: bool = False
+    db: AsyncSession,
+    user: User,
+    item_id: str,
+    *,
+    target_private: bool = False,
+    allow_case_browse: bool = False,
 ) -> tuple[bytes, str, str]:
     repo = MaterialLibraryRepository(db, include_shared=True)
     item = (
@@ -1931,7 +2002,9 @@ async def get_material_file(
         raise _error(404, "MATERIAL_NOT_FOUND", "素材不存在")
     if await material_access_mode(db, user) == "rough_upload":
         category = await repo.get_category(item.category_owner_uid or item.owner_uid, item.material_type, item.category)
-        _reject_outside_rough_upload(category)
+        parent = await _load_case_parent(repo, category) if allow_case_browse else None
+        if not _designer_may_browse_case(category, parent):
+            _reject_outside_rough_upload(category)
     asset = await repo.get_asset(item.asset_id, item.owner_uid)
     if asset is None:
         raise _error(404, "MATERIAL_ASSET_MISSING", "素材文件不存在")
@@ -1943,7 +2016,12 @@ async def get_material_file(
 
 
 async def get_material_thumbnail(
-    db: AsyncSession, user: User, item_id: str, *, target_private: bool = False
+    db: AsyncSession,
+    user: User,
+    item_id: str,
+    *,
+    target_private: bool = False,
+    allow_case_browse: bool = False,
 ) -> tuple[bytes, str]:
     repo = MaterialLibraryRepository(db, include_shared=True)
     item = (
@@ -1960,7 +2038,9 @@ async def get_material_thumbnail(
         raise _error(404, "MATERIAL_NOT_FOUND", "素材不存在")
     if await material_access_mode(db, user) == "rough_upload":
         category = await repo.get_category(item.category_owner_uid or item.owner_uid, item.material_type, item.category)
-        _reject_outside_rough_upload(category)
+        parent = await _load_case_parent(repo, category) if allow_case_browse else None
+        if not _designer_may_browse_case(category, parent):
+            _reject_outside_rough_upload(category)
     asset = await repo.get_asset(item.asset_id, item.owner_uid)
     if asset is None:
         raise _error(404, "MATERIAL_ASSET_MISSING", "素材文件不存在")

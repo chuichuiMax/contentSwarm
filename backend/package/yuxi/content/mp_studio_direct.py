@@ -38,7 +38,7 @@ _STYLE_CATALOG: dict[str, dict[str, str]] = {
     },
     "本地信任型": {
         "label": "本地信任型",
-        "description": "强调本地服务，0元量房与房屋初步评估，0元户型与空间规划，建立地域信任",
+        "description": "本地服务，建立地域信任",
     },
     "案例证明型": {"label": "案例证明型", "description": "用真实案例和落地实际费用建立用户信任"},
     "专业干货型": {
@@ -53,9 +53,9 @@ _STYLE_CATALOG: dict[str, dict[str, str]] = {
         "label": "实景案例拆解型",
         "description": "讲故事，结合真实房子案例，代入感强",
     },
-    "靠谱项目经理": {
-        "label": "靠谱项目经理",
-        "description": "务实真诚，深耕家装行业多年的项目经理，不玩套路，只讲落地",
+    "痛点共鸣型": {
+        "label": "痛点共鸣型",
+        "description": "先说明装修会遇到的坑和痛点，再给解决方案",
     },
     "理性设计师": {
         "label": "理性设计师",
@@ -63,17 +63,24 @@ _STYLE_CATALOG: dict[str, dict[str, str]] = {
     },
 }
 
+_HEARTFELT_PRICE_SHOW = "用真诚的语气表达价格秀明、团队优势"
 _STYLES_BY_TYPE_NAME: dict[str, tuple[str, ...]] = {
-    "工艺施工展示": ("项目经理掏心窝", "本地信任型", "案例证明型", "专业干货型", "极简美学设计型"),
-    "工艺展示": ("项目经理掏心窝", "本地信任型", "案例证明型", "专业干货型", "极简美学设计型"),
-    "装修报价清单": ("项目经理掏心窝", "本地信任型", "案例证明型", "专业干货型", "极简美学设计型"),
-    "报价清单": ("项目经理掏心窝", "本地信任型", "案例证明型", "专业干货型", "极简美学设计型"),
-    "装修案例分享": ("项目经理掏心窝", "本地信任型", "案例证明型", "实景案例拆解型"),
-    "案例分享": ("项目经理掏心窝", "本地信任型", "案例证明型", "实景案例拆解型"),
-    "装修知识科普": ("专业干货型", "实景案例拆解型", "极简美学设计型"),
-    "知识科普": ("专业干货型", "实景案例拆解型", "极简美学设计型"),
-    "人设自荐": ("靠谱项目经理", "理性设计师"),
-    "装修人设自荐": ("靠谱项目经理", "理性设计师"),
+    "工艺施工展示": ("项目经理掏心窝", "本地信任型", "专业干货型", "极简美学设计型"),
+    "工艺展示": ("项目经理掏心窝", "本地信任型", "专业干货型", "极简美学设计型"),
+    "装修报价清单": ("项目经理掏心窝", "本地信任型", "案例证明型", "痛点共鸣型"),
+    "报价清单": ("项目经理掏心窝", "本地信任型", "案例证明型", "痛点共鸣型"),
+    "装修案例分享": ("项目经理掏心窝", "本地信任型", "案例证明型", "痛点共鸣型", "实景案例拆解型"),
+    "案例分享": ("项目经理掏心窝", "本地信任型", "案例证明型", "痛点共鸣型", "实景案例拆解型"),
+    "装修知识科普": ("实景案例拆解型", "极简美学设计型"),
+    "知识科普": ("实景案例拆解型", "极简美学设计型"),
+    "人设自荐": ("理性设计师",),
+    "装修人设自荐": ("理性设计师",),
+}
+_DESCRIPTION_OVERRIDES: dict[str, dict[str, str]] = {
+    "工艺施工展示": {"项目经理掏心窝": _HEARTFELT_PRICE_SHOW},
+    "工艺展示": {"项目经理掏心窝": _HEARTFELT_PRICE_SHOW},
+    "装修案例分享": {"项目经理掏心窝": _HEARTFELT_PRICE_SHOW},
+    "案例分享": {"项目经理掏心窝": _HEARTFELT_PRICE_SHOW},
 }
 
 
@@ -128,14 +135,22 @@ def creative_style_options(content_type_code: str | None, content_type_name: str
     name = _text(content_type_name)
     keys = _STYLES_BY_TYPE_NAME.get(name)
     if not keys:
-        code_fallback = {"CT01": "装修案例分享", "CT02": "装修报价清单", "CT07": "人设自荐"}.get(
-            _text(content_type_code)
+        name = {"CT01": "装修案例分享", "CT02": "装修报价清单", "CT07": "人设自荐"}.get(
+            _text(content_type_code), ""
         )
-        if code_fallback:
-            keys = _STYLES_BY_TYPE_NAME.get(code_fallback)
+        keys = _STYLES_BY_TYPE_NAME.get(name)
     if not keys:
         return []
-    return [_STYLE_CATALOG[key] for key in keys if key in _STYLE_CATALOG]
+    overrides = _DESCRIPTION_OVERRIDES.get(name, {})
+    options: list[dict[str, str]] = []
+    for key in keys:
+        item = _STYLE_CATALOG.get(key)
+        if item is None:
+            continue
+        if key in overrides:
+            item = {**item, "description": overrides[key]}
+        options.append(item)
+    return options
 
 
 def pick_random_creative_style(content_type_code: str | None, content_type_name: str) -> dict[str, str]:

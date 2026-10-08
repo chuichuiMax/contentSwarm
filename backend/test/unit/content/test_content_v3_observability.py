@@ -3,6 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
+from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 import yuxi.services.content_service as content_service
@@ -155,3 +156,93 @@ async def test_run_detail_proves_agent_skill_tool_and_zero_knowledge_calls(monke
         "knowledge_retrieval_count": 0,
         "knowledge_result_count": 0,
     }
+
+
+@pytest.mark.asyncio
+async def test_visible_task_owner_can_read_another_users_content_run(monkeypatch):
+    parent = SimpleNamespace(
+        id="run-1",
+        thread_id="task-1",
+        uid="employee-1",
+        run_type="content_direct",
+        input_payload={},
+        to_dict=lambda: {"id": "run-1", "status": "completed"},
+    )
+
+    class FakeRunRepo:
+        def __init__(self, db):
+            del db
+
+        async def get_run_for_user(self, run_id, uid):
+            assert (run_id, uid) == ("run-1", "tiechui")
+            return None
+
+        async def get_run(self, run_id):
+            assert run_id == "run-1"
+            return parent
+
+        async def list_content_run_family(self, run):
+            return parent, [parent], []
+
+    class FakeContentRepo:
+        def __init__(self, db):
+            del db
+
+        async def get_task_for_user(self, task_id, user):
+            assert task_id == "task-1"
+            assert user.uid == "tiechui"
+            return SimpleNamespace(id=task_id)
+
+        async def get_v3_run_projection(self, **kwargs):
+            assert kwargs == {"task_id": "task-1", "run_ids": ["run-1"]}
+            return {
+                "nodes": [],
+                "match_decision": None,
+                "formula_selection": None,
+                "external_wait": None,
+                "evidence": {},
+            }
+
+    async def fake_events(run_id, **kwargs):
+        del run_id, kwargs
+        return []
+
+    monkeypatch.setattr(content_service, "AgentRunRepository", FakeRunRepo)
+    monkeypatch.setattr(content_service, "ContentRepository", FakeContentRepo)
+    monkeypatch.setattr(content_service, "list_run_stream_events", fake_events)
+
+    result = await content_service.get_content_run(object(), SimpleNamespace(uid="tiechui", role="superadmin"), "run-1")
+    assert result["run"]["id"] == "run-1"
+
+
+@pytest.mark.asyncio
+async def test_unrelated_user_cannot_read_another_users_content_run(monkeypatch):
+    parent = SimpleNamespace(id="run-1", thread_id="task-1", uid="employee-1", run_type="content_direct")
+
+    class FakeRunRepo:
+        def __init__(self, db):
+            del db
+
+        async def get_run_for_user(self, run_id, uid):
+            del run_id, uid
+            return None
+
+        async def get_run(self, run_id):
+            del run_id
+            return parent
+
+    class FakeContentRepo:
+        def __init__(self, db):
+            del db
+
+        async def get_task_for_user(self, task_id, user):
+            del task_id, user
+            return None
+
+    monkeypatch.setattr(content_service, "AgentRunRepository", FakeRunRepo)
+    monkeypatch.setattr(content_service, "ContentRepository", FakeContentRepo)
+
+    with pytest.raises(HTTPException) as caught:
+        await content_service.get_content_run(object(), SimpleNamespace(uid="other-user"), "run-1")
+    assert caught.value.status_code == 404
+    assert caught.value.detail["error"]["code"] == "CONTENT_RUN_NOT_FOUND"

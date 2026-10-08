@@ -1134,7 +1134,7 @@ async def list_mp_galleries(
     ctx: MpContext,
     scope: Literal["private", "enterprise"] | None = None,
 ) -> dict[str, Any]:
-    result = await list_image_galleries(db, ctx.user)
+    result = await list_image_galleries(db, ctx.user, include_case_for_designer=True)
     galleries = []
     for item in result.get("galleries") or []:
         visibility = item.get("visibility") or "private"
@@ -1180,6 +1180,7 @@ async def list_mp_gallery_items(
         sort="newest",
         scope=scope,
         include_descendants=include_descendants,
+        include_case_for_designer=True,
     )
     items = [_mp_gallery_item(item) for item in result.get("items") or []]
     return {
@@ -1191,11 +1192,11 @@ async def list_mp_gallery_items(
 
 
 async def read_mp_gallery_item_file(db: AsyncSession, ctx: MpContext, item_id: str) -> tuple[bytes, str, str]:
-    return await get_material_file(db, ctx.user, item_id)
+    return await get_material_file(db, ctx.user, item_id, allow_case_browse=True)
 
 
 async def read_mp_gallery_item_thumbnail(db: AsyncSession, ctx: MpContext, item_id: str) -> bytes:
-    data, _ = await get_material_thumbnail(db, ctx.user, item_id)
+    data, _ = await get_material_thumbnail(db, ctx.user, item_id, allow_case_browse=True)
     return data
 
 

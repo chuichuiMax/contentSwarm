@@ -701,7 +701,7 @@ async def test_image2_copy_mode_sends_exact_copy_and_keeps_numbers(monkeypatch: 
     request = captured["request"]
     assert "标题：鸿扬家装-高端家装品牌" in request["prompt"]
     assert "副标题：290 平的装修细节分析" in request["prompt"]
-    assert "标签：鸿扬家装报价" in request["prompt"]
+    assert "标签：" not in request["prompt"]
     assert "不得改写、遗漏、增加或改变顺序" in request["prompt"]
     assert "数字" not in request["negative_prompt"]
     assert "标题贴顶" in request["negative_prompt"]

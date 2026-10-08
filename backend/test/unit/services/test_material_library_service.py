@@ -82,6 +82,44 @@ def test_only_generating_or_succeeded_tasks_occupy_images():
         assert f"'{status}'" not in sql
 
 
+def test_designer_can_browse_case_gallery_but_not_upload_it():
+    from yuxi.services.material_library_service import (
+        _designer_may_browse_case,
+        _designer_may_see_category,
+        is_enterprise_case_root,
+    )
+
+    case_root = SimpleNamespace(
+        material_type="image",
+        visibility="enterprise",
+        parent_id=None,
+        image_design_role="reference",
+        name="案例图库",
+    )
+    style_gallery = SimpleNamespace(
+        material_type="image",
+        visibility="enterprise",
+        parent_id="case-root",
+        image_design_role=None,
+        name="星河湾",
+    )
+    generated = SimpleNamespace(
+        material_type="image",
+        visibility="enterprise",
+        parent_id=None,
+        image_design_role="generated",
+        name="生图图库",
+    )
+
+    assert is_enterprise_case_root(case_root)
+    assert _designer_may_browse_case(case_root, None)
+    assert _designer_may_browse_case(style_gallery, case_root)
+    assert not _designer_may_see_category(case_root)
+    assert not _designer_may_see_category(style_gallery)
+    assert not _designer_may_browse_case(generated, None)
+    assert not _designer_may_browse_case(style_gallery, generated)
+
+
 def test_material_library_bucket_defaults_to_image():
     assert MATERIAL_LIBRARY_BUCKET == "image"
     assert MATERIAL_LIBRARY_BUCKET not in MinIOClient.PUBLIC_READ_BUCKETS
@@ -423,7 +461,7 @@ def test_public_material_share_page_uses_snapshot_order_and_renders_share_card_m
 
 
 @pytest.mark.asyncio
-async def test_only_admin_can_create_image_gallery_and_manual_child_creation_is_disabled(monkeypatch):
+async def test_only_admin_can_create_image_gallery_and_child_gallery(monkeypatch):
     fallback = ContentMaterialCategory(
         owner_uid="owner-1",
         material_type="image",
@@ -444,9 +482,22 @@ async def test_only_admin_can_create_image_gallery_and_manual_child_creation_is_
         async def rollback(self):
             pass
 
+    parent = ContentMaterialCategory(
+        owner_uid="owner-1",
+        id="gallery-parent",
+        material_type="image",
+        visibility="enterprise",
+        name="案例图库",
+        industry_slug="uncategorized",
+        image_design_role="reference",
+    )
+
     class FakeRepo:
         def __init__(self, _db, **_kwargs):
             pass
+
+        async def get_category(self, _owner_uid, _material_type, category_id, **_kwargs):
+            return parent if category_id == parent.id else None
 
         async def create_category(self, **values):
             return ContentMaterialCategory(**values)
@@ -468,14 +519,24 @@ async def test_only_admin_can_create_image_gallery_and_manual_child_creation_is_
     assert forbidden.value.status_code == 403
     assert forbidden.value.detail["error"]["code"] == "MATERIAL_CATEGORY_FORBIDDEN"
 
-    with pytest.raises(HTTPException) as child_disabled:
-        await create_material_category(
-            FakeDB(),
-            admin_user,
-            MaterialCategoryCreate(material_type="image", name="二级图库", parent_id="gallery-parent"),
-        )
-    assert child_disabled.value.status_code == 422
-    assert child_disabled.value.detail["error"]["code"] == "MATERIAL_CATEGORY_DEPTH_DISABLED"
+    created_child = await create_material_category(
+        FakeDB(),
+        admin_user,
+        MaterialCategoryCreate(
+            material_type="image",
+            name="桂语云峰",
+            parent_id="gallery-parent",
+            design_style="江南印象",
+            building_name="桂语云峰",
+            area="120",
+        ),
+    )
+    assert created_child["category"]["parent_id"] == "gallery-parent"
+    assert created_child["category"]["visibility"] == "enterprise"
+    assert created_child["category"]["industry_slug"] == "uncategorized"
+    assert created_child["category"]["design_style"] == "江南印象"
+    assert created_child["category"]["building_name"] == "桂语云峰"
+    assert created_child["category"]["area"] == "120"
 
     created = await create_material_category(
         FakeDB(),

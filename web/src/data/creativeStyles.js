@@ -7,8 +7,7 @@ const STYLE_CATALOG = {
   本地信任型: {
     value: '本地信任型',
     label: '本地信任型',
-    description:
-      '强调本地服务，0元量房与房屋初步评估，0元户型与空间规划，建立地域信任'
+    description: '本地服务，建立地域信任'
   },
   案例证明型: {
     value: '案例证明型',
@@ -30,10 +29,10 @@ const STYLE_CATALOG = {
     label: '实景案例拆解型',
     description: '讲故事，结合真实房子案例，代入感强'
   },
-  靠谱项目经理: {
-    value: '靠谱项目经理',
-    label: '靠谱项目经理',
-    description: '务实真诚，深耕家装行业多年的项目经理，不玩套路，只讲落地'
+  痛点共鸣型: {
+    value: '痛点共鸣型',
+    label: '痛点共鸣型',
+    description: '先说明装修会遇到的坑和痛点，再给解决方案'
   },
   理性设计师: {
     value: '理性设计师',
@@ -42,26 +41,32 @@ const STYLE_CATALOG = {
   }
 }
 
-const CRAFT_AND_QUOTE_STYLES = [
-  '项目经理掏心窝',
-  '本地信任型',
-  '案例证明型',
-  '专业干货型',
-  '极简美学设计型'
-]
+const HEARTFELT_PRICE_SHOW = '用真诚的语气表达价格秀明、团队优势'
 
-const CASE_SHARE_STYLES = ['项目经理掏心窝', '本地信任型', '案例证明型', '实景案例拆解型']
+const CRAFT_STYLES = ['项目经理掏心窝', '本地信任型', '专业干货型', '极简美学设计型']
 
-const KNOWLEDGE_STYLES = ['专业干货型', '实景案例拆解型', '极简美学设计型']
+const QUOTE_STYLES = ['项目经理掏心窝', '本地信任型', '案例证明型', '痛点共鸣型']
 
-const PERSONA_STYLES = ['靠谱项目经理', '理性设计师']
+const CASE_SHARE_STYLES = ['项目经理掏心窝', '本地信任型', '案例证明型', '痛点共鸣型', '实景案例拆解型']
+
+const KNOWLEDGE_STYLES = ['实景案例拆解型', '极简美学设计型']
+
+const PERSONA_STYLES = ['理性设计师']
+
+/** 同一风格在不同内容类型下的说明 */
+const DESCRIPTION_OVERRIDES = {
+  工艺施工展示: { 项目经理掏心窝: HEARTFELT_PRICE_SHOW },
+  工艺展示: { 项目经理掏心窝: HEARTFELT_PRICE_SHOW },
+  装修案例分享: { 项目经理掏心窝: HEARTFELT_PRICE_SHOW },
+  案例分享: { 项目经理掏心窝: HEARTFELT_PRICE_SHOW }
+}
 
 /** @type {Record<string, string[]>} */
 const STYLES_BY_TYPE_NAME = {
-  工艺施工展示: CRAFT_AND_QUOTE_STYLES,
-  工艺展示: CRAFT_AND_QUOTE_STYLES,
-  装修报价清单: CRAFT_AND_QUOTE_STYLES,
-  报价清单: CRAFT_AND_QUOTE_STYLES,
+  工艺施工展示: CRAFT_STYLES,
+  工艺展示: CRAFT_STYLES,
+  装修报价清单: QUOTE_STYLES,
+  报价清单: QUOTE_STYLES,
   装修案例分享: CASE_SHARE_STYLES,
   案例分享: CASE_SHARE_STYLES,
   装修知识科普: KNOWLEDGE_STYLES,
@@ -70,8 +75,15 @@ const STYLES_BY_TYPE_NAME = {
   装修人设自荐: PERSONA_STYLES
 }
 
-const stylesFromKeys = (keys = []) =>
-  keys.map((key) => STYLE_CATALOG[key]).filter(Boolean)
+const stylesFromKeys = (keys = [], typeName = '') =>
+  keys
+    .map((key) => {
+      const style = STYLE_CATALOG[key]
+      if (!style) return null
+      const description = DESCRIPTION_OVERRIDES[typeName]?.[key]
+      return description ? { ...style, description } : style
+    })
+    .filter(Boolean)
 
 /** @deprecated 保留导出供旧引用；请改用 creativeStylesForContentType */
 export const CREATIVE_STYLE_OPTIONS = Object.values(STYLE_CATALOG)
@@ -83,7 +95,7 @@ export const CREATIVE_STYLE_OPTIONS = Object.values(STYLE_CATALOG)
 export const creativeStylesForContentType = (contentTypeCode, contentTypeName = '') => {
   const name = String(contentTypeName || '').trim()
   if (name && STYLES_BY_TYPE_NAME[name]) {
-    return stylesFromKeys(STYLES_BY_TYPE_NAME[name])
+    return stylesFromKeys(STYLES_BY_TYPE_NAME[name], name)
   }
   const codeFallbackName = {
     CT01: '装修案例分享',
@@ -91,7 +103,7 @@ export const creativeStylesForContentType = (contentTypeCode, contentTypeName = 
     CT07: '人设自荐'
   }[contentTypeCode]
   if (codeFallbackName) {
-    return stylesFromKeys(STYLES_BY_TYPE_NAME[codeFallbackName])
+    return stylesFromKeys(STYLES_BY_TYPE_NAME[codeFallbackName], codeFallbackName)
   }
   return []
 }

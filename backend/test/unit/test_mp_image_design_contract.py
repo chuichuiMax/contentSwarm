@@ -24,6 +24,11 @@ def transfer_payload(**changes):
     }
 
 
+def test_mp_task_defaults_to_one_image():
+    payload = MpTaskCreate(**transfer_payload(refinement_id="idr_owned", save_target={"scope": "private"}))
+    assert payload.count == 1
+
+
 def test_cover_template_uncategorized_is_not_an_image_storage_root():
     category = ContentMaterialCategory(
         owner_uid="employee",

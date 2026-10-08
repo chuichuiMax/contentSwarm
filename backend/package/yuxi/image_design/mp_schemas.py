@@ -74,7 +74,7 @@ class MpTaskCreate(MpPolishCreate):
     refinement_id: str = Field(min_length=8, max_length=80)
     save_target: SaveTarget
     ratio: Literal["portrait", "landscape", "square"] = "portrait"
-    count: Literal[1, 2, 4] = 2
+    count: Literal[1, 2, 4] = 1
     quality: Literal["1k", "2k"] = "1k"
     polished_prompt: str | None = Field(default=None, max_length=20000)
     idempotency_key: str | None = Field(default=None, max_length=128)
