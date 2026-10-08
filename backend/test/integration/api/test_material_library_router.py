@@ -101,6 +101,7 @@ async def material_users(test_client):
     headers.append({"Authorization": f"Bearer {member_token}"})
     try:
         yield {
+            "session_factory": session_factory,
             "owner": headers[0],
             "other": headers[1],
             "member": headers[2],
@@ -123,6 +124,9 @@ async def material_users(test_client):
                     )
                 ).all()
             )
+            share_tokens = list((await db.execute(
+                select(ContentMaterialShare.token).where(ContentMaterialShare.owner_uid.in_(credentials))
+            )).scalars())
             await db.execute(delete(ContentMaterialShare).where(ContentMaterialShare.owner_uid.in_(credentials)))
             await db.execute(
                 delete(ContentCoverPosterTemplate).where(ContentCoverPosterTemplate.owner_uid.in_(credentials))
@@ -141,9 +145,19 @@ async def material_users(test_client):
         for bucket, object_name in share_objects:
             await storage.adelete_file(bucket, object_name)
             await storage.adelete_file(bucket, f"{object_name}.display.webp")
+            await storage.adelete_file(bucket, f"{object_name}.card.jpg")
         for asset in assets:
             await storage.adelete_file(asset.bucket_name, asset.object_name)
             await storage.adelete_file(asset.bucket_name, material_thumb_object_name(asset.object_name))
+            await storage.adelete_objects_by_prefix(asset.bucket_name, f"{asset.object_name}.share-v1.")
+        from redis.asyncio import Redis
+
+        redis = Redis.from_url(os.environ["REDIS_URL"])
+        for token in share_tokens:
+            keys = [key async for key in redis.scan_iter(match=f"material-share:v1:{token}:*")]
+            if keys:
+                await redis.delete(*keys)
+        await redis.aclose()
         await engine.dispose()
 
 
@@ -874,7 +888,11 @@ async def test_second_level_decoration_gallery_share_keeps_ordered_snapshots_and
             "X-Forwarded-Host": "share.example.test",
             "X-Forwarded-Prefix": public_prefix,
         },
-        json={"item_ids": [second_item["id"], first_item["id"]]},
+        json={
+            "item_ids": [second_item["id"], first_item["id"]],
+            "sharer_name": "客户端伪造姓名",
+            "sharer_phone": "19900000000",
+        },
     )
     assert created.status_code == 201, created.text
     share = created.json()["share"]
@@ -886,6 +904,49 @@ async def test_second_level_decoration_gallery_share_keeps_ordered_snapshots_and
     assert share["page_url"] == share["url"]
     assert share["image_url"] == f"{public_base}{share['image_path']}"
     assert share["card_cover_url"] == f"{public_base}/api/material-library/shares/{share['token']}/cover.jpg"
+
+    # Creation must already have a durable small cover and a warm Redis entry.
+    from redis.asyncio import Redis
+
+    redis = Redis.from_url(os.environ["REDIS_URL"])
+    cover_key = f"material-share:v1:{share['token']}:cover"
+    try:
+        prepared_cover = await redis.get(cover_key)
+        assert prepared_cover and prepared_cover.startswith(b"\xff\xd8")
+        assert 0 < await redis.ttl(cover_key) <= 86400
+        async with material_users["session_factory"]() as snapshot_db:
+            first_share_item = (await snapshot_db.execute(
+                select(ContentMaterialShareItem).join(ContentMaterialShare).where(
+                    ContentMaterialShare.token == share["token"], ContentMaterialShareItem.display_order == 1
+                )
+            )).scalar_one()
+        assert await MinIOClient().astat_file(first_share_item.bucket_name, f"{first_share_item.object_name}.card.jpg")
+        await redis.delete(cover_key)
+        uncached_cover = await test_client.get(f"/api/material-library/shares/{share['token']}/cover.jpg")
+        assert uncached_cover.status_code == 200, uncached_cover.text
+        assert uncached_cover.content == prepared_cover
+        assert await redis.get(cover_key) == prepared_cover
+    finally:
+        await redis.aclose()
+
+    engine = create_async_engine(os.environ["POSTGRES_URL"])
+    try:
+        async with async_sessionmaker(engine, expire_on_commit=False)() as db:
+            employee = (
+                await db.execute(
+                    select(ContentEmployee).where(ContentEmployee.created_by == material_users["owner_uid"])
+                )
+            ).scalar_one()
+            original_phone = employee.login_account
+            employee.name = "修改后的员工姓名"
+            employee.login_account = f"198{int(uuid.uuid4().hex[:10], 16) % 100000000:08d}"
+            await db.commit()
+    finally:
+        await engine.dispose()
+    public_data = await test_client.get(f"/api/material-library/shares/{share['token']}")
+    assert public_data.status_code == 200, public_data.text
+    assert public_data.json()["share"]["sharer_name"] == "分享测试员工"
+    assert public_data.json()["share"]["sharer_phone"] == original_phone
 
     deleted = await test_client.delete(f"/api/material-library/items/{first_item['id']}", headers=headers)
     assert deleted.status_code == 200, deleted.text
@@ -910,6 +971,7 @@ async def test_second_level_decoration_gallery_share_keeps_ordered_snapshots_and
     assert "楼盘：洋湖天序" in public_page.text
     assert "面积：120㎡" in public_page.text
     assert "风格：复古风潮" in public_page.text
+    assert f'href="tel:{original_phone}">电话：{original_phone} 分享测试员工</a>' in public_page.text
     assert 'property="og:description" content="洋湖天序｜120㎡｜复古风潮"' in public_page.text
     assert f'property="og:url" content="{share["url"]}"' in public_page.text
     assert f"{public_base}/api/material-library/shares/{share['token']}/images/1" in public_page.text
@@ -919,6 +981,8 @@ async def test_second_level_decoration_gallery_share_keeps_ordered_snapshots_and
     canonical_page = await test_client.get(f"/share/case/{share['token']}", headers=public_headers)
     assert canonical_page.status_code == 200, canonical_page.text
     assert canonical_page.headers["content-type"].startswith("text/html")
+    assert f'href="tel:{original_phone}"' in canonical_page.text
+    assert "修改后的员工姓名" not in canonical_page.text
     assert '<meta property="og:url"' in canonical_page.text
     assert f'property="og:url" content="{share["url"]}"' in canonical_page.text
     assert f'property="og:image" content="{share["card_cover_url"]}"' in canonical_page.text

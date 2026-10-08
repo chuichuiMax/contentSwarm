@@ -341,6 +341,8 @@ def test_public_material_share_serializer_exposes_only_snapshot_data_in_display_
             "building_name": "万科金域华府",
             "area": "120",
             "design_style": "现代简约",
+            "sharer_name": None,
+            "sharer_phone": None,
             "cover_url": "/api/material-library/shares/not-enumerable-share-id/images/1",
             "cover_webp_url": "/api/material-library/shares/not-enumerable-share-id/images/1.webp",
             "card_cover_url": "/api/material-library/shares/not-enumerable-share-id/cover.jpg",

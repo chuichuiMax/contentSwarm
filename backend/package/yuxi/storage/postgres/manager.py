@@ -423,6 +423,8 @@ class PostgresManager(metaclass=SingletonMeta):
             "ALTER TABLE IF EXISTS content_material_shares ADD COLUMN IF NOT EXISTS building_name VARCHAR(80)",
             "ALTER TABLE IF EXISTS content_material_shares ADD COLUMN IF NOT EXISTS area VARCHAR(32)",
             "ALTER TABLE IF EXISTS content_material_shares ADD COLUMN IF NOT EXISTS design_style VARCHAR(32)",
+            "ALTER TABLE IF EXISTS content_material_shares ADD COLUMN IF NOT EXISTS sharer_name VARCHAR(80)",
+            "ALTER TABLE IF EXISTS content_material_shares ADD COLUMN IF NOT EXISTS sharer_phone VARCHAR(64)",
             "ALTER TABLE IF EXISTS content_material_categories ADD COLUMN IF NOT EXISTS parent_id VARCHAR(64)",
             "ALTER TABLE IF EXISTS content_material_categories ADD COLUMN IF NOT EXISTS design_style VARCHAR(32)",
             "ALTER TABLE IF EXISTS content_material_categories ADD COLUMN IF NOT EXISTS building_name VARCHAR(80)",

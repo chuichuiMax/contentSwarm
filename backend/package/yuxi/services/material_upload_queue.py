@@ -10,6 +10,7 @@ from PIL import Image, ImageOps
 
 from yuxi.repositories.content_cover_repository import ContentCoverRepository
 from yuxi.services.run_queue_service import get_arq_pool, get_binary_redis_client
+from yuxi.services.material_share_images import ensure_material_share_images
 from yuxi.storage.minio import StorageError, get_minio_client
 from yuxi.storage.postgres.manager import pg_manager
 from yuxi.utils.logging_config import logger
@@ -125,6 +126,7 @@ async def process_material_upload(_ctx: Any, asset_id: str) -> None:
             thumbnail,
             content_type="image/webp",
         )
+        await ensure_material_share_images(asset, data)
 
         metadata["ingest_status"] = INGEST_COMPLETED
         metadata.pop("redis_key", None)

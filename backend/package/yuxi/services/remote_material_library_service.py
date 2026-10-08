@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import hashlib
 import asyncio
 import os
@@ -371,12 +373,19 @@ async def _download_remote_asset(
         remote_id = str(remote_asset["id"])
         raw = await client_api.download(client, str(remote_asset.get("original_object_key") or ""))
         normalized, width, height, content_type = await asyncio.to_thread(_normalize_image, raw)
+        sha256 = hashlib.sha256(normalized).hexdigest()
         try:
             uploaded = await get_minio_client().aupload_file(
                 bucket_name=MATERIAL_LIBRARY_BUCKET,
-                object_name=f"material-library/{owner_uid}/remote/{remote_id}/image.png",
+                object_name=f"material-library/{owner_uid}/remote/{remote_id}/{sha256}/image.webp",
                 data=normalized,
                 content_type=content_type,
+            )
+            from yuxi.services.material_share_images import ensure_material_share_images
+
+            await ensure_material_share_images(
+                SimpleNamespace(bucket_name=uploaded.bucket_name, object_name=uploaded.object_name, sha256=sha256),
+                normalized,
             )
         except StorageError as exc:
             raise _sync_error("远程图片保存到素材库失败", 500) from exc
@@ -387,7 +396,7 @@ async def _download_remote_asset(
             "file_size": len(normalized),
             "width": width,
             "height": height,
-            "sha256": hashlib.sha256(normalized).hexdigest(),
+            "sha256": sha256,
         }
 
 
