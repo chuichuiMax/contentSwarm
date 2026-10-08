@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import io
 import os
+import re
 import uuid
 
 import pytest
@@ -18,6 +19,7 @@ from yuxi.storage.postgres.models_business import Department, OperationLog, User
 from yuxi.storage.postgres.models_content import (
     ContentCoverAsset,
     ContentCoverPosterTemplate,
+    ContentEmployee,
     ContentMaterialCategory,
     ContentMaterialFolderSetting,
     ContentMaterialLibraryItem,
@@ -142,6 +144,40 @@ async def material_users(test_client):
         for asset in assets:
             await storage.adelete_file(asset.bucket_name, asset.object_name)
             await storage.adelete_file(asset.bucket_name, material_thumb_object_name(asset.object_name))
+        await engine.dispose()
+
+
+@pytest_asyncio.fixture
+async def material_mp_headers(material_users):
+    """Bind a temporary app employee to this fixture's existing material owner."""
+    employee_id = uuid.uuid4().hex
+    phone = f"199{int(uuid.uuid4().hex[:10], 16) % 100000000:08d}"
+    engine = create_async_engine(os.environ["POSTGRES_URL"])
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with session_factory() as db:
+        owner = (await db.execute(select(User).where(User.uid == material_users["owner_uid"]))).scalar_one()
+        owner.phone_number = phone
+        db.add(
+            ContentEmployee(
+                id=employee_id,
+                employee_code=f"pytest_share_{employee_id}",
+                name="分享测试员工",
+                login_account=phone,
+                gender="女",
+                login_port=["app"],
+                role=owner.role,
+                enabled=True,
+                created_by=owner.uid,
+            )
+        )
+        await db.commit()
+    try:
+        token = AuthUtils.create_access_token({"sub": employee_id, "typ": "mp", "uid": material_users["owner_uid"]})
+        yield {"Authorization": f"Bearer {token}"}
+    finally:
+        async with session_factory() as db:
+            await db.execute(delete(ContentEmployee).where(ContentEmployee.id == employee_id))
+            await db.commit()
         await engine.dispose()
 
 
@@ -781,10 +817,17 @@ async def test_poster_template_uses_controlled_category_without_tags(test_client
         assert deleted.status_code == 200, deleted.text
 
 
+@pytest.mark.parametrize(
+    ("share_api", "public_prefix"),
+    [("/api/material-library/shares", "/boyun"), ("/api/mp/share/cases", "")],
+    ids=["pc-prefixed-share", "mini-program-root-share"],
+)
 async def test_second_level_decoration_gallery_share_keeps_ordered_snapshots_and_renders_project_details(
-    test_client, material_users
+    test_client, material_users, material_mp_headers, share_api, public_prefix
 ):
     headers = material_users["owner"]
+    share_headers = material_mp_headers if share_api == "/api/mp/share/cases" else headers
+    public_base = f"https://share.example.test{public_prefix}"
     parent_response = await test_client.post(
         "/api/material-library/categories",
         headers=headers,
@@ -820,16 +863,16 @@ async def test_second_level_decoration_gallery_share_keeps_ordered_snapshots_and
     first_item = first_upload.json()["items"][0]
     second_item = second_upload.json()["items"][0]
 
-    missing = await test_client.post("/api/material-library/shares", headers=headers, json={"item_ids": []})
+    missing = await test_client.post(share_api, headers=share_headers, json={"item_ids": []})
     assert missing.status_code == 422, missing.text
 
     created = await test_client.post(
-        "/api/material-library/shares",
+        share_api,
         headers={
-            **headers,
+            **share_headers,
             "X-Forwarded-Proto": "https",
             "X-Forwarded-Host": "share.example.test",
-            "X-Forwarded-Prefix": "/boyun",
+            "X-Forwarded-Prefix": public_prefix,
         },
         json={"item_ids": [second_item["id"], first_item["id"]]},
     )
@@ -839,12 +882,10 @@ async def test_second_level_decoration_gallery_share_keeps_ordered_snapshots_and
     assert share["description"] == "洋湖天序｜120㎡｜复古风潮"
     assert share["image_count"] == 2
     assert share["page_path"].endswith(f"/shares/{share['token']}/page")
-    assert share["url"] == f"https://share.example.test/boyun/share/case/{share['token']}"
+    assert share["url"] == f"{public_base}/share/case/{share['token']}"
     assert share["page_url"] == share["url"]
-    assert share["image_url"] == f"https://share.example.test/boyun{share['image_path']}"
-    assert share["card_cover_url"] == (
-        f"https://share.example.test/boyun/api/material-library/shares/{share['token']}/cover.jpg"
-    )
+    assert share["image_url"] == f"{public_base}{share['image_path']}"
+    assert share["card_cover_url"] == f"{public_base}/api/material-library/shares/{share['token']}/cover.jpg"
 
     deleted = await test_client.delete(f"/api/material-library/items/{first_item['id']}", headers=headers)
     assert deleted.status_code == 200, deleted.text
@@ -852,7 +893,7 @@ async def test_second_level_decoration_gallery_share_keeps_ordered_snapshots_and
     public_headers = {
         "X-Forwarded-Proto": "https",
         "X-Forwarded-Host": "share.example.test",
-        "X-Forwarded-Prefix": "/boyun",
+        "X-Forwarded-Prefix": public_prefix,
     }
     card_cover = await test_client.get(f"/api/material-library/shares/{share['token']}/cover.jpg")
     assert card_cover.status_code == 200, card_cover.text
@@ -871,7 +912,7 @@ async def test_second_level_decoration_gallery_share_keeps_ordered_snapshots_and
     assert "风格：复古风潮" in public_page.text
     assert 'property="og:description" content="洋湖天序｜120㎡｜复古风潮"' in public_page.text
     assert f'property="og:url" content="{share["url"]}"' in public_page.text
-    assert f"https://share.example.test/boyun/api/material-library/shares/{share['token']}/images/1" in public_page.text
+    assert f"{public_base}/api/material-library/shares/{share['token']}/images/1" in public_page.text
     assert f"/api/material-library/shares/{share['token']}/images/1" in public_page.text
     assert public_page.text.index("/images/1") < public_page.text.index("/images/2")
 
@@ -879,6 +920,13 @@ async def test_second_level_decoration_gallery_share_keeps_ordered_snapshots_and
     assert canonical_page.status_code == 200, canonical_page.text
     assert canonical_page.headers["content-type"].startswith("text/html")
     assert '<meta property="og:url"' in canonical_page.text
+    assert f'property="og:url" content="{share["url"]}"' in canonical_page.text
+    assert f'property="og:image" content="{share["card_cover_url"]}"' in canonical_page.text
+    image_urls = re.findall(r'<img[^>]+src="([^"]+)"', canonical_page.text)
+    expected_images = [
+        f"{public_base}/api/material-library/shares/{share['token']}/images/{order}.webp" for order in (1, 2)
+    ]
+    assert image_urls == [expected_images[0], *expected_images]
 
     second_snapshot = await test_client.get(f"/api/material-library/shares/{share['token']}/images/1")
     first_snapshot = await test_client.get(f"/api/material-library/shares/{share['token']}/images/2")

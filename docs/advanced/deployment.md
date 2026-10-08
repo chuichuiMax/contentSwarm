@@ -49,6 +49,26 @@ docker compose exec -e RUN_IMAGE2_LIVE_TESTS=1 api \
 
 宝塔 Nginx 使用项目内的 `scripts/nginx/yuxi-boyun.conf` 扩展时，应确保该扩展同时包含在 HTTP 与 HTTPS 虚拟主机中。扩展会将 HTTP 请求以 308 跳转到 HTTPS，并设置 HSTS、`nosniff`、同源嵌入与 Referrer Policy；应用发布前应先执行 `nginx -t`，确认通过后再单独 reload Nginx。部署脚本不会擅自修改或重载宿主机 Nginx。
 
+### 案例分享的公开地址与代理验收
+
+正式入口 `/share/case/{token}` 必须转发到 API 的公开 HTML 接口；使用 `/boyun` 部署时，入口为 `/boyun/share/case/{token}`，不能落入 Vue 的 `index.html`。图片和 JPEG 卡片封面仍通过匿名的 `/api/material-library/shares/{token}/...` 接口读取。
+
+TLS 入口应覆盖客户端传入的 `X-Forwarded-Host`、`X-Forwarded-Proto`，设置实际公网域名和 `https`，在剥离 `/boyun` 时设置 `X-Forwarded-Prefix: /boyun`。内部 Nginx 保留可信入口的这些值；其监听的是 HTTP，不能使用内部 `$scheme` 覆盖外部 HTTPS。该内部端口应只对可信代理开放。根域名部署同样需要在实际使用的虚拟主机配置中落实这份代理契约，不要直接套用 `/boyun` 的前缀或端口。
+
+根域名 TLS 入口可使用 `scripts/nginx/yuxi-root-public-origin.conf`。把该文件安装到宿主机 Nginx 的配置目录，例如 `/etc/nginx/snippets/yuxi-root-public-origin.conf`，然后在该域名现有的 `/share/case/` 与 `/api/` 代理 location 内分别加入：
+
+```nginx
+include /etc/nginx/snippets/yuxi-root-public-origin.conf;
+```
+
+该片段只设置 `Host`、`X-Forwarded-Host`、`X-Forwarded-Proto` 并清空根路径的 `X-Forwarded-Prefix`，不声明 location、上游地址、端口或证书。接入时替换 location 内已有的这四项设置，保留经 `nginx -T` 确认的实际 `proxy_pass` 和其他代理参数；不直接覆盖整个虚拟主机。片段用于实际终止 HTTPS 的入口，HTTP 请求应跳转 HTTPS。它必须放在这两个 location 内：server 层的 `proxy_set_header` 可能因 location 内其他同类指令而失去继承。`/boyun` 入口继续使用带前缀的现有模板。
+
+后端根据上述请求信息生成分享链接、正文图片及 `og:image` 地址。仅设置 `MATERIAL_LIBRARY_SHARE_PUBLIC_BASE_URL` 不能覆盖请求中已存在的错误域名。修改代理配置后，已有分享链接在重新访问时会使用正确地址，无需重新上传或重建快照。
+
+完整镜像发布会包含 `docker/nginx/nginx.conf` 和 `default.conf`；增量 Web 镜像只替换静态产物，不能发布 Nginx 配置变更。`scripts/nginx` 下的宿主机配置变化同样要求完整发布和单独的入口配置校验、重载。源码挂载模式需要重建 Web 容器以加载新配置，具体流程见[源码挂载部署](./source-deployment.md)。
+
+CI 执行 `backend/test/e2e/test_share_public_proxy.mjs` 和 `test_share_nginx.py`，后者用隔离容器覆盖根域名与 `/boyun` 的真实 Nginx/TLS 入口、普通请求、错误转发头覆盖和图片解码，不连接业务数据库。真实接口集成测试另行覆盖小程序 `POST /api/mp/share/cases` 的认证、快照、公开链接和图片读取。上线验收仍须从公网访问一条已有分享及一条新分享，核对 HTML 中全部图片、`og:url`、`og:image` 都指向正确 HTTPS 公网地址，并验证图片能解码；最后从小程序「案例 → 分享 → 企业微信」分别验证页面及卡片封面。首页或健康接口返回 200 不能替代分享验收，企业微信已缓存的卡片还需单独确认。
+
 ### 2. 发布不可变镜像
 
 在 GitHub Actions 手动运行 `Publish versioned images`，输入发布版本号。流程会先拒绝仓库中已经存在的同名版本，再运行后端测试和前端构建，分别构建 API、Web、Sandbox Provisioner 与 HyCanvas 候选镜像，并对 API 候选镜像执行 Patchright Mock 浏览器 E2E。四类候选镜像全部成功后才统一提升为版本号与 `sha-<Git SHA>` 正式标签，避免后续构建失败留下部分发布；流程不生成 `latest`。完成后下载 `image-digests-<版本号>` 构建产物并归档，其中记录的是正式标签从仓库解析出的最终 digest，作为部署与审计依据。

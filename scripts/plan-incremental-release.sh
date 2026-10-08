@@ -66,7 +66,7 @@ for path in "${changed_paths[@]}"; do
       ;;
     docker/incremental/*)
       ;;
-    docker/*|docker-compose*.yml|.github/workflows/*|scripts/deploy-prod-server.sh|scripts/push-and-deploy.sh)
+    docker/*|docker-compose*.yml|.github/workflows/*|scripts/nginx/*|scripts/deploy-prod-server.sh|scripts/push-and-deploy.sh)
       blocked+=("$path")
       ;;
     backend/package/*|backend/server/*)

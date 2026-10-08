@@ -14,6 +14,8 @@
 
 `backend/uv.lock`、`backend/package/uv.lock` 或 Sandbox `requirements.txt` 变化不属于普通源码发布。它们必须先触发对应的基础镜像升级，否则启动前的摘要校验会拒绝运行，避免“代码已更新但容器依赖仍是旧版本”。
 
+Web 同时只读挂载仓库中的 `docker/nginx/nginx.conf` 和 `default.conf`。代理配置更新后必须按源码部署流程重建 Web 容器；只切换 `web-dist` 不会让 Nginx 自动加载新配置。宿主机 TLS 入口需要单独执行 `nginx -t` 和配置重载。案例分享的根路径、`/boyun` 前缀、转发头和公网图片验收要求见[生产部署指南](./deployment.md)，分享链路验收是现有服务健康检查之后的必要发布检查。
+
 ## 基础镜像一次性准备
 
 建议由能访问镜像仓库的构建环境构建、扫描并推送带固定版本号或 digest 的镜像。镜像内只有解释器、系统包、第三方依赖和构建工具，不包含 `server`、`package/yuxi`、Web 或 HyCanvas 业务源码。
