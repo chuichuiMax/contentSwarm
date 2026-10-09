@@ -54,6 +54,10 @@ class FakeStorage:
             raise StorageError("missing")
         return data
 
+    async def astat_file(self, bucket_name, object_name):
+        data = self.objects.get((bucket_name, object_name))
+        return len(data) if data is not None else None
+
 
 class FakeCoverRepository:
     def __init__(self, asset):
@@ -106,6 +110,7 @@ async def test_process_material_upload_moves_redis_bytes_to_storage(monkeypatch)
     original = _webp()
     asset = SimpleNamespace(
         id="cca_queued",
+        sha256="queued-content-hash",
         deleted_at=None,
         bucket_name="image",
         object_name="material-library/u1/images/cca_queued/image.webp",
@@ -135,6 +140,9 @@ async def test_process_material_upload_moves_redis_bytes_to_storage(monkeypatch)
     monkeypatch.setattr(material_upload_queue, "pg_manager", FakeManager())
     monkeypatch.setattr(material_upload_queue, "get_minio_client", lambda: storage)
     monkeypatch.setattr(material_upload_queue, "ContentCoverRepository", lambda _db: repository)
+    from yuxi.services import material_share_images
+
+    monkeypatch.setattr(material_share_images, "get_minio_client", lambda: storage)
 
     await stage_material_bytes(asset.id, original)
     await process_material_upload({}, asset.id)
@@ -143,6 +151,8 @@ async def test_process_material_upload_moves_redis_bytes_to_storage(monkeypatch)
     assert storage.uploaded[1][1] == material_thumb_object_name(asset.object_name)
     assert storage.uploaded[1][3] == "image/webp"
     assert storage.uploaded[1][2][8:12] == b"WEBP"
+    assert storage.uploaded[2][3] == "image/webp"
+    assert storage.uploaded[3][3] == "image/jpeg"
     assert asset.metadata_json["ingest_status"] == INGEST_COMPLETED
     assert await material_upload_queue.read_staged_material_thumb(asset.id) is None
 

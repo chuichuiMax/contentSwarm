@@ -7,6 +7,9 @@
       <section class="case-details">
         <h1>{{ share.gallery_name }}</h1>
         <p>{{ projectDetails }}</p>
+        <a v-if="share.sharer_phone" class="share-phone" :href="`tel:${share.sharer_phone}`">
+          电话：{{ share.sharer_phone }} {{ share.sharer_name }}
+        </a>
       </section>
       <img
         v-for="image in remainingImages"
@@ -56,13 +59,14 @@ onMounted(async () => {
 })
 </script>
 
-<style scoped>
+<style scoped lang="less">
 .case-share-page { min-height: 100vh; background: #f5f4f1; color: #27231f; }
 .case-share { max-width: 760px; margin: 0 auto; padding-bottom: 24px; }
 .case-image { display: block; width: 100%; height: auto; background: #e7e3dd; }
 .case-details { padding: 18px 20px 20px; background: #fff; }
 .case-details h1 { margin: 0; font-size: 21px; line-height: 1.35; }
 .case-details p { margin: 8px 0 0; color: #766f67; font-size: 15px; line-height: 1.5; }
+.share-phone { display: block; margin-top: 8px; color: var(--gray-10000); text-decoration: none; overflow-wrap: anywhere; }
 .state { margin: 0; padding: 88px 20px; color: #766f67; text-align: center; }
 .error { color: #b54b40; }
 @media (min-width: 761px) { .case-share { margin-top: 24px; overflow: hidden; border-radius: 10px; box-shadow: 0 4px 22px rgba(49, 37, 26, .08); } }

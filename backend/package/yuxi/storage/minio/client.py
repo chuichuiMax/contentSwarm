@@ -15,6 +15,7 @@ from urllib3 import BaseHTTPResponse
 from yuxi.utils import logger
 
 from minio import Minio
+from minio.commonconfig import CopySource
 from minio.error import S3Error
 
 
@@ -148,6 +149,22 @@ class MinIOClient:
             self.upload_file, bucket_name=bucket_name, object_name=object_name, data=data, content_type=content_type
         )
         return result
+
+    async def acopy_file(
+        self, bucket_name: str, source_object_name: str, object_name: str,
+        *, source_bucket_name: str | None = None, content_type: str | None = None,
+    ) -> UploadResult:
+        """Create an independent object without downloading it through the API."""
+        try:
+            await asyncio.to_thread(
+                self.client.copy_object, bucket_name, object_name,
+                CopySource(source_bucket_name or bucket_name, source_object_name)
+            )
+        except S3Error as exc:
+            raise StorageError(f"复制文件失败: {exc}") from exc
+        public_base = os.getenv("MINIO_PUBLIC_BASE_URL", "").strip().rstrip("/")
+        public_base = public_base or f"http://{self.public_endpoint}"
+        return UploadResult(f"{public_base}/{bucket_name}/{object_name}", bucket_name, object_name)
 
     def upload_file_from_path(self, bucket_name: str, object_name: str, file_path: str) -> UploadResult:
         """从文件路径上传文件"""

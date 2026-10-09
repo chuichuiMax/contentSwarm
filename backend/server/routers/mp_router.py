@@ -330,6 +330,7 @@ async def mp_create_material_share(
         ctx.user,
         payload,
         public_base_url=request_public_base_url(request),
+        sharer_employee=ctx.employee,
     )
 
 

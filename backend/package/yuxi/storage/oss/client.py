@@ -76,6 +76,21 @@ class RoutedStorageClient:
     ) -> UploadResult:
         return await self._backend(bucket_name).aupload_file(bucket_name, object_name, data, content_type)
 
+    async def acopy_file(
+        self, bucket_name: str, source_object_name: str, object_name: str,
+        *, source_bucket_name: str | None = None, content_type: str | None = None,
+    ) -> UploadResult:
+        source_bucket_name = source_bucket_name or bucket_name
+        destination = self._backend(bucket_name)
+        source = self._backend(source_bucket_name)
+        if source is not destination:
+            data = await source.adownload_file(source_bucket_name, source_object_name)
+            return await destination.aupload_file(bucket_name, object_name, data, content_type)
+        return await destination.acopy_file(
+            bucket_name, source_object_name, object_name,
+            source_bucket_name=source_bucket_name, content_type=content_type,
+        )
+
     def upload_file_from_path(self, bucket_name: str, object_name: str, file_path: str) -> UploadResult:
         return self._backend(bucket_name).upload_file_from_path(bucket_name, object_name, file_path)
 
@@ -279,6 +294,25 @@ class OssStorageClient:
         content_type: str | None = None,
     ) -> UploadResult:
         return await asyncio.to_thread(self.upload_file, bucket_name, object_name, data, content_type)
+
+    async def acopy_file(
+        self, bucket_name: str, source_object_name: str, object_name: str,
+        *, source_bucket_name: str | None = None, content_type: str | None = None,
+    ) -> UploadResult:
+        key = self._object_key(bucket_name, object_name)
+        try:
+            await asyncio.to_thread(
+                self.client.copy_object,
+                oss.CopyObjectRequest(
+                    bucket=self.bucket,
+                    key=key,
+                    source_bucket=self.bucket,
+                    source_key=self._object_key(source_bucket_name or bucket_name, source_object_name),
+                ),
+            )
+        except Exception as exc:
+            raise StorageError(f"复制文件失败: {exc}") from exc
+        return UploadResult(self._public_url(key), bucket_name, object_name)
 
     def upload_file_from_path(self, bucket_name: str, object_name: str, file_path: str) -> UploadResult:
         try:

@@ -183,6 +183,7 @@ async def purge(db, *, owner_uids: list[str], apply: bool = False) -> dict:
         # originals too. Independent share snapshots are separate stored objects.
         await storage.adelete_file(asset.bucket_name, asset.object_name)
         await storage.adelete_file(asset.bucket_name, material_thumb_object_name(asset.object_name))
+        await storage.adelete_objects_by_prefix(asset.bucket_name, f"{asset.object_name}.share-v1.")
         await delete_material_display_cache(asset.id)
         item.deleted_at = asset.deleted_at = utc_now_naive()
         for ref in refs:

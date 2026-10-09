@@ -1223,6 +1223,8 @@ class ContentMaterialShare(Base):
     building_name = Column(String(80), nullable=True)
     area = Column(String(32), nullable=True)
     design_style = Column(String(32), nullable=True)
+    sharer_name = Column(String(80), nullable=True)
+    sharer_phone = Column(String(64), nullable=True)
     created_at = Column(DateTime, default=utc_now_naive, index=True)
 
 

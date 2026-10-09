@@ -29,6 +29,7 @@ from yuxi.image_design.save_targets import (
     resolve_writable_save_target,
 )
 from yuxi.image_design.schemas import ImageDesignSaveTarget
+from yuxi.services.employee_service import resolve_employee_for_user
 from yuxi.services.material_library_categories import (
     DEFAULT_IMAGE_CATEGORY_IDS,
     RETIRED_PRIVATE_IMAGE_CATEGORY_IDS,
@@ -51,11 +52,20 @@ from yuxi.services.material_upload_queue import (
     stage_material_thumb,
 )
 from yuxi.services.material_watermark import watermark_upload_bytes
+from yuxi.services.material_share_images import (
+    SHARE_CARD_COVER_SIZE,
+    ensure_material_share_images,
+    make_share_card_cover as _make_share_card_cover,
+    make_share_display_webp as _make_share_display_webp,
+    read_share_image_cache,
+    write_share_image_cache,
+)
 from yuxi.storage.minio import StorageError, get_minio_client
 from yuxi.storage.postgres.models_business import OperationLog, User
 from yuxi.storage.postgres.models_content import (
     ContentCoverAsset,
     ContentCoverPosterTemplate,
+    ContentEmployee,
     ContentMaterialCategory,
     ContentMaterialLibraryItem,
     ContentMaterialShare,
@@ -77,10 +87,6 @@ MAX_MATERIAL_BYTES = 100 * 1024 * 1024
 MAX_MATERIAL_DIMENSION = 8192
 MAX_MATERIAL_PIXELS = 40_000_000
 MATERIAL_THUMBNAIL_SIZE = (480, 480)
-SHARE_CARD_COVER_SIZE = (500, 400)
-SHARE_CARD_COVER_MAX_BYTES = 128 * 1024
-SHARE_DISPLAY_WEBP_MAX_WIDTH = 1440
-SHARE_DISPLAY_WEBP_QUALITY = 80
 DECORATION_GALLERY_INDUSTRY_SLUG = "decoration"
 DECORATION_GALLERY_DESIGN_STYLES = frozenset(
     {
@@ -462,37 +468,6 @@ def _make_image_thumbnail(data: bytes) -> bytes:
         image.thumbnail(MATERIAL_THUMBNAIL_SIZE, Image.Resampling.LANCZOS)
         output = io.BytesIO()
         image.save(output, format="JPEG", quality=78, optimize=True)
-        return output.getvalue()
-
-
-def _make_share_card_cover(data: bytes) -> bytes:
-    with Image.open(io.BytesIO(data)) as source:
-        image = ImageOps.exif_transpose(source).convert("RGB")
-        image = ImageOps.fit(image, SHARE_CARD_COVER_SIZE, Image.Resampling.LANCZOS)
-        candidate = b""
-        for quality in (82, 75, 68, 60, 50):
-            output = io.BytesIO()
-            image.save(output, format="JPEG", quality=quality, optimize=True)
-            candidate = output.getvalue()
-            if len(candidate) <= SHARE_CARD_COVER_MAX_BYTES:
-                return candidate
-        return candidate
-
-
-def _make_share_display_webp(data: bytes) -> bytes:
-    with Image.open(io.BytesIO(data)) as source:
-        image = ImageOps.exif_transpose(source)
-        if image.width > SHARE_DISPLAY_WEBP_MAX_WIDTH:
-            height = round(image.height * SHARE_DISPLAY_WEBP_MAX_WIDTH / image.width)
-            image = image.resize((SHARE_DISPLAY_WEBP_MAX_WIDTH, height), Image.Resampling.LANCZOS)
-        has_alpha = image.mode in {"RGBA", "LA"} or (image.mode == "P" and "transparency" in image.info)
-        output = io.BytesIO()
-        image.convert("RGBA" if has_alpha else "RGB").save(
-            output,
-            format="WEBP",
-            quality=SHARE_DISPLAY_WEBP_QUALITY,
-            method=6,
-        )
         return output.getvalue()
 
 
@@ -897,6 +872,7 @@ async def create_material_share(
     public_base_url: str | None = None,
     actor_user: User | None = None,
     target_private: bool = False,
+    sharer_employee: ContentEmployee | None = None,
 ) -> dict[str, Any]:
     if await material_access_mode(db, actor_user or user) == "rough_upload":
         raise _error(403, "MATERIAL_PERMISSION_DENIED", "当前岗位只能上传企业共享毛坯房图库")
@@ -925,6 +901,8 @@ async def create_material_share(
         if not (category.area or "").strip():
             raise _error(422, "MATERIAL_AREA_REQUIRED", "请输入面积")
 
+    if sharer_employee is None:
+        sharer_employee = await resolve_employee_for_user(db, actor_user or user)
     share = ContentMaterialShare(
         id=f"mls_{uuid.uuid4().hex}",
         token=uuid.uuid4().hex,
@@ -934,32 +912,44 @@ async def create_material_share(
         building_name=category.building_name,
         area=category.area,
         design_style=category.design_style,
+        sharer_name=sharer_employee.name if sharer_employee else None,
+        sharer_phone=sharer_employee.login_account if sharer_employee else None,
     )
     snapshots: list[ContentMaterialShareItem] = []
     uploaded_objects: list[tuple[str, str]] = []
     storage = get_minio_client()
-    try:
-        for display_order, (_, asset, _) in enumerate(ordered_rows, start=1):
-            data = await read_material_bytes(asset)
+    semaphore = asyncio.Semaphore(4)
+
+    async def copy_snapshot(display_order: int, asset: ContentCoverAsset):
+        async with semaphore:
+            pending_data = await read_material_bytes(asset) if ingest_status_of(asset) == INGEST_PENDING else None
+            display_source, cover_source = await ensure_material_share_images(asset, pending_data)
             suffix = "webp" if (asset.content_type or "").endswith("webp") else "png"
             object_name = f"material-library-shares/{owner_uid}/{share.id}/{display_order}.{suffix}"
-            uploaded = await storage.aupload_file(
-                bucket_name=MATERIAL_LIBRARY_BUCKET,
-                object_name=object_name,
-                data=data,
-                content_type=asset.content_type,
-            )
+            if pending_data is not None:
+                uploaded = await storage.aupload_file(
+                    MATERIAL_LIBRARY_BUCKET, object_name, pending_data, content_type=asset.content_type
+                )
+            else:
+                uploaded = await storage.acopy_file(
+                    MATERIAL_LIBRARY_BUCKET, asset.object_name, object_name,
+                    source_bucket_name=asset.bucket_name, content_type=asset.content_type,
+                )
             uploaded_objects.append((uploaded.bucket_name, uploaded.object_name))
-            display_object_name = f"{object_name}.display.webp"
-            display_data = await asyncio.to_thread(_make_share_display_webp, data)
-            display_uploaded = await storage.aupload_file(
-                bucket_name=MATERIAL_LIBRARY_BUCKET,
-                object_name=display_object_name,
-                data=display_data,
-                content_type="image/webp",
+            display_uploaded = await storage.acopy_file(
+                MATERIAL_LIBRARY_BUCKET, display_source, f"{object_name}.display.webp",
+                source_bucket_name=asset.bucket_name, content_type="image/webp",
             )
             uploaded_objects.append((display_uploaded.bucket_name, display_uploaded.object_name))
-            snapshots.append(
+            card_data = None
+            if display_order == 1:
+                cover_uploaded = await storage.acopy_file(
+                    MATERIAL_LIBRARY_BUCKET, cover_source, f"{object_name}.card.jpg",
+                    source_bucket_name=asset.bucket_name, content_type="image/jpeg",
+                )
+                uploaded_objects.append((cover_uploaded.bucket_name, cover_uploaded.object_name))
+                card_data = await storage.adownload_file(cover_uploaded.bucket_name, cover_uploaded.object_name)
+            return (
                 ContentMaterialShareItem(
                     share_id=share.id,
                     display_order=display_order,
@@ -970,8 +960,20 @@ async def create_material_share(
                     image_height=asset.image_height,
                     bucket_name=uploaded.bucket_name,
                     object_name=uploaded.object_name,
-                )
+                ),
+                card_data,
             )
+
+    try:
+        # Wait for every copy before rollback/cleanup, including siblings of a failed copy.
+        results = await asyncio.gather(
+            *(copy_snapshot(order, row[1]) for order, row in enumerate(ordered_rows, start=1)),
+            return_exceptions=True,
+        )
+        for result in results:
+            if isinstance(result, BaseException):
+                raise result
+        snapshots = [result[0] for result in results]
         await repo.create_share(share, snapshots)
         _audit_material(db, user, actor_user, "material.share.create", share_id=share.id, category_id=category.id)
         await db.commit()
@@ -986,6 +988,7 @@ async def create_material_share(
             await storage.adelete_file(bucket_name, object_name)
         raise
 
+    await write_share_image_cache(share.token, "cover", results[0][1])
     return {
         "share": {
             "id": share.token,
@@ -1026,6 +1029,8 @@ def serialize_public_material_share(
             "building_name": share.building_name,
             "area": _normalize_area_value(share.area),
             "design_style": share.design_style,
+            "sharer_name": share.sharer_name,
+            "sharer_phone": share.sharer_phone,
             "cover_url": _share_image_path(share.token, 1) if ordered_items else None,
             "cover_webp_url": _share_webp_image_path(share.token, 1) if ordered_items else None,
             "card_cover_url": _share_card_cover_path(share.token) if ordered_items else None,
@@ -1062,16 +1067,27 @@ def render_public_material_share_page(
     building_name = html.escape(share.building_name or "")
     area = html.escape(_display_area_value(share.area))
     design_style = html.escape(share.design_style or "")
+    sharer_name = html.escape(share.sharer_name or "")
+    sharer_phone = html.escape(share.sharer_phone or "", quote=True)
+    contact = (
+        f'<a class="share-phone" href="tel:{sharer_phone}">电话：{sharer_phone} {sharer_name}</a>'
+        if sharer_phone
+        else ""
+    )
+    style_class = "project-style" if contact else "project-style-wide"
     description = html.escape(_share_description(share.building_name, share.area, share.design_style), quote=True)
-    details = ""
+    project_fields = []
     if building_name and area and design_style:
-        details = (
-            '<section class="project-info-card">'
-            f"<span>楼盘：{building_name}</span>"
-            f"<span>面积：{area}</span>"
-            f"<span>风格：{design_style}</span>"
-            "</section>"
+        project_fields.extend(
+            [
+                f"<span>楼盘：{building_name}</span>",
+                f"<span>面积：{area}</span>",
+                f'<span class="{style_class}">风格：{design_style}</span>',
+            ]
         )
+    if contact:
+        project_fields.append(contact)
+    details = f'<section class="project-info-card">{"".join(project_fields)}</section>' if project_fields else ""
     hero = (
         f'<section class="share-hero"><img src="{html.escape(first_image, quote=True)}" alt="{title} 首图"></section>'
         if items
@@ -1118,11 +1134,13 @@ def render_public_material_share_page(
             ".share-hero img{display:block;width:100%;height:100%;margin:0;object-fit:cover}",
             (
                 ".project-info-card{position:relative;z-index:1;display:grid;"
-                "grid-template-columns:1fr 1fr;gap:16px 24px;margin:-76px 28px 34px;"
+                "grid-template-columns:repeat(2,minmax(0,1fr));gap:16px 24px;margin:-76px 28px 34px;"
                 "padding:38px 30px 28px;border-radius:16px;background:#fff;"
                 "box-shadow:0 5px 12px rgb(0 0 0 / 22%);font-size:18px;line-height:1.55}"
             ),
-            ".project-info-card span:last-child{grid-column:1 / -1}",
+            ".project-style-wide{grid-column:1 / -1}",
+            ".share-phone{color:#000;text-decoration:none;overflow-wrap:anywhere}",
+            ".share-phone:only-child{grid-column:1 / -1}",
             ".case-section{padding:0 10px}",
             "h2{display:flex;align-items:center;gap:16px;margin:0 18px 20px;font-size:22px;line-height:1.4}",
             "h2::before{width:16px;height:35px;background:#ff1717;content:''}",
@@ -1161,27 +1179,51 @@ async def get_public_material_share_display_webp(db: AsyncSession, token: str, d
     if snapshot is None:
         raise _error(404, "MATERIAL_SHARE_IMAGE_NOT_FOUND", "分享图片不存在")
 
+    variant = f"display:{display_order}"
+    cached = await read_share_image_cache(token, variant)
+    if cached is not None:
+        return cached
     storage = get_minio_client()
     display_object_name = f"{snapshot.object_name}.display.webp"
     try:
         if await storage.astat_file(snapshot.bucket_name, display_object_name) is not None:
-            return await storage.adownload_file(snapshot.bucket_name, display_object_name)
-        source_data = await storage.adownload_file(snapshot.bucket_name, snapshot.object_name)
-        display_data = await asyncio.to_thread(_make_share_display_webp, source_data)
-        await storage.aupload_file(
-            bucket_name=snapshot.bucket_name,
-            object_name=display_object_name,
-            data=display_data,
-            content_type="image/webp",
-        )
+            display_data = await storage.adownload_file(snapshot.bucket_name, display_object_name)
+        else:
+            source_data = await storage.adownload_file(snapshot.bucket_name, snapshot.object_name)
+            display_data = await asyncio.to_thread(_make_share_display_webp, source_data)
+            await storage.aupload_file(
+                bucket_name=snapshot.bucket_name,
+                object_name=display_object_name,
+                data=display_data,
+                content_type="image/webp",
+            )
+        await write_share_image_cache(token, variant, display_data)
         return display_data
     except StorageError as exc:
         raise _error(500, "MATERIAL_SHARE_STORAGE_FAILED", "分享图片读取失败") from exc
 
 
 async def get_public_material_share_card_cover(db: AsyncSession, token: str) -> bytes:
-    data, _, _ = await get_public_material_share_image(db, token, 1)
-    return await asyncio.to_thread(_make_share_card_cover, data)
+    _, items = await get_public_material_share(db, token)
+    snapshot = next((item for item in items if item.display_order == 1), None)
+    if snapshot is None:
+        raise _error(404, "MATERIAL_SHARE_IMAGE_NOT_FOUND", "分享图片不存在")
+    cached = await read_share_image_cache(token, "cover")
+    if cached is not None:
+        return cached
+    storage = get_minio_client()
+    object_name = f"{snapshot.object_name}.card.jpg"
+    try:
+        if await storage.astat_file(snapshot.bucket_name, object_name) is not None:
+            data = await storage.adownload_file(snapshot.bucket_name, object_name)
+        else:
+            original = await storage.adownload_file(snapshot.bucket_name, snapshot.object_name)
+            data = await asyncio.to_thread(_make_share_card_cover, original)
+            await storage.aupload_file(snapshot.bucket_name, object_name, data, content_type="image/jpeg")
+        await write_share_image_cache(token, "cover", data)
+        return data
+    except StorageError as exc:
+        raise _error(500, "MATERIAL_SHARE_STORAGE_FAILED", "分享图片读取失败") from exc
 
 
 async def list_material_items(
@@ -2106,6 +2148,7 @@ async def delete_material_item(
     storage = get_minio_client()
     try:
         await storage.adelete_file(asset.bucket_name, asset.object_name)
+        await storage.adelete_objects_by_prefix(asset.bucket_name, f"{asset.object_name}.share-v1.")
     except StorageError as exc:
         if ingest_status_of(asset) != INGEST_PENDING:
             raise _error(500, "MATERIAL_STORAGE_FAILED", "素材文件删除失败") from exc

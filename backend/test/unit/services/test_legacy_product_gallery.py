@@ -121,7 +121,7 @@ async def test_pc_and_mini_omit_old_product_but_keep_reused_ai_gallery(product_d
 
 @pytest.fixture
 def purge_storage(monkeypatch):
-    storage = SimpleNamespace(adelete_file=AsyncMock())
+    storage = SimpleNamespace(adelete_file=AsyncMock(), adelete_objects_by_prefix=AsyncMock())
     cache = AsyncMock()
     monkeypatch.setattr("scripts.purge_legacy_product_gallery.get_minio_client", lambda: storage)
     monkeypatch.setattr("scripts.purge_legacy_product_gallery.delete_material_display_cache", cache)

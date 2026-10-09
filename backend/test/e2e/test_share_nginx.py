@@ -33,7 +33,8 @@ from server.utils.public_url import request_public_base_url
 from yuxi.services.material_library_service import render_public_material_share_page
 
 share = SimpleNamespace(
-    token='test-token', title='Share test', building_name='Building', area='120', design_style='Style')
+    token='test-token', title='Share test', building_name='Building', area='120', design_style='Style',
+    sharer_name='Share employee', sharer_phone='19900000001')
 items = [SimpleNamespace(display_order=i) for i in (1, 2)]
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -98,7 +99,17 @@ def nginx_origins():
     client = httpx.Client(
         transport=httpx.HTTPTransport(uds="/var/run/docker.sock"), base_url="http://docker", timeout=60
     )
-    api_image = os.getenv("SHARE_NGINX_API_IMAGE") or client.get("/containers/api-dev/json").json()["Image"]
+    api_image = os.getenv("SHARE_NGINX_API_IMAGE")
+    source_mounts = []
+    # Development uses the same mounted source as api-dev; release tests use the supplied image.
+    if not api_image:
+        api_config = client.get("/containers/api-dev/json").json()
+        api_image = api_config["Image"]
+        source_mounts = [
+            f"{mount['Source']}:{mount['Destination']}:ro"
+            for mount in api_config["Mounts"]
+            if mount["Destination"] in {"/app/package", "/app/server"}
+        ]
     response = client.post("/networks/create", json={"Name": f"share-proxy-test-{uuid.uuid4().hex[:10]}"})
     response.raise_for_status()
     network_id = response.json()["Id"]
@@ -110,7 +121,7 @@ def nginx_origins():
                 "Image": api_image,
                 "Cmd": ["python", "/tmp/share_upstream.py"],
                 "Env": ["YUXI_SKIP_APP_INIT=1", "PYTHONPATH=/app:/app/package"],
-                "HostConfig": {"NetworkMode": network_id},
+                "HostConfig": {"NetworkMode": network_id, "Binds": source_mounts},
                 "NetworkingConfig": {"EndpointsConfig": {network_id: {"Aliases": ["api", "minio", "hycanvas-app"]}}},
             },
         )
@@ -247,6 +258,8 @@ def test_production_share_page_and_all_images(nginx_origins, path, headers, publ
     with httpx.Client(base_url=nginx_origins["http"], trust_env=False, headers=headers) as client:
         response = client.get(path)
         assert response.status_code == 200, response.text
+        assert 'href="tel:19900000001">电话：19900000001 Share employee</a>' in response.text
+        assert ".share-phone{color:#000;" in response.text
         tags = ShareTags()
         tags.feed(response.text)
         assert len(tags.images) == 3, response.text
@@ -275,6 +288,7 @@ def test_tls_host_template_preserves_prefix_and_overwrites_client_forwarding(ngi
     with httpx.Client(base_url=nginx_origins["https"], verify=False, trust_env=False, headers=headers) as client:
         response = client.get(f"{prefix}/share/case/test-token")
         assert response.status_code == 200, response.text
+        assert 'href="tel:19900000001"' in response.text
         tags = ShareTags()
         tags.feed(response.text)
         base = f"https://share.example.test{prefix}"
