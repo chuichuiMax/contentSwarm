@@ -136,6 +136,20 @@ def test_normalize_image_returns_verified_webp():
     assert data[8:12] == b"WEBP"
 
 
+def test_normalize_image_shrinks_photos_over_the_storage_limit(monkeypatch):
+    monkeypatch.setattr(material_library_service, "MAX_MATERIAL_DIMENSION", 100)
+    monkeypatch.setattr(material_library_service, "MAX_MATERIAL_PIXELS", 8_000)
+    source = io.BytesIO()
+    Image.new("RGB", (200, 100), (20, 40, 60)).save(source, format="JPEG")
+
+    data, width, height, content_type = _normalize_image(source.getvalue())
+
+    assert max(width, height) <= 100
+    assert width * height <= 8_000
+    assert content_type == "image/webp"
+    assert data[8:12] == b"WEBP"
+
+
 def test_normalize_image_rejects_non_image():
     with pytest.raises(HTTPException) as exc_info:
         _normalize_image(b"not-an-image")

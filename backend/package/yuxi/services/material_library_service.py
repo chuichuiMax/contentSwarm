@@ -429,14 +429,22 @@ def _normalize_image(data: bytes) -> tuple[bytes, int, int, str]:
             detected = (source.format or "").upper()
             image = ImageOps.exif_transpose(source)
             image.load()
-            width, height = image.size
-            if (
-                width < 2
-                or height < 2
-                or max(width, height) > MAX_MATERIAL_DIMENSION
-                or width * height > MAX_MATERIAL_PIXELS
-            ):
+            source_width, source_height = image.size
+            if source_width < 2 or source_height < 2:
                 raise _error(400, "MATERIAL_DIMENSION_INVALID", "图片尺寸必须在 2–8192 像素且不超过 4000 万像素")
+            scale = 1.0
+            longest = max(source_width, source_height)
+            if longest > MAX_MATERIAL_DIMENSION:
+                scale = min(scale, MAX_MATERIAL_DIMENSION / longest)
+            pixels = source_width * source_height
+            if pixels > MAX_MATERIAL_PIXELS:
+                scale = min(scale, (MAX_MATERIAL_PIXELS / pixels) ** 0.5)
+            if scale < 1:
+                width = max(2, int(source_width * scale))
+                height = max(2, int(source_height * scale))
+                image = image.resize((width, height), Image.Resampling.LANCZOS)
+            else:
+                width, height = source_width, source_height
             if image.mode in {"RGBA", "LA"} or (image.mode == "P" and "transparency" in image.info):
                 image = image.convert("RGBA")
             else:
@@ -444,8 +452,10 @@ def _normalize_image(data: bytes) -> tuple[bytes, int, int, str]:
             output = io.BytesIO()
             image.save(output, format="WEBP", quality=80, method=4)
             logger.info(
-                "material image normalized format=%s size=%sx%s bytes_in=%s bytes_out=%s",
+                "material image normalized format=%s size=%sx%s stored=%sx%s bytes_in=%s bytes_out=%s",
                 detected or "unknown",
+                source_width,
+                source_height,
                 width,
                 height,
                 len(data),
