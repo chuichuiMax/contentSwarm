@@ -1,7 +1,7 @@
 import re
 from yuxi.utils import logger
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Request, status, UploadFile, File
+from fastapi import APIRouter, Body, Depends, Header, HTTPException, Request, status, UploadFile, File
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
@@ -14,6 +14,7 @@ from yuxi.repositories.user_repository import UserRepository
 from yuxi.repositories.department_repository import DepartmentRepository
 from server.utils.auth_middleware import (
     get_admin_user,
+    get_current_user,
     get_superadmin_user,
     get_db,
     get_required_user,
@@ -353,9 +354,18 @@ async def initialize_admin(admin_data: InitializeAdmin, db: AsyncSession = Depen
 # =============================================================================
 
 
-@auth.get("/me", response_model=UserResponse)
-async def read_users_me(current_user: User = Depends(get_required_user), db: AsyncSession = Depends(get_db)):
-    """获取当前登录用户的个人信息"""
+@auth.get("/me")
+async def read_users_me(authorization: str | None = Header(None), db: AsyncSession = Depends(get_db)):
+    """获取当前登录用户的个人信息。小程序令牌返回员工资料，PC 令牌返回平台用户。"""
+    if authorization and authorization.startswith("Bearer "):
+        token = authorization.split("Bearer ", 1)[1].strip()
+        payload = AuthUtils.decode_token(token) if token and not token.startswith("yxkey_") else None
+        if payload and payload.get("typ") == "mp":
+            from yuxi.services.mp_service import authenticate_mp_request, get_me
+
+            return await get_me(await authenticate_mp_request(db, authorization))
+
+    current_user = await get_required_user(await get_current_user(authorization, db))
     user_dict = current_user.to_dict()
 
     if current_user.department_id:
@@ -365,7 +375,7 @@ async def read_users_me(current_user: User = Depends(get_required_user), db: Asy
     permission_scoped, permissions = await permission_snapshot(db, current_user)
     user_dict["permissions"] = permissions
     user_dict["permission_scoped"] = permission_scoped
-    return user_dict
+    return UserResponse.model_validate(user_dict)
 
 
 # 路由：更新个人资料

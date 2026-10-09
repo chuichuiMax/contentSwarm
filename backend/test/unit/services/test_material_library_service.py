@@ -473,6 +473,9 @@ def test_public_material_share_page_uses_snapshot_order_and_renders_share_card_m
     assert '<meta property="og:image:type" content="image/jpeg">' in page
     assert '<meta property="og:image:width" content="500">' in page
     assert '<meta property="og:image:height" content="400">' in page
+    assert 'src="/boyun/api/material-library/shares/share-token/images/1.webp"' in page
+    assert 'src="/boyun/api/material-library/shares/share-token/images/2.webp"' in page
+    assert "https://api:5050" not in page
     assert page.index("/images/1.webp") < page.index("/images/2.webp")
 
 

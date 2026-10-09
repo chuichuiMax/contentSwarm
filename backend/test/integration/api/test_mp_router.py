@@ -151,6 +151,9 @@ async def test_mp_sms_login_me_schema_and_pc_token_isolation(test_client, admin_
         profile = await test_client.get("/api/mp/auth/profile", headers=mp_headers)
         assert profile.status_code == 200, profile.text
         assert profile.json()["employee"]["login_account"] == phone
+        pc_me = await test_client.get("/api/auth/me", headers=mp_headers)
+        assert pc_me.status_code == 200, pc_me.text
+        assert pc_me.json()["employee"]["login_account"] == phone
         assert pricing.json()["quotes"]["基础"] == "4-5万"
         assert pricing.json()["quote_choices"]["木制品"] == ["2万", "2.5万", "3万"]
 

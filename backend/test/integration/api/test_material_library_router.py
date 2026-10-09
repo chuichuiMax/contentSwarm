@@ -974,8 +974,8 @@ async def test_second_level_decoration_gallery_share_keeps_ordered_snapshots_and
     assert f'href="tel:{original_phone}">电话：{original_phone} 分享测试员工</a>' in public_page.text
     assert 'property="og:description" content="洋湖天序｜120㎡｜复古风潮"' in public_page.text
     assert f'property="og:url" content="{share["url"]}"' in public_page.text
-    assert f"{public_base}/api/material-library/shares/{share['token']}/images/1" in public_page.text
-    assert f"/api/material-library/shares/{share['token']}/images/1" in public_page.text
+    assert f"{public_prefix}/api/material-library/shares/{share['token']}/images/1" in public_page.text
+    assert "https://api:5050" not in public_page.text
     assert public_page.text.index("/images/1") < public_page.text.index("/images/2")
 
     canonical_page = await test_client.get(f"/share/case/{share['token']}", headers=public_headers)
@@ -988,7 +988,7 @@ async def test_second_level_decoration_gallery_share_keeps_ordered_snapshots_and
     assert f'property="og:image" content="{share["card_cover_url"]}"' in canonical_page.text
     image_urls = re.findall(r'<img[^>]+src="([^"]+)"', canonical_page.text)
     expected_images = [
-        f"{public_base}/api/material-library/shares/{share['token']}/images/{order}.webp" for order in (1, 2)
+        f"{public_prefix}/api/material-library/shares/{share['token']}/images/{order}.webp" for order in (1, 2)
     ]
     assert image_urls == [expected_images[0], *expected_images]
 

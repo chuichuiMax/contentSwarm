@@ -265,14 +265,19 @@ def test_production_share_page_and_all_images(nginx_origins, path, headers, publ
         assert len(tags.images) == 3, response.text
         assert tags.metadata["og:url"] == f"{public_base}/share/case/test-token"
         assert tags.metadata["og:image"] == f"{public_base}/api/material-library/shares/test-token/cover.jpg"
-        for url in tags.images + [tags.metadata["og:image"]]:
-            assert url.startswith(f"{public_base}/api/material-library/shares/test-token/"), url
-            image = client.get(urlsplit(url).path)
+        image_prefix = f"{urlsplit(public_base).path.rstrip('/')}/api/material-library/shares/test-token/"
+        for url in tags.images:
+            assert "://" not in url
+            assert url.startswith(image_prefix), url
+            image = client.get(url)
             assert image.status_code == 200, image.text
-            assert image.headers["content-type"] == ("image/jpeg" if url.endswith("cover.jpg") else "image/webp")
+            assert image.headers["content-type"] == "image/webp"
             with Image.open(io.BytesIO(image.content)) as decoded:
                 decoded.load()
-                assert decoded.format == ("JPEG" if url.endswith("cover.jpg") else "WEBP")
+                assert decoded.format == "WEBP"
+        cover = client.get(urlsplit(tags.metadata["og:image"]).path)
+        assert cover.status_code == 200, cover.text
+        assert cover.headers["content-type"] == "image/jpeg"
         creation_path = "/boyun/api/mp/share/cases" if path.startswith("/boyun/") else "/api/mp/share/cases"
         created = client.post(creation_path, json={"item_ids": ["image-1"]})
         assert created.status_code == 201
@@ -294,12 +299,16 @@ def test_tls_host_template_preserves_prefix_and_overwrites_client_forwarding(ngi
         base = f"https://share.example.test{prefix}"
         assert tags.metadata["og:url"] == f"{base}/share/case/test-token"
         assert len(tags.images) == 3
-        for url in tags.images + [tags.metadata["og:image"]]:
-            assert url.startswith(f"{base}/api/material-library/shares/test-token/"), url
-            image = client.get(urlsplit(url).path)
+        image_prefix = f"{prefix}/api/material-library/shares/test-token/"
+        for url in tags.images:
+            assert "://" not in url
+            assert url.startswith(image_prefix), url
+            image = client.get(url)
             assert image.status_code == 200, image.text
             with Image.open(io.BytesIO(image.content)) as decoded:
                 decoded.load()
+        cover = client.get(urlsplit(tags.metadata["og:image"]).path)
+        assert cover.status_code == 200, cover.text
         created = client.post(f"{prefix}/api/mp/share/cases", json={"item_ids": ["image-1"]})
         assert created.status_code == 201
         assert created.json() == {"page_url": f"{base}/share/case/test-token", "path": "/api/mp/share/cases"}

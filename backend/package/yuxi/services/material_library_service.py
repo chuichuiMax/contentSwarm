@@ -12,6 +12,7 @@ import uuid
 from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any, Literal
+from urllib.parse import urlsplit
 
 from fastapi import HTTPException, UploadFile
 from PIL import Image, ImageOps, UnidentifiedImageError
@@ -355,6 +356,12 @@ def _share_case_path(token: str) -> str:
 def _share_public_url(path: str, public_base_url: str | None = None) -> str:
     base_url = (public_base_url or os.getenv("MATERIAL_LIBRARY_SHARE_PUBLIC_BASE_URL", "")).strip().rstrip("/")
     return f"{base_url}{path}" if base_url else path
+
+
+def _share_browser_path(request_base_url: str, path: str) -> str:
+    """页面内图片只用路径，浏览器会沿用当前站点，不会带上代理改写后的内部域名。"""
+    prefix = urlsplit(request_base_url).path.rstrip("/")
+    return f"{prefix}{path}"
 
 
 def _share_description(building_name: str | None, area: str | None, design_style: str | None) -> str:
@@ -1068,7 +1075,11 @@ def render_public_material_share_page(
     ordered_items = sorted(items, key=lambda item: item.display_order)
     title = html.escape(share.title)
     first_item = ordered_items[0] if ordered_items else None
-    first_image = f"{base_url}{_share_webp_image_path(share.token, first_item.display_order)}" if first_item else ""
+    first_image = (
+        _share_browser_path(base_url, _share_webp_image_path(share.token, first_item.display_order))
+        if first_item
+        else ""
+    )
     card_cover = f"{base_url}{_share_card_cover_path(share.token)}" if first_item else ""
     share_url = f"{base_url}{_share_case_path(share.token)}"
     first_image_type = "image/jpeg" if first_item else ""
@@ -1105,7 +1116,7 @@ def render_public_material_share_page(
     )
     image_tags = []
     for item in ordered_items:
-        image_url = f"{base_url}{_share_webp_image_path(share.token, item.display_order)}"
+        image_url = _share_browser_path(base_url, _share_webp_image_path(share.token, item.display_order))
         image_tags.append(
             f'<img src="{html.escape(image_url, quote=True)}" alt="{title} 第 {item.display_order} 张" loading="lazy">'
         )
@@ -1129,7 +1140,7 @@ def render_public_material_share_page(
             f'<meta property="og:image:height" content="{first_image_height}">',
             f'<meta name="twitter:title" content="{title}">',
             f'<meta name="twitter:description" content="{description}">',
-            f'<meta name="twitter:image" content="{html.escape(first_image, quote=True)}">',
+            f'<meta name="twitter:image" content="{html.escape(card_cover, quote=True)}">',
             '<meta name="twitter:card" content="summary_large_image">',
             "<style>",
             "body{margin:0;background:#fff;color:#151616;font:16px/1.6 "
