@@ -743,6 +743,10 @@ async function uploadFiles() {
     }
   } catch (error) {
     message.error(error.message || '素材上传失败')
+    if (error.uploadedCount) {
+      page.value = 1
+      await loadItems()
+    }
   } finally {
     uploading.value = false
   }
