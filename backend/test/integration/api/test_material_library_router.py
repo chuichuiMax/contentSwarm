@@ -21,7 +21,6 @@ from yuxi.storage.postgres.models_content import (
     ContentCoverPosterTemplate,
     ContentEmployee,
     ContentMaterialCategory,
-    ContentMaterialFolderSetting,
     ContentMaterialLibraryItem,
     ContentMaterialShare,
     ContentMaterialShareItem,
@@ -457,7 +456,7 @@ async def test_image_gallery_crud_and_safe_item_reassignment(test_client, materi
         await test_client.delete(f"/api/material-library/items/{member_item['id']}", headers=material_users["member"])
 
 
-async def test_personal_presets_are_immutable_and_enterprise_deletion_does_not_restore(test_client, material_users):
+async def test_member_cannot_manage_presets_and_enterprise_deletion_does_not_restore(test_client, material_users):
     admin = material_users["owner"]
     member = material_users["member"]
     initial = await test_client.get("/api/material-library/my-materials/folders", headers=admin)
@@ -473,17 +472,11 @@ async def test_personal_presets_are_immutable_and_enterprise_deletion_does_not_r
     )
     original_name = reference["name"]
     engine = create_async_engine(os.environ["POSTGRES_URL"])
-    async with async_sessionmaker(engine, expire_on_commit=False)() as db:
-        assert await db.get(ContentMaterialFolderSetting, "rough") is None, "隔离测试库的固定入口已被修改"
     try:
         denied = await test_client.patch(
             "/api/material-library/my-materials/folders/rough", headers=member, json={"name": "越权改名"}
         )
         assert denied.status_code == 403, denied.text
-        fixed_rename = await test_client.patch(
-            "/api/material-library/my-materials/folders/rough", headers=admin, json={"name": "装修毛坯"}
-        )
-        assert fixed_rename.status_code == 409, fixed_rename.text
 
         enterprise_rename = await test_client.patch(
             f"/api/material-library/categories/{reference['id']}?material_type=image",
@@ -493,8 +486,10 @@ async def test_personal_presets_are_immutable_and_enterprise_deletion_does_not_r
         assert enterprise_rename.status_code == 200, enterprise_rename.text
         assert enterprise_rename.json()["category"]["image_design_role"] == "reference"
 
-        fixed_delete = await test_client.delete("/api/material-library/my-materials/folders/rough", headers=admin)
-        assert fixed_delete.status_code == 409, fixed_delete.text
+        fixed_delete = await test_client.request(
+            "DELETE", "/api/material-library/my-materials/folders/rough", headers=member, json={}
+        )
+        assert fixed_delete.status_code == 403, fixed_delete.text
         enterprise_delete = await test_client.request(
             "DELETE",
             f"/api/material-library/categories/{reference['id']}?material_type=image",
@@ -512,7 +507,6 @@ async def test_personal_presets_are_immutable_and_enterprise_deletion_does_not_r
             assert reference["id"] not in {item["id"] for item in galleries.json()["galleries"]}
 
         async with async_sessionmaker(engine, expire_on_commit=False)() as db:
-            setting = await db.get(ContentMaterialFolderSetting, "rough")
             category = await db.scalar(
                 select(ContentMaterialCategory).where(
                     ContentMaterialCategory.owner_uid == reference["owner_uid"],
@@ -520,14 +514,10 @@ async def test_personal_presets_are_immutable_and_enterprise_deletion_does_not_r
                     ContentMaterialCategory.id == reference["id"],
                 )
             )
-            assert setting is None
             assert category is not None and category.deleted_at is not None
             assert category.image_design_role == "reference"
     finally:
         async with async_sessionmaker(engine, expire_on_commit=False)() as db:
-            await db.execute(
-                delete(ContentMaterialFolderSetting).where(ContentMaterialFolderSetting.folder_key == "rough")
-            )
             category = await db.scalar(
                 select(ContentMaterialCategory).where(
                     ContentMaterialCategory.owner_uid == reference["owner_uid"],

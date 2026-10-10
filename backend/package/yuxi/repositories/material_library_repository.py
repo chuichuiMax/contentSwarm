@@ -86,6 +86,40 @@ class MaterialLibraryRepository:
         )
         return {owner_uid: int(count) for owner_uid, count in rows.all()}
 
+    @staticmethod
+    def enterprise_rough_filters(owner_uid: str | None = None):
+        filters = [
+            ContentMaterialCategory.visibility == "enterprise",
+            ContentMaterialCategory.material_type == "image",
+            ContentMaterialCategory.parent_id.is_(None),
+            or_(
+                ContentMaterialCategory.image_design_role == "rough",
+                ContentMaterialCategory.name.in_(ROUGH_CATEGORY_NAMES),
+            ),
+        ]
+        if owner_uid is not None:
+            filters.append(ContentMaterialLibraryItem.owner_uid == owner_uid)
+        return filters
+
+    async def count_enterprise_rough_images_by_owner(self, owner_uids: list[str]) -> dict[str, int]:
+        if not owner_uids:
+            return {}
+        rows = await self.db.execute(
+            select(ContentMaterialLibraryItem.owner_uid, func.count(ContentMaterialLibraryItem.id))
+            .join(ContentCoverAsset, ContentCoverAsset.id == ContentMaterialLibraryItem.asset_id)
+            .join(ContentMaterialCategory, self.category_join())
+            .where(
+                ContentMaterialLibraryItem.owner_uid.in_(owner_uids),
+                ContentMaterialLibraryItem.material_type == "image",
+                ContentMaterialLibraryItem.status == "enabled",
+                ContentMaterialLibraryItem.deleted_at.is_(None),
+                ContentCoverAsset.deleted_at.is_(None),
+                *self.enterprise_rough_filters(),
+            )
+            .group_by(ContentMaterialLibraryItem.owner_uid)
+        )
+        return {owner_uid: int(count) for owner_uid, count in rows.all()}
+
     async def get_remote_setting(self, *, for_update: bool = False) -> RemoteMaterialLibrarySetting | None:
         query = select(RemoteMaterialLibrarySetting).where(RemoteMaterialLibrarySetting.id == "global")
         if for_update:
@@ -497,6 +531,7 @@ class MaterialLibraryRepository:
         scope: str | None = None,
         category_owner_uid: str | None = None,
         private_rough_only: bool = False,
+        enterprise_rough_owner_uid: str | None = None,
         uploaded_from: datetime | None = None,
         uploaded_before: datetime | None = None,
     ) -> tuple[list[tuple[ContentMaterialLibraryItem, ContentCoverAsset, ContentMaterialCategory]], int]:
@@ -519,6 +554,8 @@ class MaterialLibraryRepository:
             )
         if private_rough_only:
             filters.extend(self.private_rough_filters(owner_uid))
+        if enterprise_rough_owner_uid is not None:
+            filters.extend(self.enterprise_rough_filters(enterprise_rough_owner_uid))
         if uploaded_from is not None:
             filters.append(ContentCoverAsset.created_at >= uploaded_from)
         if uploaded_before is not None:

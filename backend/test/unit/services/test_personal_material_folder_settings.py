@@ -29,7 +29,7 @@ class FolderSettingsDB:
 
 
 @pytest.mark.asyncio
-async def test_preset_folder_names_and_entities_cannot_be_modified_or_deleted():
+async def test_only_superadmin_can_modify_or_delete_global_personal_galleries():
     db = FolderSettingsDB()
     admin = SimpleNamespace(uid="admin-1", role="admin")
     regular = SimpleNamespace(uid="regular-1", role="user")
@@ -43,7 +43,7 @@ async def test_preset_folder_names_and_entities_cannot_be_modified_or_deleted():
     ):
         with pytest.raises(HTTPException) as immutable:
             await operation(db, admin, *args)
-        assert immutable.value.status_code == 409
+        assert immutable.value.status_code == 403
     assert db.rows == []
     assert db.commits == 0
 
@@ -69,6 +69,8 @@ async def test_missing_personal_folders_provision_four_actual_categories(monkeyp
             pass
 
     monkeypatch.setattr(personal_materials, "MaterialLibraryRepository", FakeRepo)
+    from unittest.mock import AsyncMock
+    monkeypatch.setattr(personal_materials, "load_personal_gallery_settings", AsyncMock(return_value={}))
     user = SimpleNamespace(uid="owner-1", department_id=None)
 
     folders = await personal_materials.folder_categories(FakeDB(), user)

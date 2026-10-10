@@ -165,6 +165,8 @@ def db(monkeypatch):
 
     for module in (save_targets, worker, material_library_service, personal_materials):
         monkeypatch.setattr(module, "MaterialLibraryRepository", MemoryRepository)
+    monkeypatch.setattr(save_targets, "load_personal_gallery_settings", AsyncMock(return_value={}))
+    monkeypatch.setattr(personal_materials, "load_personal_gallery_settings", AsyncMock(return_value={}))
     return session
 
 

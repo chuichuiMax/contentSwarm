@@ -79,6 +79,8 @@ async def test_personal_materials_use_only_entity_and_custom_galleries():
             "name": f["name"],
             "personal_folder": f["id"],
             "can_manage": False,
+            "can_edit": True,
+            "can_delete": True,
             "can_upload": f["can_upload"],
             "is_global_personal": False,
             "count": f["count"],
@@ -96,6 +98,10 @@ async def test_personal_materials_use_only_entity_and_custom_galleries():
                 context = await browser.new_context(viewport={"width": 1440, "height": 1000})
                 await context.add_init_script(f'localStorage.setItem("user_token", {json.dumps(admin_token)})')
                 page = await context.new_page()
+                await page.route("**/api/auth/me", lambda route: route.fulfill(json={
+                    "id": user_ids[0], "uid": uid, "username": uid, "role": "superadmin",
+                    "department_id": department_id, "permission_scoped": False, "permissions": [],
+                }))
                 await page.route(
                     "**/api/material-library/my-materials/folders",
                     lambda route: route.fulfill(json={"folders": fixed_folders}),
@@ -128,7 +134,7 @@ async def test_personal_materials_use_only_entity_and_custom_galleries():
                     lambda route: route.fulfill(json={"job": None}),
                 )
 
-                await page.goto("http://localhost:5173/materials/images")
+                await page.goto("http://localhost:5173/materials/images", wait_until="domcontentloaded", timeout=60_000)
                 await expect(page.get_by_role("heading", name="素材库")).to_be_visible(timeout=60_000)
                 await expect(page.get_by_role("heading", name="固定图库", exact=True)).to_have_count(0)
 
@@ -140,6 +146,32 @@ async def test_personal_materials_use_only_entity_and_custom_galleries():
                 await expect(generated_card).to_be_visible()
                 await expect(custom_card).to_be_visible()
 
+                async def rename_preset(route):
+                    assert route.request.method == "PATCH"
+                    payload = route.request.post_data_json
+                    assert payload["name"] == "施工照片"
+                    entity_galleries[1]["name"] = payload["name"]
+                    await route.fulfill(json={"category": entity_galleries[1]})
+
+                await page.route("**/api/material-library/categories/entity-rough?*", rename_preset)
+                for folder in fixed_folders:
+                    edit_button = page.get_by_role("button", name=f"编辑图库 {folder['name']}", exact=True)
+                    delete_button = page.get_by_role("button", name=f"删除图库 {folder['name']}", exact=True)
+                    await expect(edit_button).to_be_visible()
+                    await expect(delete_button).to_be_visible()
+                await page.get_by_role("button", name="编辑图库 毛坯房图库", exact=True).click()
+                edit_modal = page.locator(".ant-modal-content").filter(has_text="编辑图库")
+                await expect(edit_modal).to_contain_text("所有账号")
+                await expect(edit_modal).not_to_contain_text("可见范围")
+                await edit_modal.get_by_placeholder("例如：春季新品素材").fill("施工照片")
+                await edit_modal.get_by_role("button", name="保 存").click()
+                await expect(page.get_by_role("button", name="编辑图库 施工照片", exact=True)).to_be_visible()
+                await page.get_by_role("button", name="删除图库 施工照片", exact=True).click()
+                delete_modal = page.locator(".ant-modal-content").filter(has_text="删除图库“施工照片”")
+                await expect(delete_modal).to_contain_text("各账号的素材分别迁移")
+                await expect(delete_modal.locator(".ant-select")).to_be_visible()
+                await delete_modal.get_by_role("button", name="取 消").click()
+
                 await page.locator(".ant-radio-button-wrapper").filter(has_text="企业共享").click()
                 await expect(page.get_by_role("button", name="新建图库")).to_be_visible()
                 await expect(page.get_by_role("button", name="上传图片")).to_have_count(0)
@@ -147,10 +179,11 @@ async def test_personal_materials_use_only_entity_and_custom_galleries():
 
                 await generated_card.click()
                 await expect(page.get_by_role("button", name="新建图库")).to_have_count(0)
+                await expect(page.get_by_role("button", name="新建二级图库")).to_have_count(0)
                 await page.get_by_role("button", name="返回图库").click()
 
                 await custom_card.click()
-                await expect(page.get_by_role("button", name="新建二级图库")).to_have_count(0)
+                await expect(page.get_by_role("button", name="新建二级图库")).to_be_visible()
                 await page.get_by_role("button", name="上传图片").click()
                 upload_modal = page.locator(".ant-modal-content").filter(has_text="上传素材图片")
                 await expect(upload_modal).to_contain_text("客厅灵感")
@@ -159,7 +192,12 @@ async def test_personal_materials_use_only_entity_and_custom_galleries():
                 member_context = await browser.new_context(viewport={"width": 1440, "height": 1000})
                 await member_context.add_init_script(f'localStorage.setItem("user_token", {json.dumps(member_token)})')
                 member_page = await member_context.new_page()
+                await member_page.route("**/api/auth/me", lambda route: route.fulfill(json={
+                    "id": user_ids[1], "uid": member_uid, "username": member_uid, "role": "user",
+                    "department_id": department_id, "permission_scoped": False, "permissions": [],
+                }))
                 read_only_gallery = {**custom_gallery, "can_manage": False}
+                member_entities = [{**gallery, "can_edit": False, "can_delete": False} for gallery in entity_galleries]
                 await member_page.route(
                     "**/api/material-library/my-materials/folders",
                     lambda route: route.fulfill(json={"folders": fixed_folders}),
@@ -172,7 +210,7 @@ async def test_personal_materials_use_only_entity_and_custom_galleries():
                     "**/api/material-library/galleries*",
                     lambda route: route.fulfill(
                         json={
-                            "galleries": [*entity_galleries, read_only_gallery],
+                            "galleries": [*member_entities, read_only_gallery],
                             "industries": [{"slug": "decoration", "name": "装修与家居"}],
                         }
                     ),
@@ -180,7 +218,7 @@ async def test_personal_materials_use_only_entity_and_custom_galleries():
                 await member_page.route(
                     "**/api/material-library/categories?*",
                     lambda route: route.fulfill(
-                        json={"categories": [*entity_galleries, read_only_gallery], "can_create_shared": False}
+                        json={"categories": [*member_entities, read_only_gallery], "can_create_shared": False}
                     ),
                 )
                 await member_page.route(
@@ -198,6 +236,8 @@ async def test_personal_materials_use_only_entity_and_custom_galleries():
                 await expect(member_page.get_by_role("button", name="新建图库")).to_have_count(0)
                 await expect(member_page.get_by_role("button", name="编辑图库 客厅灵感")).to_have_count(0)
                 await expect(member_page.get_by_role("button", name="删除图库 客厅灵感")).to_have_count(0)
+                await expect(member_page.get_by_role("button", name="编辑图库 施工照片")).to_have_count(0)
+                await expect(member_page.get_by_role("button", name="删除图库 施工照片")).to_have_count(0)
                 await expect(member_gallery_card).to_be_visible()
                 await member_gallery_card.click()
                 await expect(member_page.get_by_role("button", name="上传图片")).to_be_visible()

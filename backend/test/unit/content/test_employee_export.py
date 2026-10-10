@@ -24,6 +24,7 @@ async def test_export_preserves_all_rows_display_values_and_text(monkeypatch):
                     "login_port": ["app", "pc"],
                     "role": "普通用户",
                     "rough_image_count": index,
+                    "enterprise_rough_image_count": index + 2,
                     "enabled": index != 0,
                 }
                 for index in range(25)
@@ -44,7 +45,8 @@ async def test_export_preserves_all_rows_display_values_and_text(monkeypatch):
         "年龄",
         "登录端口",
         "角色",
-        "毛坯图上传数",
+        "毛坯图上传数（我的素材）",
+        "毛坯图上传数（企业共享）",
         "状态",
     ]
     assert list(sheet.values)[1] == (
@@ -59,9 +61,10 @@ async def test_export_preserves_all_rows_display_values_and_text(monkeypatch):
         "PC&APP",
         "普通用户",
         0,
+        2,
         "禁用",
     )
     assert sheet["C2"].data_type == "s"
     assert sheet["B2"].data_type == sheet["F2"].data_type == "s"
     assert sheet["A26"].value == 25
-    assert sheet["L26"].value == "启用"
+    assert sheet["M26"].value == "启用"

@@ -14,8 +14,8 @@ const encodeQuery = (params = {}) => {
 
 export const materialLibraryApi = {
   listItems: (params) => apiGet(`/api/material-library/items${encodeQuery(params)}`),
-  listCategories: (materialType, employeeId = '') =>
-    apiGet(`/api/material-library/categories${encodeQuery({ material_type: materialType, employee_id: employeeId })}`),
+  listCategories: (materialType, employeeId = '', uploaderEmployeeId = '') =>
+    apiGet(`/api/material-library/categories${encodeQuery({ material_type: materialType, employee_id: employeeId, uploader_employee_id: uploaderEmployeeId })}`),
   createCategory: (payload, employeeId = '') =>
     apiPost(`/api/material-library/categories${encodeQuery({ employee_id: employeeId })}`, payload),
   updateCategory: (materialType, categoryId, payload, employeeId = '') =>

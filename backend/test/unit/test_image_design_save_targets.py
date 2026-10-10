@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+from unittest.mock import AsyncMock
 from fastapi import HTTPException
 from pydantic import ValidationError
 
@@ -113,6 +114,8 @@ def fake_repository(monkeypatch):
     FakeMaterialLibraryRepository.categories = []
     monkeypatch.setattr(save_targets, "MaterialLibraryRepository", FakeMaterialLibraryRepository)
     monkeypatch.setattr(personal_materials, "MaterialLibraryRepository", FakeMaterialLibraryRepository)
+    monkeypatch.setattr(personal_materials, "load_personal_gallery_settings", AsyncMock(return_value={}))
+    monkeypatch.setattr(save_targets, "load_personal_gallery_settings", AsyncMock(return_value={}))
 
 
 def test_root_target_normalizes_missing_gallery_id():

@@ -31,10 +31,12 @@ from yuxi.image_design.save_targets import (
 )
 from yuxi.image_design.schemas import ImageDesignSaveTarget
 from yuxi.services.employee_service import resolve_employee_for_user
+from yuxi.services.personal_gallery_settings import (
+    load_personal_gallery_settings, personal_gallery_fields, personal_gallery_is_active,
+)
 from yuxi.services.material_library_categories import (
     DEFAULT_IMAGE_CATEGORY_IDS,
     RETIRED_PRIVATE_IMAGE_CATEGORY_IDS,
-    PERSONAL_IMAGE_FOLDERS,
     personal_folder_key,
     list_material_categories,
     resolve_legacy_category,
@@ -493,15 +495,15 @@ def serialize_item(
     asset: ContentCoverAsset,
     category: ContentMaterialCategory,
     poster_template: ContentCoverPosterTemplate | None = None,
+    *, personal_settings: dict | None = None,
 ) -> dict[str, Any]:
+    fields = personal_gallery_fields(category, personal_settings or {})
     result = item.to_dict()
     result.update(
         {
             "category": category.id,
-            "category_name": PERSONAL_IMAGE_FOLDERS[personal_folder_key(category)][1]
-            if personal_folder_key(category)
-            else category.name,
-            "industry_slug": category.industry_slug,
+            "category_name": fields["name"],
+            "industry_slug": fields["industry_slug"],
             "visibility": category.visibility or "private",
             "file_name": asset.original_file_name,
             "content_type": asset.content_type,
@@ -878,7 +880,8 @@ async def import_material_images(
         except Exception:
             logger.exception("material upload enqueue failed: asset=%s", asset_id)
             raise _error(500, "MATERIAL_UPLOAD_QUEUE_FAILED", "素材已暂存，入库队列提交失败") from None
-        results.append(serialize_item(item, asset, resolved_category))
+        results.append(serialize_item(item, asset, resolved_category,
+            personal_settings=await load_personal_gallery_settings(db)))
     return {"items": results, "summary": {"total": len(results), "created": len(results), "queued": len(staged_ids)}}
 
 
@@ -1264,6 +1267,7 @@ async def list_material_items(
     exclude_task_id: str | None = None,
     include_case_for_designer: bool = False,
     personal_folder: Literal["rough"] | None = None,
+    enterprise_rough_owner_uid: str | None = None,
     date_from: date | None = None,
     date_to: date | None = None,
 ) -> dict[str, Any]:
@@ -1293,6 +1297,12 @@ async def list_material_items(
         category = None
         scope = "private"
         status = status or "enabled"
+    if enterprise_rough_owner_uid is not None:
+        if material_type != "image" or personal_folder is not None:
+            raise _error(422, "MATERIAL_EMPLOYEE_SCOPE_INVALID", "企业共享员工筛选仅支持毛坯图片")
+        category = None
+        scope = "enterprise"
+        status = "enabled"
     await ensure_material_categories(
         db,
         owner_uid=_owner_uid(user),
@@ -1378,6 +1388,7 @@ async def list_material_items(
         sort=sort,
         scope=scope,
         private_rough_only=personal_folder == "rough",
+        enterprise_rough_owner_uid=enterprise_rough_owner_uid,
         uploaded_from=uploaded_from,
         uploaded_before=uploaded_before,
     )
@@ -1393,9 +1404,12 @@ async def list_material_items(
     elif material_type == "image":
         used_image_ids = await repo.list_selected_image_item_ids(_owner_uid(user), exclude_task_id=exclude_task_id)
     await db.commit()
+    personal_settings = await load_personal_gallery_settings(db)
     items = []
     for item, asset, item_category in rows:
-        payload = serialize_item(item, asset, item_category, posters_by_asset.get(asset.id))
+        payload = serialize_item(
+            item, asset, item_category, posters_by_asset.get(asset.id), personal_settings=personal_settings
+        )
         payload["can_manage"] = _can_manage_item(user, item, item_category)
         payload["uploaded_by_name"] = uploader_names.get(item.owner_uid) or item.owner_uid
         if material_type == "image":
@@ -1509,7 +1523,8 @@ async def update_material_item(
             poster.status = "ready" if item.status == "enabled" and poster.product_box_json else "disabled"
     _audit_material(db, user, actor_user, "material.update", item_id=item.id, changes=changes)
     await db.commit()
-    return {"item": {**serialize_item(item, asset, item_category, poster), "can_manage": True}}
+    return {"item": {**serialize_item(item, asset, item_category, poster,
+        personal_settings=await load_personal_gallery_settings(db)), "can_manage": True}}
 
 
 async def get_material_categories(
@@ -1519,6 +1534,7 @@ async def get_material_categories(
     *,
     include_private_defaults: bool = True,
     personal_folder: Literal["rough"] | None = None,
+    enterprise_rough_only: bool = False,
 ) -> dict[str, Any]:
     if material_type not in {"image", "cover_template"}:
         raise _error(422, "MATERIAL_TYPE_INVALID", "素材类型不存在")
@@ -1530,6 +1546,8 @@ async def get_material_categories(
         from yuxi.services.personal_materials import folder_categories
 
         rough_categories = (await folder_categories(db, user))["rough"]
+        if not rough_categories:
+            raise _error(404, "MATERIAL_PERSONAL_GALLERY_DELETED", "该个人图库已删除")
         personal_rough_category_id = next(
             category.id
             for category in rough_categories
@@ -1542,11 +1560,14 @@ async def get_material_categories(
         material_type=material_type,
     )
     rough_upload_only = await material_access_mode(db, user) == "rough_upload"
+    personal_settings = await load_personal_gallery_settings(db)
     categories = [
         category
         for category in await repo.list_categories(_owner_uid(user), material_type)
+        if personal_gallery_is_active(category, personal_settings)
         if not rough_upload_only or _designer_may_see_category(category)
         if personal_folder != "rough" or _is_target_rough_category(category, _owner_uid(user))
+        if not enterprise_rough_only or is_enterprise_rough_root(category)
         if not is_storage_root(category)
         and (
             material_type != "image"
@@ -1569,7 +1590,7 @@ async def get_material_categories(
         effective_industry = (
             parents[category.parent_id].industry_slug
             if category.parent_id and category.parent_id in parents
-            else category.industry_slug
+            else personal_gallery_fields(category, personal_settings)["industry_slug"]
         )
         children = await repo.list_child_categories(_owner_uid(user), material_type, category.id)
         key = personal_folder_key(category)
@@ -1583,13 +1604,15 @@ async def get_material_categories(
             {
                 **category.to_dict(),
                 "personal_folder": personal_folder_key(category),
-                "name": PERSONAL_IMAGE_FOLDERS[personal_folder_key(category)][1]
-                if personal_folder_key(category)
-                else category.name,
+                **personal_gallery_fields(category, personal_settings),
                 "can_upload": can_contribute_to_category(user, category)
                 and personal_folder_key(category) not in {"generated", "works"}
                 and (not rough_upload_only or _designer_may_see_category(category)),
                 "can_manage": _can_manage_category(user, category),
+                "can_edit": user.role == "superadmin" if key else _can_manage_category(user, category),
+                "can_delete": user.role == "superadmin" if personal_folder_key(category) else (
+                    _can_manage_category(user, category) and (not category.is_system or
+                        category.image_design_role in {"reference", "rough", "generated"})),
                 "is_global_personal": category.is_global_personal,
                 "industry_slug": effective_industry,
                 "industry_name": industry_catalog.get(effective_industry, "未分类行业"),
@@ -1730,10 +1753,19 @@ async def update_material_category(
         material_type=material_type,
     )
     repo = MaterialLibraryRepository(db, include_shared=True)
-    category = await repo.get_category(_owner_uid(user), material_type, category_id, for_update=True)
+    category = await repo.get_category(_owner_uid(user), material_type, category_id)
     if category is None:
         raise _error(404, "MATERIAL_CATEGORY_NOT_FOUND", "图库或分类不存在")
     if target_private and not _is_target_rough_category(category, _owner_uid(user)):
+        raise _error(404, "MATERIAL_CATEGORY_NOT_FOUND", "图库或分类不存在")
+    if personal_folder_key(category):
+        from yuxi.services.personal_materials import update_personal_gallery
+        await update_personal_gallery(db, actor_user or user, personal_folder_key(category), payload)
+        await db.commit()
+        updated = await get_material_categories(db, user, material_type=material_type)
+        return {"category": next(row for row in updated["categories"] if row["id"] == category.id)}
+    category = await repo.get_category(_owner_uid(user), material_type, category_id, for_update=True)
+    if category is None:
         raise _error(404, "MATERIAL_CATEGORY_NOT_FOUND", "图库或分类不存在")
     if not (target_private or _can_manage_category(user, category)):
         message = "只有管理员可管理图片图库" if material_type == "image" else "只能管理自己的分类"
@@ -1867,10 +1899,18 @@ async def delete_material_category(
         material_type=material_type,
     )
     repo = MaterialLibraryRepository(db, include_shared=True)
-    category = await repo.get_category(_owner_uid(user), material_type, category_id, for_update=True)
+    category = await repo.get_category(_owner_uid(user), material_type, category_id)
     if category is None:
         raise _error(404, "MATERIAL_CATEGORY_NOT_FOUND", "图库或分类不存在")
     if target_private and not _is_target_rough_category(category, _owner_uid(user)):
+        raise _error(404, "MATERIAL_CATEGORY_NOT_FOUND", "图库或分类不存在")
+    if personal_folder_key(category):
+        from yuxi.services.personal_materials import delete_personal_gallery
+        result = await delete_personal_gallery(db, actor_user or user, user, personal_folder_key(category), payload)
+        await db.commit()
+        return {**result, "id": category.id}
+    category = await repo.get_category(_owner_uid(user), material_type, category_id, for_update=True)
+    if category is None:
         raise _error(404, "MATERIAL_CATEGORY_NOT_FOUND", "图库或分类不存在")
     if not (target_private or _can_manage_category(user, category)):
         message = "只有管理员可管理图片图库" if material_type == "image" else "只能管理自己的分类"
@@ -1908,7 +1948,10 @@ async def delete_material_category(
             uploader = await db.scalar(select(User).where(User.uid == owner_uid))
             if uploader is None:
                 raise _error(409, "MATERIAL_UPLOADER_NOT_FOUND", "图库内素材的上传账号不存在，请先核对归属")
-            uploads = (await folder_categories(db, uploader))["uploads"][0]
+            uploads = (await folder_categories(db, uploader))["uploads"]
+            if not uploads:
+                raise _error(409, "MATERIAL_PERSONAL_GALLERY_DELETED", "个人上传图库已删除，请指定其他迁移目标")
+            uploads = uploads[0]
             for item in contributed:
                 if item.owner_uid == owner_uid:
                     item.category = uploads.id
@@ -1952,7 +1995,9 @@ async def list_image_galleries(
     )
     repo = MaterialLibraryRepository(db, include_shared=True)
     rough_upload_only = await material_access_mode(db, user) == "rough_upload"
-    listed_categories = await repo.list_categories(_owner_uid(user), "image")
+    personal_settings = await load_personal_gallery_settings(db)
+    listed_categories = [category for category in await repo.list_categories(_owner_uid(user), "image")
+                         if personal_gallery_is_active(category, personal_settings)]
     case_root_ids = {category.id for category in listed_categories if is_enterprise_case_root(category)}
     categories = [
         category
@@ -1985,7 +2030,7 @@ async def list_image_galleries(
         effective_industry = (
             parents[category.parent_id].industry_slug
             if category.parent_id and category.parent_id in parents
-            else category.industry_slug
+            else personal_gallery_fields(category, personal_settings)["industry_slug"]
         )
         if industry_slug and (
             (industry_slug == "uncategorized" and effective_industry != "uncategorized")
@@ -2017,13 +2062,16 @@ async def list_image_galleries(
             {
                 **category.to_dict(),
                 "personal_folder": personal_folder_key(category),
-                "name": PERSONAL_IMAGE_FOLDERS[personal_folder_key(category)][1]
-                if personal_folder_key(category)
-                else category.name,
+                **personal_gallery_fields(category, personal_settings),
                 "can_upload": can_contribute_to_category(user, category)
                 and personal_folder_key(category) not in {"generated", "works"}
                 and (not rough_upload_only or _designer_may_see_category(category)),
                 "can_manage": _can_manage_category(user, category),
+                "can_edit": user.role == "superadmin" if personal_folder_key(category) else (
+                    _can_manage_category(user, category)),
+                "can_delete": user.role == "superadmin" if personal_folder_key(category) else (
+                    _can_manage_category(user, category) and (not category.is_system or
+                        category.image_design_role in {"reference", "rough", "generated"})),
                 "is_global_personal": category.is_global_personal,
                 "industry_slug": effective_industry,
                 "industry_name": industry_catalog.get(effective_industry, "未分类行业"),

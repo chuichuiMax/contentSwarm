@@ -78,9 +78,9 @@ const optionLabel = (options, value) =>
 
 const isSystemAccount = (employee) => employee?.source === 'user'
 
-const openRoughImages = (employee) => router.push({
+const openRoughImages = (employee, scope = 'private') => router.push({
   path: '/materials/images',
-  query: { employee_id: employee.id, gallery: 'rough' }
+  query: { employee_id: employee.id, gallery: 'rough', ...(scope === 'enterprise' ? { scope } : {}) }
 })
 
 const loginPortLabel = (ports) => {
@@ -357,9 +357,14 @@ onMounted(async () => {
           <template #default="{ record }">{{ loginPortLabel(record.login_port) }}</template>
         </a-table-column>
         <a-table-column title="角色" data-index="role" key="role" />
-        <a-table-column title="毛坯图上传数" key="rough_image_count" :width="140" align="center">
+        <a-table-column title="毛坯图上传数（我的素材）" key="rough_image_count" :width="180" align="center">
           <template #default="{ record }">
             <a-button type="link" @click="openRoughImages(record)">{{ record.rough_image_count ?? 0 }}</a-button>
+          </template>
+        </a-table-column>
+        <a-table-column title="毛坯图上传数（企业共享）" key="enterprise_rough_image_count" :width="180" align="center">
+          <template #default="{ record }">
+            <a-button type="link" @click="openRoughImages(record, 'enterprise')">{{ record.enterprise_rough_image_count ?? 0 }}</a-button>
           </template>
         </a-table-column>
         <a-table-column title="状态" key="enabled" :width="140">
