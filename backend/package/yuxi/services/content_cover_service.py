@@ -15,6 +15,7 @@ from typing import Any
 
 from fastapi import HTTPException, UploadFile
 from PIL import Image, ImageOps, UnidentifiedImageError
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.datastructures import Headers
@@ -80,6 +81,7 @@ from yuxi.storage.minio.client import StorageError, get_minio_client
 from yuxi.storage.postgres.models_business import User
 from yuxi.storage.postgres.models_content import (
     ContentArtifact,
+    ContentArtifactVersion,
     ContentCoverAsset,
     ContentCoverEditProject,
     ContentCoverJob,
@@ -1262,8 +1264,31 @@ async def delete_poster_template(db: AsyncSession, user: User, template_id: str)
     return {"success": True}
 
 
+async def _cover_on_visible_content(db: AsyncSession, user: User, asset_id: str) -> ContentCoverAsset | None:
+    item = await ContentCoverRepository(db).get_asset(asset_id)
+    if item is None:
+        return None
+    current_tasks = (
+        await db.execute(select(ContentArtifact.task_id).where(ContentArtifact.cover_asset_id == asset_id))
+    ).scalars()
+    version_tasks = (
+        await db.execute(
+            select(ContentArtifact.task_id)
+            .join(ContentArtifactVersion, ContentArtifactVersion.artifact_id == ContentArtifact.id)
+            .where(ContentArtifactVersion.cover_asset_id == asset_id)
+        )
+    ).scalars()
+    content_repo = ContentRepository(db)
+    for task_id in dict.fromkeys([*current_tasks, *version_tasks]):
+        if await content_repo.get_task_for_user(str(task_id), user) is not None:
+            return item
+    return None
+
+
 async def get_cover_asset_file(db: AsyncSession, user: User, asset_id: str) -> tuple[bytes, str, str]:
     item = await ContentCoverRepository(db).get_asset_for_user(asset_id, _owner_uid(user), allow_material_use=True)
+    if item is None:
+        item = await _cover_on_visible_content(db, user, asset_id)
     if item is None:
         raise _error(404, "COVER_ASSET_NOT_FOUND", "封面素材不存在")
     try:

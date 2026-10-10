@@ -16,8 +16,11 @@ from oss_import import (
     ImportError,
     ProductionClient,
     category_label,
+    child_needs_project_details,
     collect_images,
+    group_images_by_folder,
     needs_design_style,
+    prepare_webp_files,
     uploadable_categories,
 )
 
@@ -161,27 +164,60 @@ class App(tk.Tk):
         self.events.put(("status", f"已登录 {name}"))
 
     def _import_work(self, category: dict, folder: Path) -> None:
-        images, skipped = collect_images(folder)
+        style = self.style.get().strip() or None
+        if category.get("parent_id"):
+            images, skipped = collect_images(folder)
+            for line in skipped:
+                self.events.put(("log", line))
+            if not images:
+                raise ImportError("文件夹里没有可导入的图片")
+            if not needs_design_style(category, self.by_id):
+                style = (category.get("design_style") or "").strip() or style
+            self.events.put(("log", "所选图库已是二级图库，图片直接写入该图库。"))
+            stored = self._upload_webp(category["id"], images, style)
+            self.events.put(("log", f"完成：OSS 可读 {stored}/{len(images)}。"))
+            self.events.put(("status", f"完成：OSS 可读 {stored}/{len(images)}"))
+            return
+
+        groups, skipped = group_images_by_folder(folder)
         for line in skipped:
             self.events.put(("log", line))
-        if not images:
+        if not groups:
             raise ImportError("文件夹里没有可导入的图片")
-        style = self.style.get().strip() or None
-        if not needs_design_style(category, self.by_id):
-            style = (category.get("design_style") or "").strip() or style
-        batches = [images[index : index + BATCH_SIZE] for index in range(0, len(images), BATCH_SIZE)]
-        self.events.put(("log", f"准备导入 {len(images)} 张，分 {len(batches)} 批，每批最多 {BATCH_SIZE} 张。"))
+        if child_needs_project_details(category) and not style:
+            raise ImportError("案例图库上传需要选择设计风格")
+        total = sum(len(images) for _name, images in groups)
+        stored = 0
+        self.events.put(("log", f"准备在「{category.get('name')}」下导入 {len(groups)} 个文件夹、{total} 张 WebP。"))
+        for name, images in groups:
+            child = self.client.find_child(category["id"], name)
+            if child is None:
+                child = self.client.create_child_gallery(category, name, style)
+                self.events.put(("log", f"已新建文件夹：{name}"))
+            else:
+                self.events.put(("log", f"使用已有文件夹：{name}"))
+            if not child.get("id"):
+                raise ImportError(f"文件夹「{name}」没有返回图库编号")
+            upload_style = style if child_needs_project_details(category) else (child.get("design_style") or "").strip() or None
+            stored += self._upload_webp(child["id"], images, upload_style)
+            self.events.put(("status", f"已确认 {stored}/{total}"))
+        self.events.put(("log", f"完成：OSS 可读 {stored}/{total}。"))
+        self.events.put(("status", f"完成：OSS 可读 {stored}/{total}"))
+
+    def _upload_webp(self, category_id: str, images: list[Path], style: str | None) -> int:
+        prepared = prepare_webp_files(images)
+        batches = [prepared[index : index + BATCH_SIZE] for index in range(0, len(prepared), BATCH_SIZE)]
         uploaded = 0
         stored = 0
         for batch_index, batch in enumerate(batches, start=1):
-            result = self.client.upload_batch(batch, category["id"], style)
+            result = self.client.upload_batch(batch, category_id, style)
             items = result.get("items") or []
             uploaded += len(items)
-            self.events.put(("log", f"第 {batch_index}/{len(batches)} 批已提交 {len(items)} 张，等待写入 OSS。"))
-            stored += self._wait_for_oss(category["id"], items)
-            self.events.put(("status", f"已确认 {stored}/{len(images)}"))
-        self.events.put(("log", f"完成：提交 {uploaded} 张，OSS 可读 {stored} 张。"))
-        self.events.put(("status", f"完成：OSS 可读 {stored}/{len(images)}"))
+            self.events.put(("log", f"第 {batch_index}/{len(batches)} 批已提交 {len(items)} 张 WebP，等待写入 OSS。"))
+            stored += self._wait_for_oss(category_id, items)
+        if uploaded != len(prepared):
+            self.events.put(("log", f"提交 {uploaded} 张，本地准备 {len(prepared)} 张。"))
+        return stored
 
     def _wait_for_oss(self, category_id: str, items: list[dict]) -> int:
         pending = {item["id"]: item.get("name") or item["id"] for item in items if item.get("id")}

@@ -1,2 +1,4 @@
 requests>=2.32
+pillow>=10.4
+pillow-heif>=0.18
 pyinstaller>=6.0

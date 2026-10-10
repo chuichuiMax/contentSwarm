@@ -557,6 +557,20 @@ async def test_only_admin_can_create_image_gallery_and_child_gallery(monkeypatch
     assert created_child["category"]["building_name"] == "桂语云峰"
     assert created_child["category"]["area"] == "120"
 
+    named_only = await create_material_category(
+        FakeDB(),
+        admin_user,
+        MaterialCategoryCreate(
+            material_type="image",
+            name="洋湖天序",
+            parent_id="gallery-parent",
+            design_style="江南印象",
+        ),
+    )
+    assert named_only["category"]["name"] == "洋湖天序"
+    assert named_only["category"]["building_name"] is None
+    assert named_only["category"]["area"] is None
+
     created = await create_material_category(
         FakeDB(),
         admin_user,

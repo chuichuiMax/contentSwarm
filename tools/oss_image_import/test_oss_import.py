@@ -4,11 +4,16 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 import requests
+from PIL import Image
 
 from oss_import import (
     api_message,
+    case_project_fields,
     category_label,
+    child_needs_project_details,
     collect_images,
+    encode_webp,
+    group_images_by_folder,
     needs_design_style,
     uploadable_categories,
 )
@@ -46,6 +51,24 @@ class OssImportTests(unittest.TestCase):
         self.assertEqual(category_label(child, by_id), "企业 / 案例图库 / 洋湖天序")
         selected = uploadable_categories({"categories": [parent, child, rough]})
         self.assertEqual([item["id"] for item in selected], ["room", "rough"])
+
+    def test_folder_groups_use_subdirectories_and_encode_webp(self):
+        with TemporaryDirectory() as folder:
+            root = Path(folder)
+            project = root / "宝能公馆-165㎡"
+            project.mkdir()
+            image = project / "room.jpg"
+            Image.new("RGB", (32, 24), (180, 74, 58)).save(image, format="JPEG")
+            (root / "note.txt").write_bytes(b"text")
+            groups, skipped = group_images_by_folder(root)
+            self.assertEqual(skipped, [])
+            self.assertEqual([name for name, _paths in groups], ["宝能公馆-165㎡"])
+            name, data = encode_webp(groups[0][1][0])
+        self.assertEqual(name, "room.webp")
+        self.assertTrue(data.startswith(b"RIFF") and data[8:12] == b"WEBP")
+        self.assertEqual(case_project_fields("宝能公馆-165㎡"), ("宝能公馆", "165"))
+        self.assertEqual(case_project_fields("洋湖天序"), (None, None))
+        self.assertTrue(child_needs_project_details({"visibility": "enterprise", "image_design_role": "reference", "name": "案例图库"}))
 
 
 if __name__ == "__main__":

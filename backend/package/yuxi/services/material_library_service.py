@@ -1649,10 +1649,12 @@ async def create_material_category(
             area = (payload.area or "").strip()
             if design_style not in DECORATION_GALLERY_DESIGN_STYLES:
                 raise _error(422, "MATERIAL_DESIGN_STYLE_REQUIRED", "请选择设计风格")
-            if not building_name:
-                raise _error(422, "MATERIAL_BUILDING_NAME_REQUIRED", "请输入楼盘名称")
-            if not area:
-                raise _error(422, "MATERIAL_AREA_REQUIRED", "请输入面积")
+            # 案例图库文件夹按上传名称保存，楼盘和面积能识别时才写入。
+            if not is_enterprise_case_root(parent):
+                if not building_name:
+                    raise _error(422, "MATERIAL_BUILDING_NAME_REQUIRED", "请输入楼盘名称")
+                if not area:
+                    raise _error(422, "MATERIAL_AREA_REQUIRED", "请输入面积")
         elif payload.design_style or payload.building_name or payload.area:
             raise _error(
                 422,
