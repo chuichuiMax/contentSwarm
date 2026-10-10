@@ -1,9 +1,10 @@
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
-from yuxi.services import content_cover_worker, material_library_service, personal_materials
+from yuxi.services import content_cover_worker, material_library_service, personal_materials, personal_gallery_settings
 from yuxi.storage.postgres.models_business import User
 from yuxi.storage.postgres.models_content import ContentTask
 
@@ -51,6 +52,7 @@ async def test_cover_output_enters_pc_library_only_for_pc_content(monkeypatch, m
     monkeypatch.setattr(content_cover_worker, "get_minio_client", lambda: SimpleNamespace(aupload_file=upload_file))
     monkeypatch.setattr(content_cover_worker, "_normalize_output", lambda raw, **_kwargs: (raw, 32, 24))
     monkeypatch.setattr(personal_materials, "folder_categories", folder_categories)
+    monkeypatch.setattr(personal_gallery_settings, "load_personal_gallery_settings", AsyncMock(return_value={}))
     monkeypatch.setattr(material_library_service, "create_library_item_for_asset", create_library_item)
 
     job = SimpleNamespace(

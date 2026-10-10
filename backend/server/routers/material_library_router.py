@@ -4,9 +4,8 @@ from datetime import date
 from typing import Literal
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, File, Form, Query, Request, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile, status
 from fastapi.responses import HTMLResponse, Response
-from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from yuxi.services.material_library_service import (
     MaterialCategoryCreate,
@@ -35,10 +34,10 @@ from yuxi.services.material_library_service import (
 )
 from yuxi.services.employee_service import EmployeeMaterialOwner, resolve_employee_material_owner
 from yuxi.services.personal_materials import (
-    delete_fixed_folder,
     folder_counts,
     list_folder,
-    rename_fixed_folder,
+    update_personal_gallery,
+    delete_personal_gallery,
 )
 from yuxi.services.remote_material_library_service import (
     RemoteMaterialConfigUpdate,
@@ -54,10 +53,6 @@ from server.utils.public_url import request_public_base_url
 
 material_library = APIRouter(prefix="/material-library", tags=["material-library"])
 public_share_router = APIRouter(tags=["public-share"])
-
-
-class FixedFolderRename(BaseModel):
-    name: str = Field(min_length=1, max_length=80)
 
 
 async def _material_owner(
@@ -132,18 +127,33 @@ async def import_images(
 async def material_categories(
     material_type: str = Query(...),
     employee_id: str | None = Query(None),
+    uploader_employee_id: str | None = Query(None),
     current_user: User = Depends(get_required_user),
     db: AsyncSession = Depends(get_db),
 ):
     owner_user, target = await _material_owner(db, current_user, employee_id)
+    uploader = None
+    if uploader_employee_id:
+        await get_admin_user(current_user)
+        if employee_id or material_type != "image":
+            raise HTTPException(422, "企业共享员工筛选仅支持图片，且不能同时筛选个人素材")
+        uploader = await resolve_employee_material_owner(db, uploader_employee_id)
     response = await get_material_categories(
         db,
         owner_user,
         material_type,
         personal_folder="rough" if target is not None else None,
+        enterprise_rough_only=uploader is not None,
     )
     if target is not None:
         response["target_employee"] = target.to_dict()
+    if uploader is not None:
+        roots = response["categories"]
+        if len(roots) != 1:
+            raise HTTPException(409 if roots else 404, "企业共享毛坯房图库不存在或存在多个记录，请核对图库配置")
+        response["categories"] = roots
+        response["enterprise_rough_category_id"] = roots[0]["id"]
+        response["target_employee"] = uploader.to_dict()
     return response
 
 
@@ -229,20 +239,25 @@ async def personal_material_folders(
 @material_library.patch("/my-materials/folders/{folder}")
 async def edit_personal_material_folder(
     folder: str,
-    payload: FixedFolderRename,
-    current_user: User = Depends(get_admin_user),
+    payload: MaterialCategoryUpdate,
+    current_user: User = Depends(get_superadmin_user),
     db: AsyncSession = Depends(get_db),
 ):
-    return await rename_fixed_folder(db, current_user, folder, payload.name)
+    result = await update_personal_gallery(db, current_user, folder, payload)
+    await db.commit()
+    return result
 
 
 @material_library.delete("/my-materials/folders/{folder}")
 async def remove_personal_material_folder(
     folder: str,
-    current_user: User = Depends(get_admin_user),
+    payload: MaterialCategoryDelete,
+    current_user: User = Depends(get_superadmin_user),
     db: AsyncSession = Depends(get_db),
 ):
-    return await delete_fixed_folder(db, current_user, folder)
+    result = await delete_personal_gallery(db, current_user, current_user, folder, payload)
+    await db.commit()
+    return result
 
 
 @material_library.get("/my-materials/{folder}")
@@ -378,12 +393,19 @@ async def material_items(
     scope: Literal["private", "enterprise"] | None = Query(None),
     exclude_task_id: str | None = Query(None),
     employee_id: str | None = Query(None),
+    uploader_employee_id: str | None = Query(None),
     date_from: date | None = Query(None),
     date_to: date | None = Query(None),
     current_user: User = Depends(get_required_user),
     db: AsyncSession = Depends(get_db),
 ):
     owner_user, target = await _material_owner(db, current_user, employee_id)
+    uploader = None
+    if uploader_employee_id:
+        await get_admin_user(current_user)
+        if employee_id or material_type != "image":
+            raise HTTPException(422, "企业共享员工筛选仅支持图片，且不能同时筛选个人素材")
+        uploader = await resolve_employee_material_owner(db, uploader_employee_id)
     return await list_material_items(
         db,
         owner_user,
@@ -397,6 +419,7 @@ async def material_items(
         scope=scope,
         exclude_task_id=exclude_task_id,
         personal_folder="rough" if target is not None else None,
+        enterprise_rough_owner_uid=str(uploader.user.uid) if uploader else None,
         date_from=date_from,
         date_to=date_to,
     )

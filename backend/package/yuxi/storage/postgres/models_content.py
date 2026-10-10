@@ -1247,12 +1247,16 @@ class ContentMaterialShareItem(Base):
 
 
 class ContentMaterialFolderSetting(Base):
-    """Display state for the four fixed personal-material entrances."""
+    """Global configuration for the four personal galleries; assets remain user-owned."""
 
     __tablename__ = "content_material_folder_settings"
 
     folder_key = Column(String(32), primary_key=True)
     name = Column(String(80), nullable=False)
+    description = Column(String(255), nullable=False, default="", server_default="")
+    industry_slug = Column(String(80), nullable=False, default="decoration", server_default="decoration")
+    # Old rows configured virtual entrances, not actual galleries.
+    config_version = Column(Integer, nullable=False, default=0, server_default="0")
     deleted_at = Column(DateTime, nullable=True)
     updated_by = Column(String(255), nullable=True)
     updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)

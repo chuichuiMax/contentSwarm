@@ -208,6 +208,15 @@ async def _store_outputs(job: ContentCoverJob, outputs: list[bytes]) -> list[str
                 form_values.get("mp_content_code") or form_values.get("mp_service_entry")
             )
             user = await db.scalar(select(User).where(User.uid == job.owner_uid)) if pc_content_output else None
+            if user is not None:
+                from yuxi.services.personal_gallery_settings import (
+                    load_personal_gallery_settings,
+                    require_personal_gallery,
+                )
+                from yuxi.services.personal_materials import folder_categories
+
+                require_personal_gallery(await load_personal_gallery_settings(db), "generated")
+                gallery = (await folder_categories(db, user))["generated"][0]
             for index, raw in enumerate(outputs):
                 normalized, width, height = _normalize_output(
                     raw,
@@ -270,9 +279,6 @@ async def _store_outputs(job: ContentCoverJob, outputs: list[bytes]) -> list[str
                 )
                 if pc_content_output and user is not None:
                     from yuxi.services.material_library_service import create_library_item_for_asset
-                    from yuxi.services.personal_materials import folder_categories
-
-                    gallery = (await folder_categories(db, user))["generated"][0]
                     await create_library_item_for_asset(
                         db, asset=asset, material_type="image", name=f"cover-{index + 1}",
                         category=gallery.id, category_owner_uid=gallery.owner_uid,

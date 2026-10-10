@@ -187,14 +187,17 @@ async def _soft_delete_employee_user(db: AsyncSession, employee: ContentEmployee
     await db.flush()
 
 
-def _employee_row(employee: ContentEmployee, rough_image_count: int = 0) -> dict[str, Any]:
+def _employee_row(
+    employee: ContentEmployee, rough_image_count: int = 0, enterprise_rough_image_count: int = 0
+) -> dict[str, Any]:
     data = employee.to_dict()
     data["source"] = "employee"
     data["rough_image_count"] = rough_image_count
+    data["enterprise_rough_image_count"] = enterprise_rough_image_count
     return data
 
 
-def _user_row(user: User, rough_image_count: int = 0) -> dict[str, Any]:
+def _user_row(user: User, rough_image_count: int = 0, enterprise_rough_image_count: int = 0) -> dict[str, Any]:
     return {
         "id": f"user:{user.uid}",
         "employee_code": user.uid,
@@ -215,6 +218,7 @@ def _user_row(user: User, rough_image_count: int = 0) -> dict[str, Any]:
         "created_at": format_utc_datetime(user.created_at),
         "updated_at": format_utc_datetime(user.created_at),
         "rough_image_count": rough_image_count,
+        "enterprise_rough_image_count": enterprise_rough_image_count,
     }
 
 
@@ -269,11 +273,20 @@ async def list_employees(db: AsyncSession, keyword: str | None = None) -> dict[s
         )
     users = list((await db.execute(query)).scalars().all())
     owner_uids = [*(_platform_uid(employee) for employee in employees), *(str(user.uid) for user in users)]
-    counts = await MaterialLibraryRepository(db).count_private_rough_images_by_owner(owner_uids)
+    repository = MaterialLibraryRepository(db)
+    counts = await repository.count_private_rough_images_by_owner(owner_uids)
+    enterprise_counts = await repository.count_enterprise_rough_images_by_owner(owner_uids)
     rows: list[tuple[Any, dict[str, Any]]] = [
-        (item.created_at, _employee_row(item, counts.get(_platform_uid(item), 0))) for item in employees
+        (
+            item.created_at,
+            _employee_row(item, counts.get(_platform_uid(item), 0), enterprise_counts.get(_platform_uid(item), 0)),
+        )
+        for item in employees
     ]
-    rows.extend((user.created_at, _user_row(user, counts.get(str(user.uid), 0))) for user in users)
+    rows.extend(
+        (user.created_at, _user_row(user, counts.get(str(user.uid), 0), enterprise_counts.get(str(user.uid), 0)))
+        for user in users
+    )
     rows.sort(key=lambda item: item[0] or utc_now_naive(), reverse=True)
     items = [row for _, row in rows]
     return {"employees": items, "total": len(items)}
@@ -296,7 +309,8 @@ async def export_employees(db: AsyncSession) -> bytes:
             "年龄",
             "登录端口",
             "角色",
-            "毛坯图上传数",
+            "毛坯图上传数（我的素材）",
+            "毛坯图上传数（企业共享）",
             "状态",
         ]
     )
@@ -315,6 +329,7 @@ async def export_employees(db: AsyncSession) -> bytes:
                 "&".join(label for port, label in (("pc", "PC"), ("app", "APP")) if port in ports) or "-",
                 employee["role"],
                 employee["rough_image_count"],
+                employee["enterprise_rough_image_count"],
                 "启用" if employee["enabled"] else "禁用",
             ]
         )
@@ -324,7 +339,7 @@ async def export_employees(db: AsyncSession) -> bytes:
                 cell.data_type = "s"
     for cell in sheet[1]:
         cell.font = Font(bold=True)
-    for column, width in zip("ABCDEFGHIJKL", (8, 24, 22, 22, 22, 22, 10, 10, 16, 18, 18, 12), strict=True):
+    for column, width in zip("ABCDEFGHIJKLM", (8, 24, 22, 22, 22, 22, 10, 10, 16, 18, 32, 32, 12), strict=True):
         sheet.column_dimensions[column].width = width
     sheet.freeze_panes = "A2"
     sheet.auto_filter.ref = sheet.dimensions

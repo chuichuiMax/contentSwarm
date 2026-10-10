@@ -1353,6 +1353,14 @@ async def _create_job(
     existing = await repo.get_job_by_idempotency(owner_uid, idempotency_key)
     if existing:
         return existing, True
+    if content_task_id:
+        task = await ContentRepository(db).get_task_for_user(content_task_id, user)
+        form_values = ((task.brief_json or {}).get("form_values") or {}) if task else {}
+        if task is not None and not (form_values.get("mp_content_code") or form_values.get("mp_service_entry")):
+            from yuxi.image_design.save_targets import resolve_mp_save_target
+            from yuxi.image_design.schemas import ImageDesignSaveTarget
+
+            await resolve_mp_save_target(db, user, ImageDesignSaveTarget(scope="private"))
     source_ids = request.get("asset_ids") if mode == "compose" else request.get("source_asset_ids")
     if source_ids:
         await repo.retain_material_use(list(source_ids), owner_uid)

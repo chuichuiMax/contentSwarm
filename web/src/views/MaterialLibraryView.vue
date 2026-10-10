@@ -30,12 +30,14 @@ import VisualWorkspaceHeader from '@/components/content/VisualWorkspaceHeader.vu
 
 const route = useRoute()
 const router = useRouter()
-const targetEmployeeId = computed(() => (
+const routeEmployeeId = computed(() => (
   route.query.gallery === 'rough' && typeof route.query.employee_id === 'string'
     ? route.query.employee_id
     : ''
 ))
-const isEmployeeRoughMode = computed(() => Boolean(targetEmployeeId.value))
+const isEmployeeRoughMode = computed(() => Boolean(routeEmployeeId.value))
+const isEmployeeEnterpriseMode = computed(() => isEmployeeRoughMode.value && route.query.scope === 'enterprise')
+const targetEmployeeId = computed(() => isEmployeeEnterpriseMode.value ? '' : routeEmployeeId.value)
 const targetEmployee = ref(null)
 
 const tabs = [
@@ -146,7 +148,9 @@ const uploadProgressText = computed(() => {
   }
   return ''
 })
-const deleteTargetOptions = computed(() => categories.value.filter((item) => item.id !== deletingCategory.value?.id && (deletingCategory.value?.visibility !== 'enterprise' || item.visibility === 'enterprise')))
+const deleteTargetOptions = computed(() => categories.value.filter((item) => item.id !== deletingCategory.value?.id &&
+  (deletingCategory.value?.personal_folder ? item.visibility === 'private' && (item.personal_folder || item.is_global_personal)
+    : (deletingCategory.value?.visibility !== 'enterprise' || item.visibility === 'enterprise'))))
 const decorationGalleryStyles = [
   '复合写意', '写意木构', '江南印象', '轻欧简美', '欧美香颂', '新装饰主义', '北欧之光',
   '意境东方', '雅致现代', '优雅缤纷', '极简侘寂', '复古风潮', '艺术室界'
@@ -245,14 +249,19 @@ async function blobPreview(id, key = id) {
 
 async function loadCategories() {
   const requestedType = materialType.value
-  const response = await materialLibraryApi.listCategories(requestedType, targetEmployeeId.value)
-  if (materialType.value === requestedType) {
+  const employeeContext = `${routeEmployeeId.value}:${isEmployeeEnterpriseMode.value}`
+  const response = await materialLibraryApi.listCategories(
+    requestedType, targetEmployeeId.value, isEmployeeEnterpriseMode.value ? routeEmployeeId.value : ''
+  )
+  if (materialType.value === requestedType && employeeContext === `${routeEmployeeId.value}:${isEmployeeEnterpriseMode.value}`) {
     categories.value = response.categories || []
     canCreateShared.value = Boolean(response.can_create_shared)
     targetEmployee.value = response.target_employee || null
-    if (isEmployeeRoughMode.value && response.personal_rough_category_id) {
-      materialScope.value = 'private'
-      activeGallery.value = response.personal_rough_category_id
+    if (isEmployeeRoughMode.value) {
+      materialScope.value = isEmployeeEnterpriseMode.value ? 'enterprise' : 'private'
+      activeGallery.value = isEmployeeEnterpriseMode.value
+        ? response.enterprise_rough_category_id
+        : response.personal_rough_category_id
     }
   }
 }
@@ -355,12 +364,14 @@ function askDeleteCategory(category) {
     return message.warning('该一级图库仍有二级图库，请先移动或删除二级图库')
   }
   deletingCategory.value = category
-  deleteTargetCategory.value = category.parent_id || categories.value.find((item) => item.is_system)?.id || ''
+  deleteTargetCategory.value = category.personal_folder
+    ? (category.count ? '' : '__personal_root__')
+    : category.parent_id || deleteTargetOptions.value.find((item) => item.is_system)?.id || ''
   deleteCategoryOpen.value = true
 }
 
 async function confirmDeleteCategory() {
-  if (deletingCategory.value.count > 0 && !deleteTargetCategory.value) {
+  if ((deletingCategory.value.count > 0 || deletingCategory.value.personal_folder) && !deleteTargetCategory.value) {
     return message.warning('请选择素材迁移目标')
   }
   categoryDeleting.value = true
@@ -368,7 +379,7 @@ async function confirmDeleteCategory() {
     await materialLibraryApi.deleteCategory(
       materialType.value,
       deletingCategory.value.id,
-      deleteTargetCategory.value || null,
+      deleteTargetCategory.value === '__personal_root__' ? null : deleteTargetCategory.value || null,
       targetEmployeeId.value
     )
     if (activeGallery.value === deletingCategory.value.id) activeGallery.value = ''
@@ -407,6 +418,7 @@ async function hydrateGalleries(response) {
 
 async function loadItems() {
   if (isGalleryRoot.value) return loadGalleries()
+  const employeeContext = `${routeEmployeeId.value}:${isEmployeeEnterpriseMode.value}`
   loading.value = true
   try {
     const response = await materialLibraryApi.listItems({
@@ -417,14 +429,18 @@ async function loadItems() {
       page: page.value,
       page_size: 24,
       employee_id: targetEmployeeId.value,
+      uploader_employee_id: isEmployeeEnterpriseMode.value ? routeEmployeeId.value : '',
       ...uploadDateParams.value
     })
+    if (employeeContext !== `${routeEmployeeId.value}:${isEmployeeEnterpriseMode.value}`) return
     const next = response.items || []
     releasePreviews()
-    items.value = await Promise.all(next.map(async (item) => ({
+    const hydratedItems = await Promise.all(next.map(async (item) => ({
       ...item,
       previewUrl: item.work_asset_id ? await workPreview(item.work_asset_id) : await blobPreview(item.id)
     })))
+    if (employeeContext !== `${routeEmployeeId.value}:${isEmployeeEnterpriseMode.value}`) return
+    items.value = hydratedItems
     total.value = response.total || 0
   } catch (error) {
     message.error(error.message || '素材加载失败')
@@ -927,19 +943,29 @@ watch(materialType, async () => {
 }, { immediate: true })
 
 watch(materialScope, async () => {
+  if (isEmployeeRoughMode.value) return
   uploadDateRange.value = []
   activeGallery.value = ''
   queryInput.value = ''
   await loadItems()
 })
 
-watch(targetEmployeeId, async () => {
+watch([routeEmployeeId, isEmployeeEnterpriseMode], async () => {
   uploadDateRange.value = []
   targetEmployee.value = null
   activeGallery.value = ''
+  query.value = ''
+  queryInput.value = ''
+  page.value = 1
+  total.value = 0
+  selectedShareItemIds.value = []
   items.value = []
-  await loadCategories()
-  await loadItems()
+  try {
+    await loadCategories()
+    await loadItems()
+  } catch (error) {
+    message.error(error.message || '员工图库加载失败')
+  }
 })
 
 watch(uploadCategory, (id) => {
@@ -1156,10 +1182,10 @@ onBeforeUnmount(() => {
             <a-radio-button value="private">我的素材</a-radio-button>
             <a-radio-button value="enterprise">企业共享</a-radio-button>
           </a-radio-group>
-          <a-tag v-else>{{ isEmployeeRoughMode ? '员工个人素材' : (currentGallery?.visibility === 'enterprise' ? '企业共享' : (currentGallery?.is_global_personal ? '我的素材 · 文件夹全员可见，图片仅自己可见' : '仅自己可见')) }}</a-tag>
-          <h2>{{ isEmployeeRoughMode && targetEmployee ? `${targetEmployee.name} / 毛坯房图库` : (activeGallery ? currentGallery?.name : (materialScope === 'enterprise' ? '企业共享图库' : '我的图库')) }}</h2>
+          <a-tag v-else>{{ isEmployeeRoughMode ? (isEmployeeEnterpriseMode ? '企业共享 · 员工上传' : '员工个人素材') : (currentGallery?.visibility === 'enterprise' ? '企业共享' : (currentGallery?.is_global_personal ? '我的素材 · 文件夹全员可见，图片仅自己可见' : '仅自己可见')) }}</a-tag>
+          <h2>{{ isEmployeeRoughMode && targetEmployee ? `${targetEmployee.name} / ${currentGallery?.name || '图库'}` : (activeGallery ? currentGallery?.name : (materialScope === 'enterprise' ? '企业共享图库' : '我的图库')) }}</h2>
           <p v-if="parentGallery" class="gallery-path">{{ parentGallery.name }} / {{ currentGallery?.name }}</p>
-          <p>{{ isEmployeeRoughMode && targetEmployee ? `员工编码：${targetEmployee.employee_code}；本页仅显示该员工个人毛坯房图库。` : (designerEnterpriseScope && !activeGallery ? '企业共享仅可上传毛坯房图库。' : (activeGallery ? (currentGallery?.description || '这个图库还没有填写说明。') : '我的素材中的图片仅自己可见；超管新建文件夹向所有用户显示。企业共享保持现有使用规则。')) }}</p>
+          <p>{{ isEmployeeRoughMode && targetEmployee ? `员工编码：${targetEmployee.employee_code}；${isEmployeeEnterpriseMode ? '本页仅显示该员工上传到企业共享毛坯房图库的图片。' : `本页仅显示该员工个人${currentGallery?.name || '图库'}。`}` : (designerEnterpriseScope && !activeGallery ? '企业共享仅可上传毛坯房图库。' : (activeGallery ? (currentGallery?.description || '这个图库还没有填写说明。') : '我的素材中的图片仅自己可见；超管新建文件夹向所有用户显示。企业共享保持现有使用规则。')) }}</p>
         </div>
       </div>
       <div v-else class="context-head">
@@ -1222,8 +1248,8 @@ onBeforeUnmount(() => {
               <span class="gallery-copy"><strong>{{ gallery.name }}</strong><small>{{ gallery.description || '暂未填写图库说明' }}</small><em v-if="isGalleryRoot">{{ gallery.industry_name }}</em></span>
             </button>
             <div class="gallery-actions">
-              <button v-if="gallery.can_manage" type="button" :aria-label="`编辑图库 ${gallery.name}`" title="编辑图库" @click="openEditCategory(gallery)"><Pencil :size="15" /></button>
-              <button v-if="gallery.can_manage && (!gallery.is_system || ['reference', 'rough', 'generated'].includes(gallery.image_design_role))" type="button" class="danger" :aria-label="`删除图库 ${gallery.name}`" title="删除图库" @click="askDeleteCategory(gallery)"><Trash2 :size="15" /></button>
+              <button v-if="gallery.can_edit ?? gallery.can_manage" type="button" :aria-label="`编辑图库 ${gallery.name}`" title="编辑图库" @click="openEditCategory(gallery)"><Pencil :size="15" /></button>
+              <button v-if="gallery.can_delete ?? (gallery.can_manage && (!gallery.is_system || ['reference', 'rough', 'generated'].includes(gallery.image_design_role)))" type="button" class="danger" :aria-label="`删除图库 ${gallery.name}`" title="删除图库" @click="askDeleteCategory(gallery)"><Trash2 :size="15" /></button>
             </div>
           </article>
           </div>
@@ -1357,8 +1383,9 @@ onBeforeUnmount(() => {
 
     <a-modal v-model:open="categoryEditorOpen" :title="createCategoryTitle" :confirm-loading="categorySaving" ok-text="保存" @ok="saveCategory">
       <div class="upload-form">
+        <a-alert v-if="editingCategory?.personal_folder" type="info" show-icon message="修改此图库的名称、说明和所属行业将对所有账号生效，小程序关联名称同步更新。" />
         <label v-if="categoryEditorMode === 'create' && categoryParentId"><span>所属一级图库</span><a-input :value="categoryMap[categoryParentId]?.name" disabled /></label>
-        <label v-if="materialType === 'image' && !categoryParentId && !editingCategory?.is_system"><span>可见范围</span>
+        <label v-if="materialType === 'image' && !categoryParentId && !editingCategory?.is_system && !editingCategory?.personal_folder"><span>可见范围</span>
           <a-radio-group v-model:value="categoryForm.visibility" :disabled="!canCreateShared">
             <a-radio value="private">我的素材（全员可见）</a-radio><a-radio value="enterprise">企业共享</a-radio>
           </a-radio-group>
@@ -1394,8 +1421,9 @@ onBeforeUnmount(() => {
 
     <a-modal v-model:open="deleteCategoryOpen" :title="`删除${materialType === 'image' ? '图库' : '分类'}“${deletingCategory?.name || ''}”`" :confirm-loading="categoryDeleting" ok-text="确认删除" ok-type="danger" @ok="confirmDeleteCategory">
       <div class="delete-category-content">
-        <p>删除只会移除分类信息，不会删除 image 桶中的素材文件。</p>
-        <label v-if="deletingCategory?.count > 0"><span>将其中 {{ deletingCategory.count }} 个素材移动到</span><a-select v-model:value="deleteTargetCategory" placeholder="请选择迁移目标">
+        <p>{{ deletingCategory?.personal_folder ? '删除对所有账号生效，各账号的素材分别迁移并保留图片文件，小程序同步移除此图库。' : '删除只会移除分类信息，不会删除 image 桶中的素材文件。' }}</p>
+        <label v-if="deletingCategory?.count > 0 || deletingCategory?.personal_folder"><span>{{ deletingCategory?.personal_folder ? '将各账号图库中的素材移动到' : `将其中 ${deletingCategory.count} 个素材移动到` }}</span><a-select v-model:value="deleteTargetCategory" placeholder="请选择迁移目标">
+          <a-select-option v-if="deletingCategory?.personal_folder" value="__personal_root__">各账号的个人素材根目录</a-select-option>
           <a-select-option v-for="item in deleteTargetOptions" :key="item.id" :value="item.id">{{ categoryOptionLabel(item) }}</a-select-option>
         </a-select></label>
         <a-alert v-else type="info" show-icon message="这是一个空分类，可以直接删除。" />
