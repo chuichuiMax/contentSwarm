@@ -42,6 +42,7 @@ from yuxi.services.material_library_categories import (
     resolve_legacy_category,
 )
 from yuxi.services.material_upload_queue import (
+    INGEST_EXPIRED,
     INGEST_PENDING,
     delete_material_display_cache,
     encode_material_thumbnail,
@@ -51,6 +52,7 @@ from yuxi.services.material_upload_queue import (
     material_upload_redis_key,
     persist_material_thumbnail,
     read_material_bytes,
+    read_material_bytes_or_thumbnail,
     stage_material_bytes,
     stage_material_thumb,
 )
@@ -2122,10 +2124,12 @@ async def get_material_file(
     if asset is None:
         raise _error(404, "MATERIAL_ASSET_MISSING", "素材文件不存在")
     try:
-        data = await read_material_bytes(asset)
+        data, content_type = await read_material_bytes_or_thumbnail(asset)
     except StorageError as exc:
+        if ingest_status_of(asset) in {INGEST_PENDING, INGEST_EXPIRED}:
+            raise _error(404, "MATERIAL_FILE_EXPIRED", "原图未写入存储，临时文件已过期，请重新上传") from exc
         raise _error(500, "MATERIAL_STORAGE_FAILED", "素材文件读取失败") from exc
-    return data, asset.content_type, asset.original_file_name
+    return data, content_type, asset.original_file_name
 
 
 async def get_material_thumbnail(

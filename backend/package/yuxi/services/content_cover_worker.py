@@ -45,6 +45,7 @@ from yuxi.content_cover.template_replication import (
 from yuxi.content_cover.templates import COVER_SIZES
 from yuxi.repositories.content_cover_repository import ContentCoverRepository
 from yuxi.services.content_photo_composition import GALLERY_SOURCE_ASSET_ROLES
+from yuxi.services.material_upload_queue import read_material_bytes_or_thumbnail
 from yuxi.services.run_queue_service import (
     append_run_stream_event,
     clear_cancel_signal,
@@ -132,9 +133,10 @@ async def _finish_cancelled(job_id: str) -> None:
 
 async def _download_asset(asset: ContentCoverAsset) -> bytes:
     try:
-        return await get_minio_client().adownload_file(asset.bucket_name, asset.object_name)
+        data, _content_type = await read_material_bytes_or_thumbnail(asset)
     except StorageError as exc:
         raise RuntimeError(f"封面素材读取失败：{asset.id}") from exc
+    return data
 
 
 def _output_title_overlay(job: ContentCoverJob) -> str:

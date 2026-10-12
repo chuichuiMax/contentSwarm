@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.content_cover.image2_settings import get_image2_config_state
 from yuxi.repositories.material_library_repository import MaterialLibraryRepository
-from yuxi.services.material_upload_queue import read_material_bytes
+from yuxi.services.material_upload_queue import read_material_bytes, read_material_bytes_or_thumbnail
 from yuxi.services.run_queue_service import get_arq_pool
 from yuxi.storage.minio import get_minio_client
 from yuxi.storage.postgres.models_business import User
@@ -135,7 +135,10 @@ class ImageDesignInput:
 
 async def resolve_image_input(db: AsyncSession, owner_uid: str, input_id: str) -> ImageDesignInput:
     _, asset = await _get_material_item_and_asset(db, owner_uid, input_id)
-    sha256 = asset.sha256 or hashlib.sha256(await read_material_bytes(asset)).hexdigest()
+    sha256 = asset.sha256
+    if not sha256:
+        data, _content_type = await read_material_bytes_or_thumbnail(asset)
+        sha256 = hashlib.sha256(data).hexdigest()
     return ImageDesignInput(input_id, asset, sha256)
 
 
@@ -249,7 +252,7 @@ async def create_analysis(
         ) from exc
     asset_sha256 = asset.sha256
     if not asset_sha256:
-        data = await read_material_bytes(asset)
+        data, _content_type = await read_material_bytes_or_thumbnail(asset)
         asset_sha256 = hashlib.sha256(data).hexdigest()
     else:
         data = None
@@ -303,7 +306,7 @@ async def create_analysis(
         raise
     try:
         if data is None:
-            data = await read_material_bytes(asset)
+            data, _content_type = await read_material_bytes_or_thumbnail(asset)
         result, resolved_model = await run_visual_analysis(data, payload.role, model_spec=model_spec)
         row.result_json = result.model_dump(mode="json")
         row.model_spec = resolved_model
@@ -412,7 +415,7 @@ async def create_refinement(
         _, asset = await _get_material_item_and_asset(db, owner_uid, material_id)
         sha256 = asset.sha256
         if not sha256:
-            data = await read_material_bytes(asset)
+            data, _content_type = await read_material_bytes_or_thumbnail(asset)
             sha256 = hashlib.sha256(data).hexdigest()
         materials.append({"role": role, "material_id": material_id, "asset_sha256": sha256})
         response = await create_analysis(

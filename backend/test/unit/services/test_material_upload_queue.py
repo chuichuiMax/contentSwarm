@@ -9,12 +9,14 @@ from PIL import Image
 import yuxi.services.material_upload_queue as material_upload_queue
 from yuxi.services.material_upload_queue import (
     INGEST_COMPLETED,
+    INGEST_EXPIRED,
     INGEST_PENDING,
     encode_material_thumbnail,
     material_thumb_object_name,
     persist_material_thumbnail,
     process_material_upload,
     read_material_bytes,
+    read_material_bytes_or_thumbnail,
     stage_material_bytes,
     stage_material_thumb,
 )
@@ -158,6 +160,50 @@ async def test_process_material_upload_moves_redis_bytes_to_storage(monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_process_material_upload_marks_expired_when_staging_is_gone(monkeypatch):
+    redis = FakeRedis()
+    storage = FakeStorage()
+    asset = SimpleNamespace(
+        id="cca_expired",
+        sha256="expired-content-hash",
+        deleted_at=None,
+        bucket_name="image",
+        object_name="material-library/u1/images/cca_expired/image.webp",
+        content_type="image/webp",
+        metadata_json={"ingest_status": INGEST_PENDING, "redis_key": "material-upload:cca_expired"},
+    )
+    repository = FakeCoverRepository(asset)
+
+    class FakeSession:
+        async def commit(self):
+            return None
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+    class FakeManager:
+        def get_async_session_context(self):
+            return FakeSession()
+
+    async def fake_client():
+        return redis
+
+    monkeypatch.setattr(material_upload_queue, "get_binary_redis_client", fake_client)
+    monkeypatch.setattr(material_upload_queue, "pg_manager", FakeManager())
+    monkeypatch.setattr(material_upload_queue, "get_minio_client", lambda: storage)
+    monkeypatch.setattr(material_upload_queue, "ContentCoverRepository", lambda _db: repository)
+
+    await process_material_upload({}, asset.id)
+
+    assert storage.uploaded == []
+    assert asset.metadata_json["ingest_status"] == INGEST_EXPIRED
+    assert "redis_key" not in asset.metadata_json
+
+
+@pytest.mark.asyncio
 async def test_persist_thumbnail_reuses_redis_without_rereading_original(monkeypatch):
     redis = FakeRedis()
     storage = FakeStorage()
@@ -183,6 +229,30 @@ async def test_persist_thumbnail_reuses_redis_without_rereading_original(monkeyp
     second = await persist_material_thumbnail(asset)
     assert second == first
     assert len(storage.uploaded) == uploads
+
+
+@pytest.mark.asyncio
+async def test_missing_original_uses_existing_thumbnail(monkeypatch):
+    redis = FakeRedis()
+    storage = FakeStorage()
+    asset = SimpleNamespace(
+        id="cca_thumb_only",
+        bucket_name="image",
+        object_name="material-library/u1/images/cca_thumb_only/image.webp",
+        content_type="image/webp",
+        metadata_json={"ingest_status": INGEST_PENDING, "redis_key": "material-upload:cca_thumb_only"},
+    )
+    storage.objects[(asset.bucket_name, material_thumb_object_name(asset.object_name))] = b"thumb-bytes"
+
+    async def fake_client():
+        return redis
+
+    monkeypatch.setattr(material_upload_queue, "get_binary_redis_client", fake_client)
+    monkeypatch.setattr(material_upload_queue, "get_minio_client", lambda: storage)
+
+    data, content_type = await read_material_bytes_or_thumbnail(asset)
+    assert data == b"thumb-bytes"
+    assert content_type == "image/webp"
 
 
 def test_material_thumb_object_name_sits_beside_original():

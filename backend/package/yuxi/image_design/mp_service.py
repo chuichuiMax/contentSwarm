@@ -325,20 +325,15 @@ async def upload_image(db: AsyncSession, user: User, file: UploadFile, *, role: 
 
 
 async def read_library_file(db: AsyncSession, user: User, item_id: str, *, thumbnail: bool = False):
-    row, asset = await get_library_item_and_asset(db, user, item_id)
-    if row.source_material_item_id:
-        from yuxi.services.material_upload_queue import read_material_bytes
+    _row, asset = await get_library_item_and_asset(db, user, item_id)
+    from yuxi.services.material_upload_queue import read_material_bytes_or_thumbnail
 
-        data = await read_material_bytes(asset)
-    else:
-        from yuxi.storage.minio import get_minio_client
-
-        data = await get_minio_client().adownload_file(asset.bucket_name, asset.object_name)
+    data, content_type = await read_material_bytes_or_thumbnail(asset)
     if thumbnail:
         from yuxi.services.material_library_service import _make_image_thumbnail
 
         return _make_image_thumbnail(data), "image/jpeg"
-    return data, asset.content_type
+    return data, content_type
 
 
 def map_ratio(value: str) -> str:
@@ -590,7 +585,7 @@ async def read_task_input(db: AsyncSession, user: User, job_id: str, role: str):
     if snapshot is None:
         raise _error("IMAGE_DESIGN_MATERIAL_NOT_FOUND", "任务输入图片不存在")
     from .service import resolve_image_input
-    from yuxi.services.material_upload_queue import read_material_bytes
+    from yuxi.services.material_upload_queue import read_material_bytes_or_thumbnail
 
     image = await resolve_image_input(db, str(user.uid), snapshot["material_id"])
     pinned = next(
@@ -598,4 +593,4 @@ async def read_task_input(db: AsyncSession, user: User, job_id: str, role: str):
     )
     if pinned and (pinned["asset_id"] != image.asset.id or pinned["asset_sha256"] != image.asset_sha256):
         raise _error("IMAGE_DESIGN_REFINEMENT_STALE", "任务输入图片已变化", 409)
-    return await read_material_bytes(image.asset), image.asset.content_type
+    return await read_material_bytes_or_thumbnail(image.asset)

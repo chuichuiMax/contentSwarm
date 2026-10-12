@@ -25,7 +25,7 @@ from yuxi.image_design.schemas import ImageDesignSaveTarget
 from yuxi.image_design.service import resolve_image_input
 from yuxi.repositories.material_library_repository import MaterialLibraryRepository
 from yuxi.services.material_library_service import create_library_item_for_asset
-from yuxi.services.material_upload_queue import read_material_bytes
+from yuxi.services.material_upload_queue import read_material_bytes_or_thumbnail
 from yuxi.services.run_queue_service import clear_cancel_signal
 from yuxi.storage.minio import get_minio_client
 from yuxi.storage.postgres.models_business import User
@@ -59,8 +59,8 @@ async def _set_job(job_id: str, **values: Any) -> ImageDesignJob | None:
 async def _load_material_input(db, owner_uid: str, material_id: str) -> Image2Input:
     image = await resolve_image_input(db, owner_uid, material_id)
     asset = image.asset
-    data = await read_material_bytes(asset)
-    return Image2Input(data=data, content_type=asset.content_type, file_name=asset.original_file_name)
+    data, content_type = await read_material_bytes_or_thumbnail(asset)
+    return Image2Input(data=data, content_type=content_type, file_name=asset.original_file_name)
 
 
 def _build_prompt(request: dict[str, Any]) -> str:

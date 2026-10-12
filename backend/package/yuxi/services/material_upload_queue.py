@@ -17,7 +17,8 @@ from yuxi.utils.logging_config import logger
 
 INGEST_PENDING = "pending"
 INGEST_COMPLETED = "completed"
-MATERIAL_UPLOAD_STAGING_TTL_SECONDS = int(os.getenv("MATERIAL_UPLOAD_STAGING_TTL_SECONDS", "3600"))
+INGEST_EXPIRED = "expired"
+MATERIAL_UPLOAD_STAGING_TTL_SECONDS = int(os.getenv("MATERIAL_UPLOAD_STAGING_TTL_SECONDS", str(7 * 24 * 3600)))
 MATERIAL_THUMBNAIL_SIZE = (720, 480)
 
 
@@ -87,6 +88,20 @@ async def read_material_bytes(asset: Any) -> bytes:
     return await get_minio_client().adownload_file(asset.bucket_name, asset.object_name)
 
 
+async def read_material_bytes_or_thumbnail(asset: Any) -> tuple[bytes, str]:
+    """原图缺失时返回 OSS 上已有的缩略图，避免把预览请求报成原图过期。"""
+    try:
+        return await read_material_bytes(asset), str(getattr(asset, "content_type", None) or "image/webp")
+    except StorageError as original_error:
+        try:
+            thumbnail = await get_minio_client().adownload_file(
+                asset.bucket_name, material_thumb_object_name(asset.object_name)
+            )
+        except StorageError:
+            raise original_error from None
+        return thumbnail, "image/webp"
+
+
 async def persist_material_thumbnail(asset: Any) -> bytes:
     storage = get_minio_client()
     thumbnail_name = material_thumb_object_name(asset.object_name)
@@ -113,7 +128,17 @@ async def process_material_upload(_ctx: Any, asset_id: str) -> None:
         redis = await get_binary_redis_client()
         data = await redis.get(redis_key)
         if data is None:
-            raise RuntimeError(f"staged material bytes expired before upload: {asset.id}")
+            storage = get_minio_client()
+            existing = await storage.astat_file(asset.bucket_name, asset.object_name)
+            metadata["ingest_status"] = INGEST_COMPLETED if existing else INGEST_EXPIRED
+            metadata.pop("redis_key", None)
+            await repository.update_asset_metadata(asset, metadata)
+            await db.commit()
+            if existing:
+                logger.info("material upload already stored: asset=%s", asset_id)
+            else:
+                logger.warning("material upload expired before persist: asset=%s", asset_id)
+            return
         thumbnail = await redis.get(_material_thumb_redis_key(asset.id))
         if thumbnail is None:
             thumbnail = encode_material_thumbnail(data)

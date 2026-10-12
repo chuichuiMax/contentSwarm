@@ -2071,3 +2071,27 @@ def test_photo_composition_render_requires_matching_photo_count():
 
     with pytest.raises(ValueError):
         render_composition_image([(_image("#D64343"), 0.5, 0.5)], layout)
+
+
+@pytest.mark.asyncio
+async def test_download_asset_uses_thumbnail_when_original_is_missing(monkeypatch):
+    asset = SimpleNamespace(id="cca_missing", content_type="image/jpeg")
+
+    async def read_thumbnail(item):
+        assert item is asset
+        return b"thumb-webp", "image/webp"
+
+    monkeypatch.setattr(content_cover_worker, "read_material_bytes_or_thumbnail", read_thumbnail)
+
+    assert await content_cover_worker._download_asset(asset) == b"thumb-webp"
+
+
+@pytest.mark.asyncio
+async def test_download_asset_reports_when_original_and_thumbnail_are_missing(monkeypatch):
+    async def read_missing(_item):
+        raise content_cover_worker.StorageError("missing")
+
+    monkeypatch.setattr(content_cover_worker, "read_material_bytes_or_thumbnail", read_missing)
+
+    with pytest.raises(RuntimeError, match="封面素材读取失败：cca_gone"):
+        await content_cover_worker._download_asset(SimpleNamespace(id="cca_gone"))

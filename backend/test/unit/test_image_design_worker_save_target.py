@@ -553,3 +553,25 @@ async def test_worker_legacy_pc_job_does_not_attach(db, run_worker):
     assert db.job.status == "succeeded"
     assert len(db.assets) == 2 and not db.items
     assert set(db.job.result_json) == {"asset_ids"}
+
+
+@pytest.mark.asyncio
+async def test_load_material_input_uses_thumbnail_when_original_is_missing(monkeypatch):
+    asset = SimpleNamespace(content_type="image/jpeg", original_file_name="30.jpg", sha256="abc")
+    selected = service.ImageDesignInput("mli_1", asset, "abc")
+
+    async def resolve(*_args):
+        return selected
+
+    async def read_thumbnail(item):
+        assert item is asset
+        return b"thumb-webp", "image/webp"
+
+    monkeypatch.setattr(worker, "resolve_image_input", resolve)
+    monkeypatch.setattr(worker, "read_material_bytes_or_thumbnail", read_thumbnail)
+
+    loaded = await worker._load_material_input(object(), "owner", "mli_1")
+
+    assert loaded.data == b"thumb-webp"
+    assert loaded.content_type == "image/webp"
+    assert loaded.file_name == "30.jpg"
