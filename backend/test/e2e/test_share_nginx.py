@@ -258,8 +258,9 @@ def test_production_share_page_and_all_images(nginx_origins, path, headers, publ
     with httpx.Client(base_url=nginx_origins["http"], trust_env=False, headers=headers) as client:
         response = client.get(path)
         assert response.status_code == 200, response.text
-        assert 'href="tel:19900000001">电话：19900000001 Share employee</a>' in response.text
-        assert ".share-phone{color:#000;" in response.text
+        assert '<span class="project-contact">联系人：Share employee</span>' in response.text
+        assert 'href="tel:19900000001">电话：19900000001</a>' in response.text
+        assert ".share-phone{grid-column:1 / -1;color:var(--share-phone-color);" in response.text
         tags = ShareTags()
         tags.feed(response.text)
         assert len(tags.images) == 3, response.text

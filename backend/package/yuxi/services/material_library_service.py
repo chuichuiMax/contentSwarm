@@ -1096,21 +1096,25 @@ def render_public_material_share_page(
     sharer_name = html.escape(share.sharer_name or "")
     sharer_phone = html.escape(share.sharer_phone or "", quote=True)
     contact = (
-        f'<a class="share-phone" href="tel:{sharer_phone}">电话：{sharer_phone} {sharer_name}</a>'
+        f'<a class="share-phone" href="tel:{sharer_phone}">电话：{sharer_phone}</a>'
         if sharer_phone
         else ""
     )
-    style_class = "project-style" if contact else "project-style-wide"
+    style_class = "project-style" if sharer_name else "project-style-wide"
     description = html.escape(_share_description(share.building_name, share.area, share.design_style), quote=True)
     project_fields = []
-    if building_name and area and design_style:
+    has_project_details = bool(building_name and area and design_style)
+    if has_project_details:
         project_fields.extend(
             [
                 f"<span>楼盘：{building_name}</span>",
                 f"<span>面积：{area}</span>",
-                f'<span class="{style_class}">风格：{design_style}</span>',
             ]
         )
+    if sharer_name:
+        project_fields.append(f'<span class="project-contact">联系人：{sharer_name}</span>')
+    if has_project_details:
+        project_fields.append(f'<span class="{style_class}">风格：{design_style}</span>')
     if contact:
         project_fields.append(contact)
     details = f'<section class="project-info-card">{"".join(project_fields)}</section>' if project_fields else ""
@@ -1156,17 +1160,19 @@ def render_public_material_share_page(
             ),
             "h1{margin:0;font-size:21px;line-height:1.4;text-align:center}",
             "main{max-width:720px;margin:auto;padding:0 0 36px}",
-            ".share-hero{height:min(53vw,382px);overflow:hidden;background:#eef0f0}",
-            ".share-hero img{display:block;width:100%;height:100%;margin:0;object-fit:cover}",
+            ".share-hero{background:#eef0f0}",
+            ".share-hero img{display:block;width:100%;height:auto;margin:0}",
             (
-                ".project-info-card{position:relative;z-index:1;display:grid;"
+                ".project-info-card{--share-phone-color:#5b7cff;position:relative;z-index:1;display:grid;"
                 "grid-template-columns:repeat(2,minmax(0,1fr));gap:16px 24px;margin:-76px 28px 34px;"
                 "padding:38px 30px 28px;border-radius:16px;background:#fff;"
                 "box-shadow:0 5px 12px rgb(0 0 0 / 22%);font-size:18px;line-height:1.55}"
             ),
+            ".project-info-card span{min-width:0;overflow-wrap:anywhere}",
+            ".project-contact{grid-column:1}.project-style{grid-column:2}",
             ".project-style-wide{grid-column:1 / -1}",
-            ".share-phone{color:#000;text-decoration:none;overflow-wrap:anywhere}",
-            ".share-phone:only-child{grid-column:1 / -1}",
+            ".share-phone{grid-column:1 / -1;color:var(--share-phone-color);"
+            "text-decoration:none;overflow-wrap:anywhere}",
             ".case-section{padding:0 10px}",
             "h2{display:flex;align-items:center;gap:16px;margin:0 18px 20px;font-size:22px;line-height:1.4}",
             "h2::before{width:16px;height:35px;background:#ff1717;content:''}",
@@ -1272,8 +1278,9 @@ async def list_material_items(
     enterprise_rough_owner_uid: str | None = None,
     date_from: date | None = None,
     date_to: date | None = None,
+    actor_user: User | None = None,
 ) -> dict[str, Any]:
-    rough_upload_only = await material_access_mode(db, user) == "rough_upload"
+    rough_upload_only = await material_access_mode(db, actor_user or user) == "rough_upload"
     if date_from and date_to and date_from > date_to:
         raise _error(422, "MATERIAL_DATE_RANGE_INVALID", "开始日期不能晚于结束日期")
     uploaded_from = (

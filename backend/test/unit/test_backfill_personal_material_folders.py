@@ -34,12 +34,16 @@ def test_historical_sources_route_pc_outputs_and_mp_inputs_with_existing_items()
     old_mp_task = SimpleNamespace(brief_json={"form_values": {"mp_service_entry": "装修家居"}})
 
     assert MODULE.historical_destination(SimpleNamespace(role="output", metadata_json={}), item, pc_task, None) == (
-        "generated",
+        "works",
         "pc",
     )
-    assert MODULE.historical_destination(SimpleNamespace(role="output", metadata_json={}), item, mp_task, None) is None
+    assert MODULE.historical_destination(
+        SimpleNamespace(role="output", metadata_json={}), item, mp_task, None,
+    ) == ("works", "mp")
     assert (
-        MODULE.historical_destination(SimpleNamespace(role="output", metadata_json={}), item, old_mp_task, None) is None
+        MODULE.historical_destination(
+            SimpleNamespace(role="output", metadata_json={}), item, old_mp_task, None,
+        ) == ("works", "mp")
     )
     assert MODULE.historical_destination(
         SimpleNamespace(role="image_design_input", metadata_json={}), item, None, None
@@ -77,3 +81,19 @@ def test_historical_private_photos_are_not_shared_without_source_evidence():
     assert MODULE.historical_destination(
         asset, SimpleNamespace(metadata_json={"source": "image_design"}), None, unknown, mp_job
     ) == ("generated", "mp")
+
+
+def test_task_source_overrides_old_content_production_tag():
+    asset = SimpleNamespace(role="output", metadata_json={})
+    item = SimpleNamespace(metadata_json={"source": "content_production", "source_channel": "pc"})
+    task = SimpleNamespace(brief_json={"form_values": {"mp_service_entry": "装修家居"}})
+    assert MODULE.historical_destination(asset, item, task, None) == ("works", "mp")
+    assert MODULE.historical_destination(asset, item, None, None) == ("review", None)
+
+
+def test_backfill_preserves_enterprise_shared_cover():
+    asset = SimpleNamespace(role="output", metadata_json={})
+    item = SimpleNamespace(metadata_json={"source": "content_production"})
+    task = SimpleNamespace(brief_json={"form_values": {}})
+    gallery = SimpleNamespace(visibility="enterprise")
+    assert MODULE.historical_destination(asset, item, task, gallery) is None

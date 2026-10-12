@@ -29,12 +29,14 @@ def historical_destination(asset, item, task, old_category, image_job=None) -> t
         ):
             return "generated", "mp"
         return None
-    if item_meta.get("source") == "content_production":
-        return "generated", "pc"
     if asset.role == "output" and task is not None:
+        if old_category and old_category.visibility == "enterprise":
+            return None
         values = (task.brief_json or {}).get("form_values") or {}
-        if not (values.get("mp_content_code") or values.get("mp_service_entry")):
-            return "generated", "pc"
+        channel = "mp" if values.get("mp_content_code") or values.get("mp_service_entry") else "pc"
+        return "works", channel
+    if item_meta.get("source") == "content_production":
+        return "review", None
     if item and asset.role == "library_image":
         channel = item_meta.get("source_channel") or asset_meta.get("source_channel")
         source = item_meta.get("source_folder") or asset_meta.get("source_folder")
@@ -92,6 +94,7 @@ async def run(*, apply: bool, owner_uids: list[str]) -> None:
     from yuxi.storage.postgres.models_business import User
     from yuxi.storage.postgres.models_content import (
         ContentCoverAsset,
+        ContentCoverJob,
         ContentMaterialCategory,
         ContentMaterialLibraryItem,
         ContentTask,
@@ -171,6 +174,11 @@ async def run(*, apply: bool, owner_uids: list[str]) -> None:
                     .scalars()
                     .all()
                 }
+                cover_jobs = await db.scalars(select(ContentCoverJob).where(
+                    ContentCoverJob.owner_uid == uid, ContentCoverJob.status == "succeeded",
+                ))
+                completed_covers = {(job.content_task_id, asset_id)
+                                    for job in cover_jobs for asset_id in (job.result_json or {}).get("asset_ids", [])}
                 categories = {
                     (category.owner_uid, category.id): category
                     for category in (
@@ -196,6 +204,9 @@ async def run(*, apply: bool, owner_uids: list[str]) -> None:
                     if destination is None:
                         continue
                     folder, channel = destination
+                    if folder == "works" and (asset.content_task_id, asset.id) not in completed_covers:
+                        review.append((uid, asset.id, item.id if item else "-", old.name if old else "unknown"))
+                        continue
                     if folder == "review":
                         review.append((uid, asset.id, item.id, old.name if old else "unknown"))
                         continue
@@ -203,8 +214,8 @@ async def run(*, apply: bool, owner_uids: list[str]) -> None:
                         review_shared.append((uid, asset.id, item.id, old.name if old else "unknown"))
                         continue
                     target = (
-                        folders["generated"][0]
-                        if folder == "generated"
+                        folders[folder][0]
+                        if folder in {"generated", "works"}
                         else await upload_category(db, user, folder, channel)
                     )
                     metadata = {**item_meta, "source_channel": channel, "source_folder": folder}
@@ -215,6 +226,9 @@ async def run(*, apply: bool, owner_uids: list[str]) -> None:
                         metadata["retain_asset_on_delete"] = True
                     if folder == "generated":
                         metadata["source"] = "image_design" if channel == "mp" else "content_production"
+                    if folder == "works":
+                        metadata.update(source="content_production", retain_asset_on_delete=True)
+                        asset_metadata["source"] = "content_production"
                     if folder == "generated" and channel == "mp":
                         saved_target = {"scope": "private", "gallery_id": target.id}
                         metadata.update(resolved_save_target=saved_target, save_target_version=2)

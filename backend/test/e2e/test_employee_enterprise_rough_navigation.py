@@ -1,6 +1,7 @@
 """Exercise employee column navigation against the real Vue page with controlled API responses."""
 
 import io
+import re
 import socket
 from urllib.parse import parse_qs, urlparse
 
@@ -20,9 +21,11 @@ async def test_employee_columns_preserve_scope_pagination_refresh_and_preview():
             "id": "user:alice",
             "source": "user",
             "employee_code": "A1",
-            "name": "员工甲",
-            "login_account": "alice",
-            "role": "普通用户",
+            "name": "欧美玲",
+            "login_account": "13800000001",
+            "current_branch": "长沙袁家岭店",
+            "current_department": "工程交付部/工程交付二组",
+            "role": "家装顾问",
             "enabled": True,
             "login_port": ["pc"],
             "rough_image_count": 7,
@@ -124,11 +127,45 @@ async def test_employee_columns_preserve_scope_pagination_refresh_and_preview():
             await page.goto(
                 "http://localhost:5173/model-manage/employees", wait_until="domcontentloaded", timeout=60_000
             )
-            await expect(page.get_by_role("columnheader", name="毛坯图上传数（我的素材）")).to_be_visible()
-            await expect(page.get_by_role("columnheader", name="毛坯图上传数（企业共享）")).to_be_visible()
+            private_header = page.get_by_role("columnheader", name=re.compile(r"毛坯图上传数\s*（我的素材）"))
+            enterprise_header = page.get_by_role("columnheader", name=re.compile(r"毛坯图上传数\s*（企业共享）"))
+            await expect(private_header).to_be_visible(timeout=30_000)
+            await expect(enterprise_header).to_be_visible()
+            for width in (1920, 1366, 1024):
+                await page.set_viewport_size({"width": width, "height": 1000})
+                for label, minimum_width in (("姓名", 80), ("角色", 96)):
+                    header = page.get_by_role("columnheader", name=label, exact=True)
+                    assert minimum_width <= (await header.bounding_box())["width"] <= minimum_width + 8
+                    cell = page.locator('tr[data-row-key="user:alice"] > td').nth(
+                        await header.evaluate("el => el.cellIndex")
+                    )
+                    assert await cell.evaluate("el => el.scrollWidth <= el.clientWidth")
+                    assert (
+                        await cell.evaluate(
+                            "el => { const range = document.createRange(); range.selectNodeContents(el); "
+                            "return range.getClientRects().length; }"
+                        )
+                        == 1
+                    )
+                for header, scope in ((private_header, "我的素材"), (enterprise_header, "企业共享")):
+                    assert await header.inner_text() == f"毛坯图上传数\n（{scope}）"
+                    assert await header.evaluate(
+                        "el => { const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT); "
+                        "let node; while ((node = walker.nextNode())) { "
+                        "if (!node.textContent.trim()) continue; const range = document.createRange(); "
+                        "range.selectNodeContents(node); if (range.getClientRects().length !== 1) return false; "
+                        "} return true; }"
+                    )
+                if width == 1024:
+                    assert await page.locator(".employee-table .ant-table-content").evaluate(
+                        "el => el.scrollWidth > el.clientWidth && getComputedStyle(el).overflowX === 'auto'"
+                    )
+                    assert await page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+            await page.set_viewport_size({"width": 1600, "height": 1000})
             await page.get_by_role("button", name="25", exact=True).click()
             await expect(page).to_have_url(
-                "http://localhost:5173/materials/images?employee_id=user:alice&gallery=rough&scope=enterprise"
+                "http://localhost:5173/materials/images?employee_id=user:alice&gallery=rough&scope=enterprise",
+                timeout=30_000,
             )
             await expect(
                 page.get_by_text("本页仅显示该员工上传到企业共享毛坯房图库的图片。", exact=False)
@@ -143,15 +180,14 @@ async def test_employee_columns_preserve_scope_pagination_refresh_and_preview():
             await expect(page.locator("article.material-card")).to_have_count(24)
             assert all("employee_id" not in p for path, p in requests if path.endswith("/thumbnail"))
 
-            # Change scope and employee without reloading the component.
-            await page.evaluate(
-                "url => { const state = {...history.state, current: url}; "
-                "history.pushState(state, '', url); "
-                "dispatchEvent(new PopStateEvent('popstate', {state})); }",
-                "/materials/images?employee_id=user:alice&gallery=rough",
+            await page.go_back(wait_until="domcontentloaded")
+            await page.get_by_role("button", name="7", exact=True).click()
+            await expect(page).to_have_url(
+                "http://localhost:5173/materials/images?employee_id=user:alice&gallery=rough"
             )
             await expect(page.locator("article.material-card")).to_have_count(7)
             await expect(page.get_by_alt_text("个人甲-0")).to_be_visible()
+            # Change scope and employee without reloading the component.
             await page.evaluate(
                 "url => { const state = {...history.state, current: url}; "
                 "history.pushState(state, '', url); "

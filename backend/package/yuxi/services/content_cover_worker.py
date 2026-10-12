@@ -198,7 +198,6 @@ async def _store_outputs(job: ContentCoverJob, outputs: list[bytes]) -> list[str
         async with pg_manager.get_async_session_context() as db:
             repo = ContentCoverRepository(db)
             from sqlalchemy import select
-            from yuxi.storage.postgres.models_business import User
             from yuxi.storage.postgres.models_content import ContentTask
 
             task = (
@@ -206,19 +205,13 @@ async def _store_outputs(job: ContentCoverJob, outputs: list[bytes]) -> list[str
                 if job.content_task_id else None
             )
             form_values = ((task.brief_json or {}).get("form_values") or {}) if task else {}
-            pc_content_output = task is not None and not (
-                form_values.get("mp_content_code") or form_values.get("mp_service_entry")
-            )
-            user = await db.scalar(select(User).where(User.uid == job.owner_uid)) if pc_content_output else None
-            if user is not None:
+            source_channel = "mp" if form_values.get("mp_content_code") or form_values.get("mp_service_entry") else "pc"
+            if task is not None:
                 from yuxi.services.personal_gallery_settings import (
                     load_personal_gallery_settings,
                     require_personal_gallery,
                 )
-                from yuxi.services.personal_materials import folder_categories
-
-                require_personal_gallery(await load_personal_gallery_settings(db), "generated")
-                gallery = (await folder_categories(db, user))["generated"][0]
+                require_personal_gallery(await load_personal_gallery_settings(db), "works")
             for index, raw in enumerate(outputs):
                 normalized, width, height = _normalize_output(
                     raw,
@@ -234,7 +227,7 @@ async def _store_outputs(job: ContentCoverJob, outputs: list[bytes]) -> list[str
                     content_type="image/png",
                 )
                 uploaded_objects.append((uploaded.bucket_name, uploaded.object_name))
-                asset = await repo.create_asset(
+                await repo.create_asset(
                     id=asset_id,
                     owner_uid=job.owner_uid,
                     tenant_id=job.tenant_id,
@@ -249,6 +242,8 @@ async def _store_outputs(job: ContentCoverJob, outputs: list[bytes]) -> list[str
                     bucket_name=uploaded.bucket_name,
                     object_name=uploaded.object_name,
                     metadata_json={
+                        **({"source": "content_production", "source_channel": source_channel,
+                            "source_folder": "works"} if task is not None else {}),
                         "job_id": job.id,
                         "mode": job.mode,
                         "template_replicate": template_replicate,
@@ -279,13 +274,8 @@ async def _store_outputs(job: ContentCoverJob, outputs: list[bytes]) -> list[str
                         ),
                     },
                 )
-                if pc_content_output and user is not None:
-                    from yuxi.services.material_library_service import create_library_item_for_asset
-                    await create_library_item_for_asset(
-                        db, asset=asset, material_type="image", name=f"cover-{index + 1}",
-                        category=gallery.id, category_owner_uid=gallery.owner_uid,
-                        metadata={"source": "content_production", "source_channel": "pc", "source_folder": "generated"},
-                    )
+                # 我的作品 aggregates successful task outputs by asset ID.
+                # Do not create a second material-library attachment for a cover.
                 asset_ids.append(asset_id)
             await db.commit()
     except Exception:

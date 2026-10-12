@@ -422,6 +422,7 @@ async def material_items(
         enterprise_rough_owner_uid=str(uploader.user.uid) if uploader else None,
         date_from=date_from,
         date_to=date_to,
+        actor_user=current_user,
     )
 
 

@@ -25,6 +25,7 @@ from yuxi.storage.postgres.models_content import (
     ContentMaterialShare,
     ContentMaterialShareItem,
     ContentMaterialUsage,
+    ContentRole,
 )
 from yuxi.utils.auth_utils import AuthUtils
 
@@ -105,6 +106,8 @@ async def material_users(test_client):
             "other": headers[1],
             "member": headers[2],
             "owner_uid": credentials[0],
+            "owner_uids": credentials,
+            "user_ids": user_ids,
             "department_id": department_id,
         }
     finally:
@@ -671,6 +674,126 @@ async def test_target_employee_rough_gallery_revalidates_scope_on_every_operatio
         assert deleted.status_code == 200, deleted.text
 
 
+@pytest_asyncio.fixture
+async def scoped_rough_employee(material_users):
+    from yuxi.services.employee_service import _platform_uid
+
+    suffix = uuid.uuid4().hex
+    role_name = f"设计师测试_{suffix[:10]}"
+    async with material_users["session_factory"]() as db:
+        employee = ContentEmployee(
+            id=suffix, employee_code=f"pytest_rough_{suffix[:10]}", name="毛坯图库测试员工",
+            login_account=f"pytest_rough_{suffix}", login_port=["pc", "app"], role=role_name,
+            gender="女", enabled=True, created_by=material_users["owner_uid"],
+        )
+        user = User(
+            uid=_platform_uid(employee), username=f"pytest_rough_target_{suffix[:10]}", role=role_name,
+            department_id=material_users["department_id"], password_hash=AuthUtils.hash_password(uuid.uuid4().hex),
+        )
+        db.add_all([employee, user, ContentRole(
+            id=suffix, role_code=f"pytest_rough_{suffix[:10]}", name=role_name,
+            permissions=["material_rough.upload"], created_by=material_users["owner_uid"],
+        )])
+        await db.commit()
+        material_users["owner_uids"].append(user.uid)
+        material_users["user_ids"].append(user.id)
+    try:
+        yield {
+            "id": employee.id, "uid": user.uid,
+            "headers": {"Authorization": f"Bearer {AuthUtils.create_access_token({'sub': str(user.id)})}"},
+        }
+    finally:
+        async with material_users["session_factory"]() as db:
+            await db.execute(delete(ContentEmployee).where(ContentEmployee.id == suffix))
+            await db.execute(delete(ContentRole).where(ContentRole.id == suffix))
+            await db.commit()
+
+
+@pytest.mark.parametrize("actor_role", ["admin", "superadmin"])
+@pytest.mark.parametrize("employee_ref_kind", ["employee", "user"])
+async def test_admin_views_scoped_employee_rough_materials_without_crossing_ownership(
+    test_client, material_users, scoped_rough_employee, actor_role, employee_ref_kind,
+):
+    async with material_users["session_factory"]() as db:
+        actor = await db.scalar(select(User).where(User.uid == material_users["owner_uid"]))
+        actor.role = actor_role
+        await db.commit()
+    headers = material_users["owner"]
+    employee_ref = (scoped_rough_employee["id"] if employee_ref_kind == "employee"
+                    else f"user:{scoped_rough_employee['uid']}")
+    params = {"material_type": "image", "employee_id": employee_ref}
+    categories = await test_client.get("/api/material-library/categories", params=params, headers=headers)
+    assert categories.status_code == 200, categories.text
+    assert categories.json()["target_employee"]["id"] == employee_ref
+    rough_id = categories.json()["personal_rough_category_id"]
+    assert all(row["visibility"] == "private" for row in categories.json()["categories"])
+
+    own_categories = await test_client.get(
+        "/api/material-library/categories", params={"material_type": "image"}, headers=headers,
+    )
+    assert own_categories.status_code == 200, own_categories.text
+    own_rough_id = next(row["id"] for row in own_categories.json()["categories"]
+                        if row.get("personal_folder") == "rough")
+    own_upload = await test_client.post(
+        "/api/material-library/images/import", headers=headers, data={"category": own_rough_id},
+        files=[("files", ("other-owner.png", _png(), "image/png"))],
+    )
+    assert own_upload.status_code == 201, own_upload.text
+    other_item_id = own_upload.json()["items"][0]["id"]
+    target_upload = await test_client.post(
+        "/api/material-library/images/import", params={"employee_id": employee_ref}, headers=headers,
+        data={"category": rough_id}, files=[("files", ("target-rough.png", _png(), "image/png"))],
+    )
+    assert target_upload.status_code == 201, target_upload.text
+    item_id = target_upload.json()["items"][0]["id"]
+    shared_params = {"material_type": "image", "uploader_employee_id": employee_ref}
+    shared_categories = await test_client.get(
+        "/api/material-library/categories", params=shared_params, headers=headers,
+    )
+    assert shared_categories.status_code == 200, shared_categories.text
+    shared_id = shared_categories.json()["enterprise_rough_category_id"]
+    excluded_ids = [other_item_id]
+    for category, name in ((shared_id, "target-shared"), ("mp-uploads-private", "target-uploads")):
+        upload = await test_client.post(
+            "/api/material-library/images/import", headers=scoped_rough_employee["headers"],
+            data={"category": category}, files=[("files", (f"{name}.png", _png(), "image/png"))],
+        )
+        assert upload.status_code == 201, upload.text
+        excluded_ids.append(upload.json()["items"][0]["id"])
+    items = await test_client.get(
+        "/api/material-library/items", params={**params, "category": rough_id}, headers=headers,
+    )
+    assert items.status_code == 200, items.text
+    assert items.json()["total"] == 1
+    assert [row["id"] for row in items.json()["items"]] == [item_id]
+    assert items.json()["items"][0]["uploaded_by"] == scoped_rough_employee["uid"]
+    assert items.json()["items"][0]["can_manage"] is True
+    for resource in ("file", "thumbnail"):
+        allowed = await test_client.get(
+            f"/api/material-library/items/{item_id}/{resource}", params={"employee_id": employee_ref}, headers=headers,
+        )
+        assert allowed.status_code == 200, allowed.text
+        for excluded_id in excluded_ids:
+            denied_other = await test_client.get(
+                f"/api/material-library/items/{excluded_id}/{resource}",
+                params={"employee_id": employee_ref}, headers=headers,
+            )
+            assert denied_other.status_code == 404, denied_other.text
+        denied_member = await test_client.get(
+            f"/api/material-library/items/{item_id}/{resource}",
+            params={"employee_id": employee_ref}, headers=material_users["member"],
+        )
+        assert denied_member.status_code == 403, denied_member.text
+    shared_items = await test_client.get("/api/material-library/items", params=shared_params, headers=headers)
+    assert shared_items.status_code == 200, shared_items.text
+    assert [row["id"] for row in shared_items.json()["items"]] == [excluded_ids[1]]
+    for resource in ("categories", "items"):
+        denied_member = await test_client.get(
+            f"/api/material-library/{resource}", params=params, headers=material_users["member"],
+        )
+        assert denied_member.status_code == 403, denied_member.text
+
+
 async def test_admin_can_create_second_level_gallery(test_client, material_users):
     headers = material_users["owner"]
     parent_response = await test_client.post(
@@ -701,7 +824,9 @@ async def test_admin_can_create_second_level_gallery(test_client, material_users
     assert child["area"] == "120"
     galleries = await test_client.get("/api/material-library/galleries", headers=headers)
     assert galleries.status_code == 200, galleries.text
-    assert any(item["id"] == child["id"] and item["parent_id"] == parent["id"] for item in galleries.json()["galleries"])
+    assert any(
+        item["id"] == child["id"] and item["parent_id"] == parent["id"] for item in galleries.json()["galleries"]
+    )
 
     cover_child = await test_client.post(
         "/api/material-library/categories",
@@ -961,7 +1086,8 @@ async def test_second_level_decoration_gallery_share_keeps_ordered_snapshots_and
     assert "楼盘：洋湖天序" in public_page.text
     assert "面积：120㎡" in public_page.text
     assert "风格：复古风潮" in public_page.text
-    assert f'href="tel:{original_phone}">电话：{original_phone} 分享测试员工</a>' in public_page.text
+    assert '<span class="project-contact">联系人：分享测试员工</span>' in public_page.text
+    assert f'href="tel:{original_phone}">电话：{original_phone}</a>' in public_page.text
     assert 'property="og:description" content="洋湖天序｜120㎡｜复古风潮"' in public_page.text
     assert f'property="og:url" content="{share["url"]}"' in public_page.text
     assert f"{public_prefix}/api/material-library/shares/{share['token']}/images/1" in public_page.text

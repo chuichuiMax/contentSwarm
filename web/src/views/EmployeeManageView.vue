@@ -336,6 +336,7 @@ onMounted(async () => {
         :data-source="displayedEmployees"
         :loading="loading"
         :pagination="tablePagination"
+        :scroll="{ x: 'max-content' }"
         row-key="id"
         @change="handleTableChange"
       >
@@ -343,7 +344,7 @@ onMounted(async () => {
           <template #default="{ index }">{{ (page - 1) * pageSize + index + 1 }}</template>
         </a-table-column>
         <a-table-column title="员工编码" data-index="employee_code" key="employee_code" />
-        <a-table-column title="姓名" data-index="name" key="name" />
+        <a-table-column title="姓名" data-index="name" key="name" :width="80" class-name="employee-nowrap" />
         <a-table-column title="当前分部" data-index="current_branch" key="current_branch" />
         <a-table-column title="当前部门" data-index="current_department" key="current_department" />
         <a-table-column title="登录账号" data-index="login_account" key="login_account" />
@@ -356,13 +357,19 @@ onMounted(async () => {
         <a-table-column title="登录端口" key="login_port" :width="110">
           <template #default="{ record }">{{ loginPortLabel(record.login_port) }}</template>
         </a-table-column>
-        <a-table-column title="角色" data-index="role" key="role" />
-        <a-table-column title="毛坯图上传数（我的素材）" key="rough_image_count" :width="180" align="center">
+        <a-table-column title="角色" data-index="role" key="role" :width="96" class-name="employee-nowrap" />
+        <a-table-column key="rough_image_count" :width="150" align="center">
+          <template #title>
+            <span class="rough-count-title">毛坯图上传数<br />（我的素材）</span>
+          </template>
           <template #default="{ record }">
             <a-button type="link" @click="openRoughImages(record)">{{ record.rough_image_count ?? 0 }}</a-button>
           </template>
         </a-table-column>
-        <a-table-column title="毛坯图上传数（企业共享）" key="enterprise_rough_image_count" :width="180" align="center">
+        <a-table-column key="enterprise_rough_image_count" :width="150" align="center">
+          <template #title>
+            <span class="rough-count-title">毛坯图上传数<br />（企业共享）</span>
+          </template>
           <template #default="{ record }">
             <a-button type="link" @click="openRoughImages(record, 'enterprise')">{{ record.enterprise_rough_image_count ?? 0 }}</a-button>
           </template>
@@ -533,6 +540,10 @@ onMounted(async () => {
 }
 
 .employee-table {
+  :deep(.employee-nowrap) {
+    white-space: nowrap;
+  }
+
   :deep(.ant-table) {
     background: var(--gray-0);
   }
@@ -546,6 +557,12 @@ onMounted(async () => {
   :deep(.ant-table-pagination) {
     margin: 16px 0 0;
   }
+}
+
+.rough-count-title {
+  display: inline-block;
+  white-space: nowrap;
+  line-height: 1.5;
 }
 
 .status-cell {
