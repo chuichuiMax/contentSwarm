@@ -84,6 +84,7 @@ async def mp_accounts(test_client, material_users):
 
 async def test_image_design_routes_require_mp_authentication(test_client):
     for route in (
+        "profiles",
         "drafts",
         "library",
         "save-targets",
@@ -144,8 +145,22 @@ async def test_mp_transfer_array_passes_validation_before_refinement_lookup(test
     assert response.status_code == 404, response.text
     assert response.json()["detail"]["error"]["code"] == "IMAGE_DESIGN_REFINEMENT_INVALID"
     payload["extra_element"].append("开放式层板展示架")
+    accepted = await test_client.post("/api/mp/image-design/tasks", headers=mp_accounts[0]["headers"], json=payload)
+    assert accepted.status_code == 404, accepted.text
+    payload["extra_element"] = ["壁炉居中"] * 13
     rejected = await test_client.post("/api/mp/image-design/tasks", headers=mp_accounts[0]["headers"], json=payload)
     assert rejected.status_code == 422, rejected.text
+
+
+async def test_mp_transfer_profiles_match_pc_space_configuration(test_client, mp_accounts):
+    from yuxi.image_design.workflow_profiles import public_profiles
+
+    response = await test_client.get("/api/mp/image-design/profiles", headers=mp_accounts[0]["headers"])
+    assert response.status_code == 200, response.text
+    profiles = response.json()
+    assert profiles["spaces"] == public_profiles()["spaces"]
+    assert len(profiles["spaces"]) == 17
+    assert set(profiles) == {"version", "spaces"}
 
 
 async def test_mp_results_and_task_files_remain_authenticated(test_client, mp_accounts):

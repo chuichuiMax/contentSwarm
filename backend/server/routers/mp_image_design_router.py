@@ -8,11 +8,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from yuxi.image_design import mp_service
 from yuxi.image_design.mp_schemas import MpDraftsUpdate, MpLibraryCreate, MpPolishCreate, MpTaskCreate
 from yuxi.image_design.save_targets import list_mp_save_targets
+from yuxi.image_design.workflow_profiles import public_profiles
 from yuxi.services.mp_service import MpContext
 
 from server.utils.auth_middleware import get_db, get_mp_context
 
 mp_image_design = APIRouter(prefix="/mp/image-design", tags=["mp-image-design"])
+
+
+@mp_image_design.get("/profiles")
+async def transfer_profiles(ctx: MpContext = Depends(get_mp_context)):
+    profiles = public_profiles()
+    return {"version": profiles["version"], "spaces": profiles["spaces"]}
 
 
 @mp_image_design.get("/drafts")

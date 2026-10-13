@@ -161,8 +161,8 @@ ADDONS = {
 }
 
 
-# MP's first release intentionally offers the living-room composition choices
-# for every target space. Keep this internal vocabulary out of PC selectors.
+# Retain legacy MP vocabulary for historical refinement snapshots.
+# New MP requests use the selected space's canonical options.
 MP_SHARED_LAYOUTS = {f"mp_{key}": label for key, label in LAYOUTS["living_room"].items()}
 MP_SHARED_ADDONS = {f"mp_{key}": label for key, label in ADDONS["living_room"].items()}
 

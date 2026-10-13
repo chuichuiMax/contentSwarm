@@ -50,7 +50,7 @@ class MpPolishCreate(BaseModel):
     style: str | None = Field(default=None, max_length=80)
     target_space: str | None = Field(default=None, max_length=80)
     layout_type: str | None = Field(default=None, max_length=80)
-    extra_element: list[Annotated[str, Field(min_length=1, max_length=80)]] = Field(default_factory=list, max_length=2)
+    extra_element: list[Annotated[str, Field(min_length=1, max_length=80)]] = Field(default_factory=list, max_length=12)
 
     @field_validator("extra_element")
     @classmethod

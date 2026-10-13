@@ -63,20 +63,20 @@ async def test_retry_revalidates_fixed_target_before_enqueue_and_marks_legacy_re
     assert result["task"]["status"] == "queued" and job.request_json["mp_fixed_target"] is True
 
 
-@pytest.mark.parametrize("space,prefix", [("客厅", ""), ("书房", "mp_")])
 @pytest.mark.parametrize(
     "elements,ids",
     [
         ([], []),
         (["落地窗旁休闲躺椅"], ["lounge_chair"]),
         (["落地窗旁休闲躺椅", "壁炉居中"], ["lounge_chair", "fireplace"]),
+        (["落地窗旁休闲躺椅", "壁炉居中", "电视墙满墙收纳柜"], ["lounge_chair", "fireplace", "storage_wall"]),
         ([" 壁炉居中 ", "壁炉居中"], ["fireplace"]),
     ],
 )
-def test_transfer_addon_arrays_reach_compiled_prompt(space, prefix, elements, ids):
-    payload = MpPolishCreate(**transfer_payload(target_space=space, extra_element=elements))
+def test_transfer_addon_arrays_reach_compiled_prompt(elements, ids):
+    payload = MpPolishCreate(**transfer_payload(extra_element=elements))
     converted = refinement_payload(payload)
-    assert converted.addons == [prefix + value for value in ids]
+    assert converted.addons == ids
     plan = build_prompt_plan(converted, {"cross_space_style": {"style": "现代简约"}})
     prompt = compile_prompt(plan)
     for element in set(value.strip() for value in elements):
@@ -87,8 +87,8 @@ def test_transfer_missing_addons_defaults_to_empty_list():
     assert MpPolishCreate(**transfer_payload()).extra_element == []
 
 
-@pytest.mark.parametrize("elements", ["壁炉居中", None, [42], [" "], ["壁炉居中"] * 3])
-def test_transfer_rejects_non_array_invalid_items_and_more_than_two(elements):
+@pytest.mark.parametrize("elements", ["壁炉居中", None, [42], [" "], ["壁炉居中"] * 13])
+def test_transfer_rejects_invalid_items_and_more_than_twelve(elements):
     with pytest.raises(ValidationError):
         MpPolishCreate(**transfer_payload(extra_element=elements))
 
@@ -180,7 +180,7 @@ async def test_ambiguous_enterprise_id_returns_validation_error(category_db):
     ],
 )
 def test_contribution_policy_preserves_private_ownership_and_employee_enterprise_access(role, scope, owner, allowed):
-    category = ContentMaterialCategory(owner_uid=owner, visibility=scope)
+    category = ContentMaterialCategory(owner_uid=owner, visibility=scope, is_global_personal=False)
     assert can_contribute_to_category(SimpleNamespace(uid="employee", role=role), category) is allowed
 
 
@@ -230,7 +230,7 @@ async def test_polish_and_task_http_contract_accepts_same_array_and_rejects_stal
     app.dependency_overrides[get_db] = lambda: db
     app.dependency_overrides[get_mp_context] = lambda: SimpleNamespace(user=SimpleNamespace(uid="employee"))
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
-        payload = transfer_payload(extra_element=["落地窗旁休闲躺椅", "壁炉居中"])
+        payload = transfer_payload(extra_element=["落地窗旁休闲躺椅", "壁炉居中", "电视墙满墙收纳柜"])
         polished = await client.post("/api/mp/image-design/polish", json=payload)
         assert polished.status_code == 200, polished.text
         task = {**payload, "refinement_id": polished.json()["refinement_id"], "save_target": {"scope": "private"}}
@@ -242,6 +242,6 @@ async def test_polish_and_task_http_contract_accepts_same_array_and_rejects_stal
         task["extra_element"][1] = "开放式层板展示架"
         stale = await client.post("/api/mp/image-design/tasks", json=task)
         assert stale.status_code == 409
-        invalid = await client.post("/api/mp/image-design/polish", json={**payload, "extra_element": ["壁炉居中"] * 3})
+        invalid = await client.post("/api/mp/image-design/polish", json={**payload, "extra_element": ["壁炉居中"] * 13})
         assert invalid.status_code == 422
         assert generate.await_count == 1
