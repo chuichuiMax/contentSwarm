@@ -6,6 +6,7 @@ from fastapi import HTTPException
 
 import yuxi.services.content_service as content_service
 from yuxi.content.schemas import ContentBriefPayload
+from yuxi.content.v3.modular_rules import SINGLE_BLUEPRINT_WORKFLOW_ID
 from yuxi.services.content_service import (
     _parse_content_studio_production_pack,
     _parse_content_studio_quote_case,
@@ -721,3 +722,35 @@ def test_structured_persona_case_preserves_identity_without_inventing_pain(conte
         assert ("inspection" in values) is (content_type == "CT07")
     else:
         assert "process" not in values
+
+
+def test_single_blueprint_persona_case_does_not_require_brand_on_structured_persona():
+    request = json.dumps(
+        {
+            "persona": {
+                "age": "30",
+                "workYears": "5",
+                "serviceCity": "长沙市",
+                "introduction": "我从事装修行业五年了",
+                "skills": ["工长"],
+                "serviceAdvantages": ["自有工人无转包"],
+            },
+            "requirementType": {"typeName": "自我介绍", "houseInfo": {"mySite": "长沙金茂府"}},
+            "tags": ["自我推荐"],
+        },
+        ensure_ascii=False,
+    )
+    task = SimpleNamespace(
+        id="ct_single_bp",
+        content_goal="acquire",
+        mode="quick",
+        content_type_code="CT01",
+        workflow_version_id=SINGLE_BLUEPRINT_WORKFLOW_ID,
+    )
+    compiled, missing = compile_content_brief(
+        task=task, template=SimpleNamespace(slug="decoration"), brief=ContentBriefPayload(user_request=request)
+    )
+    assert missing == []
+    assert compiled["brand"] == {}
+    assert compiled["audience"] == []
+    assert "工长" in compiled["business_variables"]["persona_fact"]

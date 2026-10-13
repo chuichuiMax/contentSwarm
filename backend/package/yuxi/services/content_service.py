@@ -784,6 +784,7 @@ def compile_content_brief(
         quote_case = _parse_content_studio_quote_case(user_request, content_type_code=content_type_code)
         production_pack = None if quote_case else _parse_content_studio_production_pack(user_request)
         structured = quote_case or production_pack
+        metadata_source = structured
         existing_snapshot = (getattr(task, "runtime_config_snapshot_json", None) or {}).get(
             "trusted_external_material_snapshot"
         )
@@ -876,8 +877,8 @@ def compile_content_brief(
             "channel_profile_version_id": getattr(task, "channel_profile_version_id", None),
             "persona_profile_version_id": getattr(task, "persona_profile_version_id", None),
             "mode": task.mode,
-            "brand": structured["brand"] if structured is not None else {},
-            "audience": structured["audience"] if structured is not None else [],
+            "brand": (metadata_source or structured or {}).get("brand", {}),
+            "audience": (metadata_source or structured or {}).get("audience", []),
             "business_variables": {
                 "user_request": normalized_user_request,
                 **({"quote_type": quote_type} if inject_quote_type else {}),

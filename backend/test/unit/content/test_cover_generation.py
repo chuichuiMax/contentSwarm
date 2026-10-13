@@ -350,8 +350,18 @@ def test_global_image2_config_rejects_concurrency_above_worker_capacity():
             base_url="https://relay.example.com/v1",
             api_key="request-secret",
             model="gpt-image-2",
-            max_concurrent=11,
+            max_concurrent=101,
         )
+
+
+def test_global_image2_config_allows_concurrency_up_to_100():
+    payload = Image2GlobalConfigUpdate(
+        base_url="https://relay.example.com/v1",
+        api_key="request-secret",
+        model="gpt-image-2",
+        max_concurrent=100,
+    )
+    assert payload.max_concurrent == 100
 
 
 @pytest.mark.asyncio

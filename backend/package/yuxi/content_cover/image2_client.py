@@ -90,8 +90,8 @@ class Image2Config:
                 max_concurrent = int(os.getenv("IMAGE2_MAX_CONCURRENT", "1"))
             except ValueError as exc:
                 raise Image2Error("IMAGE2_CONFIG_INVALID", "IMAGE2_MAX_CONCURRENT 必须是整数") from exc
-        if not 1 <= max_concurrent <= 10:
-            raise Image2Error("IMAGE2_CONFIG_INVALID", "image2 最大并发数必须在 1 到 10 之间")
+        if not 1 <= max_concurrent <= 100:
+            raise Image2Error("IMAGE2_CONFIG_INVALID", "image2 最大并发数必须在 1 到 100 之间")
         trusted_output_origins = tuple(
             item.strip().rstrip("/")
             for item in (os.getenv("IMAGE2_TRUSTED_OUTPUT_ORIGINS") or "").split(",")

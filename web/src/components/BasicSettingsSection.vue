@@ -203,12 +203,12 @@
           <a-input-number
             v-model:value="image2Form.maxConcurrent"
             :min="1"
-            :max="10"
+            :max="100"
             :precision="0"
             style="width: 100%"
           />
           <span class="setting-help">
-            全站在单个 Worker 中同时执行的 AI 封面任务数，范围 1–10；超过限制的任务自动排队。
+            全站在单个 Worker 中同时执行的 AI 封面任务数，范围 1–100；超过限制的任务自动排队。
           </span>
         </div>
         <div v-if="image2State?.capabilities?.message" class="image2-capability-message">
@@ -503,8 +503,8 @@ const validateImage2Form = () => {
     message.warning('首次配置请填写 API Key')
     return null
   }
-  if (!Number.isInteger(maxConcurrent) || maxConcurrent < 1 || maxConcurrent > 10) {
-    message.warning('image2 最大并发数必须是 1 到 10 之间的整数')
+  if (!Number.isInteger(maxConcurrent) || maxConcurrent < 1 || maxConcurrent > 100) {
+    message.warning('image2 最大并发数必须是 1 到 100 之间的整数')
     return null
   }
   return { base_url: baseUrl, api_key: apiKey || null, model, max_concurrent: maxConcurrent }
