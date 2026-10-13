@@ -178,28 +178,43 @@ async def test_failed_global_migration_rolls_back_earlier_accounts(gallery_db):
 
 
 @pytest.mark.asyncio
-async def test_deleted_generated_gallery_rejects_pc_cover_before_enqueue(gallery_db):
+@pytest.mark.parametrize("folder", ["generated", "works"])
+async def test_content_cover_validates_works_instead_of_generated(gallery_db, monkeypatch, folder):
     from yuxi.services.content_cover_service import _create_job
     from yuxi.services.personal_materials import delete_personal_gallery
     gallery_db.add(ContentTask(id="pc-task", name="PC内容", industry_template_version_id="industry",
         workflow_version_id="workflow", rule_version_id="rule", created_by="alice", updated_by="alice"))
     await gallery_db.commit()
-    await delete_personal_gallery(gallery_db, user(), user(), "generated", MaterialCategoryDelete())
-    with pytest.raises(HTTPException) as exc:
-        await _create_job(gallery_db, user("alice", "user"), mode="generate", content_task_id="pc-task",
+    await delete_personal_gallery(gallery_db, user(), user(), folder, MaterialCategoryDelete())
+    async def enqueue(db, job):
+        await db.commit()
+    monkeypatch.setattr("yuxi.services.content_cover_service._enqueue", enqueue)
+    if folder == "works":
+        with pytest.raises(HTTPException) as exc:
+            await _create_job(gallery_db, user("alice", "user"), mode="generate", content_task_id="pc-task",
+                artifact_id=None, idempotency_key="deleted-target", request={})
+        assert exc.value.status_code == 409
+        assert await gallery_db.scalar(select(ContentCoverJob.id)) is None
+    else:
+        job, reused = await _create_job(gallery_db, user("alice", "user"), mode="generate", content_task_id="pc-task",
             artifact_id=None, idempotency_key="deleted-target", request={})
-    assert exc.value.status_code == 409
-    assert await gallery_db.scalar(select(ContentCoverJob.id)) is None
+        assert not reused
+        assert job.status == "queued"
 
 
 @pytest.mark.asyncio
-async def test_pending_mp_cover_does_not_block_unrelated_generated_gallery(gallery_db):
+@pytest.mark.parametrize("mini_program", [False, True])
+async def test_pending_content_cover_blocks_only_works_gallery(gallery_db, mini_program):
     from yuxi.services.personal_materials import delete_personal_gallery
     gallery_db.add(ContentTask(id="mp-task", name="小程序内容", industry_template_version_id="industry",
         workflow_version_id="workflow", rule_version_id="rule", created_by="alice", updated_by="alice",
-        brief_json={"form_values": {"mp_content_code": "case"}}))
+        brief_json={"form_values": {"mp_content_code": "case"} if mini_program else {}}))
     gallery_db.add(ContentCoverJob(id="mp-cover", owner_uid="alice", content_task_id="mp-task", mode="generate",
         status="running", idempotency_key="mp-cover"))
     await gallery_db.commit()
+    with pytest.raises(HTTPException) as exc:
+        await delete_personal_gallery(gallery_db, user(), user(), "works", MaterialCategoryDelete())
+    assert exc.value.status_code == 409
+    await gallery_db.rollback()
     await delete_personal_gallery(gallery_db, user(), user(), "generated", MaterialCategoryDelete())
     assert (await gallery_db.get(ContentCoverJob, "mp-cover")).status == "running"

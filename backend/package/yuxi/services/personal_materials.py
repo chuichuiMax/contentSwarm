@@ -17,7 +17,6 @@ from yuxi.storage.postgres.models_content import (
     ContentMaterialCategory,
     ContentMaterialLibraryItem,
     ContentCoverJob,
-    ContentTask,
     ImageDesignJob,
 )
 from yuxi.utils.datetime_utils import format_utc_datetime
@@ -133,13 +132,11 @@ async def delete_personal_gallery(db, actor, owner_user, folder, payload) -> dic
                 None, "private-root", source.id if source else PERSONAL_IMAGE_FOLDERS["generated"][0]
             }:
                 raise HTTPException(409, "图库有正在生成的图片，请任务完成后再删除")
-        pending_tasks = await db.scalars(select(ContentTask).join(
-            ContentCoverJob, ContentCoverJob.content_task_id == ContentTask.id
-        ).where(ContentCoverJob.status.in_(["queued", "running"])))
-        for task in pending_tasks:
-            form_values = (task.brief_json or {}).get("form_values") or {}
-            if not (form_values.get("mp_content_code") or form_values.get("mp_service_entry")):
-                raise HTTPException(409, "图库有正在生成的封面，请任务完成后再删除")
+    if folder == "works" and await db.scalar(select(ContentCoverJob.id).where(
+        ContentCoverJob.content_task_id.is_not(None),
+        ContentCoverJob.status.in_(["queued", "running", "saving"]),
+    ).limit(1)):
+        raise HTTPException(409, "图库有正在生成的封面，请任务完成后再删除")
 
     moved = 0
     for source in sources:
@@ -329,6 +326,12 @@ async def list_folder(
         item.deleted_at.is_(None),
         asset.deleted_at.is_(None),
     ]
+    if key == "generated":
+        # Historical content covers may still have an AI-gallery attachment.
+        filters.append(or_(
+            asset.role != "output", asset.content_task_id.is_(None),
+            asset.metadata_json["domain"].as_string() == "image_design",
+        ))
     if status:
         filters.append(item.status == status)
     shanghai = timezone(timedelta(hours=8))

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import HTTPException
@@ -80,6 +81,45 @@ def test_only_generating_or_succeeded_tasks_occupy_images():
         assert f"'{status}'" in sql
     for status in ("draft", "brief_ready", "failed", "cancelled", "review_blocked", "deleted"):
         assert f"'{status}'" not in sql
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("actor_role", ["admin", "superadmin"])
+async def test_employee_rough_listing_uses_actor_permissions_and_target_ownership(monkeypatch, actor_role):
+    from yuxi.services import personal_materials, role_service
+
+    owner = SimpleNamespace(uid="employee-owner", role="设计师", department_id=1)
+    actor = SimpleNamespace(uid="admin-viewer", role=actor_role)
+    db = SimpleNamespace(commit=AsyncMock())
+    repo = SimpleNamespace(
+        list_items=AsyncMock(return_value=([], 0)),
+        uploader_names=AsyncMock(return_value={}),
+        list_selected_image_item_ids=AsyncMock(return_value=set()),
+    )
+
+    async def permission_grants(db, user):
+        return ["material_rough.upload"] if user.role == "设计师" else None
+
+    grants = AsyncMock(side_effect=permission_grants)
+    folders = AsyncMock(return_value={})
+    monkeypatch.setattr(role_service, "effective_permission_grants", grants)
+    monkeypatch.setattr(personal_materials, "folder_categories", folders)
+    monkeypatch.setattr(material_library_service, "ensure_material_categories", AsyncMock(return_value=[]))
+    monkeypatch.setattr(material_library_service, "load_personal_gallery_settings", AsyncMock(return_value={}))
+    monkeypatch.setattr(material_library_service, "MaterialLibraryRepository", lambda *args, **kwargs: repo)
+
+    result = await material_library_service.list_material_items(
+        db, owner, material_type="image", category="mp-rough-private", status=None, query=None,
+        page=1, page_size=24, sort="newest", personal_folder="rough", actor_user=actor,
+    )
+
+    assert result["items"] == [] and result["total"] == 0
+    grants.assert_awaited_once_with(db, actor)
+    folders.assert_awaited_once_with(db, owner)
+    assert repo.list_items.call_args.args == (owner.uid,)
+    assert repo.list_items.call_args.kwargs["private_rough_only"] is True
+    assert repo.list_items.call_args.kwargs["scope"] == "private"
+    assert repo.list_items.call_args.kwargs["enterprise_rough_owner_uid"] is None
 
 
 def test_designer_can_browse_case_gallery_but_not_upload_it():

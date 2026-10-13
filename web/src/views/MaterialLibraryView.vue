@@ -50,6 +50,7 @@ const uploadDateRange = ref([])
 const canCreateShared = ref(false)
 const isGalleryRoot = computed(() => materialType.value === 'image' && !activeGallery.value)
 const loading = ref(false)
+const loadError = ref('')
 const remoteSyncing = ref(false)
 const remoteSyncJob = ref(null)
 const remoteConfigOpen = ref(false)
@@ -456,11 +457,13 @@ async function confirmDeleteCategory() {
 
 async function loadGalleries() {
   loading.value = true
+  loadError.value = ''
   try {
     const response = await materialLibraryApi.listGalleries('', targetEmployeeId.value)
     await hydrateGalleries(response)
   } catch (error) {
-    message.error(error.message || '图库加载失败')
+    loadError.value = error.message || '图库加载失败'
+    message.error(loadError.value)
   } finally {
     loading.value = false
   }
@@ -479,6 +482,7 @@ async function loadItems() {
   if (isGalleryRoot.value) return loadGalleries()
   const employeeContext = `${routeEmployeeId.value}:${isEmployeeEnterpriseMode.value}`
   loading.value = true
+  loadError.value = ''
   try {
     const response = await materialLibraryApi.listItems({
       material_type: materialType.value,
@@ -503,7 +507,23 @@ async function loadItems() {
     total.value = response.total || 0
     applyUploadFailures(response.upload_failures || [])
   } catch (error) {
-    message.error(error.message || '素材加载失败')
+    if (employeeContext !== `${routeEmployeeId.value}:${isEmployeeEnterpriseMode.value}`) return
+    loadError.value = error.message || '素材加载失败'
+    message.error(loadError.value)
+  } finally {
+    if (employeeContext === `${routeEmployeeId.value}:${isEmployeeEnterpriseMode.value}`) loading.value = false
+  }
+}
+
+async function retryLoad() {
+  loadError.value = ''
+  loading.value = true
+  try {
+    await loadCategories()
+    await loadItems()
+  } catch (error) {
+    loadError.value = error.message || '素材加载失败'
+    message.error(loadError.value)
   } finally {
     loading.value = false
   }
@@ -991,6 +1011,7 @@ function formatSize(bytes) {
 }
 
 watch(materialType, async () => {
+  loadError.value = ''
   uploadDateRange.value = []
   activeGallery.value = ''
   designStyleFilter.value = ''
@@ -1003,7 +1024,8 @@ watch(materialType, async () => {
     await loadCategories()
     await loadItems()
   } catch (error) {
-    message.error(error.message || '素材分类加载失败')
+    loadError.value = error.message || '素材分类加载失败'
+    message.error(loadError.value)
   }
 }, { immediate: true })
 
@@ -1016,6 +1038,7 @@ watch(materialScope, async () => {
 })
 
 watch([routeEmployeeId, isEmployeeEnterpriseMode], async () => {
+  loadError.value = ''
   uploadDateRange.value = []
   targetEmployee.value = null
   activeGallery.value = ''
@@ -1029,7 +1052,8 @@ watch([routeEmployeeId, isEmployeeEnterpriseMode], async () => {
     await loadCategories()
     await loadItems()
   } catch (error) {
-    message.error(error.message || '员工图库加载失败')
+    loadError.value = error.message || '员工图库加载失败'
+    message.error(loadError.value)
   }
 })
 
@@ -1279,10 +1303,13 @@ onBeforeUnmount(() => {
           value-format="YYYY-MM-DD" :placeholder="['开始日期', '结束日期']" allow-clear
           aria-label="日期区间" @change="changeUploadDateRange" />
         <a-button v-if="!isGalleryRoot" @click="search">查询</a-button>
-        <a-button class="lucide-icon-btn" :loading="loading" @click="loadItems"><RefreshCw :size="15" />刷新</a-button>
+        <a-button class="lucide-icon-btn" :loading="loading" @click="loadError ? retryLoad() : loadItems()"><RefreshCw :size="15" />刷新</a-button>
       </div>
 
       <a-spin :spinning="loading">
+        <a-result v-if="loadError && !loading" status="error" title="素材加载失败" :sub-title="loadError">
+          <template #extra><a-button type="primary" @click="retryLoad">重试</a-button></template>
+        </a-result>
         <div v-for="group in galleryGroups" :key="group.slug" class="gallery-section">
           <h3>{{ group.name }}</h3>
           <div v-if="isCaseGalleryPage" class="design-style-filter" role="tablist" aria-label="设计风格筛选">
@@ -1359,7 +1386,7 @@ onBeforeUnmount(() => {
           </div>
         </div>
 
-        <a-empty v-if="!loading && !filteredGalleries.length && (isGalleryRoot || !items.length)" :image="false" :description="isGalleryRoot ? '没有匹配的图库' : (query ? '未找到匹配素材' : (isTopLevelGallery ? '当前图库还没有图片或二级图库' : '当前图库还没有图片'))">
+        <a-empty v-if="!loading && !loadError && !filteredGalleries.length && (isGalleryRoot || !items.length)" :image="false" :description="isGalleryRoot ? '没有匹配的图库' : (query ? '未找到匹配素材' : (isTopLevelGallery ? '当前图库还没有图片或二级图库' : '当前图库还没有图片'))">
           <a-button v-if="!query && isGalleryRoot && userStore.isAdmin" type="primary" class="lucide-icon-btn" @click="openCreateCategory"><FolderPlus :size="15" />新建第一个图库</a-button>
           <a-button v-else-if="!query && canUploadCurrentLocation" type="primary" class="lucide-icon-btn" @click="openUpload"><ImagePlus :size="15" />上传第一份素材</a-button>
         </a-empty>
