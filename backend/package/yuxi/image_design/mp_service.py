@@ -34,7 +34,7 @@ from .schemas import (
     RoomAdaptRefinementCreate,
     StyleTransferRefinementCreate,
 )
-from .workflow_profiles import SPACE_LABELS
+from .workflow_profiles import ADDONS, LAYOUTS, SPACE_LABELS
 
 MP_SPACE_IDS = {label: space_id for space_id, label in SPACE_LABELS.items()}
 MP_LAYOUT_IDS = {
@@ -362,19 +362,22 @@ def refinement_payload(payload: MpPolishCreate):
             raw_structure_material_id=materials["rough"],
             **common,
         )
-    space = MP_SPACE_IDS.get(payload.target_space)
-    layout = MP_LAYOUT_IDS.get(payload.layout_type)
-    if not space or not layout or any(element not in MP_ADDON_IDS for element in payload.extra_element):
-        raise _error("IMAGE_DESIGN_TRANSFER_OPTION_INVALID", "目标空间、布局或附加元素不在小程序支持的选项中", 422)
-    # Shared MP choices retain their meaning in every space, using internal core
-    # IDs instead of substituting an unrelated space-specific layout or element.
-    prefix = "" if space == "living_room" else "mp_"
+    space = payload.target_space if payload.target_space in SPACE_LABELS else MP_SPACE_IDS.get(payload.target_space)
+    layouts, addons = LAYOUTS.get(space, {}), ADDONS.get(space, {})
+    # Accept old display labels only when they identify an option in this space.
+    layout_ids = {**{key: key for key in layouts}, **{label: key for key, label in layouts.items()}}
+    layout_ids.update({label: key for label, key in MP_LAYOUT_IDS.items() if key in layouts})
+    addon_ids = {**{key: key for key in addons}, **{label: key for key, label in addons.items()}}
+    addon_ids.update({label: key for label, key in MP_ADDON_IDS.items() if key in addons})
+    layout = layout_ids.get(payload.layout_type)
+    if not space or not layout or any(element not in addon_ids for element in payload.extra_element):
+        raise _error("IMAGE_DESIGN_TRANSFER_OPTION_INVALID", "请选择目标空间对应的布局和附加元素", 422)
     return CrossSpaceRefinementCreate(
         workflow="cross_space",
         style_reference_material_id=materials["reference"],
         target_space=space,
-        layout=f"{prefix}{layout}",
-        addons=[f"{prefix}{MP_ADDON_IDS[element]}" for element in payload.extra_element],
+        layout=layout,
+        addons=list(dict.fromkeys(addon_ids[element] for element in payload.extra_element)),
         **common,
     )
 
