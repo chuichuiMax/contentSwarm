@@ -9,7 +9,16 @@ test('designer rough upload lands on the material library and cannot open other 
   assert.equal(canAccessScopedPath(true, grants, '/materials/images'), true)
   assert.equal(canAccessScopedPath(true, grants, '/hycanvas'), false)
   assert.equal(canAccessScopedPath(true, grants, '/content/new'), false)
+  assert.equal(canAccessScopedPath(true, grants, '/content/image-design'), false)
   assert.equal(canAccessScopedPath(true, grants, '/agent'), false)
+})
+
+test('designer image design permission opens only the image design page', () => {
+  const grants = ['material_rough.upload', 'image_design.access']
+  assert.equal(canAccessScopedPath(true, grants, '/content/image-design'), true)
+  assert.equal(canAccessScopedPath(true, grants, '/materials/images'), true)
+  assert.equal(canAccessScopedPath(true, grants, '/hycanvas'), false)
+  assert.equal(canAccessScopedPath(true, grants, '/content/new'), false)
 })
 
 test('roles without configured grants keep the existing home', () => {

@@ -11,7 +11,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from yuxi.repositories.employee_repository import EmployeeRepository
 from yuxi.repositories.role_repository import RoleRepository
 from yuxi.repositories.user_repository import UserRepository
-from yuxi.services.role_permissions import PERMISSION_CATALOG, ROUGH_UPLOAD_PERMISSION, normalize_grants
+from yuxi.services.role_permissions import (
+    IMAGE_DESIGN_PAGE_PERMISSION,
+    PERMISSION_CATALOG,
+    ROUGH_UPLOAD_PERMISSION,
+    normalize_grants,
+)
 from yuxi.storage.postgres.models_business import User
 from yuxi.storage.postgres.models_content import ContentRole
 
@@ -24,7 +29,7 @@ DEFAULT_ROLES: tuple[tuple[str, str], ...] = (
 )
 DESIGNER_ROLE_CODE = "JS0006"
 DESIGNER_ROLE_NAME = "设计师"
-DESIGNER_DEFAULT_GRANTS = (ROUGH_UPLOAD_PERMISSION,)
+DESIGNER_DEFAULT_GRANTS = (ROUGH_UPLOAD_PERMISSION, IMAGE_DESIGN_PAGE_PERMISSION)
 
 SYSTEM_ROLES: tuple[tuple[str, str], ...] = (
     ("user", "普通用户"),
@@ -125,7 +130,7 @@ async def ensure_default_roles(db: AsyncSession) -> None:
 
 
 async def ensure_designer_role(db: AsyncSession) -> ContentRole:
-    """设计师岗位默认只有企业共享毛坯房图库的上传权限。"""
+    """设计师岗位保留已有授权，并补上毛坯房上传和 PC 图片设计页面。"""
 
     repo = RoleRepository(db)
     role = await repo.get_by_name(DESIGNER_ROLE_NAME)
@@ -143,8 +148,10 @@ async def ensure_designer_role(db: AsyncSession) -> ContentRole:
                 "created_by": "system",
             }
         )
-    if not role.permissions:
-        return await repo.update(role, {"permissions": list(DESIGNER_DEFAULT_GRANTS)})
+    current = list(role.permissions or [])
+    merged = [*current, *[key for key in DESIGNER_DEFAULT_GRANTS if key not in current]]
+    if merged != current:
+        return await repo.update(role, {"permissions": merged})
     return role
 
 

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
+import ctypes
+import gc
 import io
 import os
 from typing import Any
@@ -18,8 +21,13 @@ from yuxi.utils.logging_config import logger
 INGEST_PENDING = "pending"
 INGEST_COMPLETED = "completed"
 INGEST_EXPIRED = "expired"
+INGEST_FAILED = "failed"
+# 新上传带上这个标记后，原图写入成功前不出现在文件夹。旧素材没有该标记。
+SHOW_AFTER_ORIGINAL = "show_after_original"
 MATERIAL_UPLOAD_STAGING_TTL_SECONDS = int(os.getenv("MATERIAL_UPLOAD_STAGING_TTL_SECONDS", str(7 * 24 * 3600)))
 MATERIAL_THUMBNAIL_SIZE = (720, 480)
+# 大图同时解码会把唯一的入库进程内存打满。同一时刻只处理一张。
+_material_upload_lock = asyncio.Lock()
 
 
 def material_upload_redis_key(asset_id: str) -> str:
@@ -115,8 +123,53 @@ async def persist_material_thumbnail(asset: Any) -> bytes:
         return thumbnail
 
 
-async def process_material_upload(_ctx: Any, asset_id: str) -> None:
+def _is_last_material_upload_try(ctx: Any) -> bool:
+    from yuxi.services.run_worker import WorkerSettings
+
+    try:
+        job_try = int(ctx.get("job_try") or 1) if isinstance(ctx, dict) else 1
+    except (TypeError, ValueError):
+        job_try = 1
+    return job_try >= max(1, int(getattr(WorkerSettings, "max_tries", 1)))
+
+
+async def _mark_material_upload_result(asset_id: str, status: str) -> None:
+    async with pg_manager.get_async_session_context() as db:
+        repository = ContentCoverRepository(db)
+        asset = await repository.get_asset(asset_id, for_update=True)
+        if asset is None or ingest_status_of(asset) == INGEST_COMPLETED:
+            return
+        metadata = dict(asset.metadata_json or {})
+        metadata["ingest_status"] = status
+        metadata.pop("redis_key", None)
+        await repository.update_asset_metadata(asset, metadata)
+        await db.commit()
+    await delete_material_display_cache(asset_id)
+
+
+def _release_material_upload_memory() -> None:
+    gc.collect()
+    try:
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    except OSError:
+        return
+
+
+async def process_material_upload(ctx: Any, asset_id: str) -> None:
     """Persist a staged material and thumbnail, then mark the asset as readable from MinIO."""
+    async with _material_upload_lock:
+        try:
+            await _persist_staged_material(asset_id)
+        except Exception:
+            logger.exception("material upload persist failed: asset=%s", asset_id)
+            if not _is_last_material_upload_try(ctx):
+                raise
+            await _mark_material_upload_result(asset_id, INGEST_FAILED)
+        finally:
+            _release_material_upload_memory()
+
+
+async def _persist_staged_material(asset_id: str) -> None:
     async with pg_manager.get_async_session_context() as db:
         repository = ContentCoverRepository(db)
         asset = await repository.get_asset(asset_id, for_update=True)

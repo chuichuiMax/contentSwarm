@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import and_, func, or_, select, update
+from sqlalchemy import and_, func, not_, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from yuxi.storage.postgres.models_business import User
@@ -21,6 +21,13 @@ from yuxi.storage.postgres.models_content import (
 )
 from yuxi.utils.datetime_utils import utc_now_naive
 from yuxi.services.material_library_categories import PERSONAL_IMAGE_FOLDERS
+from yuxi.services.material_upload_queue import (
+    INGEST_COMPLETED,
+    INGEST_EXPIRED,
+    INGEST_FAILED,
+    INGEST_PENDING,
+    SHOW_AFTER_ORIGINAL,
+)
 
 # 排队中、生成中、生成成功占用图库图片。直生成功状态是 generated。
 # 草稿、编译未开跑、失败、取消、审核拦截不占用，失败后可再次选择。
@@ -175,6 +182,16 @@ class MaterialLibraryRepository:
             ),
         )
         return or_(own, ContentMaterialCategory.visibility == "enterprise", admin_personal)
+
+    @staticmethod
+    def visible_in_folder():
+        """新上传等原图入库成功后才进入文件夹。没有标记的旧素材保持可见。"""
+        waiting_for_original = ContentCoverAsset.metadata_json[SHOW_AFTER_ORIGINAL].as_boolean().is_(True)
+        original_stored = (
+            func.coalesce(ContentCoverAsset.metadata_json["ingest_status"].as_string(), INGEST_COMPLETED)
+            == INGEST_COMPLETED
+        )
+        return or_(not_(waiting_for_original), original_stored)
 
     @staticmethod
     def category_join():
@@ -540,6 +557,7 @@ class MaterialLibraryRepository:
             ContentMaterialLibraryItem.material_type == material_type,
             ContentMaterialLibraryItem.deleted_at.is_(None),
             ContentCoverAsset.deleted_at.is_(None),
+            self.visible_in_folder(),
         ]
         if scope:
             filters.append(ContentMaterialCategory.visibility == scope)
@@ -600,6 +618,60 @@ class MaterialLibraryRepository:
         ).all()
         return list(rows), total
 
+    async def list_upload_notices(
+        self,
+        owner_uid: str,
+        *,
+        material_type: str,
+        category: str | None,
+        category_ids: list[str] | None = None,
+        category_owner_uid: str | None = None,
+        limit: int = 50,
+    ) -> tuple[list[tuple[ContentMaterialLibraryItem, ContentCoverAsset]], int]:
+        """当前用户在该文件夹里尚未成功入库的新上传。失败项用于提示，pending 用于上传后继续等待。"""
+        filters = [
+            self.item_access(owner_uid),
+            ContentMaterialLibraryItem.owner_uid == owner_uid,
+            ContentMaterialLibraryItem.material_type == material_type,
+            ContentMaterialLibraryItem.deleted_at.is_(None),
+            ContentCoverAsset.deleted_at.is_(None),
+            ContentCoverAsset.metadata_json[SHOW_AFTER_ORIGINAL].as_boolean().is_(True),
+        ]
+        if category_ids:
+            filters.append(ContentMaterialLibraryItem.category.in_(category_ids))
+        elif category:
+            filters.append(ContentMaterialLibraryItem.category == category)
+        else:
+            return [], 0
+        if category_owner_uid is not None:
+            filters.append(
+                func.coalesce(ContentMaterialLibraryItem.category_owner_uid, ContentMaterialLibraryItem.owner_uid)
+                == category_owner_uid
+            )
+        status = ContentCoverAsset.metadata_json["ingest_status"].as_string()
+        join = ContentMaterialLibraryItem.__table__.join(
+            ContentCoverAsset, ContentCoverAsset.id == ContentMaterialLibraryItem.asset_id
+        )
+        failed = (
+            await self.db.execute(
+                select(ContentMaterialLibraryItem, ContentCoverAsset)
+                .select_from(join)
+                .where(*filters, status.in_([INGEST_FAILED, INGEST_EXPIRED]))
+                .order_by(ContentMaterialLibraryItem.created_at.desc())
+                .limit(limit)
+            )
+        ).all()
+        pending = int(
+            (
+                await self.db.execute(
+                    select(func.count(ContentMaterialLibraryItem.id))
+                    .select_from(join)
+                    .where(*filters, status == INGEST_PENDING)
+                )
+            ).scalar_one()
+        )
+        return list(failed), pending
+
     async def uploader_names(self, owner_uids: list[str]) -> dict[str, str]:
         rows = await self.db.execute(select(User.uid, User.username).where(User.uid.in_(owner_uids)))
         return dict(rows.all())
@@ -612,6 +684,7 @@ class MaterialLibraryRepository:
             ContentMaterialLibraryItem.material_type == material_type,
             ContentMaterialLibraryItem.deleted_at.is_(None),
             ContentCoverAsset.deleted_at.is_(None),
+            self.visible_in_folder(),
         ]
         owner = func.coalesce(ContentMaterialLibraryItem.category_owner_uid, ContentMaterialLibraryItem.owner_uid)
         counts = (

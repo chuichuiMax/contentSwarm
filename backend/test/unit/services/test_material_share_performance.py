@@ -271,6 +271,56 @@ async def test_pending_upload_share_preserves_staged_original_without_waiting_fo
 
 
 @pytest.mark.asyncio
+async def test_share_uses_thumbnail_when_original_is_missing(share_env, monkeypatch):
+    storage, _, _ = share_env
+    thumbnail = io.BytesIO()
+    Image.new("RGB", (360, 480), "tomato").save(thumbnail, format="WEBP")
+    thumbnail_bytes = thumbnail.getvalue()
+    asset = SimpleNamespace(
+        id="thumb-only",
+        sha256="thumb-only-hash",
+        bucket_name="image",
+        object_name="missing.webp",
+        metadata_json={"ingest_status": "expired"},
+        content_type="image/webp",
+        original_file_name="room.webp",
+        file_size=999999,
+        image_width=4160,
+        image_height=6240,
+    )
+    storage.objects["image", "missing.webp.thumb.webp"] = thumbnail_bytes
+    category = SimpleNamespace(
+        id="case",
+        parent_id="root",
+        industry_slug="other",
+        name="案例",
+        building_name=None,
+        area=None,
+        design_style=None,
+    )
+    repo = SimpleNamespace(
+        list_image_items_with_assets_and_categories=AsyncMock(
+            return_value=[(SimpleNamespace(id="item"), asset, category)]
+        ),
+        create_share=AsyncMock(),
+    )
+    monkeypatch.setattr(service, "MaterialLibraryRepository", lambda *a, **kw: repo)
+    monkeypatch.setattr(service, "resolve_employee_for_user", AsyncMock(return_value=None))
+    monkeypatch.setattr(service, "_audit_material", lambda *a, **kw: None)
+    await service.create_material_share(
+        SimpleNamespace(commit=AsyncMock(), rollback=AsyncMock()),
+        SimpleNamespace(uid="owner", id=1, role="superadmin"),
+        service.MaterialShareCreate(item_ids=["item"]),
+    )
+    _, snapshots = repo.create_share.await_args.args
+    assert snapshots[0].content_type == "image/webp"
+    assert snapshots[0].file_size == len(thumbnail_bytes)
+    assert storage.objects["image", snapshots[0].object_name] == thumbnail_bytes
+    assert any(name.endswith(".display.webp") for _, name in storage.objects)
+    assert any(name.endswith(".card.jpg") for _, name in storage.objects)
+
+
+@pytest.mark.asyncio
 async def test_remote_sync_prepares_images_and_uses_immutable_content_paths(share_env, monkeypatch):
     from yuxi.services import remote_material_library_service as remote
 

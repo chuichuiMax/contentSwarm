@@ -788,3 +788,106 @@ def test_cover_template_item_exposes_linked_generation_status():
 
     poster.status = "needs_annotation"
     assert serialize_item(item, asset, category, poster)["selectable"] is False
+
+
+@pytest.mark.asyncio
+async def test_folder_keeps_existing_thumbnails_and_waits_for_new_originals():
+    from sqlalchemy import delete
+
+    from yuxi.repositories.material_library_repository import MaterialLibraryRepository
+    from yuxi.storage.postgres.manager import pg_manager
+
+    owner = "folder-visibility-test"
+    category_id = "mlc_folder_visibility"
+    ids = {
+        "legacy": ("cca_folder_legacy", "mli_folder_legacy", {"ingest_status": "pending"}),
+        "waiting": (
+            "cca_folder_waiting",
+            "mli_folder_waiting",
+            {"ingest_status": "pending", "show_after_original": True},
+        ),
+        "stored": (
+            "cca_folder_stored",
+            "mli_folder_stored",
+            {"ingest_status": "completed", "show_after_original": True},
+        ),
+        "failed": (
+            "cca_folder_failed",
+            "mli_folder_failed",
+            {"ingest_status": "failed", "show_after_original": True},
+        ),
+    }
+    async with pg_manager.get_async_session_context() as db:
+        try:
+            db.add(
+                ContentMaterialCategory(
+                    owner_uid=owner,
+                    material_type="image",
+                    id=category_id,
+                    visibility="private",
+                    name="可见性测试图库",
+                    description="",
+                )
+            )
+            for key, (asset_id, item_id, metadata) in ids.items():
+                db.add(
+                    ContentCoverAsset(
+                        id=asset_id,
+                        owner_uid=owner,
+                        role="library_image",
+                        original_file_name=f"{key}.webp",
+                        content_type="image/webp",
+                        file_size=10,
+                        image_width=10,
+                        image_height=10,
+                        sha256=f"{key}-hash",
+                        bucket_name="image",
+                        object_name=f"material-library/{owner}/{asset_id}/image.webp",
+                        metadata_json=metadata,
+                    )
+                )
+                db.add(
+                    ContentMaterialLibraryItem(
+                        id=item_id,
+                        owner_uid=owner,
+                        asset_id=asset_id,
+                        material_type="image",
+                        display_name=key,
+                        category=category_id,
+                        status="enabled",
+                    )
+                )
+            await db.commit()
+            repo = MaterialLibraryRepository(db)
+            rows, total = await repo.list_items(
+                owner,
+                material_type="image",
+                category=category_id,
+                status="enabled",
+                query_text=None,
+                page=1,
+                page_size=20,
+            )
+            visible = {item.display_name for item, _, _ in rows}
+            assert visible == {"legacy", "stored"}
+            assert total == 2
+            failures, pending = await repo.list_upload_notices(
+                owner, material_type="image", category=category_id
+            )
+            assert [item.display_name for item, _asset in failures] == ["failed"]
+            assert pending == 1
+            summaries = await repo.category_summaries(owner, material_type="image")
+            count, _latest = summaries[(owner, category_id)]
+            assert count == 2
+        finally:
+            await db.execute(
+                delete(ContentMaterialLibraryItem).where(ContentMaterialLibraryItem.owner_uid == owner)
+            )
+            await db.execute(delete(ContentCoverAsset).where(ContentCoverAsset.owner_uid == owner))
+            await db.execute(
+                delete(ContentMaterialCategory).where(
+                    ContentMaterialCategory.owner_uid == owner,
+                    ContentMaterialCategory.id == category_id,
+                )
+            )
+            await db.commit()

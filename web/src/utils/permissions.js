@@ -1,4 +1,5 @@
 export const ROUGH_UPLOAD_PERMISSION = 'material_rough.upload'
+export const IMAGE_DESIGN_PAGE_PERMISSION = 'image_design.access'
 
 const HOME_CANDIDATES = [
   [ROUGH_UPLOAD_PERMISSION, '/materials/images'],
@@ -21,7 +22,7 @@ const HOME_CANDIDATES = [
 
 const SCOPED_PATH_RULES = [
   { prefix: '/materials', any: [ROUGH_UPLOAD_PERMISSION] },
-  { prefix: '/content/image-design', any: [] },
+  { prefix: '/content/image-design', any: [IMAGE_DESIGN_PAGE_PERMISSION] },
   { prefix: '/hycanvas', any: [] },
   { prefix: '/agent', any: ['chat.access'] },
   { prefix: '/content', any: ['content.generate', 'content.copy'] },

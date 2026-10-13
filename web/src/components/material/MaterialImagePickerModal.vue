@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
-import { CheckCircle2, FolderOpen, Image as ImageIcon, Search } from 'lucide-vue-next'
+import { CheckCircle2, ChevronRight, FolderOpen, Image as ImageIcon, Search } from 'lucide-vue-next'
 
 import { materialLibraryApi } from '@/apis/material_library_api'
 
@@ -31,6 +31,7 @@ const page = ref(1)
 const pageSize = 24
 const total = ref(0)
 const pendingItem = ref(null)
+const expandedGalleryIds = ref(new Set())
 let loadVersion = 0
 
 const activeGallery = computed(() => galleries.value.find((item) => item.id === activeGalleryId.value))
@@ -43,6 +44,33 @@ const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize))
 
 function galleryChildren(parentId) {
   return galleries.value.filter((item) => item.parent_id === parentId)
+}
+
+function isCaseGallery(gallery) {
+  return Boolean(
+    gallery
+    && !gallery.parent_id
+    && gallery.visibility === 'enterprise'
+    && (gallery.image_design_role === 'reference' || gallery.name === '案例图库')
+  )
+}
+
+function isGalleryExpanded(galleryId) {
+  return expandedGalleryIds.value.has(galleryId)
+}
+
+function setGalleryExpanded(galleryId, expanded) {
+  const next = new Set(expandedGalleryIds.value)
+  if (expanded) next.add(galleryId)
+  else next.delete(galleryId)
+  expandedGalleryIds.value = next
+}
+
+function expandCaseParent(galleryId) {
+  const gallery = galleries.value.find((item) => item.id === galleryId)
+  if (!gallery?.parent_id) return
+  const parent = galleries.value.find((item) => item.id === gallery.parent_id)
+  if (isCaseGallery(parent)) setGalleryExpanded(parent.id, true)
 }
 
 function releaseItemUrls(urls = itemUrls.value) {
@@ -107,6 +135,7 @@ async function loadGalleries() {
           || orderedGalleries.value[0]?.id
           || ''
     )
+    expandCaseParent(activeGalleryId.value)
     await loadItems()
   } catch (error) {
     message.error(error.message || '图片素材库加载失败')
@@ -115,9 +144,14 @@ async function loadGalleries() {
   }
 }
 
+function toggleCaseGallery(gallery) {
+  setGalleryExpanded(gallery.id, !isGalleryExpanded(gallery.id))
+}
+
 async function chooseGallery(galleryId) {
   if (galleryId === activeGalleryId.value) return
   activeGalleryId.value = galleryId
+  expandCaseParent(galleryId)
   pendingItem.value = null
   queryInput.value = ''
   query.value = ''
@@ -157,6 +191,7 @@ watch(() => props.open, (open) => {
   queryInput.value = ''
   query.value = ''
   page.value = 1
+  expandedGalleryIds.value = new Set()
   void loadGalleries()
 })
 
@@ -184,14 +219,15 @@ onBeforeUnmount(() => {
             <button
               type="button"
               class="gallery-button"
-              :class="{ active: activeGalleryId === gallery.id }"
-              @click="chooseGallery(gallery.id)"
+              :class="{ active: activeGalleryId === gallery.id, expanded: isCaseGallery(gallery) && isGalleryExpanded(gallery.id) }"
+              @click="isCaseGallery(gallery) ? toggleCaseGallery(gallery) : chooseGallery(gallery.id)"
             >
-              <FolderOpen :size="16" />
+              <ChevronRight v-if="isCaseGallery(gallery)" :size="14" class="expand-icon" :class="{ open: isGalleryExpanded(gallery.id) }" />
+              <FolderOpen v-else :size="16" />
               <span>{{ gallery.visibility === 'enterprise' ? '企业共享 · ' : '' }}{{ gallery.name }}</span>
-              <small>{{ gallery.direct_count || 0 }}</small>
+              <small>{{ isCaseGallery(gallery) ? galleryChildren(gallery.id).length : (gallery.direct_count || 0) }}</small>
             </button>
-            <div v-if="galleryChildren(gallery.id).length" class="gallery-tree-children">
+            <div v-if="galleryChildren(gallery.id).length && (!isCaseGallery(gallery) || isGalleryExpanded(gallery.id))" class="gallery-tree-children">
               <button
                 v-for="child in galleryChildren(gallery.id)"
                 :key="child.id"
@@ -274,6 +310,7 @@ onBeforeUnmount(() => {
 .gallery-button { width: 100%; padding: 9px 8px; border: 0; border-radius: 7px; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 7px; color: var(--color-text-secondary); background: transparent; text-align: left; cursor: pointer; }
 .gallery-button span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .gallery-button small { color: var(--color-text-tertiary); }
+.expand-icon { transition: transform .15s; } .expand-icon.open { transform: rotate(90deg); }
 .gallery-button:hover { color: var(--main-700); background: var(--main-30); }
 .gallery-button.active { color: var(--main-700); background: var(--main-50); font-weight: 650; }
 .gallery-tree-children { margin: 2px 0 5px 17px; padding-left: 7px; border-left: 1px solid var(--main-100); }

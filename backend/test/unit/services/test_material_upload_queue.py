@@ -10,6 +10,7 @@ import yuxi.services.material_upload_queue as material_upload_queue
 from yuxi.services.material_upload_queue import (
     INGEST_COMPLETED,
     INGEST_EXPIRED,
+    INGEST_FAILED,
     INGEST_PENDING,
     encode_material_thumbnail,
     material_thumb_object_name,
@@ -200,6 +201,59 @@ async def test_process_material_upload_marks_expired_when_staging_is_gone(monkey
 
     assert storage.uploaded == []
     assert asset.metadata_json["ingest_status"] == INGEST_EXPIRED
+    assert "redis_key" not in asset.metadata_json
+
+
+@pytest.mark.asyncio
+async def test_process_material_upload_reports_failure_on_last_try(monkeypatch):
+    redis = FakeRedis()
+    storage = FakeStorage()
+    asset = SimpleNamespace(
+        id="cca_failed",
+        sha256="failed-content-hash",
+        deleted_at=None,
+        bucket_name="image",
+        object_name="material-library/u1/images/cca_failed/image.webp",
+        content_type="image/webp",
+        metadata_json={"ingest_status": INGEST_PENDING, "redis_key": "material-upload:cca_failed"},
+    )
+    repository = FakeCoverRepository(asset)
+    redis.store["material-upload:cca_failed"] = _webp()
+
+    class FakeSession:
+        async def commit(self):
+            return None
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+    class FakeManager:
+        def get_async_session_context(self):
+            return FakeSession()
+
+    async def fail_upload(*args, **kwargs):
+        del args, kwargs
+        raise StorageError("oss down")
+
+    storage.aupload_file = fail_upload
+
+    async def fake_client():
+        return redis
+
+    monkeypatch.setattr(material_upload_queue, "get_binary_redis_client", fake_client)
+    monkeypatch.setattr(material_upload_queue, "pg_manager", FakeManager())
+    monkeypatch.setattr(material_upload_queue, "get_minio_client", lambda: storage)
+    monkeypatch.setattr(material_upload_queue, "ContentCoverRepository", lambda _db: repository)
+
+    with pytest.raises(StorageError):
+        await process_material_upload({"job_try": 1}, asset.id)
+    assert asset.metadata_json["ingest_status"] == INGEST_PENDING
+
+    await process_material_upload({"job_try": 2}, asset.id)
+    assert asset.metadata_json["ingest_status"] == INGEST_FAILED
     assert "redis_key" not in asset.metadata_json
 
 

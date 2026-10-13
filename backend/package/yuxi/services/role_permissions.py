@@ -14,6 +14,7 @@ def _entry(list_key: str, label: str, items: tuple[tuple[str, str], ...]) -> dic
 
 
 ROUGH_UPLOAD_PERMISSION = "material_rough.upload"
+IMAGE_DESIGN_PAGE_PERMISSION = "image_design.access"
 
 PERMISSION_CATALOG: list[dict[str, Any]] = [
     {
@@ -30,6 +31,11 @@ PERMISSION_CATALOG: list[dict[str, Any]] = [
         "module_key": "visual",
         "module": "视觉创作",
         "lists": [_entry("material_rough", "素材库-企业共享-毛坯房图库", (("upload", "上传"),))],
+    },
+    {
+        "module_key": "image_design",
+        "module": "图片设计",
+        "lists": [_entry("image_design", "PC端", (("access", "页面"),))],
     },
     {
         "module_key": "workspace",

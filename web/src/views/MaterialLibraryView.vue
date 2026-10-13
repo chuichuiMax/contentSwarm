@@ -65,6 +65,9 @@ const industries = ref([])
 const industryFilter = ref('')
 const activeGallery = ref('')
 const items = ref([])
+const uploadFailures = ref([])
+const announcedUploadFailureIds = new Set()
+let uploadWatchTimer = 0
 const total = ref(0)
 const page = ref(1)
 const queryInput = ref('')
@@ -141,7 +144,62 @@ const canUploadCurrentLocation = computed(() => {
 })
 const uploadFileLimit = computed(() => materialType.value === 'image' ? 50 : 100)
 const selectedFilesTotalBytes = computed(() => selectedFiles.value.reduce((sum, file) => sum + file.size, 0))
+const uploadFailureText = computed(() => {
+  const names = uploadFailures.value.map((item) => item.file_name || item.name).filter(Boolean)
+  if (names.length <= 8) return names.join('、')
+  return `${names.slice(0, 8).join('、')} 等 ${names.length} 张`
+})
+
+function applyUploadFailures(failures) {
+  const next = Array.isArray(failures) ? failures : []
+  uploadFailures.value = next
+  const fresh = next.filter((item) => item?.id && !announcedUploadFailureIds.has(item.id))
+  if (!fresh.length) return
+  fresh.forEach((item) => announcedUploadFailureIds.add(item.id))
+  const names = fresh.map((item) => item.file_name || item.name).filter(Boolean)
+  const shown = names.slice(0, 8).join('、')
+  const extra = names.length > 8 ? ` 等 ${names.length} 张` : ''
+  message.error(`图片上传失败，请重新上传：${shown}${extra}`)
+}
+
+function stopUploadWatch() {
+  if (!uploadWatchTimer) return
+  window.clearTimeout(uploadWatchTimer)
+  uploadWatchTimer = 0
+}
+
+function watchUploadResult(categoryId) {
+  stopUploadWatch()
+  let attempt = 0
+  const tick = async () => {
+    if (activeGallery.value !== categoryId) return
+    attempt += 1
+    try {
+      const response = await materialLibraryApi.listItems({
+        material_type: 'image',
+        category: categoryId,
+        page: 1,
+        page_size: 1,
+        sort: 'newest',
+        employee_id: targetEmployeeId.value,
+        uploader_employee_id: isEmployeeEnterpriseMode.value ? routeEmployeeId.value : ''
+      })
+      if (activeGallery.value !== categoryId) return
+      applyUploadFailures(response.upload_failures || [])
+      if (!response.pending_upload_count || attempt >= 10) {
+        await loadItems()
+        return
+      }
+    } catch {
+      return
+    }
+    uploadWatchTimer = window.setTimeout(tick, 3000)
+  }
+  uploadWatchTimer = window.setTimeout(tick, 3000)
+}
+
 const uploadProgressText = computed(() => {
+  if (uploadProgress.phase === 'converting') return `正在转换为 WebP ${uploadProgress.percent}%`
   if (uploadProgress.phase === 'processing') return '文件已送达，正在转码入库…'
   if (uploadProgress.phase === 'sending') {
     return `已传输 ${uploadProgress.percent}% · ${formatSize(uploadProgress.loaded)} / ${formatSize(uploadProgress.total)}`
@@ -153,7 +211,8 @@ const deleteTargetOptions = computed(() => categories.value.filter((item) => ite
     : (deletingCategory.value?.visibility !== 'enterprise' || item.visibility === 'enterprise'))))
 const decorationGalleryStyles = [
   '复合写意', '写意木构', '江南印象', '轻欧简美', '欧美香颂', '新装饰主义', '北欧之光',
-  '意境东方', '雅致现代', '优雅缤纷', '极简侘寂', '复古风潮', '艺术室界'
+  '意境东方', '雅致现代', '优雅缤纷', '极简侘寂', '复古风潮', '艺术室界',
+  '雅致灰调', '意式轻奢', '意式极简', '中古风潮', '宋氏美学', '现代之源', '复古写意'
 ]
 const isDecorationGalleryChild = computed(() =>
   ['create', 'edit'].includes(categoryEditorMode.value) &&
@@ -442,6 +501,7 @@ async function loadItems() {
     if (employeeContext !== `${routeEmployeeId.value}:${isEmployeeEnterpriseMode.value}`) return
     items.value = hydratedItems
     total.value = response.total || 0
+    applyUploadFailures(response.upload_failures || [])
   } catch (error) {
     message.error(error.message || '素材加载失败')
   } finally {
@@ -464,6 +524,8 @@ function search() {
 }
 
 function enterGallery(gallery) {
+  stopUploadWatch()
+  uploadFailures.value = []
   uploadDateRange.value = []
   activeGallery.value = gallery.code
   designStyleFilter.value = ''
@@ -475,6 +537,8 @@ function enterGallery(gallery) {
 }
 
 function leaveGallery() {
+  stopUploadWatch()
+  uploadFailures.value = []
   uploadDateRange.value = []
   if (isEmployeeRoughMode.value) {
     void router.push('/model-manage/employees')
@@ -754,6 +818,7 @@ async function uploadFiles() {
       activeGallery.value = uploadedTo
     }
     await loadItems()
+    if (materialType.value === 'image' && response?.summary?.queued) watchUploadResult(uploadedTo)
     if (materialType.value === 'cover_template' && pendingReviewTemplates.value.length) {
       await openNextPendingReview()
     }
@@ -1134,6 +1199,7 @@ function closeRemoteConfig() {
 onMounted(restoreRemoteSync)
 onBeforeUnmount(() => {
   window.clearTimeout(remoteSyncPollTimer)
+  stopUploadWatch()
   releasePreviews()
 })
 </script>
@@ -1253,6 +1319,11 @@ onBeforeUnmount(() => {
             </div>
           </article>
           </div>
+        </div>
+
+        <div v-if="!isGalleryRoot && uploadFailures.length" class="upload-failure-notice" role="alert">
+          <strong>上传失败</strong>
+          <span>请重新上传：{{ uploadFailureText }}</span>
         </div>
 
         <div v-if="!isGalleryRoot && (items.length || isTopLevelGallery)" class="material-section current-gallery-section">
@@ -1460,6 +1531,8 @@ onBeforeUnmount(() => {
 .category-filter { width: 170px; }.sort-filter { width: 130px; }
 .date-range-filter { width: 280px; flex-shrink: 0; }
 .date-range-label { display: flex; align-items: center; white-space: nowrap; }
+.upload-failure-notice { display: flex; flex-direction: column; gap: 4px; margin-bottom: 16px; padding: 12px 14px; border: 1px solid var(--color-error-100); border-radius: 8px; background: var(--color-error-50); color: var(--color-error-700); line-height: 1.5; }
+.upload-failure-notice strong { font-size: 14px; }
 .gallery-section, .material-section { margin-bottom: 22px; }
 .gallery-section h3, .material-section h3 { margin: 0 0 12px; color: var(--color-text); font-size: 15px; }
 .design-style-filter { display: flex; gap: 24px; margin: -2px 0 16px; overflow-x: auto; border-bottom: 1px solid var(--gray-100); white-space: nowrap; }

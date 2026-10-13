@@ -155,15 +155,14 @@ const mainList = computed(() => {
     permissionAny: ['material_rough.upload']
   })
 
-  if (!userStore.isPermissionScoped) {
-    items.push({
-      name: '图片设计',
-      path: '/content/image-design',
-      activePaths: ['/content/image-design'],
-      icon: ImagePlus,
-      activeIcon: ImagePlus
-    })
-  }
+  items.push({
+    name: '图片设计',
+    path: '/content/image-design',
+    activePaths: ['/content/image-design'],
+    icon: ImagePlus,
+    activeIcon: ImagePlus,
+    permissionAny: ['image_design.access']
+  })
 
   items.push({
     name: '工作区',

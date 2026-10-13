@@ -44,6 +44,7 @@ from yuxi.services.material_library_categories import (
 from yuxi.services.material_upload_queue import (
     INGEST_EXPIRED,
     INGEST_PENDING,
+    SHOW_AFTER_ORIGINAL,
     delete_material_display_cache,
     encode_material_thumbnail,
     enqueue_material_oss_upload,
@@ -113,6 +114,13 @@ DECORATION_GALLERY_DESIGN_STYLES = frozenset(
         "仿生未来",
         "复古风潮",
         "艺术室界",
+        "雅致灰调",
+        "意式轻奢",
+        "意式极简",
+        "中古风潮",
+        "宋氏美学",
+        "现代之源",
+        "复古写意",
     }
 )
 
@@ -849,6 +857,7 @@ async def import_material_images(
                     "source_folder": source_folder,
                     "ingest_status": INGEST_PENDING,
                     "redis_key": material_upload_redis_key(asset_id),
+                    SHOW_AFTER_ORIGINAL: True,
                 },
             )
             item = await create_library_item_for_asset(
@@ -944,18 +953,33 @@ async def create_material_share(
 
     async def copy_snapshot(display_order: int, asset: ContentCoverAsset):
         async with semaphore:
-            pending_data = await read_material_bytes(asset) if ingest_status_of(asset) == INGEST_PENDING else None
-            display_source, cover_source = await ensure_material_share_images(asset, pending_data)
-            suffix = "webp" if (asset.content_type or "").endswith("webp") else "png"
+            # 原图还在存储里时直接复制。原图缺失时用已有缩略图，避免分享整单失败。
+            source_bytes = None
+            content_type = asset.content_type
+            if await storage.astat_file(asset.bucket_name, asset.object_name) is None:
+                if ingest_status_of(asset) == INGEST_PENDING:
+                    try:
+                        source_bytes = await read_material_bytes(asset)
+                    except StorageError:
+                        source_bytes = None
+                if source_bytes is None:
+                    thumbnail_name = material_thumb_object_name(asset.object_name)
+                    if await storage.astat_file(asset.bucket_name, thumbnail_name) is None:
+                        raise StorageError(f"对象 '{asset.object_name}' 在存储桶 '{asset.bucket_name}' 中不存在")
+                    source_bytes = await storage.adownload_file(asset.bucket_name, thumbnail_name)
+                    content_type = "image/webp"
+                    logger.warning("share snapshot uses thumbnail because original is missing: asset=%s", asset.id)
+            display_source, cover_source = await ensure_material_share_images(asset, source_bytes)
+            suffix = "webp" if (content_type or "").endswith("webp") else "png"
             object_name = f"material-library-shares/{owner_uid}/{share.id}/{display_order}.{suffix}"
-            if pending_data is not None:
+            if source_bytes is not None:
                 uploaded = await storage.aupload_file(
-                    MATERIAL_LIBRARY_BUCKET, object_name, pending_data, content_type=asset.content_type
+                    MATERIAL_LIBRARY_BUCKET, object_name, source_bytes, content_type=content_type
                 )
             else:
                 uploaded = await storage.acopy_file(
                     MATERIAL_LIBRARY_BUCKET, asset.object_name, object_name,
-                    source_bucket_name=asset.bucket_name, content_type=asset.content_type,
+                    source_bucket_name=asset.bucket_name, content_type=content_type,
                 )
             uploaded_objects.append((uploaded.bucket_name, uploaded.object_name))
             display_uploaded = await storage.acopy_file(
@@ -976,8 +1000,8 @@ async def create_material_share(
                     share_id=share.id,
                     display_order=display_order,
                     original_file_name=asset.original_file_name,
-                    content_type=asset.content_type,
-                    file_size=asset.file_size,
+                    content_type=content_type,
+                    file_size=len(source_bytes) if source_bytes is not None else asset.file_size,
                     image_width=asset.image_width,
                     image_height=asset.image_height,
                     bucket_name=uploaded.bucket_name,
@@ -1405,6 +1429,24 @@ async def list_material_items(
         posters_by_asset = {poster.asset_id: poster for poster in posters}
     elif material_type == "image":
         used_image_ids = await repo.list_selected_image_item_ids(_owner_uid(user), exclude_task_id=exclude_task_id)
+    upload_failures: list[dict[str, str]] = []
+    pending_upload_count = 0
+    if material_type == "image" and (category_ids or resolved_category is not None):
+        failed_rows, pending_upload_count = await repo.list_upload_notices(
+            _owner_uid(user),
+            material_type=material_type,
+            category=resolved_category.id if resolved_category and category_ids is None else None,
+            category_ids=category_ids,
+            category_owner_uid=root.owner_uid if root else None,
+        )
+        upload_failures = [
+            {
+                "id": item.id,
+                "name": item.display_name,
+                "file_name": asset.original_file_name or item.display_name,
+            }
+            for item, asset in failed_rows
+        ]
     await db.commit()
     personal_settings = await load_personal_gallery_settings(db)
     items = []
@@ -1422,6 +1464,8 @@ async def list_material_items(
         "total": total,
         "page": page,
         "page_size": page_size,
+        "upload_failures": upload_failures,
+        "pending_upload_count": pending_upload_count,
     }
 
 

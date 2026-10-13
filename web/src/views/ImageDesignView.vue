@@ -10,10 +10,17 @@ import {
   Sparkles,
   Trash2,
   Upload,
-  WandSparkles
+  WandSparkles,
+  X
 } from 'lucide-vue-next'
 
 import MaterialImagePickerModal from '@/components/material/MaterialImagePickerModal.vue'
+import {
+  composeImageDesignPrompt,
+  DEFAULT_IMAGE_DESIGN_KEYWORDS,
+  DEFAULT_IMAGE_DESIGN_PROMPT,
+  LOCKED_IMAGE_DESIGN_PROMPT_LINE
+} from '@/data/imageDesignPromptKeywords'
 import { materialLibraryApi } from '@/apis/material_library_api'
 import { imageDesignApi } from '@/apis/image_design_api'
 import { useImageDesignStore } from '@/stores/imageDesign'
@@ -37,10 +44,13 @@ const detailRawRoomUrl = ref('')
 const loadingGallery = ref(false)
 const refinedPromptDraft = ref('')
 const refinedPromptDirty = ref(false)
+const lockedPromptLine = LOCKED_IMAGE_DESIGN_PROMPT_LINE
+const promptKeywords = ref([...DEFAULT_IMAGE_DESIGN_KEYWORDS])
+const customKeyword = ref('')
 const polling = new Map()
 
 const commonForm = reactive({
-  prompt: '',
+  prompt: DEFAULT_IMAGE_DESIGN_PROMPT,
   aspectRatio: '3:4',
   genCount: 1,
   clarity: '1K',
@@ -122,6 +132,7 @@ const currentLayouts = computed(() => activeSpaceProfile.value?.layouts?.map((it
 const currentAddons = computed(() => activeSpaceProfile.value?.addons?.map((item) => [item.id, item.label]) || spaceConfigs[crossSpaceForm.targetSpace]?.addons || addons)
 const analysisKey = (materialId, role) => `${materialId}:${role}`
 const materialAnalysis = (material, role) => material ? store.analyses[analysisKey(material.id, role)] : null
+const effectivePrompt = computed(() => composeImageDesignPrompt(commonForm.prompt, promptKeywords.value))
 const compiledPromptPreview = computed(() => {
   const refinement = store.activeRefinement
   if (!refinement) return ''
@@ -142,7 +153,8 @@ const refineIssues = computed(() => {
   if (activeReference.value && materialAnalysis(activeReference.value, activeReferenceRole.value)?.status !== 'completed') issues.push('请等待参考图视觉分析完成')
   if (workflow.value === 'room_adapt' && !roomAdaptForm.rawStructure) issues.push('请先选择毛坯实拍图')
   if (roomAdaptForm.rawStructure && workflow.value === 'room_adapt' && materialAnalysis(roomAdaptForm.rawStructure, 'structure_source')?.status !== 'completed') issues.push('请等待毛坯图视觉分析完成')
-  if (!commonForm.prompt.trim()) issues.push('请填写补充描述')
+  if (!effectivePrompt.value.trim()) issues.push('请填写补充描述或保留关键词')
+  if (effectivePrompt.value.length > 3000) issues.push('补充描述和关键词合计不能超过 3000 字')
   return issues
 })
 
@@ -166,7 +178,6 @@ function invalidateRefinement() {
 
 function switchWorkflow(next) {
   workflow.value = next
-  commonForm.prompt = ''
   invalidateRefinement()
 }
 
@@ -207,6 +218,21 @@ function toggleAddon(value) {
 
 function clearPrompt() {
   commonForm.prompt = ''
+  promptKeywords.value = [...DEFAULT_IMAGE_DESIGN_KEYWORDS]
+  customKeyword.value = ''
+  invalidateRefinement()
+}
+
+function removeKeyword(keyword) {
+  promptKeywords.value = promptKeywords.value.filter((item) => item !== keyword)
+  invalidateRefinement()
+}
+
+function addCustomKeyword() {
+  const keyword = customKeyword.value.trim()
+  customKeyword.value = ''
+  if (!keyword || promptKeywords.value.includes(keyword)) return
+  promptKeywords.value = [...promptKeywords.value, keyword]
   invalidateRefinement()
 }
 
@@ -319,7 +345,7 @@ async function uploadToLibrary(event) {
 }
 
 function buildRefinementPayload() {
-  const base = { workflow: workflow.value, user_prompt: commonForm.prompt }
+  const base = { workflow: workflow.value, user_prompt: effectivePrompt.value }
   if (workflow.value === 'style_transfer') {
     return {
       ...base,
@@ -581,8 +607,18 @@ async function loadResultPreviews() {
 
         <section class="card prompt-card">
           <div class="section-heading"><div><span class="accent-line" />补充描述 <span class="required">*</span></div><button type="button" class="clear-button" @click="clearPrompt">清空</button></div>
-          <textarea v-model="commonForm.prompt" maxlength="3000" placeholder="描述你希望生成的空间风格、材质、色彩和氛围…" @input="invalidateRefinement" />
-          <div class="prompt-footer"><span>{{ commonForm.prompt.length }}/3000</span><button type="button" class="refine-button" :class="{ blocked: refineIssues.length }" :disabled="commonForm.refining" @click="refinePrompt"><LoaderCircle v-if="commonForm.refining" class="spin" :size="16" /><Sparkles v-else :size="16" />{{ commonForm.refining ? '正在分析并编译…' : 'AI 深度优化（必做）' }}</button></div>
+          <div class="prompt-box">
+            <p class="prompt-locked">{{ lockedPromptLine }}</p>
+            <textarea v-model="commonForm.prompt" maxlength="3000" @input="invalidateRefinement" />
+          </div>
+          <div class="prompt-keywords">
+            <button v-for="item in promptKeywords" :key="item" type="button" class="prompt-keyword" @click="removeKeyword(item)">{{ item }}<X :size="12" /></button>
+          </div>
+          <div class="keyword-composer">
+            <input v-model="customKeyword" maxlength="40" placeholder="输入自定义关键词" @keydown.enter.prevent="addCustomKeyword" />
+            <button type="button" @click="addCustomKeyword">添加</button>
+          </div>
+          <div class="prompt-footer"><span>{{ effectivePrompt.length }}/3000</span><button type="button" class="refine-button" :class="{ blocked: refineIssues.length }" :disabled="commonForm.refining" @click="refinePrompt"><LoaderCircle v-if="commonForm.refining" class="spin" :size="16" /><Sparkles v-else :size="16" />{{ commonForm.refining ? '正在分析并编译…' : 'AI 深度优化（必做）' }}</button></div>
           <div class="refine-note" :class="{ done: store.activeRefinement }"><Check v-if="store.activeRefinement" :size="14" /><span>{{ store.activeRefinement ? '图片、选项和最终提示词已通过服务端验证；修改语义条件后需重新优化。' : (refineIssues[0] || '请完成 AI 深度优化后再提交生成。') }}</span></div>
         </section>
 
@@ -661,7 +697,7 @@ h1 { margin: 0; font-size: 28px; letter-spacing: -.04em; } .page-head p:last-chi
 .material-slot { width: 100%; min-height: 180px; border: 1px dashed var(--main-300); border-radius: 12px; background: var(--gray-50); color: var(--main-700); cursor: pointer; overflow: hidden; display: grid; place-items: center; position: relative; } .material-slot > span { display: grid; justify-items: center; gap: 7px; } .material-slot strong { font-size: 14px; } .material-slot small { color: var(--gray-500); } .material-slot img { display: block; width: 100%; height: clamp(260px, 38vw, 520px); object-fit: contain; background: var(--gray-50); } .slot-name { position: absolute; left: 10px; right: 10px; bottom: 8px; padding: 4px 8px; border-radius: 6px; color: #fff !important; background: rgba(0,0,0,.58); text-align: left; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .upload-inline { display: inline-flex; align-items: center; gap: 5px; margin-top: 10px; color: var(--main-700); font-size: 12px; cursor: pointer; } .upload-inline input { display: none; }
 .choice-grid { display: grid; gap: 8px; } .styles-grid { grid-template-columns: repeat(5, 1fr); } .space-grid { grid-template-columns: repeat(6, 1fr); } .layout-grid { grid-template-columns: repeat(4, 1fr); } .addon-grid { grid-template-columns: repeat(3, 1fr); } .choice-grid button { min-height: 42px; font-size: 12px; } .subheading { margin: 16px 0 9px; color: var(--gray-700); font-size: 12px; font-weight: 700; }
-.prompt-card textarea { width: 100%; min-height: 156px; box-sizing: border-box; padding: 12px; border: 1px solid var(--gray-200); border-radius: 10px; resize: vertical; font: inherit; line-height: 1.65; outline: none; } .prompt-card textarea:focus { border-color: var(--main-500); box-shadow: 0 0 0 2px var(--main-100); } .prompt-footer { display: flex; justify-content: space-between; align-items: center; margin-top: 9px; color: var(--gray-500); font-size: 12px; } .clear-button { border: 0; background: transparent; color: var(--gray-500); cursor: pointer; } .refine-button { display: inline-flex; align-items: center; gap: 6px; border: 0; border-radius: 8px; padding: 8px 12px; color: #fff; background: var(--main-700); font-weight: 700; cursor: pointer; } .refine-button.blocked { opacity: .68; } .refine-button:disabled { opacity: .45; cursor: not-allowed; } .refine-model-row { display: flex; align-items: center; gap: 10px; margin-top: 10px; color: var(--gray-600); font-size: 12px; } .refine-model-row > :last-child { min-width: 220px; } .refine-note { display: flex; align-items: center; gap: 6px; margin: 10px 0 0; color: var(--color-error-700); font-size: 12px; } .refine-note span { flex: 1; } .refine-note button { border: 0; padding: 0; color: var(--main-700); background: transparent; cursor: pointer; } .refine-note.done { color: var(--color-success-700); }
+.prompt-box { border: 1px solid var(--gray-200); border-radius: 10px; } .prompt-box:focus-within { border-color: var(--main-500); box-shadow: 0 0 0 2px var(--main-100); } .prompt-locked { margin: 0; padding: 12px 12px 0; color: var(--gray-800); font-size: inherit; font-weight: 400; line-height: 1.65; user-select: none; } .prompt-card textarea { width: 100%; min-height: 132px; box-sizing: border-box; padding: 0 12px 12px; border: 0; border-radius: 0; resize: vertical; font: inherit; line-height: 1.65; outline: none; background: transparent; } .prompt-card textarea:focus { border-color: transparent; box-shadow: none; } .prompt-keywords { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; } .prompt-keyword { display: inline-flex; align-items: center; gap: 4px; border: 1px solid var(--gray-200); border-radius: 999px; padding: 5px 10px; color: var(--gray-800); background: var(--gray-50); font-size: 12px; cursor: pointer; } .prompt-keyword:hover { border-color: var(--color-error-100); color: var(--color-error-700); } .keyword-composer { display: flex; gap: 8px; margin-top: 10px; } .keyword-composer input { flex: 1; min-width: 0; padding: 8px 10px; border: 1px solid var(--gray-200); border-radius: 8px; font: inherit; outline: none; } .keyword-composer input:focus { border-color: var(--main-500); box-shadow: 0 0 0 2px var(--main-100); } .keyword-composer button { border: 1px solid var(--main-300); border-radius: 8px; padding: 0 12px; color: var(--main-700); background: var(--main-20); font-weight: 700; cursor: pointer; } .prompt-footer { display: flex; justify-content: space-between; align-items: center; margin-top: 9px; color: var(--gray-500); font-size: 12px; } .clear-button { border: 0; background: transparent; color: var(--gray-500); cursor: pointer; } .refine-button { display: inline-flex; align-items: center; gap: 6px; border: 0; border-radius: 8px; padding: 8px 12px; color: #fff; background: var(--main-700); font-weight: 700; cursor: pointer; } .refine-button.blocked { opacity: .68; } .refine-button:disabled { opacity: .45; cursor: not-allowed; } .refine-model-row { display: flex; align-items: center; gap: 10px; margin-top: 10px; color: var(--gray-600); font-size: 12px; } .refine-model-row > :last-child { min-width: 220px; } .refine-note { display: flex; align-items: center; gap: 6px; margin: 10px 0 0; color: var(--color-error-700); font-size: 12px; } .refine-note span { flex: 1; } .refine-note button { border: 0; padding: 0; color: var(--main-700); background: transparent; cursor: pointer; } .refine-note.done { color: var(--color-success-700); }
 .verified-badge { display: inline-flex; align-items: center; gap: 4px; padding: 4px 8px; border-radius: 999px; color: var(--color-success-700); background: var(--color-success-10); font-size: 11px; } .analysis-summary { display: flex; justify-content: space-between; gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--gray-100); color: var(--gray-600); font-size: 12px; } .analysis-summary strong { color: var(--gray-800); } .analysis-retry { margin-top: 8px; border: 0; padding: 0; color: var(--main-700); background: transparent; font-size: 12px; font-weight: 700; cursor: pointer; } .effective-options { display: flex; flex-wrap: wrap; gap: 7px 12px; margin-top: 13px; padding: 10px 12px; border-radius: 8px; background: var(--gray-50); color: var(--gray-700); font-size: 12px; } .effective-options strong { width: 100%; color: var(--gray-800); } .constraint-list, .conflict-list { margin-top: 13px; color: var(--gray-700); font-size: 12px; } .constraint-list ul, .conflict-list ul { margin: 7px 0 0; padding-left: 20px; line-height: 1.7; } .conflict-list { color: var(--color-warning-700); } .compiled-prompt { display: grid; gap: 7px; margin-top: 14px; color: var(--gray-700); font-size: 12px; font-weight: 700; } .compiled-prompt textarea { min-height: 190px; padding: 11px; border: 1px solid var(--gray-200); border-radius: 9px; background: var(--gray-50); color: var(--gray-700); font: inherit; font-weight: 400; line-height: 1.65; resize: vertical; } .prompt-revalidate { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 8px; color: var(--color-warning-700); font-size: 12px; } .prompt-revalidate button { border: 0; border-radius: 7px; padding: 7px 10px; color: #fff; background: var(--main-700); font-weight: 700; cursor: pointer; } .prompt-revalidate button:disabled { opacity: .45; cursor: not-allowed; }
 .option-group + .option-group { margin-top: 15px; } .option-group > strong { display: block; margin-bottom: 8px; font-size: 13px; } .option-row { display: flex; gap: 8px; flex-wrap: wrap; } .option-row button { min-width: 105px; } .option-row small { display: block; margin-top: 3px; color: var(--gray-500); font-size: 10px; }
 .submit-row { display: flex; justify-content: flex-end; } .generate-button { display: inline-flex; align-items: center; gap: 7px; padding: 13px 18px; border: 0; border-radius: 10px; color: #fff; background: linear-gradient(135deg, var(--main-700), var(--main-500)); font-weight: 800; cursor: pointer; white-space: nowrap; } .generate-button.blocked { opacity: .68; } .generate-button:disabled { opacity: .45; cursor: not-allowed; } .blocked-note { margin: -6px 0 0; color: var(--color-warning-700); font-size: 12px; }

@@ -1,3 +1,4 @@
+import { encodeFileAsWebp } from '@/utils/materialUploadImage'
 import { apiDelete, apiGet, apiPatch, apiPost, apiPostFormWithProgress, apiPut } from './base'
 
 const IMAGE_FILE_LIMIT_BYTES = 100 * 1024 * 1024
@@ -41,12 +42,26 @@ export const materialLibraryApi = {
     if (oversized) {
       throw new Error(`「${oversized.name}」超过 100 MB，请压缩后再上传`)
     }
-    const totalBytes = selected.reduce((sum, file) => sum + file.size, 0)
+    const prepared = []
+    for (let index = 0; index < selected.length; index += 1) {
+      onProgress?.({
+        loaded: index,
+        total: selected.length,
+        percent: selected.length ? Math.round((index / selected.length) * 100) : 0,
+        phase: 'converting'
+      })
+      prepared.push(await encodeFileAsWebp(selected[index]))
+    }
+    const oversizedWebp = prepared.find((file) => file.size > IMAGE_FILE_LIMIT_BYTES)
+    if (oversizedWebp) {
+      throw new Error(`「${oversizedWebp.name}」超过 100 MB，请压缩后再上传`)
+    }
+    const totalBytes = prepared.reduce((sum, file) => sum + file.size, 0)
     const items = []
     let created = 0
     let queued = 0
     let sentBytes = 0
-    for (const file of selected) {
+    for (const file of prepared) {
       const form = new FormData()
       form.append('files', file)
       form.append('category', category)
