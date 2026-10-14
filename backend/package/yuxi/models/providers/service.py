@@ -28,6 +28,23 @@ def _normalize_list(value: Any) -> list:
     return value if isinstance(value, list) else []
 
 
+def _merge_missing_builtin_enabled_models(
+    existing_models: Any,
+    builtin_models: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], bool]:
+    """Append builtin template models missing from DB without replacing admin edits."""
+    existing = [item for item in _normalize_list(existing_models) if isinstance(item, dict)]
+    existing_ids = {str(item.get("id") or "").strip() for item in existing if str(item.get("id") or "").strip()}
+    changed = False
+    for model in builtin_models:
+        model_id = str(model.get("id") or "").strip()
+        if model_id and model_id not in existing_ids:
+            existing.append(model)
+            existing_ids.add(model_id)
+            changed = True
+    return existing, changed
+
+
 def _normalize_dict(value: Any) -> dict:
     return value if isinstance(value, dict) else {}
 
@@ -245,11 +262,37 @@ async def ensure_builtin_model_providers_in_db(db: AsyncSession) -> None:
         provider_id = provider_def["provider_id"]
         existing_provider = existing_ids.get(provider_id)
         if existing_provider:
-            if not existing_provider.enabled_models and provider_def.get("enabled_models"):
-                existing_provider.enabled_models = _normalize_model_list(provider_def["enabled_models"])
-                existing_provider.capabilities = provider_def.get("capabilities") or existing_provider.capabilities
-                existing_provider.updated_by = "system"
-                await db.flush()
+            if provider_id == "keenlight":
+                override_base = (os.getenv("KEENLIGHT_BASE_URL") or "").strip()
+                if override_base and existing_provider.base_url != override_base:
+                    existing_provider.base_url = override_base
+                    existing_provider.updated_by = "system"
+                    await db.flush()
+                if existing_provider.api_key_env != "KEENLIGHT_API_KEY":
+                    existing_provider.api_key_env = "KEENLIGHT_API_KEY"
+                    existing_provider.updated_by = "system"
+                    await db.flush()
+                if existing_provider.api_key:
+                    existing_provider.api_key = None
+                    existing_provider.updated_by = "system"
+                    await db.flush()
+            builtin_models = provider_def.get("enabled_models") or []
+            if builtin_models:
+                merged, changed = _merge_missing_builtin_enabled_models(
+                    existing_provider.enabled_models,
+                    builtin_models,
+                )
+                if not existing_provider.enabled_models:
+                    existing_provider.enabled_models = _normalize_model_list(builtin_models)
+                    existing_provider.capabilities = (
+                        provider_def.get("capabilities") or existing_provider.capabilities
+                    )
+                    existing_provider.updated_by = "system"
+                    await db.flush()
+                elif changed:
+                    existing_provider.enabled_models = _normalize_model_list(merged)
+                    existing_provider.updated_by = "system"
+                    await db.flush()
             continue
 
         payload = {key: value for key, value in provider_def.items() if value is not None}

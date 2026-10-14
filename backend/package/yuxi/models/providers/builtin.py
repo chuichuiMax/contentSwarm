@@ -169,6 +169,19 @@ BUILTIN_PROVIDERS: list[dict[str, Any]] = [
         "models_endpoint": "https://opencode.ai/zen/v1/models",
     },
     {
+        "provider_id": "keenlight",
+        "display_name": "KeenLight",
+        "base_url": "http://8.136.134.29:18080/v1",
+        "api_key_env": "KEENLIGHT_API_KEY",
+        "models_endpoint": "http://8.136.134.29:18080/v1/models",
+        "capabilities": ["chat"],
+        "enabled_models": [
+            {"id": "gpt-5.6-luna", "type": "chat", "display_name": "gpt-5.6-luna"},
+            {"id": "gpt-image-2", "type": "chat", "display_name": "gpt-image-2"},
+            {"id": "gpt-image-1.5", "type": "chat", "display_name": "gpt-image-1.5"},
+        ],
+    },
+    {
         "provider_id": "siliconflow-cn",
         "display_name": "SiliconFlow",
         "base_url": "https://api.siliconflow.cn/v1",
@@ -182,6 +195,11 @@ BUILTIN_PROVIDERS: list[dict[str, Any]] = [
         "enabled_models": [
             {"id": "deepseek-ai/DeepSeek-V4-Flash", "type": "chat", "display_name": "deepseek-ai/DeepSeek-V4-Flash"},
             {"id": "zai-org/GLM-5.2", "type": "chat", "display_name": "zai-org/GLM-5.2"},
+            {
+                "id": "Qwen/Qwen3-VL-8B-Instruct",
+                "type": "chat",
+                "display_name": "Qwen/Qwen3-VL-8B-Instruct",
+            },
             {
                 "id": "Pro/BAAI/bge-m3",
                 "type": "embedding",

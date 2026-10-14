@@ -37,6 +37,7 @@ from yuxi.services.personal_gallery_settings import (
 from yuxi.services.material_library_categories import (
     DEFAULT_IMAGE_CATEGORY_IDS,
     RETIRED_PRIVATE_IMAGE_CATEGORY_IDS,
+    is_personal_folder_visible,
     personal_folder_key,
     list_material_categories,
     resolve_legacy_category,
@@ -768,6 +769,12 @@ async def import_material_images(
         from yuxi.services.personal_materials import upload_category
 
         source_folder = source_folder or "uploads"
+        if source_folder and not is_personal_folder_visible(source_folder):
+            raise _error(
+                403,
+                "MATERIAL_UPLOAD_FORBIDDEN",
+                "个人毛坯图库已停用，请上传到企业共享毛坯房图库或我的上传",
+            )
         if category and category not in {"uncategorized", "rough", "uploads"}:
             resolved_category, style = await _resolve_upload_category(db, user, category, design_style)
             if resolved_category.visibility != "private":
@@ -779,6 +786,13 @@ async def import_material_images(
         resolved_category, style = await _resolve_upload_category(db, user, category, design_style)
         if manage_target_private and not _is_target_rough_category(resolved_category, owner_uid):
             raise _error(403, "MATERIAL_TARGET_SCOPE_FORBIDDEN", "员工素材模式只能管理该员工的个人图库")
+        private_key = personal_folder_key(resolved_category)
+        if private_key and not is_personal_folder_visible(private_key):
+            raise _error(
+                403,
+                "MATERIAL_UPLOAD_FORBIDDEN",
+                "个人毛坯图库已停用，请上传到企业共享毛坯房图库或我的上传",
+            )
         source_folder = None
         if resolved_category.visibility == "private":
             if (
@@ -1304,6 +1318,8 @@ async def list_material_items(
     date_to: date | None = None,
     actor_user: User | None = None,
 ) -> dict[str, Any]:
+    if personal_folder == "rough":
+        raise _error(404, "MATERIAL_PERSONAL_GALLERY_DISABLED", "个人毛坯图库已停用")
     rough_upload_only = await material_access_mode(db, actor_user or user) == "rough_upload"
     if date_from and date_to and date_from > date_to:
         raise _error(422, "MATERIAL_DATE_RANGE_INVALID", "开始日期不能晚于结束日期")
@@ -1323,13 +1339,6 @@ async def list_material_items(
         raise _error(422, "MATERIAL_ROOT_SCOPE_INVALID", "根目录素材仅支持按图片共享范围查询")
     if personal_folder is not None and material_type != "image":
         raise _error(422, "MATERIAL_PERSONAL_FOLDER_INVALID", "个人固定图库仅支持图片素材")
-    if personal_folder == "rough":
-        from yuxi.services.personal_materials import folder_categories
-
-        await folder_categories(db, user)
-        category = None
-        scope = "private"
-        status = status or "enabled"
     if enterprise_rough_owner_uid is not None:
         if material_type != "image" or personal_folder is not None:
             raise _error(422, "MATERIAL_EMPLOYEE_SCOPE_INVALID", "企业共享员工筛选仅支持毛坯图片")
@@ -1596,16 +1605,7 @@ async def get_material_categories(
     repo = MaterialLibraryRepository(db, include_shared=True)
     personal_rough_category_id = None
     if personal_folder == "rough":
-        from yuxi.services.personal_materials import folder_categories
-
-        rough_categories = (await folder_categories(db, user))["rough"]
-        if not rough_categories:
-            raise _error(404, "MATERIAL_PERSONAL_GALLERY_DELETED", "该个人图库已删除")
-        personal_rough_category_id = next(
-            category.id
-            for category in rough_categories
-            if category.visibility == "private" and category.owner_uid == _owner_uid(user)
-        )
+        raise _error(404, "MATERIAL_PERSONAL_GALLERY_DISABLED", "个人毛坯图库已停用")
     categories = await ensure_material_categories(
         db,
         owner_uid=_owner_uid(user),
@@ -1640,13 +1640,15 @@ async def get_material_categories(
     parents = {category.id: category for category in categories if category.parent_id is None}
     result = []
     for category in categories:
+        key = personal_folder_key(category)
+        if key and not is_personal_folder_visible(key):
+            continue
         effective_industry = (
             parents[category.parent_id].industry_slug
             if category.parent_id and category.parent_id in parents
             else personal_gallery_fields(category, personal_settings)["industry_slug"]
         )
         children = await repo.list_child_categories(_owner_uid(user), material_type, category.id)
-        key = personal_folder_key(category)
         if key:
             from yuxi.services.personal_materials import list_folder
 
@@ -2039,6 +2041,8 @@ async def list_image_galleries(
     personal_folder: Literal["rough"] | None = None,
     include_case_for_designer: bool = False,
 ) -> dict[str, Any]:
+    if personal_folder == "rough":
+        raise _error(404, "MATERIAL_PERSONAL_GALLERY_DISABLED", "个人毛坯图库已停用")
     await ensure_initial_enterprise_galleries(db)
     categories = await ensure_material_categories(
         db,
@@ -2080,6 +2084,9 @@ async def list_image_galleries(
     parents = {category.id: category for category in categories if category.parent_id is None}
     galleries = []
     for category in categories:
+        personal_key = personal_folder_key(category)
+        if personal_key and not is_personal_folder_visible(personal_key):
+            continue
         effective_industry = (
             parents[category.parent_id].industry_slug
             if category.parent_id and category.parent_id in parents

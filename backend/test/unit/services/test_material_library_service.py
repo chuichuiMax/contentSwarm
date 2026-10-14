@@ -108,18 +108,15 @@ async def test_employee_rough_listing_uses_actor_permissions_and_target_ownershi
     monkeypatch.setattr(material_library_service, "load_personal_gallery_settings", AsyncMock(return_value={}))
     monkeypatch.setattr(material_library_service, "MaterialLibraryRepository", lambda *args, **kwargs: repo)
 
-    result = await material_library_service.list_material_items(
-        db, owner, material_type="image", category="mp-rough-private", status=None, query=None,
-        page=1, page_size=24, sort="newest", personal_folder="rough", actor_user=actor,
-    )
-
-    assert result["items"] == [] and result["total"] == 0
-    grants.assert_awaited_once_with(db, actor)
-    folders.assert_awaited_once_with(db, owner)
-    assert repo.list_items.call_args.args == (owner.uid,)
-    assert repo.list_items.call_args.kwargs["private_rough_only"] is True
-    assert repo.list_items.call_args.kwargs["scope"] == "private"
-    assert repo.list_items.call_args.kwargs["enterprise_rough_owner_uid"] is None
+    with pytest.raises(HTTPException) as exc:
+        await material_library_service.list_material_items(
+            db, owner, material_type="image", category="mp-rough-private", status=None, query=None,
+            page=1, page_size=24, sort="newest", personal_folder="rough", actor_user=actor,
+        )
+    assert exc.value.status_code == 404
+    grants.assert_not_awaited()
+    folders.assert_not_awaited()
+    repo.list_items.assert_not_awaited()
 
 
 def test_designer_can_browse_case_gallery_but_not_upload_it():

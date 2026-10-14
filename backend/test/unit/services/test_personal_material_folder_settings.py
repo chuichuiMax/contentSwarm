@@ -74,10 +74,9 @@ async def test_missing_personal_folders_provision_four_actual_categories(monkeyp
     user = SimpleNamespace(uid="owner-1", department_id=None)
 
     folders = await personal_materials.folder_categories(FakeDB(), user)
-    assert folders["rough"][0].id == "mp-rough-private"
+    assert folders["rough"] == []
     assert folders["uploads"][0].id == "mp-uploads-private"
     assert {value["id"] for value in synced} == {
-        "mp-rough-private",
         "mp-uploads-private",
         "mp-generated-private",
         "mp-works-private",

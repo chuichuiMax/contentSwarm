@@ -259,7 +259,8 @@ const filteredGalleries = computed(() => {
   if (designerEnterpriseScope.value && !isGalleryRoot.value) return []
   const term = queryInput.value.trim().toLowerCase()
   const scoped = isGalleryRoot.value
-    ? galleries.value.filter((item) => !item.parent_id && (item.visibility || 'private') === materialScope.value)
+    ? galleries.value.filter((item) => !item.parent_id && (item.visibility || 'private') === materialScope.value
+      && item.personal_folder !== 'rough')
     : (isTopLevelGallery.value ? galleries.value.filter((item) => item.parent_id === activeGallery.value) : [])
   const roughScoped = designerEnterpriseScope.value ? scoped.filter(isEnterpriseRoughRoot) : scoped
   const styleScoped = isCaseGalleryPage.value && designStyleFilter.value

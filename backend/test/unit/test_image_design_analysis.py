@@ -6,9 +6,18 @@ from pydantic import ValidationError
 from yuxi.image_design.analysis import (
     VisualModelUnavailableError,
     analysis_cache_key,
+    configured_image_design_vision_model_spec,
     parse_analysis_response,
     run_visual_analysis,
 )
+from yuxi.image_design.schemas import DEFAULT_VISION_MODEL_SPEC
+
+
+def test_configured_vision_model_spec_uses_env_or_default(monkeypatch) -> None:
+    monkeypatch.delenv("IMAGE_DESIGN_VISION_MODEL_SPEC", raising=False)
+    assert configured_image_design_vision_model_spec() == DEFAULT_VISION_MODEL_SPEC
+    monkeypatch.setenv("IMAGE_DESIGN_VISION_MODEL_SPEC", "keenlight:gpt-5.6-luna")
+    assert configured_image_design_vision_model_spec() == "keenlight:gpt-5.6-luna"
 
 
 def test_analysis_cache_key_includes_role_model_and_schema() -> None:

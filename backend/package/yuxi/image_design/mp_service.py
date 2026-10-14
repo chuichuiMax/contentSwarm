@@ -383,6 +383,7 @@ def refinement_payload(payload: MpPolishCreate):
 
 
 async def polish(db: AsyncSession, user: User, payload: MpPolishCreate) -> dict[str, Any]:
+    """小程序 AI 深度润色：与 PC「AI 深度优化」共用 create_refinement 与 IMAGE_DESIGN_VISION_MODEL_SPEC 识图。"""
     from .service import create_refinement
 
     result = await create_refinement(db, user, refinement_payload(payload))

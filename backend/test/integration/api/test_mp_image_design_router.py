@@ -308,7 +308,6 @@ async def test_pc_personal_materials_follow_mp_folder_rules(test_client, mp_acco
     )
     assert uploaded.status_code == 200, uploaded.text
     item_id = uploaded.json()["library_item_id"]
-    pc_item_id = None
     try:
         mp_folders = await test_client.get("/api/mp/content/my-materials/folders", headers=mp_headers)
         pc_folders = await test_client.get("/api/material-library/my-materials/folders", headers=pc_headers)
@@ -337,40 +336,30 @@ async def test_pc_personal_materials_follow_mp_folder_rules(test_client, mp_acco
         forbidden = await test_client.get(f"/api/material-library/items/{item_id}/thumbnail", headers=other_pc_headers)
         assert forbidden.status_code == 404, forbidden.text
 
-        pc_upload = await test_client.post(
+        pc_rough_upload = await test_client.post(
             "/api/material-library/images/import",
             headers=pc_headers,
             files=[("files", ("pc-rough.png", raw.getvalue(), "image/png"))],
             data={"category": "mp-rough-private"},
         )
-        assert pc_upload.status_code == 201, pc_upload.text
-        pc_item_id = pc_upload.json()["items"][0]["id"]
+        assert pc_rough_upload.status_code == 403, pc_rough_upload.text
         mp_rough = await test_client.get("/api/mp/content/my-materials/rough", headers=mp_headers)
         pc_rough = await test_client.get("/api/material-library/my-materials/rough", headers=pc_headers)
-        other_mp_rough = await test_client.get("/api/mp/content/my-materials/rough", headers=mp_accounts[1]["headers"])
-        other_pc_rough = await test_client.get("/api/material-library/my-materials/rough", headers=other_pc_headers)
-        assert mp_rough.status_code == 200, mp_rough.text
-        assert pc_rough.status_code == 200, pc_rough.text
-        assert pc_item_id in {item["id"] for item in mp_rough.json()["items"]}
-        assert pc_item_id in {item["id"] for item in pc_rough.json()["items"]}
-        assert pc_item_id not in {item["id"] for item in other_mp_rough.json()["items"]}
-        assert pc_item_id not in {item["id"] for item in other_pc_rough.json()["items"]}
-        shared_file = await test_client.get(
-            f"/api/mp/content/gallery-items/{pc_item_id}/thumbnail", headers=mp_accounts[1]["headers"]
+        assert mp_rough.status_code == 404, mp_rough.text
+        assert pc_rough.status_code == 404, pc_rough.text
+        mp_rough_upload = await test_client.post(
+            "/api/mp/content/uploads/cover",
+            headers=mp_headers,
+            files={"file": ("rough.png", raw.getvalue(), "image/png")},
+            data={"folder": "rough"},
         )
-        assert shared_file.status_code == 404, shared_file.text
-        forbidden_delete = await test_client.delete(
-            f"/api/mp/content/gallery-items/{pc_item_id}", headers=mp_accounts[1]["headers"]
-        )
-        assert forbidden_delete.status_code in {403, 404}, forbidden_delete.text
+        assert mp_rough_upload.status_code == 403, mp_rough_upload.text
 
         mp_works = await test_client.get("/api/mp/image/works", headers=mp_headers)
         pc_works = await test_client.get("/api/material-library/my-materials/works", headers=pc_headers)
         assert pc_works.status_code == 200, pc_works.text
         assert pc_works.json()["total"] == mp_works.json()["total"]
     finally:
-        if pc_item_id:
-            await test_client.delete(f"/api/material-library/items/{pc_item_id}", headers=pc_headers)
         await test_client.delete(f"/api/mp/content/gallery-items/{item_id}", headers=mp_headers)
 
 

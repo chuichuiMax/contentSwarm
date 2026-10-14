@@ -464,7 +464,7 @@ async def test_member_cannot_manage_presets_and_enterprise_deletion_does_not_res
     member = material_users["member"]
     initial = await test_client.get("/api/material-library/my-materials/folders", headers=admin)
     assert initial.status_code == 200, initial.text
-    assert {item["id"] for item in initial.json()["folders"]} == {"rough", "generated", "uploads", "works"}
+    assert {item["id"] for item in initial.json()["folders"]} == {"generated", "uploads", "works"}
 
     categories = await test_client.get("/api/material-library/categories?material_type=image", headers=admin)
     assert categories.status_code == 200, categories.text
@@ -480,6 +480,8 @@ async def test_member_cannot_manage_presets_and_enterprise_deletion_does_not_res
             "/api/material-library/my-materials/folders/rough", headers=member, json={"name": "越权改名"}
         )
         assert denied.status_code == 403, denied.text
+        hidden_rough = await test_client.get("/api/material-library/my-materials/rough", headers=admin)
+        assert hidden_rough.status_code == 404, hidden_rough.text
 
         enterprise_rename = await test_client.patch(
             f"/api/material-library/categories/{reference['id']}?material_type=image",
@@ -505,8 +507,8 @@ async def test_member_cannot_manage_presets_and_enterprise_deletion_does_not_res
             folders = await test_client.get("/api/material-library/my-materials/folders", headers=admin)
             galleries = await test_client.get("/api/material-library/galleries", headers=admin)
             assert folders.status_code == galleries.status_code == 200
-            assert "rough" in {item["id"] for item in folders.json()["folders"]}
-            assert sum(item.get("personal_folder") == "rough" for item in galleries.json()["galleries"]) == 1
+            assert "rough" not in {item["id"] for item in folders.json()["folders"]}
+            assert sum(item.get("personal_folder") == "rough" for item in galleries.json()["galleries"]) == 0
             assert reference["id"] not in {item["id"] for item in galleries.json()["galleries"]}
 
         async with async_sessionmaker(engine, expire_on_commit=False)() as db:
@@ -618,7 +620,7 @@ async def test_global_personal_gallery_is_visible_across_departments_and_preserv
         await engine.dispose()
 
 
-async def test_target_employee_rough_gallery_revalidates_scope_on_every_operation(test_client, material_users):
+async def test_target_employee_personal_rough_gallery_is_disabled(test_client, material_users):
     employee_id = f"user:{material_users['owner_uid']}"
     query = f"employee_id={employee_id}"
     admin = material_users["other"]
@@ -627,51 +629,18 @@ async def test_target_employee_rough_gallery_revalidates_scope_on_every_operatio
     forbidden = await test_client.get(f"/api/material-library/categories?material_type=image&{query}", headers=member)
     assert forbidden.status_code == 403, forbidden.text
     categories = await test_client.get(f"/api/material-library/categories?material_type=image&{query}", headers=admin)
-    assert categories.status_code == 200, categories.text
-    assert categories.json()["target_employee"]["id"] == employee_id
-    rough_id = categories.json()["personal_rough_category_id"]
-    assert {item["id"] for item in categories.json()["categories"]} == {rough_id}
+    assert categories.status_code == 404, categories.text
 
     galleries = await test_client.get(f"/api/material-library/galleries?{query}", headers=admin)
-    assert galleries.status_code == 200, galleries.text
-    assert {item["id"] for item in galleries.json()["galleries"]} == {rough_id}
+    assert galleries.status_code == 404, galleries.text
 
-    wrong_folder = await test_client.post(
+    upload = await test_client.post(
         f"/api/material-library/images/import?{query}",
         headers=admin,
         data={"category": "mp-uploads-private"},
         files=[("files", ("wrong.png", _png(), "image/png"))],
     )
-    assert wrong_folder.status_code == 403, wrong_folder.text
-
-    uploaded = await test_client.post(
-        f"/api/material-library/images/import?{query}",
-        headers=admin,
-        data={"category": rough_id},
-        files=[("files", ("rough.png", _png(), "image/png"))],
-    )
-    assert uploaded.status_code == 201, uploaded.text
-    item_id = uploaded.json()["items"][0]["id"]
-    try:
-        items = await test_client.get(f"/api/material-library/items?material_type=image&{query}", headers=admin)
-        assert items.status_code == 200, items.text
-        assert item_id in {item["id"] for item in items.json()["items"]}
-
-        denied_file = await test_client.get(f"/api/material-library/items/{item_id}/file?{query}", headers=member)
-        assert denied_file.status_code == 403, denied_file.text
-        allowed_file = await test_client.get(f"/api/material-library/items/{item_id}/file?{query}", headers=admin)
-        assert allowed_file.status_code == 200, allowed_file.text
-
-        updated = await test_client.patch(
-            f"/api/material-library/items/{item_id}?{query}",
-            headers=admin,
-            json={"name": "毛坯实拍"},
-        )
-        assert updated.status_code == 200, updated.text
-        assert updated.json()["item"]["name"] == "毛坯实拍"
-    finally:
-        deleted = await test_client.delete(f"/api/material-library/items/{item_id}?{query}", headers=admin)
-        assert deleted.status_code == 200, deleted.text
+    assert upload.status_code == 404, upload.text
 
 
 @pytest_asyncio.fixture
@@ -723,70 +692,49 @@ async def test_admin_views_scoped_employee_rough_materials_without_crossing_owne
                     else f"user:{scoped_rough_employee['uid']}")
     params = {"material_type": "image", "employee_id": employee_ref}
     categories = await test_client.get("/api/material-library/categories", params=params, headers=headers)
-    assert categories.status_code == 200, categories.text
-    assert categories.json()["target_employee"]["id"] == employee_ref
-    rough_id = categories.json()["personal_rough_category_id"]
-    assert all(row["visibility"] == "private" for row in categories.json()["categories"])
+    assert categories.status_code == 404, categories.text
 
-    own_categories = await test_client.get(
-        "/api/material-library/categories", params={"material_type": "image"}, headers=headers,
-    )
-    assert own_categories.status_code == 200, own_categories.text
-    own_rough_id = next(row["id"] for row in own_categories.json()["categories"]
-                        if row.get("personal_folder") == "rough")
-    own_upload = await test_client.post(
-        "/api/material-library/images/import", headers=headers, data={"category": own_rough_id},
-        files=[("files", ("other-owner.png", _png(), "image/png"))],
-    )
-    assert own_upload.status_code == 201, own_upload.text
-    other_item_id = own_upload.json()["items"][0]["id"]
-    target_upload = await test_client.post(
-        "/api/material-library/images/import", params={"employee_id": employee_ref}, headers=headers,
-        data={"category": rough_id}, files=[("files", ("target-rough.png", _png(), "image/png"))],
-    )
-    assert target_upload.status_code == 201, target_upload.text
-    item_id = target_upload.json()["items"][0]["id"]
     shared_params = {"material_type": "image", "uploader_employee_id": employee_ref}
     shared_categories = await test_client.get(
         "/api/material-library/categories", params=shared_params, headers=headers,
     )
     assert shared_categories.status_code == 200, shared_categories.text
     shared_id = shared_categories.json()["enterprise_rough_category_id"]
-    excluded_ids = [other_item_id]
-    for category, name in ((shared_id, "target-shared"), ("mp-uploads-private", "target-uploads")):
-        upload = await test_client.post(
-            "/api/material-library/images/import", headers=scoped_rough_employee["headers"],
-            data={"category": category}, files=[("files", (f"{name}.png", _png(), "image/png"))],
-        )
-        assert upload.status_code == 201, upload.text
-        excluded_ids.append(upload.json()["items"][0]["id"])
-    items = await test_client.get(
-        "/api/material-library/items", params={**params, "category": rough_id}, headers=headers,
+    shared_upload = await test_client.post(
+        "/api/material-library/images/import",
+        headers=scoped_rough_employee["headers"],
+        data={"category": shared_id},
+        files=[("files", ("target-shared.png", _png(), "image/png"))],
     )
-    assert items.status_code == 200, items.text
-    assert items.json()["total"] == 1
-    assert [row["id"] for row in items.json()["items"]] == [item_id]
-    assert items.json()["items"][0]["uploaded_by"] == scoped_rough_employee["uid"]
-    assert items.json()["items"][0]["can_manage"] is True
-    for resource in ("file", "thumbnail"):
-        allowed = await test_client.get(
-            f"/api/material-library/items/{item_id}/{resource}", params={"employee_id": employee_ref}, headers=headers,
-        )
-        assert allowed.status_code == 200, allowed.text
-        for excluded_id in excluded_ids:
-            denied_other = await test_client.get(
-                f"/api/material-library/items/{excluded_id}/{resource}",
-                params={"employee_id": employee_ref}, headers=headers,
-            )
-            assert denied_other.status_code == 404, denied_other.text
-        denied_member = await test_client.get(
-            f"/api/material-library/items/{item_id}/{resource}",
-            params={"employee_id": employee_ref}, headers=material_users["member"],
-        )
-        assert denied_member.status_code == 403, denied_member.text
+    assert shared_upload.status_code == 201, shared_upload.text
+    shared_item_id = shared_upload.json()["items"][0]["id"]
+    private_upload = await test_client.post(
+        "/api/material-library/images/import",
+        headers=scoped_rough_employee["headers"],
+        data={"category": "mp-uploads-private"},
+        files=[("files", ("target-uploads.png", _png(), "image/png"))],
+    )
+    assert private_upload.status_code == 201, private_upload.text
+    private_item_id = private_upload.json()["items"][0]["id"]
     shared_items = await test_client.get("/api/material-library/items", params=shared_params, headers=headers)
     assert shared_items.status_code == 200, shared_items.text
-    assert [row["id"] for row in shared_items.json()["items"]] == [excluded_ids[1]]
+    assert [row["id"] for row in shared_items.json()["items"]] == [shared_item_id]
+    assert shared_items.json()["items"][0]["uploaded_by"] == scoped_rough_employee["uid"]
+    for resource in ("file", "thumbnail"):
+        allowed = await test_client.get(
+            f"/api/material-library/items/{shared_item_id}/{resource}",
+            params={"uploader_employee_id": employee_ref},
+            headers=headers,
+        )
+        assert allowed.status_code == 200, allowed.text
+        denied_private = await test_client.get(
+            f"/api/material-library/items/{private_item_id}/{resource}",
+            params={"uploader_employee_id": employee_ref},
+            headers=headers,
+        )
+        assert denied_private.status_code == 404, denied_private.text
+    await test_client.delete(f"/api/material-library/items/{shared_item_id}", headers=scoped_rough_employee["headers"])
+    await test_client.delete(f"/api/material-library/items/{private_item_id}", headers=scoped_rough_employee["headers"])
     for resource in ("categories", "items"):
         denied_member = await test_client.get(
             f"/api/material-library/{resource}", params=params, headers=material_users["member"],

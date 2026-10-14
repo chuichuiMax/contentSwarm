@@ -363,7 +363,7 @@ onMounted(async () => {
             <span class="rough-count-title">毛坯图上传数<br />（我的素材）</span>
           </template>
           <template #default="{ record }">
-            <a-button type="link" @click="openRoughImages(record)">{{ record.rough_image_count ?? 0 }}</a-button>
+            <span>{{ record.rough_image_count ?? 0 }}</span>
           </template>
         </a-table-column>
         <a-table-column key="enterprise_rough_image_count" :width="150" align="center">

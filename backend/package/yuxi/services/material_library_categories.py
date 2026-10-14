@@ -41,6 +41,15 @@ PERSONAL_IMAGE_FOLDERS = {
     "works": ("mp-works-private", "我的作品"),
 }
 
+# Personal rough uploads use enterprise 毛坯房图库; hide legacy per-user rough folder in PC/MP UI.
+HIDDEN_PERSONAL_IMAGE_FOLDERS: frozenset[str] = frozenset({"rough"})
+
+
+def is_personal_folder_visible(folder_key: str | None) -> bool:
+    if not folder_key:
+        return True
+    return folder_key not in HIDDEN_PERSONAL_IMAGE_FOLDERS
+
 
 def personal_folder_key(category) -> str | None:
     if category.material_type != "image" or category.visibility != "private" or category.parent_id:

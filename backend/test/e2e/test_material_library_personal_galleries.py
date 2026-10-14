@@ -66,7 +66,6 @@ async def test_personal_materials_use_only_entity_and_custom_galleries():
     }
     fixed_folders = [
         {"id": "generated", "name": "AI生图图库", "count": 2, "can_upload": False},
-        {"id": "rough", "name": "毛坯房图库", "count": 1, "can_upload": True},
         {"id": "works", "name": "我的作品", "count": 3, "can_upload": False},
         {"id": "uploads", "name": "我的上传", "count": 4, "can_upload": True},
     ]
@@ -107,7 +106,7 @@ async def test_personal_materials_use_only_entity_and_custom_galleries():
                     lambda route: route.fulfill(json={"folders": fixed_folders}),
                 )
                 await page.route(
-                    re.compile(r"/api/material-library/my-materials/(rough|generated|uploads|works)(?:\?|$)"),
+                    re.compile(r"/api/material-library/my-materials/(generated|uploads|works)(?:\?|$)"),
                     lambda route: route.fulfill(json={"items": [], "total": 0, "page": 1, "page_size": 24}),
                 )
                 await page.route(
@@ -203,7 +202,7 @@ async def test_personal_materials_use_only_entity_and_custom_galleries():
                     lambda route: route.fulfill(json={"folders": fixed_folders}),
                 )
                 await member_page.route(
-                    re.compile(r"/api/material-library/my-materials/(rough|generated|uploads|works)(?:\?|$)"),
+                    re.compile(r"/api/material-library/my-materials/(generated|uploads|works)(?:\?|$)"),
                     lambda route: route.fulfill(json={"items": [], "total": 0, "page": 1, "page_size": 24}),
                 )
                 await member_page.route(

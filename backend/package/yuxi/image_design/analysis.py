@@ -4,6 +4,7 @@ import base64
 import hashlib
 import io
 import json
+import os
 from typing import Any, Literal
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -39,6 +40,12 @@ def analysis_cache_key(asset_sha256: str, role: AnalysisRole, model_spec: str, s
 
 def resolve_visual_model_spec(model_spec: str) -> str:
     return resolve_chat_model_spec(model_spec, fallback=DEFAULT_VISION_MODEL_SPEC)
+
+
+def configured_image_design_vision_model_spec() -> str:
+    """PC 图片设计与小程序 /polish 深度润色共用的识图模型（IMAGE_DESIGN_VISION_MODEL_SPEC）。"""
+    configured = os.getenv("IMAGE_DESIGN_VISION_MODEL_SPEC", DEFAULT_VISION_MODEL_SPEC).strip()
+    return resolve_visual_model_spec(configured)
 
 
 def _response_text(response: Any) -> str:
@@ -123,6 +130,7 @@ __all__ = [
     "ANALYSIS_SCHEMA_VERSION",
     "VisualModelUnavailableError",
     "analysis_cache_key",
+    "configured_image_design_vision_model_spec",
     "parse_analysis_response",
     "resolve_visual_model_spec",
     "run_visual_analysis",

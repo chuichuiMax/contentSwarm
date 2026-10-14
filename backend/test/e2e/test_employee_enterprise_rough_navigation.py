@@ -63,6 +63,8 @@ async def test_employee_columns_preserve_scope_pagination_refresh_and_preview():
         elif path == "/api/material-library/remote-sync/status":
             data = {"job": None}
         elif path == "/api/material-library/categories":
+            if "employee_id" in params and "uploader_employee_id" not in params:
+                return await route.fulfill(status=404, json={"detail": "个人毛坯图库已停用"})
             enterprise = "uploader_employee_id" in params
             reference = params.get("uploader_employee_id", params.get("employee_id", ["user:alice"]))[0]
             employee = next(row for row in employees if row["id"] == reference)
@@ -86,6 +88,8 @@ async def test_employee_columns_preserve_scope_pagination_refresh_and_preview():
                 "enterprise_rough_category_id" if enterprise else "personal_rough_category_id": gallery_id,
             }
         elif path == "/api/material-library/items":
+            if "employee_id" in params and "uploader_employee_id" not in params:
+                return await route.fulfill(status=404, json={"detail": "个人毛坯图库已停用"})
             enterprise = "uploader_employee_id" in params
             reference = params.get("uploader_employee_id", params.get("employee_id", ["user:alice"]))[0]
             page = int(params.get("page", [1])[0])
@@ -181,12 +185,8 @@ async def test_employee_columns_preserve_scope_pagination_refresh_and_preview():
             assert all("employee_id" not in p for path, p in requests if path.endswith("/thumbnail"))
 
             await page.go_back(wait_until="domcontentloaded")
-            await page.get_by_role("button", name="7", exact=True).click()
-            await expect(page).to_have_url(
-                "http://localhost:5173/materials/images?employee_id=user:alice&gallery=rough"
-            )
-            await expect(page.locator("article.material-card")).to_have_count(7)
-            await expect(page.get_by_alt_text("个人甲-0")).to_be_visible()
+            await expect(page.get_by_role("button", name="7", exact=True)).to_have_count(0)
+            await expect(page.locator('tr[data-row-key="user:alice"]').get_by_text("7", exact=True)).to_be_visible()
             # Change scope and employee without reloading the component.
             await page.evaluate(
                 "url => { const state = {...history.state, current: url}; "

@@ -32,7 +32,7 @@ from yuxi.utils.datetime_utils import utc_now_naive
 from .analysis import (
     VisualModelUnavailableError,
     analysis_cache_key,
-    resolve_visual_model_spec,
+    configured_image_design_vision_model_spec,
     run_visual_analysis,
 )
 from .prompt_compiler import apply_edited_prompt, build_prompt_plan, compile_prompt, validate_plan_coverage
@@ -40,7 +40,6 @@ from .save_targets import resolve_writable_save_target
 from .schemas import (
     ANALYSIS_SCHEMA_VERSION,
     ASPECT_SIZES,
-    DEFAULT_VISION_MODEL_SPEC,
     PROMPT_COMPILER_SPEC,
     WORKFLOW_PROFILE_VERSION,
     CrossSpaceRefinementCreate,
@@ -228,7 +227,7 @@ async def get_bootstrap(db: AsyncSession, user: User) -> dict[str, Any]:
         "image2": image2,
         "aspect_sizes": ASPECT_SIZES,
         "prompt_compiler_spec": PROMPT_COMPILER_SPEC,
-        "vision_model_spec": os.getenv("IMAGE_DESIGN_VISION_MODEL_SPEC", DEFAULT_VISION_MODEL_SPEC),
+        "vision_model_spec": configured_image_design_vision_model_spec(),
         "profiles": public_profiles(),
     }
 
@@ -240,9 +239,8 @@ async def create_analysis(
 ) -> dict[str, Any]:
     owner_uid = _owner_uid(user)
     _, asset = await _get_material_item_and_asset(db, owner_uid, payload.material_item_id)
-    configured_model = os.getenv("IMAGE_DESIGN_VISION_MODEL_SPEC", DEFAULT_VISION_MODEL_SPEC).strip()
     try:
-        model_spec = resolve_visual_model_spec(configured_model)
+        model_spec = configured_image_design_vision_model_spec()
     except Exception as exc:
         raise _error(
             "IMAGE_DESIGN_ANALYSIS_MODEL_UNAVAILABLE",

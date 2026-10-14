@@ -20,7 +20,12 @@ from yuxi.storage.postgres.models_content import (
     ImageDesignJob,
 )
 from yuxi.utils.datetime_utils import format_utc_datetime
-from yuxi.services.material_library_categories import PERSONAL_IMAGE_FOLDERS, personal_folder_key
+from yuxi.services.material_library_categories import (
+    HIDDEN_PERSONAL_IMAGE_FOLDERS,
+    PERSONAL_IMAGE_FOLDERS,
+    is_personal_folder_visible,
+    personal_folder_key,
+)
 from yuxi.services.personal_gallery_settings import (
     load_personal_gallery_settings, lock_personal_gallery_settings,
     personal_gallery_fields, require_personal_gallery,
@@ -146,10 +151,14 @@ async def delete_personal_gallery(db, actor, owner_user, folder, payload) -> dic
         else:
             target = selected_target or await ensure_scope_root(db, owner, "private")
         # Include historical root saves and task-only works, just as the card does.
-        listing = await list_folder(db, owner, folder, page=1, page_size=1, status=None)
+        listing = await list_folder(
+            db, owner, folder, page=1, page_size=1, status=None, include_hidden=True,
+        )
         asset_ids = set()
         for page in range(1, (listing["total"] + 99) // 100 + 1):
-            rows = await list_folder(db, owner, folder, page=page, page_size=100, status=None)
+            rows = await list_folder(
+                db, owner, folder, page=page, page_size=100, status=None, include_hidden=True,
+            )
             asset_ids.update(row["asset_id"] for row in rows["items"])
         asset_ids.update(item.asset_id for item in await repo.category_items(source) if item.deleted_at is None)
         for asset_id in sorted(asset_ids):
@@ -207,6 +216,8 @@ async def folder_categories(db: AsyncSession, user: User) -> dict[str, list[Cont
             result[key].append(category)
     values = []
     for index, (key, (category_id, name)) in enumerate(PERSONAL_IMAGE_FOLDERS.items()):
+        if not is_personal_folder_visible(key):
+            continue
         if key in settings and settings[key].deleted_at is not None:
             continue
         if len(result[key]) > 1:
@@ -233,12 +244,16 @@ async def folder_categories(db: AsyncSession, user: User) -> dict[str, list[Cont
         categories = await repo.list_categories(owner, "image")
         result = {key: [c for c in categories if personal_folder_key(c) == key]
                   if key not in settings or settings[key].deleted_at is None else [] for key in PERSONAL_IMAGE_FOLDERS}
+    for hidden in HIDDEN_PERSONAL_IMAGE_FOLDERS:
+        result[hidden] = []
     return result
 
 
 async def upload_category(
     db: AsyncSession, user: User, folder: Literal["rough", "uploads"], channel: Literal["pc", "mp"]
 ) -> ContentMaterialCategory:
+    if not is_personal_folder_visible(folder):
+        raise HTTPException(404, "个人图库不存在")
     require_personal_gallery(await load_personal_gallery_settings(db), folder)
     return (await folder_categories(db, user))[folder][0]
 
@@ -286,9 +301,12 @@ async def list_folder(
     query_text: str | None = None,
     sort: str = "newest",
     status: str | None = "enabled",
+    include_hidden: bool = False,
 ) -> dict:
     if date_from and date_to and date_from > date_to:
         raise HTTPException(422, "开始日期不能晚于结束日期")
+    if folder in HIDDEN_PERSONAL_IMAGE_FOLDERS and not include_hidden:
+        raise HTTPException(404, "个人图库不存在")
     mapping = await folder_categories(db, user)
     settings = await load_personal_gallery_settings(db)
     if folder in PERSONAL_IMAGE_FOLDERS:
@@ -298,10 +316,15 @@ async def list_folder(
     own = next(
         (c for c in categories if c.id == folder and c.owner_uid == str(user.uid) and c.visibility == "private"), None
     )
+    preset = mapping.get(folder) or []
     gallery = (
-        mapping[folder][0]
-        if folder in mapping
+        preset[0]
+        if preset
         else own
+        or next(
+            (c for c in categories if personal_folder_key(c) == folder and c.visibility == "private"),
+            None,
+        )
         or next((c for c in categories if c.id == folder and c.visibility == "private" and c.is_global_personal), None)
     )
     if gallery is None:
@@ -416,6 +439,8 @@ async def folder_counts(db: AsyncSession, user: User, *, client: Literal["pc", "
     result = []
     for gallery in galleries:
         key = personal_folder_key(gallery)
+        if key and not is_personal_folder_visible(key):
+            continue
         listing = await list_folder(db, user, key or gallery.id, page=1, page_size=1)
         first = next(iter(listing["items"]), None)
         if first and client == "pc":

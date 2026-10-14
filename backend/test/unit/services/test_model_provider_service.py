@@ -143,6 +143,23 @@ def test_builtin_provider_templates_default_to_openai_provider_type():
     assert all("ollama" not in provider["provider_id"] for provider in BUILTIN_PROVIDERS)
 
 
+def test_merge_missing_builtin_enabled_models_appends_without_overwriting():
+    from yuxi.models.providers.service import _merge_missing_builtin_enabled_models
+
+    existing = [{"id": "deepseek-ai/DeepSeek-V4-Flash", "type": "chat"}]
+    builtin = [
+        {"id": "deepseek-ai/DeepSeek-V4-Flash", "type": "chat"},
+        {"id": "Qwen/Qwen3-VL-8B-Instruct", "type": "chat"},
+    ]
+    merged, changed = _merge_missing_builtin_enabled_models(existing, builtin)
+
+    assert changed is True
+    assert {item["id"] for item in merged} == {
+        "deepseek-ai/DeepSeek-V4-Flash",
+        "Qwen/Qwen3-VL-8B-Instruct",
+    }
+
+
 def test_builtin_siliconflow_provider_includes_default_runnable_models():
     provider = next(item for item in BUILTIN_PROVIDERS if item["provider_id"] == "siliconflow-cn")
     models = {model["id"]: model for model in provider["enabled_models"]}
@@ -151,6 +168,7 @@ def test_builtin_siliconflow_provider_includes_default_runnable_models():
     assert provider["embedding_base_url"] == "https://api.siliconflow.cn/v1/embeddings"
     assert provider["rerank_base_url"] == "https://api.siliconflow.cn/v1/rerank"
     assert models["deepseek-ai/DeepSeek-V4-Flash"]["type"] == "chat"
+    assert models["Qwen/Qwen3-VL-8B-Instruct"]["type"] == "chat"
     assert "Pro/MiniMaxAI/MiniMax-M2.5" not in models
     assert models["Pro/BAAI/bge-m3"]["type"] == "embedding"
     assert models["Pro/BAAI/bge-m3"]["dimension"] == 1024

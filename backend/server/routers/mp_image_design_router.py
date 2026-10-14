@@ -6,8 +6,10 @@ from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from yuxi.image_design import mp_service
+from yuxi.image_design.analysis import configured_image_design_vision_model_spec
 from yuxi.image_design.mp_schemas import MpDraftsUpdate, MpLibraryCreate, MpPolishCreate, MpTaskCreate
 from yuxi.image_design.save_targets import list_mp_save_targets
+from yuxi.image_design.schemas import PROMPT_COMPILER_SPEC
 from yuxi.image_design.workflow_profiles import public_profiles
 from yuxi.services.mp_service import MpContext
 
@@ -18,8 +20,14 @@ mp_image_design = APIRouter(prefix="/mp/image-design", tags=["mp-image-design"])
 
 @mp_image_design.get("/profiles")
 async def transfer_profiles(ctx: MpContext = Depends(get_mp_context)):
+    del ctx
     profiles = public_profiles()
-    return {"version": profiles["version"], "spaces": profiles["spaces"]}
+    return {
+        "version": profiles["version"],
+        "spaces": profiles["spaces"],
+        "vision_model_spec": configured_image_design_vision_model_spec(),
+        "prompt_compiler_spec": PROMPT_COMPILER_SPEC,
+    }
 
 
 @mp_image_design.get("/drafts")

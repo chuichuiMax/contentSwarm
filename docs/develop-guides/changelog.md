@@ -1,5 +1,11 @@
 # 未发布
 
+- PC 与小程序「我的素材」下线个人「毛坯房图库」入口：列表与图库导航不再展示，上传与访问 `rough` / `mp-rough-private` 返回停用提示；毛坯图请使用企业共享毛坯房图库或「我的上传」。员工管理中个人毛坯上传数仅展示数字，不再跳转个人图库。
+
+- 新增运维脚本 `purge_personal_rough_gallery.py`：批量软删「我的素材 / 个人毛坯房图库」图片，不影响企业共享毛坯图库。
+
+- 小程序「AI 深度润色」（`/api/mp/image-design/polish`）与 PC「AI 深度优化」共用 SiliconFlow 视觉识图 `siliconflow-cn:Qwen/Qwen3-VL-8B-Instruct`（`IMAGE_DESIGN_VISION_MODEL_SPEC`，Compose 与代码默认一致）；链路为 `create_refinement` → `create_analysis` → `run_visual_analysis`，需有效 `SILICONFLOW_API_KEY`。
+
 - image2 最大并发数范围改为 1–100，生产配置设为 100。
 
 - 图片设计选图时，企业共享案例图库默认折叠，右侧显示其下文件夹数量，点击后展开二级文件夹。
@@ -193,6 +199,8 @@
 同一版本的多次功能更新时，应以功能为单位进行更新，比如之前添加了 A 功能的更新，在后续的更新中修复了因 A 功能引入的 bug，那么这个修复说明应该和 A 功能描述放在一起，而不是新增一条修复记录，功能更新同理。
 
 ## v0.7.1 (current)
+
+- 新增 `backend/scripts/import_oss_case_material_library.py`：从 OSS `image/material-library/<year>/` 批量导入企业共享案例图库二级文件夹，逐张入库并写缩略图，日志输出素材 ID（`mli_`）与资产 ID（`cca_`）；默认前缀 2026，可用 `--prefix` 指定年份。
 
 - 修复 single-blueprint 工作流保存结构化人设简报时因 `structured` 仅含 persona 字段触发 `KeyError: brand` 导致 500 的问题；brand/audience 改从编译前 metadata 或安全默认值读取。
 

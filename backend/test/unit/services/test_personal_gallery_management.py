@@ -47,17 +47,16 @@ def user(uid="super", role="superadmin"):
 @pytest.mark.asyncio
 async def test_global_edit_keeps_historical_ids_and_private_items(gallery_db):
     from yuxi.services.personal_materials import update_personal_gallery
-    await update_personal_gallery(gallery_db, user(), "rough",
+    await update_personal_gallery(gallery_db, user(), "uploads",
         MaterialCategoryUpdate(name="施工实拍", description="全员说明", industry_slug="uncategorized"))
     for owner in ("alice", "bob"):
         folders = await folder_counts(gallery_db, user(owner, "user"))
-        rough = next(f for f in folders if f["id"] == "rough")
-        assert rough["name"] == "施工实拍"
-        assert rough["description"] == "全员说明"
-        assert rough["gallery_id"] == "old-rough"
-        listing = await list_folder(gallery_db, user(owner, "user"), "rough", page=1, page_size=20)
-        assert [i["id"] for i in listing["items"]] == [f"item-{owner}"]
-        assert listing["items"][0]["category_name"] == "施工实拍"
+        uploads = next(f for f in folders if f["id"] == "uploads")
+        assert uploads["name"] == "施工实拍"
+        assert uploads["description"] == "全员说明"
+        assert uploads["gallery_id"] == "old-uploads"
+        listing = await list_folder(gallery_db, user(owner, "user"), "uploads", page=1, page_size=20)
+        assert listing["items"] == []
 
 
 @pytest.mark.asyncio

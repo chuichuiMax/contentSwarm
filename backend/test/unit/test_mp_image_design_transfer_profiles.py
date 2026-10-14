@@ -8,6 +8,7 @@ from fastapi import FastAPI, HTTPException
 from server.routers.mp_image_design_router import mp_image_design
 from server.utils.auth_middleware import get_db, get_mp_context
 from yuxi.image_design import service
+from yuxi.image_design.analysis import configured_image_design_vision_model_spec
 from yuxi.image_design.mp_schemas import MpPolishCreate
 from yuxi.image_design.mp_service import refinement_payload
 from yuxi.image_design.prompt_compiler import build_prompt_plan, compile_prompt
@@ -80,8 +81,11 @@ async def test_mp_profiles_polish_and_generation_use_the_same_space_selection(mo
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         profiles = await client.get("/api/mp/image-design/profiles")
         assert profiles.status_code == 200
-        assert profiles.json()["spaces"] == public_profiles()["spaces"]
-        assert "image2" not in profiles.json()
+        body = profiles.json()
+        assert body["spaces"] == public_profiles()["spaces"]
+        assert body["vision_model_spec"] == configured_image_design_vision_model_spec()
+        assert body["prompt_compiler_spec"].startswith("deterministic-prompt-compiler:")
+        assert "image2" not in body
         bedroom = next(space for space in profiles.json()["spaces"] if space["id"] == "master_bedroom")
         payload = {
             "workflow": "transfer",
