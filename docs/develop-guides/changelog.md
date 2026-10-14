@@ -4,7 +4,8 @@
 
 - 新增运维脚本 `purge_personal_rough_gallery.py`：批量软删「我的素材 / 个人毛坯房图库」图片，不影响企业共享毛坯图库。
 
-- 小程序「AI 深度润色」（`/api/mp/image-design/polish`）与 PC「AI 深度优化」共用 SiliconFlow 视觉识图 `siliconflow-cn:Qwen/Qwen3-VL-8B-Instruct`（`IMAGE_DESIGN_VISION_MODEL_SPEC`，Compose 与代码默认一致）；链路为 `create_refinement` → `create_analysis` → `run_visual_analysis`，需有效 `SILICONFLOW_API_KEY`。
+- 小程序「AI 深度润色」（`/api/mp/image-design/polish`）与 PC「AI 深度优化」共用 SiliconFlow 视觉识图 `siliconflow-cn:Qwen/Qwen3-VL-8B-Instruct`（`IMAGE_DESIGN_VISION_MODEL_SPEC`，Compose 与代码默认一致）；链路为 `create_refinement` → `create_analysis` → `run_visual_analysis`，需有效 `SILICONFLOW_API_KEY`。优化结果文案不再单独输出视觉分析枚举的「必须保留：…」段落，结构约束仍由工作流硬约束与基准图角色说明覆盖。
+
 
 - image2 最大并发数范围改为 1–100，生产配置设为 100。
 

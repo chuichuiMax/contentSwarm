@@ -270,8 +270,6 @@ def _role_clause(workflow: str) -> str:
 def _compile_edited_prompt(plan: PromptPlan, aspect_ratio: str | None) -> str:
     body = re.sub(r"(?m)^画幅：.*(?:\n|$)", "", plan.edited_prompt or "").strip()
     required = [_role_clause(plan.workflow), *plan.hard_constraints]
-    if plan.preserve:
-        required.extend(plan.preserve)
     style_label = str(plan.style_profile.get("label") or "").strip()
     if style_label:
         required.append(style_label)
@@ -302,8 +300,6 @@ def compile_prompt(plan: PromptPlan, aspect_ratio: str | None = None) -> str:
         f"生成目标：{WORKFLOW_PROFILES[plan.workflow]['label']}，输出真实、可落地的室内设计案例图。",
         "工作流硬约束：" + "；".join(plan.hard_constraints) + "。",
     ]
-    if plan.preserve:
-        parts.append("必须保留：" + "、".join(plan.preserve) + "。")
     parts.append("风格：" + "；".join([style_label, *style_traits]) + "。")
     if plan.materials:
         parts.append("材质：" + "、".join(plan.materials) + "。")

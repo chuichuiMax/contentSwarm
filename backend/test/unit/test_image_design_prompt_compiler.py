@@ -30,6 +30,8 @@ def test_room_adapt_declares_image_order_and_structure_priority() -> None:
     assert "第 2 张毛坯实拍图" in prompt
     assert "发生冲突时以第 2 张图为准" in prompt
     assert validate_plan_coverage(plan) == {"missing": [], "unexpected": []}
+    assert "必须保留：" not in prompt
+    assert plan.preserve == ["落地窗", "承重柱"]
 
 
 def test_cross_space_compilation_is_deterministic_and_does_not_leak_style_transfer_fields() -> None:

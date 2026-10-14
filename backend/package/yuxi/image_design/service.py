@@ -104,6 +104,7 @@ def _serialize_result(asset: ContentCoverAsset) -> dict[str, Any]:
 def _serialize_refinement(row: ImageDesignRefinement) -> dict[str, Any]:
     data = row.to_dict()
     plan = PromptPlan.model_validate(row.plan_json or {})
+    data["compiled_prompt"] = compile_prompt(plan)
     data["compiled_prompts"] = {aspect_ratio: compile_prompt(plan, aspect_ratio) for aspect_ratio in ASPECT_SIZES}
     return data
 
