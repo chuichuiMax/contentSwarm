@@ -51,6 +51,7 @@ from yuxi.services.material_upload_queue import (
     enqueue_material_oss_upload,
     ingest_status_of,
     material_thumb_object_name,
+    material_thumbnail_presigned_url,
     material_upload_redis_key,
     persist_material_thumbnail,
     read_material_bytes,
@@ -135,6 +136,122 @@ def _normalize_area_value(value: str | None) -> str | None:
 def _display_area_value(value: str | None) -> str:
     normalized = _normalize_area_value(value)
     return f"{normalized}㎡" if normalized else ""
+
+
+# 案例图库二级文件夹名：楼盘（不含楼栋房号）-风格-面积，例如「万科松湖天地 -雅致现代-189㎡」
+_CASE_BUILDING_UNIT_SUFFIX = re.compile(
+    r"\s+(?:"
+    r"[A-Za-z]?\d+[-_/]\d+(?:号)?"
+    r"|[A-Za-z]?\d+栋\d+(?:号)?"
+    r"|\d+栋\d+号?"
+    r")\s*$"
+)
+
+
+def strip_case_building_unit(value: str | None) -> str:
+    if not value:
+        return ""
+    text = value.strip()
+    while True:
+        stripped = _CASE_BUILDING_UNIT_SUFFIX.sub("", text).strip()
+        if stripped == text:
+            return text
+        text = stripped
+
+
+_CASE_PREFIX_UNIT_TAIL = re.compile(
+    r"(?:"
+    r"[A-Za-z]?\d+[-_/]\d+(?:号)?"
+    r"|[A-Za-z]?\d+栋\d+(?:号)?"
+    r"|\d+栋\d+号?"
+    r")\s*$"
+)
+
+
+def normalize_case_building_prefix(prefix: str) -> str:
+    text = strip_case_building_unit(prefix.strip(" -_—|｜·・"))
+    while True:
+        stripped = _CASE_PREFIX_UNIT_TAIL.sub("", text).strip()
+        if stripped == text:
+            return text
+        text = stripped
+
+
+def format_enterprise_case_gallery_display_name(
+    building_name: str | None,
+    design_style: str | None,
+    area: str | None,
+) -> str | None:
+    style = (design_style or "").strip()
+    if not style:
+        return None
+    building = normalize_case_building_prefix(building_name or "")
+    area_text = _display_area_value(area)
+    if building and area_text:
+        return f"{building} -{style}-{area_text}"
+    if building:
+        return f"{building} -{style}"
+    if area_text:
+        return f"{style}-{area_text}"
+    return style
+
+
+def infer_case_gallery_fields_from_name(name: str, design_style: str) -> tuple[str | None, str | None]:
+    """从旧文件夹名解析楼盘与面积（需已知设计风格）。"""
+    folder = (name or "").strip()
+    style = (design_style or "").strip()
+    if not folder or not style:
+        return None, None
+    escaped = re.escape(style)
+    middle = re.search(
+        rf"^(?P<prefix>.+?)[-_\s—|｜·・]+{escaped}[-_\s—|｜·・]+(?P<area>\d+(?:\.\d+)?)\s*(?:㎡|m²)?\s*$",
+        folder,
+    )
+    if middle:
+        return normalize_case_building_prefix(middle.group("prefix")), middle.group("area")
+    leading = re.match(
+        rf"^{escaped}[-_\s—|｜·・]+(?P<building>.+?)[-_\s—|｜·・]+(?P<area>\d+(?:\.\d+)?)\s*(?:㎡|m²)?\s*$",
+        folder,
+    )
+    if leading:
+        return normalize_case_building_prefix(leading.group("building")), leading.group("area")
+    if style in folder:
+        left, _, right = folder.partition(style)
+        return normalize_case_building_prefix(left), _normalize_area_value(right)
+    return None, None
+
+
+def _strip_design_style_from_building(building: str, style: str) -> str:
+    text = (building or "").strip()
+    if not text or not style:
+        return text
+    for sep in ("-", "_", "—", "|", "｜", "·", "・", " "):
+        suffix = f"{sep}{style}"
+        if text.endswith(suffix):
+            return text[: -len(suffix)].strip(" -_—|｜·・")
+    return text
+
+
+def resolve_enterprise_case_gallery_fields(
+    name: str,
+    design_style: str,
+    building_name: str | None,
+    area: str | None,
+) -> tuple[str | None, str | None]:
+    style = (design_style or "").strip()
+    inferred_building, inferred_area = infer_case_gallery_fields_from_name(name, style)
+    area_val = _normalize_area_value(area) or inferred_area
+
+    if inferred_building:
+        building = inferred_building
+    elif building_name:
+        building = _strip_design_style_from_building(
+            normalize_case_building_prefix(building_name), style
+        )
+        building = normalize_case_building_prefix(building)
+    else:
+        building = ""
+    return building or None, area_val or None
 
 
 class MaterialItemUpdate(BaseModel):
@@ -1727,8 +1844,11 @@ async def create_material_category(
             area = (payload.area or "").strip()
             if design_style not in DECORATION_GALLERY_DESIGN_STYLES:
                 raise _error(422, "MATERIAL_DESIGN_STYLE_REQUIRED", "请选择设计风格")
-            # 案例图库文件夹按上传名称保存，楼盘和面积能识别时才写入。
-            if not is_enterprise_case_root(parent):
+            if is_enterprise_case_root(parent):
+                building_name, area = resolve_enterprise_case_gallery_fields(
+                    payload.name.strip(), design_style, building_name or None, area or None
+                )
+            else:
                 if not building_name:
                     raise _error(422, "MATERIAL_BUILDING_NAME_REQUIRED", "请输入楼盘名称")
                 if not area:
@@ -1749,6 +1869,11 @@ async def create_material_category(
         industry_slug = await _validate_industry_slug(db, payload.industry_slug) or "uncategorized"
     if visibility == "enterprise" and (payload.material_type != "image" or not _is_admin(user)):
         raise _error(403, "MATERIAL_CATEGORY_FORBIDDEN", "只有管理员可创建企业共享图片图库")
+    category_name = payload.name.strip()
+    if payload.material_type == "image" and parent and is_enterprise_case_root(parent) and design_style:
+        formatted = format_enterprise_case_gallery_display_name(building_name, design_style, area)
+        if formatted:
+            category_name = formatted
     try:
         category = await repo.create_category(
             owner_uid=parent.owner_uid if parent else _owner_uid(user),
@@ -1765,7 +1890,7 @@ async def create_material_category(
             design_style=design_style or None,
             building_name=building_name or None,
             area=area or None,
-            name=payload.name.strip(),
+            name=category_name,
             description=payload.description.strip(),
             sort_order=(max(item.sort_order for item in categories) + 10),
             is_system=False,
@@ -1905,13 +2030,26 @@ async def update_material_category(
                     raise _error(422, "MATERIAL_DESIGN_STYLE_REQUIRED", "请选择设计风格")
                 if design_style not in DECORATION_GALLERY_DESIGN_STYLES:
                     raise _error(422, "MATERIAL_DESIGN_STYLE_INVALID", "设计风格不在可选范围内")
-                if not building_name:
-                    raise _error(422, "MATERIAL_BUILDING_NAME_REQUIRED", "请输入楼盘名称")
-                if not area:
-                    raise _error(422, "MATERIAL_AREA_REQUIRED", "请输入面积")
-                category.design_style = design_style
-                category.building_name = building_name
-                category.area = area
+                if is_enterprise_case_root(parent):
+                    resolved_building, resolved_area = resolve_enterprise_case_gallery_fields(
+                        category.name, design_style, building_name, area
+                    )
+                    category.design_style = design_style
+                    category.building_name = resolved_building
+                    category.area = resolved_area
+                    formatted = format_enterprise_case_gallery_display_name(
+                        category.building_name, design_style, category.area
+                    )
+                    if formatted:
+                        category.name = formatted
+                else:
+                    if not building_name:
+                        raise _error(422, "MATERIAL_BUILDING_NAME_REQUIRED", "请输入楼盘名称")
+                    if not area:
+                        raise _error(422, "MATERIAL_AREA_REQUIRED", "请输入面积")
+                    category.design_style = design_style
+                    category.building_name = building_name
+                    category.area = area
     category.updated_at = utc_now_naive()
     _audit_material(db, user, actor_user, "material.gallery.update", category_id=category.id, changes=changes)
     try:
@@ -2188,6 +2326,42 @@ async def get_material_file(
             raise _error(404, "MATERIAL_FILE_EXPIRED", "原图未写入存储，临时文件已过期，请重新上传") from exc
         raise _error(500, "MATERIAL_STORAGE_FAILED", "素材文件读取失败") from exc
     return data, content_type, asset.original_file_name
+
+
+async def get_material_thumbnail_presigned_url(
+    db: AsyncSession,
+    user: User,
+    item_id: str,
+    *,
+    target_private: bool = False,
+    allow_case_browse: bool = False,
+    presign_days: int = 1,
+) -> str | None:
+    repo = MaterialLibraryRepository(db, include_shared=True)
+    item = (
+        await repo.get_private_rough_item_for_owner(item_id, _owner_uid(user))
+        if target_private
+        else await repo.get_item_for_user(item_id, _owner_uid(user))
+    )
+    if item is None and not target_private:
+        from yuxi.services.personal_materials import can_read_fixed_item
+
+        if await can_read_fixed_item(db, user, item_id):
+            item = await db.get(ContentMaterialLibraryItem, item_id)
+    if item is None:
+        raise _error(404, "MATERIAL_NOT_FOUND", "素材不存在")
+    if await material_access_mode(db, user) == "rough_upload":
+        category = await repo.get_category(item.category_owner_uid or item.owner_uid, item.material_type, item.category)
+        parent = await _load_case_parent(repo, category) if allow_case_browse else None
+        if not _designer_may_browse_case(category, parent):
+            _reject_outside_rough_upload(category)
+    asset = await repo.get_asset(item.asset_id, item.owner_uid)
+    if asset is None:
+        raise _error(404, "MATERIAL_ASSET_MISSING", "素材文件不存在")
+    try:
+        return await material_thumbnail_presigned_url(asset, days=presign_days)
+    except StorageError as exc:
+        raise _error(500, "MATERIAL_STORAGE_FAILED", "素材缩略图读取失败") from exc
 
 
 async def get_material_thumbnail(

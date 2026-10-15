@@ -110,6 +110,15 @@ async def read_material_bytes_or_thumbnail(asset: Any) -> tuple[bytes, str]:
         return thumbnail, "image/webp"
 
 
+async def material_thumbnail_presigned_url(asset: Any, *, days: int = 1) -> str | None:
+    """OSS 上已有缩略图时返回预签名 URL，供小程序直连下载，减轻 API 回源。"""
+    storage = get_minio_client()
+    thumbnail_name = material_thumb_object_name(asset.object_name)
+    if await storage.astat_file(asset.bucket_name, thumbnail_name) is None:
+        return None
+    return await asyncio.to_thread(storage.get_presigned_url, asset.bucket_name, thumbnail_name, days)
+
+
 async def persist_material_thumbnail(asset: Any) -> bytes:
     storage = get_minio_client()
     thumbnail_name = material_thumb_object_name(asset.object_name)

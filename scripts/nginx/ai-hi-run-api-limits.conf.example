@@ -1,0 +1,27 @@
+# 示例：在 ai.hi-run.net 的 server {} 内 include，缓解小程序缩略图洪峰拖死 API。
+# 1) 缩略图限流（按客户端 IP）
+# 2) 登录/健康检查不限流
+#
+# http {} 中先定义 zone（若已有 limit_req_zone 可复用）：
+#   limit_req_zone $binary_remote_addr zone=mp_thumb:10m rate=30r/s;
+#   limit_req_zone $binary_remote_addr zone=mp_auth:10m rate=20r/s;
+#
+# server {} 内：
+
+location ~ ^/api/mp/content/gallery-items/[^/]+/thumbnail {
+    limit_req zone=mp_thumb burst=60 nodelay;
+    proxy_pass http://127.0.0.1:5050;
+    include /etc/nginx/proxy_params;
+}
+
+location ~ ^/api/mp/auth/ {
+    limit_req zone=mp_auth burst=40 nodelay;
+    proxy_pass http://127.0.0.1:5050;
+    include /etc/nginx/proxy_params;
+}
+
+# 可选：独立 upstream 指向第二实例（auth 分流需另起 api-auth 进程，此处仅示例）
+# upstream api_heavy { server 127.0.0.1:5050; }
+# upstream api_auth  { server 127.0.0.1:5051; }
+# location /api/mp/auth/ { proxy_pass http://api_auth; ... }
+# location /api/         { proxy_pass http://api_heavy; ... }

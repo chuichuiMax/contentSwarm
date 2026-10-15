@@ -590,6 +590,7 @@ async def test_only_admin_can_create_image_gallery_and_child_gallery(monkeypatch
     assert created_child["category"]["parent_id"] == "gallery-parent"
     assert created_child["category"]["visibility"] == "enterprise"
     assert created_child["category"]["industry_slug"] == "uncategorized"
+    assert created_child["category"]["name"] == "桂语云峰 -江南印象-120㎡"
     assert created_child["category"]["design_style"] == "江南印象"
     assert created_child["category"]["building_name"] == "桂语云峰"
     assert created_child["category"]["area"] == "120"
@@ -604,7 +605,7 @@ async def test_only_admin_can_create_image_gallery_and_child_gallery(monkeypatch
             design_style="江南印象",
         ),
     )
-    assert named_only["category"]["name"] == "洋湖天序"
+    assert named_only["category"]["name"] == "洋湖天序 -江南印象"
     assert named_only["category"]["building_name"] is None
     assert named_only["category"]["area"] is None
 

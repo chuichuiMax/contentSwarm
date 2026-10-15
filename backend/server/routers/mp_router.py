@@ -4,7 +4,7 @@ from datetime import date
 from typing import Literal
 
 from fastapi import APIRouter, Depends, File, Form, Query, Request, UploadFile, status
-from fastapi.responses import Response, StreamingResponse
+from fastapi.responses import RedirectResponse, Response, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from server.utils.auth_middleware import get_db, get_mp_context
@@ -54,6 +54,7 @@ from yuxi.services.mp_service import (
     read_hycanvas_template_preview,
     read_mp_gallery_item_file,
     read_mp_gallery_item_thumbnail,
+    resolve_mp_gallery_item_thumbnail_url,
     read_mp_work_file,
     remove_favorite,
     resume_run,
@@ -214,7 +215,7 @@ async def mp_gallery_items(
     scope: Literal["private", "enterprise"] | None = Query(None),
     include_descendants: bool = Query(False),
     page: int = Query(1, ge=1),
-    page_size: int = Query(100, ge=1, le=100),
+    page_size: int = Query(30, ge=1, le=100),
     ctx: MpContext = Depends(get_mp_context),
     db: AsyncSession = Depends(get_db),
 ):
@@ -270,6 +271,13 @@ async def mp_gallery_item_thumbnail(
     ctx: MpContext = Depends(get_mp_context),
     db: AsyncSession = Depends(get_db),
 ):
+    redirect_url = await resolve_mp_gallery_item_thumbnail_url(db, ctx, item_id)
+    if redirect_url:
+        return RedirectResponse(
+            redirect_url,
+            status_code=302,
+            headers={"Cache-Control": "private, max-age=300"},
+        )
     data = await read_mp_gallery_item_thumbnail(db, ctx, item_id)
     return Response(
         content=data,

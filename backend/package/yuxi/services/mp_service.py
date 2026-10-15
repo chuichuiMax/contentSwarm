@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import os
@@ -67,6 +68,7 @@ from yuxi.services.material_library_service import (
     delete_material_item,
     get_material_file,
     get_material_thumbnail,
+    get_material_thumbnail_presigned_url,
     import_material_images,
     list_image_galleries,
     list_material_items,
@@ -81,6 +83,19 @@ from yuxi.services.run_queue_service import get_redis_client, list_run_stream_ev
 from yuxi.services.target_audience_service import list_enabled_target_audience_names
 from yuxi.services.user_identity_service import is_valid_phone_number, normalize_phone_number
 from yuxi.services.variable_service import SERVICE_ENTRIES, ensure_default_variables
+
+_MP_THUMB_DOWNLOAD_SEM = asyncio.Semaphore(max(1, int(os.getenv("MP_THUMBNAIL_MAX_CONCURRENT", "24"))))
+
+
+def _mp_thumbnail_presign_enabled() -> bool:
+    return os.getenv("MP_THUMBNAIL_PRESIGN", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _mp_thumbnail_presign_days() -> int:
+    try:
+        return max(1, min(7, int(os.getenv("MP_THUMBNAIL_PRESIGN_DAYS", "1"))))
+    except ValueError:
+        return 1
 from yuxi.storage.minio.client import StorageError, get_minio_client
 from yuxi.storage.postgres.models_business import Department, User
 from yuxi.storage.postgres.models_content import ContentArtifact, ContentEmployee, ContentMpFavorite, ContentTask
@@ -1170,7 +1185,7 @@ async def list_mp_gallery_items(
     scope: Literal["private", "enterprise"] | None = None,
     include_descendants: bool = False,
     page: int = 1,
-    page_size: int = 100,
+    page_size: int = 30,
 ) -> dict[str, Any]:
     result = await list_material_items(
         db,
@@ -1199,8 +1214,21 @@ async def read_mp_gallery_item_file(db: AsyncSession, ctx: MpContext, item_id: s
     return await get_material_file(db, ctx.user, item_id, allow_case_browse=True)
 
 
+async def resolve_mp_gallery_item_thumbnail_url(db: AsyncSession, ctx: MpContext, item_id: str) -> str | None:
+    if not _mp_thumbnail_presign_enabled():
+        return None
+    return await get_material_thumbnail_presigned_url(
+        db,
+        ctx.user,
+        item_id,
+        allow_case_browse=True,
+        presign_days=_mp_thumbnail_presign_days(),
+    )
+
+
 async def read_mp_gallery_item_thumbnail(db: AsyncSession, ctx: MpContext, item_id: str) -> bytes:
-    data, _ = await get_material_thumbnail(db, ctx.user, item_id, allow_case_browse=True)
+    async with _MP_THUMB_DOWNLOAD_SEM:
+        data, _ = await get_material_thumbnail(db, ctx.user, item_id, allow_case_browse=True)
     return data
 
 

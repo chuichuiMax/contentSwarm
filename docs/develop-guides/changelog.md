@@ -1,5 +1,9 @@
 # 未发布
 
+- 企业共享案例图库二级文件夹名统一为「楼盘-风格-面积」：去掉楼栋房号，例如「万科松湖天地 D6-202-雅致现代-189㎡」规范为「万科松湖天地 -雅致现代-189㎡」；新建/编辑时自动命名，并提供脚本 `rename_enterprise_case_gallery_folders.py` 批量重命名历史文件夹。
+
+- 缓解小程序图库高峰拖死 API：`POSTGRES_POOL_SIZE` / `POSTGRES_MAX_OVERFLOW` 可配置；小程序 `gallery-items` 默认每页 30、上限仍为 100（兼容现有客户端）；缩略图支持 `MP_THUMBNAIL_PRESIGN` 302 至 OSS 预签名 URL，回源路径受 `MP_THUMBNAIL_MAX_CONCURRENT` 限制；附 Nginx 缩略图/登录限流示例 `scripts/nginx/ai-hi-run-api-limits.conf.example`。
+
 - 生成历史增加「全部 / 装修家居 / 好评笔记」分类。列表和卡片显示分类标记，筛选按服务入口分页；未标记的旧内容归入装修家居。
 
 - 新增运维脚本 `batch_rough_image_design_generate.py`：按 PC 端 `/api/image-design/refinements` + `/api/image-design/generate` 链路，批量读取企业共享毛坯房图库图片，生成效果图并写入企业「生图图库」下指定二级图库（默认「毛坯批量生图图库」）；默认每张图从 PC 风格列表随机选风格，可用 `--style-label` 固定。
