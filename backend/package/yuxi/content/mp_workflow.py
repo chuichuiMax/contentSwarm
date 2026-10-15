@@ -29,6 +29,11 @@ def mp_service_entry_from_brief(brief_json: dict[str, Any] | None) -> str:
     return str(form_values.get("mp_service_entry") or "").strip()
 
 
+def history_service_entry(brief_json: dict[str, Any] | None) -> str:
+    """生成历史只区分两个入口；未标记的旧任务归入装修家居。"""
+    return MP_REVIEW_NOTES_ENTRY if mp_service_entry_from_brief(brief_json) == MP_REVIEW_NOTES_ENTRY else "装修家居"
+
+
 def mp_service_entry_from_state(state: dict[str, Any]) -> str:
     brief = state.get("content_brief") or {}
     if not brief:
@@ -88,6 +93,7 @@ __all__ = [
     "MP_REVIEW_NOTES_ENTRY",
     "MP_REVIEW_NOTES_UI",
     "mp_cover_pipeline_skip_result",
+    "history_service_entry",
     "mp_service_entry_from_brief",
     "mp_service_entry_from_state",
     "mp_skip_cover_pipeline",

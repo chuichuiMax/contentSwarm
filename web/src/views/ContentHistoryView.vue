@@ -15,6 +15,17 @@ const router = useRouter()
 const route = useRoute()
 const activeTaskId = ref(typeof route.query.task === 'string' ? route.query.task : '')
 const viewMode = ref(route.query.view === 'grid' ? 'grid' : 'list')
+const serviceEntries = [
+  { value: '', label: '全部' },
+  { value: '装修家居', label: '装修家居' },
+  { value: '好评笔记', label: '好评笔记' }
+]
+const initialEntry = typeof route.query.entry === 'string' ? route.query.entry : ''
+const serviceEntry = ref(serviceEntries.some((item) => item.value === initialEntry) ? initialEntry : '')
+const taskServiceEntry = (task) => {
+  if (task?.service_entry === '好评笔记' || task?.service_entry === '装修家居') return task.service_entry
+  return task?.brief?.form_values?.mp_service_entry === '好评笔记' ? '好评笔记' : '装修家居'
+}
 const generatedOnly = ref(true)
 const selectTask = (id) => {
   activeTaskId.value = id || ''
@@ -23,6 +34,9 @@ const selectTask = (id) => {
 const taskTitle = (task) => task.selected_title?.text || task.name || '未命名内容'
 const cardTitle = (task) => task.artifact_title || taskTitle(task)
 const store = useContentStudioStore()
+const gallerySummary = computed(() => `${serviceEntry.value || '已生成内容'} · ${store.historyTotal} 篇`)
+const emptyListText = computed(() => (serviceEntry.value ? `暂无${serviceEntry.value}` : '暂无符合条件的内容'))
+const emptyGalleryText = computed(() => (serviceEntry.value ? `暂无${serviceEntry.value}` : '暂无已生成内容'))
 const page = ref(1)
 const pageSize = ref(20)
 const status = ref(undefined)
@@ -121,9 +135,24 @@ const statusLabels = {
   cancelled: '已取消'
 }
 
+const setServiceEntry = async (entry) => {
+  if (serviceEntry.value === entry) return
+  serviceEntry.value = entry
+  page.value = 1
+  selectedTaskIds.value = []
+  await router.replace({ query: { ...route.query, entry: entry || undefined } })
+  await load()
+}
+
 const load = async () => {
   try {
-    await store.loadHistory({ page: page.value, page_size: pageSize.value, status: viewMode.value === 'grid' ? undefined : status.value, generated_only: viewMode.value === 'grid' || generatedOnly.value })
+    await store.loadHistory({
+      page: page.value,
+      page_size: pageSize.value,
+      status: viewMode.value === 'grid' ? undefined : status.value,
+      generated_only: viewMode.value === 'grid' || generatedOnly.value,
+      service_entry: serviceEntry.value || undefined
+    })
     if (viewMode.value === 'list' && !store.history.some(task => task.id === activeTaskId.value)) selectTask(store.history[0]?.id)
     void loadCardCovers()
   } catch (error) {
@@ -214,6 +243,9 @@ onBeforeUnmount(() => {
     <header>
       <div class="history-heading">
         <h1><History :size="22" />生成历史</h1>
+        <div class="view-switch" role="tablist" aria-label="内容分类">
+          <button v-for="item in serviceEntries" :key="item.label" type="button" role="tab" :class="{ active: serviceEntry === item.value }" :aria-selected="serviceEntry === item.value" @click="setServiceEntry(item.value)">{{ item.label }}</button>
+        </div>
         <div class="view-switch" role="group" aria-label="生成历史布局">
           <button type="button" :class="{ active: viewMode === 'list' }" :aria-pressed="viewMode === 'list'" @click="setViewMode('list')"><List :size="15" />列表</button>
           <button type="button" :class="{ active: viewMode === 'grid' }" :aria-pressed="viewMode === 'grid'" @click="setViewMode('grid')"><Grid2X2 :size="15" />卡片</button>
@@ -238,6 +270,7 @@ onBeforeUnmount(() => {
             <div v-for="record in store.history" :key="record.id" class="history-item" :class="{ active: activeTaskId === record.id }">
               <a-checkbox :checked="selectedTaskIds.includes(record.id)" :aria-label="`选择 ${taskTitle(record)}`" @change="event => handleSelectionChange(event.target.checked ? [...selectedTaskIds, record.id] : selectedTaskIds.filter(id => id !== record.id))" />
               <button type="button" class="task-link" :aria-current="activeTaskId === record.id ? 'true' : undefined" @click="selectTask(record.id)">
+                <span class="entry-badge" :data-entry="taskServiceEntry(record)">{{ taskServiceEntry(record) }}</span>
                 <strong>{{ taskTitle(record) }}</strong>
                 <small class="task-code">任务编码 {{ record.id }}</small>
                 <small>{{ statusLabels[record.status] || record.status }} · {{ formatDateTime(record.updated_at) }}</small>
@@ -247,7 +280,7 @@ onBeforeUnmount(() => {
                 <a-button type="text" danger aria-label="删除任务" @click="remove(record)"><Trash2 :size="15" /></a-button>
               </div>
             </div>
-            <a-empty v-if="!store.history.length && !store.loading.history" description="暂无符合条件的内容" />
+            <a-empty v-if="!store.history.length && !store.loading.history" :description="emptyListText" />
           </div>
         </a-spin>
         <a-pagination :current="page" :page-size="pageSize" :total="store.historyTotal" simple @change="handlePageChange" />
@@ -257,13 +290,14 @@ onBeforeUnmount(() => {
     </div>
     <section v-else class="history-gallery" aria-label="生成历史卡片">
       <div class="gallery-toolbar">
-        <span>已生成内容 · {{ store.historyTotal }} 篇</span>
+        <span>{{ gallerySummary }}</span>
         <a-button aria-label="刷新历史" @click="load"><RotateCcw :size="15" />刷新</a-button>
       </div>
       <a-spin :spinning="store.loading.history">
         <div class="gallery-grid">
           <button v-for="record in store.history" :key="record.id" type="button" class="gallery-card" @click="openCard(record)">
             <div class="gallery-cover">
+              <span class="entry-badge cover-badge" :data-entry="taskServiceEntry(record)">{{ taskServiceEntry(record) }}</span>
               <img v-if="coverUrls[record.id]" :src="coverUrls[record.id]" :alt="`${cardTitle(record)}的封面`" loading="lazy" />
               <div v-else class="gallery-cover-empty"><Image :size="30" /><span>暂无封面</span></div>
             </div>
@@ -273,7 +307,7 @@ onBeforeUnmount(() => {
             </div>
           </button>
         </div>
-        <a-empty v-if="!store.history.length && !store.loading.history" description="暂无已生成内容" />
+        <a-empty v-if="!store.history.length && !store.loading.history" :description="emptyGalleryText" />
       </a-spin>
       <a-pagination :current="page" :page-size="pageSize" :total="store.historyTotal" show-less-items @change="handlePageChange" />
     </section>
@@ -293,7 +327,7 @@ onBeforeUnmount(() => {
           </section>
           <div class="detail-content">
             <section class="detail-section">
-              <div class="detail-section-heading"><strong>发布标题</strong><a-button type="text" size="small" @click="copyText(detailArtifact.title || '', '标题')"><Copy :size="14" />复制标题</a-button></div>
+              <div class="detail-section-heading"><span class="detail-heading-main"><strong>发布标题</strong><span class="entry-badge" :data-entry="taskServiceEntry(detailTask)">{{ taskServiceEntry(detailTask) }}</span></span><a-button type="text" size="small" @click="copyText(detailArtifact.title || '', '标题')"><Copy :size="14" />复制标题</a-button></div>
               <h2 class="history-detail-title">{{ detailArtifact.title || '暂无标题' }}</h2>
             </section>
             <section class="detail-section detail-body-section">
@@ -346,7 +380,10 @@ header :deep(.ant-btn), .history-card :deep(.ant-btn) { display: inline-flex; al
 .gallery-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 20px; }
 .gallery-card { min-width: 0; padding: 0; overflow: hidden; border: 1px solid var(--gray-150); border-radius: 10px; background: var(--gray-0); color: var(--color-text); text-align: left; cursor: pointer; transition: border-color .18s ease, transform .18s ease; }
 .gallery-card:hover { border-color: var(--main-color); transform: translateY(-2px); }
-.gallery-cover { aspect-ratio: 3 / 4; overflow: hidden; background: var(--gray-100); }
+.entry-badge { display: inline-flex; align-items: center; width: fit-content; padding: 1px 6px; border-radius: 4px; background: var(--main-50); color: var(--main-700); font-size: 11px; line-height: 18px; }
+.entry-badge[data-entry='好评笔记'] { background: var(--color-warning-50); color: var(--color-warning-900); }
+.gallery-cover { position: relative; aspect-ratio: 3 / 4; overflow: hidden; background: var(--gray-100); }
+.cover-badge { position: absolute; top: 8px; left: 8px; z-index: 1; }
 .gallery-cover img { display: block; width: 100%; height: 100%; object-fit: cover; }
 .gallery-cover-empty { width: 100%; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: var(--color-text-tertiary); }
 .gallery-card-info { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px 12px; }
@@ -365,6 +402,9 @@ header :deep(.ant-btn), .history-card :deep(.ant-btn) { display: inline-flex; al
   .history-detail-layout { height: min(760px, calc(100dvh - 190px)); min-height: 0; display: grid; grid-template-columns: minmax(320px, .9fr) minmax(0, 1.1fr); overflow: hidden; border: 1px solid var(--gray-150); border-radius: 8px; }
   .detail-cover { min-width: 0; min-height: 0; display: flex; flex-direction: column; padding: 20px; border-right: 1px solid var(--gray-150); background: var(--gray-25); }
   .detail-cover-actions, .detail-section-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .detail-heading-main { display: inline-flex; align-items: center; gap: 8px; }
+  .entry-badge { display: inline-flex; align-items: center; width: fit-content; padding: 1px 6px; border-radius: 4px; background: var(--main-50); color: var(--main-700); font-size: 11px; line-height: 18px; }
+  .entry-badge[data-entry='好评笔记'] { background: var(--color-warning-50); color: var(--color-warning-900); }
   .detail-cover-actions > span, .detail-section-heading .ant-btn { display: inline-flex; align-items: center; gap: 5px; color: var(--main-700); }
   .detail-cover-frame { min-height: 0; flex: 1; display: flex; align-items: center; justify-content: center; margin-top: 12px; overflow: hidden; }
   .detail-cover-frame img { display: block; max-width: 100%; max-height: 100%; aspect-ratio: 3 / 4; object-fit: contain; border-radius: 6px; background: var(--gray-100); }

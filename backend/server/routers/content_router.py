@@ -324,11 +324,18 @@ async def list_tasks(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
     status: str | None = None,
+    service_entry: str | None = None,
     current_user: User = Depends(get_required_user),
     db: AsyncSession = Depends(get_db),
 ):
     return await list_content_tasks(
-        db, current_user, page=page, page_size=page_size, status=status, generated_only=generated_only
+        db,
+        current_user,
+        page=page,
+        page_size=page_size,
+        status=status,
+        generated_only=generated_only,
+        service_entry=service_entry or None,
     )
 
 

@@ -23,7 +23,7 @@ from yuxi.content.generation import (
 )
 from yuxi.utils.line_breaks import normalize_escaped_newlines
 from yuxi.content.model.industry.pack import CONTENT_TYPE_CODES, IndustryPackPolicy
-from yuxi.content.mp_workflow import MP_REVIEW_NOTES_ENTRY, mp_service_entry_from_brief
+from yuxi.content.mp_workflow import MP_REVIEW_NOTES_ENTRY, history_service_entry, mp_service_entry_from_brief
 from yuxi.content.model.workflows.definition import WorkflowCatalog, WorkflowDefinitionPolicy, workflow_definition_hash
 from yuxi.content.rules import CONTENT_GOALS
 from yuxi.content.service_entry_form import (
@@ -1361,11 +1361,25 @@ async def create_content_task(db: AsyncSession, user: User, payload: ContentTask
 
 
 async def list_content_tasks(
-    db: AsyncSession, user: User, *, page: int, page_size: int, status: str | None, generated_only: bool = False
+    db: AsyncSession,
+    user: User,
+    *,
+    page: int,
+    page_size: int,
+    status: str | None,
+    generated_only: bool = False,
+    service_entry: str | None = None,
 ) -> dict[str, Any]:
+    if service_entry is not None and service_entry not in SERVICE_ENTRIES:
+        raise _content_error(422, "CONTENT_SERVICE_ENTRY_INVALID", "内容分类不存在")
     repo = ContentRepository(db)
     items, total = await repo.list_tasks(
-        user=user, page=page, page_size=page_size, status=status, generated_only=generated_only
+        user=user,
+        page=page,
+        page_size=page_size,
+        status=status,
+        generated_only=generated_only,
+        service_entry=service_entry,
     )
     artifacts = {}
     if items:
@@ -1381,6 +1395,7 @@ async def list_content_tasks(
         title, cover_asset_id = artifacts.get(item.id, (None, None))
         result["artifact_title"] = normalize_escaped_newlines(title) if isinstance(title, str) else title
         result["cover_asset_id"] = cover_asset_id
+        result["service_entry"] = history_service_entry(item.brief_json)
         results.append(result)
     return {"items": results, "total": total, "page": page, "page_size": page_size}
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.utils.line_breaks import normalize_escaped_newlines
@@ -749,7 +749,14 @@ class ContentRepository:
         return None
 
     async def list_tasks(
-        self, *, user: User, page: int, page_size: int, status: str | None = None, generated_only: bool = False
+        self,
+        *,
+        user: User,
+        page: int,
+        page_size: int,
+        status: str | None = None,
+        generated_only: bool = False,
+        service_entry: str | None = None,
     ) -> tuple[list[ContentTask], int]:
         filters = [ContentTask.deleted_at.is_(None)]
         if user.role == "admin":
@@ -760,6 +767,12 @@ class ContentRepository:
             filters.append(ContentTask.status == status)
         if generated_only:
             filters.append(select(ContentArtifact.id).where(ContentArtifact.task_id == ContentTask.id).exists())
+        if service_entry:
+            stored_entry = ContentTask.brief_json["form_values"]["mp_service_entry"].as_string()
+            if service_entry == "好评笔记":
+                filters.append(stored_entry == "好评笔记")
+            else:
+                filters.append(or_(stored_entry.is_(None), stored_entry != "好评笔记"))
         total = (await self.db.execute(select(func.count(ContentTask.id)).where(*filters))).scalar_one()
         items = (
             await self.db.execute(
