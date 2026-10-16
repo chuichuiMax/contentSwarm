@@ -309,7 +309,6 @@ async def export_employees(db: AsyncSession) -> bytes:
             "年龄",
             "登录端口",
             "角色",
-            "毛坯图上传数（我的素材）",
             "毛坯图上传数（企业共享）",
             "状态",
         ]
@@ -328,7 +327,6 @@ async def export_employees(db: AsyncSession) -> bytes:
                 employee["age"] if employee.get("age") is not None else "-",
                 "&".join(label for port, label in (("pc", "PC"), ("app", "APP")) if port in ports) or "-",
                 employee["role"],
-                employee["rough_image_count"],
                 employee["enterprise_rough_image_count"],
                 "启用" if employee["enabled"] else "禁用",
             ]

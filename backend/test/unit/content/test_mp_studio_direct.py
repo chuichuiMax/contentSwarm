@@ -79,6 +79,13 @@ def test_build_content_request_payload_matches_studio_shape():
     assert payload["facts"]["case_background"] == "星河湾"
     assert payload["facts"]["quantity"]
     assert "persona" in payload
+    assert "serialNo" not in payload
+    assert "employeeCode" not in payload["persona"]
+    assert "name" not in payload["persona"]
+    persona_fact = str(payload["facts"].get("persona_fact") or "")
+    assert "张三" not in persona_fact
+    assert "E001" not in persona_fact
+    assert "工号" not in persona_fact
 
 
 @pytest.mark.asyncio

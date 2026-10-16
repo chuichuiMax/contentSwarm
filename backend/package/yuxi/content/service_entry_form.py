@@ -21,6 +21,10 @@ REVIEW_NOTES_WRITING_INSTRUCTION = (
     "知识库里另一户的金额、退款、小区和人名，表单没有就不要写进这篇；"
     "不要写成获客种草、员工自荐或销售转化文案。"
 )
+DECORATION_NO_EMPLOYEE_IDENTITY = (
+    "成品标题、正文、话题不得出现员工真实姓名、工号、登录账号或与工号相同的编号；"
+    "只允许写岗位、门店、从业年限等业务身份，不写具体个人姓名。"
+)
 DECORATION_CTA_LAYOUT = (
     "结尾要自然转化，像跟准备装修的朋友聊天，不要硬凑引流话术，"
     "不要写成「在下方留下【小区＋面积】」或承诺马上给案例和费用；"
@@ -41,6 +45,7 @@ DECORATION_WRITING_INSTRUCTION = (
     "成品标题/正文/话题不要出现「口径」，对外写钱花在哪、费用怎么拆、预算清不清楚；"
     "项目阶段为泥木阶段时，成品写「泥瓦」不写「泥木」；工艺类型或证据未出现木工时不得补写木工；"
     "封面/副标/话题也不得出现整装、标准化整装；事实只来自简报与冻结证据，不得编造户型缺陷、改造前后效果或他人案例细节。"
+    + DECORATION_NO_EMPLOYEE_IDENTITY
 )
 QUOTATION_LIST_TYPE_NAMES = frozenset({"装修报价清单", "报价清单"})
 QUOTATION_LIST_WRITING_INSTRUCTION = (
@@ -55,6 +60,7 @@ QUOTATION_LIST_WRITING_INSTRUCTION = (
     "费用称谓一律写「预算价」，禁止写「合同价」（证据原文是合同价时只改称谓、数字保持原样）；"
     "成品不要出现「口径」；禁止把鸿扬写成整装或标准化整装；仍须写清小区、面积（锁定的具体㎡，禁止区间）、风格、项目施工鸿扬家装等信息卡点，并正确挂载 Evidence ID；"
     "不展开某套房案例故事，不编造数字与改造情节。"
+    + DECORATION_NO_EMPLOYEE_IDENTITY
 )
 CRAFT_SHOWCASE_TYPE_NAMES = frozenset({"工艺施工展示", "工艺展示"})
 # 工厂规则 CT05=施工报价（需锁定报价字段）；工艺展示对应 CT06。
@@ -116,6 +122,7 @@ CRAFT_SHOWCASE_WRITING_INSTRUCTION = (
     "品牌优势可写定制化家装（禁止整装/标准化整装）；"
     + DECORATION_CTA_LAYOUT
     + "费用称谓一律写「预算价」，禁止写「合同价」；成品不要出现「口径」；成品规避平台封禁词库问题词（见 evidence forbidden_replacement_map）；卡点与数字须挂载正确 Evidence ID。"
+    + DECORATION_NO_EMPLOYEE_IDENTITY
 )
 
 

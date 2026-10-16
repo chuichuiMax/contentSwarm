@@ -1,5 +1,9 @@
 # 未发布
 
+- 装修家居生产（含小程序直出）：生成输入与写作约束不再带入员工姓名、工号、登录账号；直出 prompt 同步禁止写入成品。
+
+- 员工管理列表去掉「毛坯图上传数（我的素材）」列；「毛坯图上传数（企业共享）」支持列头排序（默认由高到低），导出 Excel 同步去掉个人毛坯列。
+
 - 企业共享案例图库二级文件夹名统一为「楼盘-风格-面积」：去掉楼栋房号，例如「万科松湖天地 D6-202-雅致现代-189㎡」规范为「万科松湖天地 -雅致现代-189㎡」；新建/编辑时自动命名，并提供脚本 `rename_enterprise_case_gallery_folders.py` 批量重命名历史文件夹。
 
 - 缓解小程序图库高峰拖死 API：`POSTGRES_POOL_SIZE` / `POSTGRES_MAX_OVERFLOW` 可配置；小程序 `gallery-items` 默认每页 30、上限仍为 100（兼容现有客户端）；缩略图支持 `MP_THUMBNAIL_PRESIGN` 302 至 OSS 预签名 URL，回源路径受 `MP_THUMBNAIL_MAX_CONCURRENT` 限制；附 Nginx 缩略图/登录限流示例 `scripts/nginx/ai-hi-run-api-limits.conf.example`。

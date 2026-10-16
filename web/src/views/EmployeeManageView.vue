@@ -146,10 +146,13 @@ const handleRoleFilterChange = () => {
   page.value = 1
 }
 
-const handleTableChange = (pagination) => {
+const handleTableChange = (pagination, _filters, _sorter) => {
   page.value = pagination.current
   pageSize.value = pagination.pageSize
 }
+
+const enterpriseRoughCountSorter = (a, b) =>
+  (a.enterprise_rough_image_count ?? 0) - (b.enterprise_rough_image_count ?? 0)
 
 const resetForm = (employee) => {
   const next = employee
@@ -358,15 +361,14 @@ onMounted(async () => {
           <template #default="{ record }">{{ loginPortLabel(record.login_port) }}</template>
         </a-table-column>
         <a-table-column title="角色" data-index="role" key="role" :width="96" class-name="employee-nowrap" />
-        <a-table-column key="rough_image_count" :width="150" align="center">
-          <template #title>
-            <span class="rough-count-title">毛坯图上传数<br />（我的素材）</span>
-          </template>
-          <template #default="{ record }">
-            <span>{{ record.rough_image_count ?? 0 }}</span>
-          </template>
-        </a-table-column>
-        <a-table-column key="enterprise_rough_image_count" :width="150" align="center">
+        <a-table-column
+          key="enterprise_rough_image_count"
+          :width="150"
+          align="center"
+          :sorter="enterpriseRoughCountSorter"
+          :sort-directions="['descend', 'ascend']"
+          default-sort-order="descend"
+        >
           <template #title>
             <span class="rough-count-title">毛坯图上传数<br />（企业共享）</span>
           </template>

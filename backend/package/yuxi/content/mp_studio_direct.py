@@ -186,17 +186,26 @@ def _format_service_years(raw: Any) -> str:
     return value if "年" in value else f"{value}年"
 
 
+def _persona_for_generation(persona: dict[str, Any]) -> dict[str, Any]:
+    """装修家居对外生成输入：去掉员工姓名、工号与登录账号，避免模型写入成品。"""
+    blocked = {"name", "employeeCode", "loginAccount"}
+    return {key: value for key, value in persona.items() if key not in blocked and _text(value)}
+
+
 def _build_persona_fact(persona: dict[str, Any], *, job: str = "", years: str = "", region: str = "") -> str:
     org = f"{persona.get('currentBranch', '')}{persona.get('currentDepartment', '')}"
-    parts = [
-        persona.get("name") or "",
-        f"{persona['age']}岁" if persona.get("age") else "",
-        job or persona.get("role") or "",
-        f"从业{years}" if years else "",
-        f"服务{region}" if region else "",
-        org,
-        f"工号{persona['employeeCode']}" if persona.get("employeeCode") else "",
-    ]
+    parts: list[str] = []
+    if persona.get("age"):
+        parts.append(f"{persona['age']}岁")
+    role_text = job or persona.get("role") or ""
+    if role_text:
+        parts.append(role_text)
+    if years:
+        parts.append(f"从业{years}")
+    if region:
+        parts.append(f"服务{region}")
+    if org.strip():
+        parts.append(org.strip())
     return "，".join(part for part in parts if part)
 
 
@@ -258,7 +267,7 @@ def _build_facts(type_name: str, persona: dict[str, Any], business_variables: di
         result = " ".join(
             part for part in (community, locked_area or frame_area, style, f"施工{_CONSTRUCTION_BRAND}") if part
         )
-    persona_fact = _build_persona_fact(persona, job=job, years=years, region=region) if is_persona else _build_persona_fact(persona)
+    persona_fact = _build_persona_fact(persona, job=job, years=years, region=region)
     audience = _compact_list(household, audience_target) or _compact_list("装修业主")
     return _compact_facts(
         {
@@ -305,13 +314,12 @@ def build_content_request_payload(
     }
     type_code = CONTENT_TYPE_NAME_TO_DIRECTION.get(content_type_name) or content_type_code
     return {
-        "serialNo": persona.get("employeeCode") or user.uid or "",
         "contentType": {
             "typeName": content_type_name,
             "contentTypeId": content_type_id,
             "contentTypeCode": type_code,
         },
-        "persona": persona,
+        "persona": _persona_for_generation(persona),
         "businessVariables": filled,
         "facts": _build_facts(content_type_name, persona, filled),
     }
