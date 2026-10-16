@@ -14,7 +14,6 @@ from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from yuxi.repositories.content_repository import ContentRepository
 from yuxi.repositories.employee_repository import EmployeeRepository
 from yuxi.repositories.material_library_repository import MaterialLibraryRepository
 from yuxi.services.role_service import SYSTEM_ROLES, require_role, resolve_stored_user_role
@@ -388,6 +387,8 @@ def _traffic_summary(rows: list[dict[str, Any]]) -> dict[str, int]:
 async def list_traffic_stats(
     db: AsyncSession, *, keyword: str | None = None, branch: str | None = None, department: str | None = None
 ) -> dict[str, Any]:
+    from yuxi.repositories.content_repository import ContentRepository
+
     listing = await list_employees(db)
     rows = listing["employees"]
     owner_uids = [traffic_owner_uid(row) for row in rows]
