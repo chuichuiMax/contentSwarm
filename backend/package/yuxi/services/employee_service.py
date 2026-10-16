@@ -14,6 +14,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from yuxi.repositories.content_repository import ContentRepository
 from yuxi.repositories.employee_repository import EmployeeRepository
 from yuxi.repositories.material_library_repository import MaterialLibraryRepository
 from yuxi.services.role_service import SYSTEM_ROLES, require_role, resolve_stored_user_role
@@ -92,6 +93,35 @@ def _normalize_text(value: str, *, field: str) -> str:
 
 def _platform_uid(employee: ContentEmployee) -> str:
     return f"mp_{employee.id.replace('-', '')[:17]}"
+
+
+def traffic_owner_uid(row: dict[str, Any]) -> str:
+    if row.get("source") == "user":
+        return str(row["id"]).removeprefix("user:")
+    return f"mp_{str(row['id']).replace('-', '')[:17]}"
+
+
+def filter_traffic_employees(
+    rows: list[dict[str, Any]], *, keyword: str | None, branch: str | None, department: str | None
+) -> list[dict[str, Any]]:
+    text = (keyword or "").strip().casefold()
+    selected_branch = (branch or "").strip()
+    selected_department = (department or "").strip()
+    matched = []
+    for row in rows:
+        if selected_branch and (row.get("current_branch") or "") != selected_branch:
+            continue
+        if selected_department and (row.get("current_department") or "") != selected_department:
+            continue
+        if text:
+            haystack = " ".join(
+                str(row.get(key) or "")
+                for key in ("name", "login_account", "employee_code", "current_branch", "current_department")
+            ).casefold()
+            if text not in haystack:
+                continue
+        matched.append(row)
+    return matched
 
 
 async def resolve_employee_for_user(db: AsyncSession, user: User) -> ContentEmployee | None:
@@ -341,6 +371,89 @@ async def export_employees(db: AsyncSession) -> bytes:
         sheet.column_dimensions[column].width = width
     sheet.freeze_panes = "A2"
     sheet.auto_filter.ref = sheet.dimensions
+    output = io.BytesIO()
+    workbook.save(output)
+    return output.getvalue()
+
+
+def _traffic_summary(rows: list[dict[str, Any]]) -> dict[str, int]:
+    return {
+        "decoration": sum(row["decoration_count"] for row in rows),
+        "review_notes": sum(row["review_notes_count"] for row in rows),
+        "personal_generated": sum(row["personal_generated_count"] for row in rows),
+        "enterprise_generated": sum(row["enterprise_generated_count"] for row in rows),
+    }
+
+
+async def list_traffic_stats(
+    db: AsyncSession, *, keyword: str | None = None, branch: str | None = None, department: str | None = None
+) -> dict[str, Any]:
+    listing = await list_employees(db)
+    rows = listing["employees"]
+    owner_uids = [traffic_owner_uid(row) for row in rows]
+    content_counts = await ContentRepository(db).count_generated_tasks_by_owner(owner_uids)
+    materials = MaterialLibraryRepository(db, include_shared=True)
+    personal_counts = await materials.count_personal_generated_images_by_owner(owner_uids)
+    enterprise_counts = await materials.count_enterprise_generated_images_by_owner(owner_uids)
+    for row, owner_uid in zip(rows, owner_uids, strict=True):
+        content = content_counts.get(owner_uid, {})
+        row["decoration_count"] = content.get("装修家居", 0)
+        row["review_notes_count"] = content.get("好评笔记", 0)
+        row["personal_generated_count"] = personal_counts.get(owner_uid, 0)
+        row["enterprise_generated_count"] = enterprise_counts.get(owner_uid, 0)
+    branches = sorted({row.get("current_branch") or "" for row in rows if row.get("current_branch")})
+    departments = sorted({row.get("current_department") or "" for row in rows if row.get("current_department")})
+    filtered = filter_traffic_employees(rows, keyword=keyword, branch=branch, department=department)
+    return {
+        "summary": _traffic_summary(filtered),
+        "branches": branches,
+        "departments": departments,
+        "employees": filtered,
+        "total": len(filtered),
+    }
+
+
+async def export_traffic_stats(
+    db: AsyncSession, *, keyword: str | None = None, branch: str | None = None, department: str | None = None
+) -> bytes:
+    listing = await list_traffic_stats(db, keyword=keyword, branch=branch, department=department)
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "流量统计"
+    sheet.append(
+        [
+            "序号",
+            "姓名",
+            "手机号码",
+            "员工编码",
+            "装修家居",
+            "好评笔记",
+            "生图（个人素材）",
+            "生图（企业共享）",
+            "所属门店",
+            "所属部门",
+        ]
+    )
+    for index, employee in enumerate(listing["employees"], start=1):
+        sheet.append(
+            [
+                index,
+                employee["name"],
+                employee["login_account"],
+                employee["employee_code"],
+                employee["decoration_count"],
+                employee["review_notes_count"],
+                employee["personal_generated_count"],
+                employee["enterprise_generated_count"],
+                employee.get("current_branch") or "",
+                employee.get("current_department") or "",
+            ]
+        )
+        for cell in sheet[index + 1]:
+            if isinstance(cell.value, str):
+                cell.data_type = "s"
+    for cell in sheet[1]:
+        cell.font = Font(bold=True)
     output = io.BytesIO()
     workbook.save(output)
     return output.getvalue()

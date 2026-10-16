@@ -108,6 +108,8 @@ async def test_counts_separate_uploaders_from_gallery_owner_and_private_images(r
         "bob": 1,
     }
     assert await repository.count_enterprise_rough_images_by_owner([]) == {}
+    assert await repository.count_enterprise_generated_images_by_owner(["alice", "bob"]) == {"alice": 1}
+    assert await repository.count_personal_generated_images_by_owner(["alice"]) == {}
 
 
 @pytest.mark.asyncio

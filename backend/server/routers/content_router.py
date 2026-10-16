@@ -325,6 +325,7 @@ async def list_tasks(
     page_size: int = Query(default=20, ge=1, le=100),
     status: str | None = None,
     service_entry: str | None = None,
+    employee_id: str | None = None,
     current_user: User = Depends(get_required_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -336,6 +337,7 @@ async def list_tasks(
         status=status,
         generated_only=generated_only,
         service_entry=service_entry or None,
+        employee_id=employee_id or None,
     )
 
 

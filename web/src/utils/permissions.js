@@ -41,7 +41,8 @@ const SCOPED_PATH_RULES = [
   { prefix: '/config-manage/business-variables', any: ['business_variable.view_list', 'business_variable.create', 'business_variable.view', 'business_variable.delete'] },
   { prefix: '/config-manage/process-standards', any: ['process_standard.view_list', 'process_standard.create', 'process_standard.view', 'process_standard.delete'] },
   { prefix: '/config-manage', any: [] },
-  { prefix: '/dashboard', any: [] }
+  { prefix: '/dashboard', any: [] },
+  { prefix: '/traffic', any: [] }
 ]
 
 export function hasAnyPermission(grants, keys) {

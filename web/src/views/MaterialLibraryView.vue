@@ -30,13 +30,26 @@ import VisualWorkspaceHeader from '@/components/content/VisualWorkspaceHeader.vu
 
 const route = useRoute()
 const router = useRouter()
-const routeEmployeeId = computed(() => (
-  route.query.gallery === 'rough' && typeof route.query.employee_id === 'string'
-    ? route.query.employee_id
+const employeeGallery = computed(() => (
+  (route.query.gallery === 'rough' || route.query.gallery === 'generated') && typeof route.query.employee_id === 'string'
+    ? route.query.gallery
     : ''
 ))
-const isEmployeeRoughMode = computed(() => Boolean(routeEmployeeId.value))
-const isEmployeeEnterpriseMode = computed(() => isEmployeeRoughMode.value && route.query.scope === 'enterprise')
+const routeEmployeeId = computed(() => (employeeGallery.value ? route.query.employee_id : ''))
+const isEmployeeGalleryMode = computed(() => Boolean(routeEmployeeId.value))
+const isEmployeeRoughMode = computed(() => employeeGallery.value === 'rough')
+const isEmployeeGeneratedMode = computed(() => employeeGallery.value === 'generated')
+const isEmployeeEnterpriseMode = computed(() => isEmployeeGalleryMode.value && route.query.scope === 'enterprise')
+const employeeGalleryHint = computed(() => {
+  if (isEmployeeGeneratedMode.value) {
+    return isEmployeeEnterpriseMode.value
+      ? '本页仅显示该员工上传到企业共享生图图库的图片。'
+      : '本页仅显示该员工个人 AI 生图图库。'
+  }
+  return isEmployeeEnterpriseMode.value
+    ? '本页仅显示该员工上传到企业共享毛坯房图库的图片。'
+    : `本页仅显示该员工个人${currentGallery.value?.name || '图库'}。`
+})
 const targetEmployeeId = computed(() => isEmployeeEnterpriseMode.value ? '' : routeEmployeeId.value)
 const targetEmployee = ref(null)
 
@@ -238,7 +251,7 @@ const isCaseGalleryPage = computed(() =>
 const canCreateChildGallery = computed(() =>
   isTopLevelGallery.value &&
   userStore.isAdmin &&
-  !isEmployeeRoughMode.value &&
+  !isEmployeeGalleryMode.value &&
   !currentGallery.value?.personal_folder
 )
 const uploadTargetGallery = computed(() => categoryMap.value[uploadCategory.value] || null)
@@ -312,17 +325,26 @@ async function loadCategories() {
   const requestedType = materialType.value
   const employeeContext = `${routeEmployeeId.value}:${isEmployeeEnterpriseMode.value}`
   const response = await materialLibraryApi.listCategories(
-    requestedType, targetEmployeeId.value, isEmployeeEnterpriseMode.value ? routeEmployeeId.value : ''
+    requestedType,
+    targetEmployeeId.value,
+    isEmployeeEnterpriseMode.value ? routeEmployeeId.value : '',
+    isEmployeeGeneratedMode.value ? 'generated' : ''
   )
   if (materialType.value === requestedType && employeeContext === `${routeEmployeeId.value}:${isEmployeeEnterpriseMode.value}`) {
     categories.value = response.categories || []
     canCreateShared.value = Boolean(response.can_create_shared)
     targetEmployee.value = response.target_employee || null
-    if (isEmployeeRoughMode.value) {
+    if (isEmployeeGalleryMode.value) {
       materialScope.value = isEmployeeEnterpriseMode.value ? 'enterprise' : 'private'
-      activeGallery.value = isEmployeeEnterpriseMode.value
-        ? response.enterprise_rough_category_id
-        : response.personal_rough_category_id
+      if (isEmployeeGeneratedMode.value) {
+        activeGallery.value = isEmployeeEnterpriseMode.value
+          ? response.enterprise_generated_category_id
+          : response.personal_generated_category_id
+      } else {
+        activeGallery.value = isEmployeeEnterpriseMode.value
+          ? response.enterprise_rough_category_id
+          : response.personal_rough_category_id
+      }
     }
   }
 }
@@ -494,6 +516,7 @@ async function loadItems() {
       page_size: 24,
       employee_id: targetEmployeeId.value,
       uploader_employee_id: isEmployeeEnterpriseMode.value ? routeEmployeeId.value : '',
+      folder: isEmployeeGeneratedMode.value ? 'generated' : (isEmployeeRoughMode.value && isEmployeeEnterpriseMode.value ? 'rough' : ''),
       ...uploadDateParams.value
     })
     if (employeeContext !== `${routeEmployeeId.value}:${isEmployeeEnterpriseMode.value}`) return
@@ -561,8 +584,8 @@ function leaveGallery() {
   stopUploadWatch()
   uploadFailures.value = []
   uploadDateRange.value = []
-  if (isEmployeeRoughMode.value) {
-    void router.push('/model-manage/employees')
+  if (isEmployeeGalleryMode.value) {
+    void router.push(isEmployeeGeneratedMode.value ? '/traffic' : '/model-manage/employees')
     return
   }
   const targetGallery = currentGallery.value?.parent_id || ''
@@ -1031,14 +1054,14 @@ watch(materialType, async () => {
 }, { immediate: true })
 
 watch(materialScope, async () => {
-  if (isEmployeeRoughMode.value) return
+  if (isEmployeeGalleryMode.value) return
   uploadDateRange.value = []
   activeGallery.value = ''
   queryInput.value = ''
   await loadItems()
 })
 
-watch([routeEmployeeId, isEmployeeEnterpriseMode], async () => {
+watch([routeEmployeeId, employeeGallery, isEmployeeEnterpriseMode], async () => {
   loadError.value = ''
   uploadDateRange.value = []
   targetEmployee.value = null
@@ -1232,7 +1255,7 @@ onBeforeUnmount(() => {
 <template>
   <div class="material-library-view layout-container">
     <VisualWorkspaceHeader subtitle="集中管理设计可直接使用的图片和封面模板" />
-    <PageHeader :title="isEmployeeRoughMode && targetEmployee ? `${targetEmployee.name}的素材库` : '素材库'" :tabs="tabs" :active-key="materialType" :loading="loading" show-border>
+    <PageHeader :title="isEmployeeGalleryMode && targetEmployee ? `${targetEmployee.name}的素材库` : '素材库'" :tabs="tabs" :active-key="materialType" :loading="loading" show-border>
       <template #actions>
         <template v-if="materialType === 'image'">
           <a-button v-if="userStore.isAdmin" class="lucide-icon-btn" :loading="remoteSyncing" @click="syncRemoteMaterials">
@@ -1267,16 +1290,16 @@ onBeforeUnmount(() => {
         <a-progress :percent="remoteSyncJob.progress || 0" :show-info="false" size="small" />
       </div>
       <div v-if="materialType === 'image'" class="context-head">
-        <button v-if="activeGallery" type="button" class="back-button" @click="leaveGallery"><ArrowLeft :size="16" />{{ isEmployeeRoughMode ? '返回员工管理' : (parentGallery ? `返回${parentGallery.name}` : '返回图库') }}</button>
+        <button v-if="activeGallery" type="button" class="back-button" @click="leaveGallery"><ArrowLeft :size="16" />{{ isEmployeeGeneratedMode ? '返回流量统计' : (isEmployeeRoughMode ? '返回员工管理' : (parentGallery ? `返回${parentGallery.name}` : '返回图库')) }}</button>
         <div>
-          <a-radio-group v-if="isGalleryRoot && !isEmployeeRoughMode" v-model:value="materialScope" button-style="solid" @change="activeGallery = ''; page = 1">
+          <a-radio-group v-if="isGalleryRoot && !isEmployeeGalleryMode" v-model:value="materialScope" button-style="solid" @change="activeGallery = ''; page = 1">
             <a-radio-button value="private">我的素材</a-radio-button>
             <a-radio-button value="enterprise">企业共享</a-radio-button>
           </a-radio-group>
-          <a-tag v-else>{{ isEmployeeRoughMode ? (isEmployeeEnterpriseMode ? '企业共享 · 员工上传' : '员工个人素材') : (currentGallery?.visibility === 'enterprise' ? '企业共享' : (currentGallery?.is_global_personal ? '我的素材 · 文件夹全员可见，图片仅自己可见' : '仅自己可见')) }}</a-tag>
-          <h2>{{ isEmployeeRoughMode && targetEmployee ? `${targetEmployee.name} / ${currentGallery?.name || '图库'}` : (activeGallery ? currentGallery?.name : (materialScope === 'enterprise' ? '企业共享图库' : '我的图库')) }}</h2>
+          <a-tag v-else>{{ isEmployeeGalleryMode ? (isEmployeeEnterpriseMode ? '企业共享 · 员工上传' : '员工个人素材') : (currentGallery?.visibility === 'enterprise' ? '企业共享' : (currentGallery?.is_global_personal ? '我的素材 · 文件夹全员可见，图片仅自己可见' : '仅自己可见')) }}</a-tag>
+          <h2>{{ isEmployeeGalleryMode && targetEmployee ? `${targetEmployee.name} / ${currentGallery?.name || '图库'}` : (activeGallery ? currentGallery?.name : (materialScope === 'enterprise' ? '企业共享图库' : '我的图库')) }}</h2>
           <p v-if="parentGallery" class="gallery-path">{{ parentGallery.name }} / {{ currentGallery?.name }}</p>
-          <p>{{ isEmployeeRoughMode && targetEmployee ? `员工编码：${targetEmployee.employee_code}；${isEmployeeEnterpriseMode ? '本页仅显示该员工上传到企业共享毛坯房图库的图片。' : `本页仅显示该员工个人${currentGallery?.name || '图库'}。`}` : (designerEnterpriseScope && !activeGallery ? '企业共享仅可上传毛坯房图库。' : (activeGallery ? (currentGallery?.description || '这个图库还没有填写说明。') : '我的素材中的图片仅自己可见；超管新建文件夹向所有用户显示。企业共享保持现有使用规则。')) }}</p>
+          <p>{{ isEmployeeGalleryMode && targetEmployee ? `员工编码：${targetEmployee.employee_code}；${employeeGalleryHint}` : (designerEnterpriseScope && !activeGallery ? '企业共享仅可上传毛坯房图库。' : (activeGallery ? (currentGallery?.description || '这个图库还没有填写说明。') : '我的素材中的图片仅自己可见；超管新建文件夹向所有用户显示。企业共享保持现有使用规则。')) }}</p>
         </div>
       </div>
       <div v-else class="context-head">

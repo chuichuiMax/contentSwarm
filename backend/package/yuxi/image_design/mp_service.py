@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import HTTPException, UploadFile
 from sqlalchemy import and_, func, or_, select
@@ -257,7 +257,8 @@ async def upload_image(db: AsyncSession, user: User, file: UploadFile, *, role: 
     from yuxi.services.material_library_service import MAX_MATERIAL_BYTES, MATERIAL_LIBRARY_BUCKET, _normalize_image
     from yuxi.storage.minio import get_minio_client
 
-    if not file.filename:
+    upload_filename = (file.filename or "").replace("\\", "/").split("/")[-1].strip() or "upload.jpg"
+    if not upload_filename:
         raise _error("MATERIAL_FILE_NAME_REQUIRED", "无法识别上传文件名", 400)
     try:
         raw = await read_upload_with_limit(
@@ -284,7 +285,7 @@ async def upload_image(db: AsyncSession, user: User, file: UploadFile, *, role: 
             owner_uid=owner_uid,
             tenant_id=tenant_id,
             role="image_design_input",
-            original_file_name=Path(file.filename.replace("\\", "/")).name,
+            original_file_name=Path(upload_filename).name,
             content_type=content_type,
             file_size=len(normalized),
             image_width=width,
@@ -301,7 +302,7 @@ async def upload_image(db: AsyncSession, user: User, file: UploadFile, *, role: 
 
         upload_folder = await upload_category(db, user, "uploads", "mp")
         material_item = await create_library_item_for_asset(
-            db, asset=asset, material_type="image", name=Path(file.filename).stem,
+            db, asset=asset, material_type="image", name=Path(upload_filename).stem,
             category=upload_folder.id, category_owner_uid=upload_folder.owner_uid,
             metadata={"source_channel": "mp", "source_folder": "uploads"},
         )
@@ -322,6 +323,27 @@ async def upload_image(db: AsyncSession, user: User, file: UploadFile, *, role: 
         await storage.adelete_file(uploaded.bucket_name, uploaded.object_name)
         raise
     return {"item": serialize_mp_library_item(row, asset)}
+
+
+async def upload_folder_material(
+    db: AsyncSession,
+    user: User,
+    file: UploadFile,
+    *,
+    category: str,
+    folder: Literal["rough", "uploads"] = "uploads",
+) -> dict[str, Any]:
+    """带 category/folder 时与 /api/mp/content/uploads/cover 相同（对齐 PC images/import）。"""
+    from yuxi.services.mp_service import import_mp_material_upload
+
+    return await import_mp_material_upload(
+        db,
+        user,
+        file,
+        category=category,
+        folder=folder,
+        actor_user=user,
+    )
 
 
 async def read_library_file(db: AsyncSession, user: User, item_id: str, *, thumbnail: bool = False):

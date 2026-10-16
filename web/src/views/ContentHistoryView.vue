@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { message, Modal } from 'ant-design-vue'
 import { Copy, FilePlus2, Grid2X2, History, Image, List, PencilLine, RotateCcw, Trash2 } from 'lucide-vue-next'
@@ -34,7 +34,9 @@ const selectTask = (id) => {
 const taskTitle = (task) => task.selected_title?.text || task.name || '未命名内容'
 const cardTitle = (task) => task.artifact_title || taskTitle(task)
 const store = useContentStudioStore()
-const gallerySummary = computed(() => `${serviceEntry.value || '已生成内容'} · ${store.historyTotal} 篇`)
+const employeeId = computed(() => (typeof route.query.employee_id === 'string' ? route.query.employee_id : ''))
+const employeeName = computed(() => (typeof route.query.employee_name === 'string' ? route.query.employee_name : ''))
+const gallerySummary = computed(() => `${employeeName.value ? `${employeeName.value} · ` : ''}${serviceEntry.value || '已生成内容'} · ${store.historyTotal} 篇`)
 const emptyListText = computed(() => (serviceEntry.value ? `暂无${serviceEntry.value}` : '暂无符合条件的内容'))
 const emptyGalleryText = computed(() => (serviceEntry.value ? `暂无${serviceEntry.value}` : '暂无已生成内容'))
 const page = ref(1)
@@ -141,7 +143,6 @@ const setServiceEntry = async (entry) => {
   page.value = 1
   selectedTaskIds.value = []
   await router.replace({ query: { ...route.query, entry: entry || undefined } })
-  await load()
 }
 
 const load = async () => {
@@ -151,7 +152,8 @@ const load = async () => {
       page_size: pageSize.value,
       status: viewMode.value === 'grid' ? undefined : status.value,
       generated_only: viewMode.value === 'grid' || generatedOnly.value,
-      service_entry: serviceEntry.value || undefined
+      service_entry: serviceEntry.value || undefined,
+      employee_id: employeeId.value || undefined
     })
     if (viewMode.value === 'list' && !store.history.some(task => task.id === activeTaskId.value)) selectTask(store.history[0]?.id)
     void loadCardCovers()
@@ -229,6 +231,15 @@ const handleSelectionChange = (keys) => {
   selectedTaskIds.value = keys
 }
 
+watch(
+  () => [route.query.entry, route.query.employee_id],
+  () => {
+    const entry = typeof route.query.entry === 'string' ? route.query.entry : ''
+    serviceEntry.value = serviceEntries.some((item) => item.value === entry) ? entry : ''
+    page.value = 1
+    void load()
+  }
+)
 onMounted(load)
 onBeforeUnmount(() => {
   coverLoadId += 1
@@ -253,6 +264,7 @@ onBeforeUnmount(() => {
       </div>
       <a-button type="primary" @click="router.push('/content/new')"><FilePlus2 :size="16" />新建内容</a-button>
     </header>
+    <p v-if="employeeId" class="employee-filter">正在查看 {{ employeeName || '该员工' }} 的生成历史。<button type="button" @click="router.push('/traffic')">返回流量统计</button></p>
     <div v-if="viewMode === 'list'" class="history-workspace">
       <aside class="history-card" aria-label="历史文章列表">
         <div class="history-toolbar">
@@ -353,6 +365,8 @@ onBeforeUnmount(() => {
 <style scoped lang="less">
 .content-history-page { min-height: 100vh; padding: 20px var(--page-padding); background: var(--gray-25); color: var(--color-text); }
 header { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: 16px; }
+.employee-filter { display: flex; align-items: center; gap: 8px; margin: -4px 0 16px; color: var(--color-text-secondary); }
+.employee-filter button { border: 0; padding: 0; background: transparent; color: var(--main-700); cursor: pointer; }
 .history-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 24px; }
 header h1 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 22px; }
 .view-switch { display: inline-flex; gap: 2px; padding: 3px; border: 1px solid var(--gray-150); border-radius: 8px; background: var(--gray-100); }

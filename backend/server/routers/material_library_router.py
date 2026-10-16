@@ -128,6 +128,7 @@ async def material_categories(
     material_type: str = Query(...),
     employee_id: str | None = Query(None),
     uploader_employee_id: str | None = Query(None),
+    folder: Literal["rough", "generated"] | None = Query(None),
     current_user: User = Depends(get_required_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -142,17 +143,31 @@ async def material_categories(
         db,
         owner_user,
         material_type,
-        personal_folder="rough" if target is not None else None,
-        enterprise_rough_only=uploader is not None,
+        personal_folder=("generated" if folder == "generated" else "rough") if target is not None else None,
+        enterprise_rough_only=uploader is not None and folder != "generated",
+        enterprise_generated_only=uploader is not None and folder == "generated",
     )
     if target is not None:
         response["target_employee"] = target.to_dict()
-    if uploader is not None:
+        if folder == "generated":
+            roots = [item for item in response["categories"] if item.get("personal_folder") == "generated"]
+            if len(roots) != 1:
+                raise HTTPException(409 if roots else 404, "个人 AI 生图图库不存在或存在多个记录，请核对图库配置")
+            response["categories"] = roots
+            response["personal_generated_category_id"] = roots[0]["id"]
+    if uploader is not None and folder != "generated":
         roots = response["categories"]
         if len(roots) != 1:
             raise HTTPException(409 if roots else 404, "企业共享毛坯房图库不存在或存在多个记录，请核对图库配置")
         response["categories"] = roots
         response["enterprise_rough_category_id"] = roots[0]["id"]
+        response["target_employee"] = uploader.to_dict()
+    if uploader is not None and folder == "generated":
+        roots = response["categories"]
+        if len(roots) != 1:
+            raise HTTPException(409 if roots else 404, "企业共享生图图库不存在或存在多个记录，请核对图库配置")
+        response["categories"] = roots
+        response["enterprise_generated_category_id"] = roots[0]["id"]
         response["target_employee"] = uploader.to_dict()
     return response
 
@@ -394,6 +409,7 @@ async def material_items(
     exclude_task_id: str | None = Query(None),
     employee_id: str | None = Query(None),
     uploader_employee_id: str | None = Query(None),
+    folder: Literal["rough", "generated"] | None = Query(None),
     date_from: date | None = Query(None),
     date_to: date | None = Query(None),
     current_user: User = Depends(get_required_user),
@@ -406,6 +422,7 @@ async def material_items(
         if employee_id or material_type != "image":
             raise HTTPException(422, "企业共享员工筛选仅支持图片，且不能同时筛选个人素材")
         uploader = await resolve_employee_material_owner(db, uploader_employee_id)
+    generated = folder == "generated"
     return await list_material_items(
         db,
         owner_user,
@@ -418,8 +435,9 @@ async def material_items(
         sort=sort,
         scope=scope,
         exclude_task_id=exclude_task_id,
-        personal_folder="rough" if target is not None else None,
-        enterprise_rough_owner_uid=str(uploader.user.uid) if uploader else None,
+        personal_folder="rough" if target is not None and not generated else None,
+        enterprise_rough_owner_uid=str(uploader.user.uid) if uploader and not generated else None,
+        enterprise_generated_owner_uid=str(uploader.user.uid) if uploader and generated else None,
         date_from=date_from,
         date_to=date_to,
         actor_user=current_user,

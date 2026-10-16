@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from sqlalchemy import delete, func, or_, select
+from sqlalchemy import case, delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.utils.line_breaks import normalize_escaped_newlines
@@ -757,9 +757,12 @@ class ContentRepository:
         status: str | None = None,
         generated_only: bool = False,
         service_entry: str | None = None,
+        owner_uid: str | None = None,
     ) -> tuple[list[ContentTask], int]:
         filters = [ContentTask.deleted_at.is_(None)]
-        if user.role == "admin":
+        if owner_uid:
+            filters.append(ContentTask.created_by == owner_uid)
+        elif user.role == "admin":
             filters.append(ContentTask.tenant_id == str(user.department_id))
         elif user.role != "superadmin":
             filters.append(ContentTask.created_by == str(user.uid))
@@ -784,6 +787,26 @@ class ContentRepository:
             )
         ).scalars()
         return list(items), int(total)
+
+    async def count_generated_tasks_by_owner(self, owner_uids: list[str]) -> dict[str, dict[str, int]]:
+        counts = {uid: {"装修家居": 0, "好评笔记": 0} for uid in owner_uids}
+        if not owner_uids:
+            return counts
+        entry = ContentTask.brief_json["form_values"]["mp_service_entry"].as_string()
+        label = case((entry == "好评笔记", "好评笔记"), else_="装修家居")
+        rows = await self.db.execute(
+            select(ContentTask.created_by, label, func.count(ContentTask.id))
+            .where(
+                ContentTask.deleted_at.is_(None),
+                ContentTask.created_by.in_(owner_uids),
+                select(ContentArtifact.id).where(ContentArtifact.task_id == ContentTask.id).exists(),
+            )
+            .group_by(ContentTask.created_by, label)
+        )
+        for owner_uid, service_entry, count in rows.all():
+            bucket = counts.setdefault(owner_uid, {"装修家居": 0, "好评笔记": 0})
+            bucket[service_entry] = int(count)
+        return counts
 
     async def create_ocr_result(
         self,

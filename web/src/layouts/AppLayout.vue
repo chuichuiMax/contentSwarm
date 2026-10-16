@@ -3,6 +3,7 @@ import { ref, onMounted, computed, provide, watch } from 'vue'
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 import {
   BarChart3,
+  ChartColumn,
   ClipboardList,
   Database,
   LibraryBig,
@@ -288,6 +289,12 @@ const mainList = computed(() => {
       path: '/dashboard',
       icon: BarChart3,
       activeIcon: BarChart3
+    })
+    items.push({
+      name: '流量统计',
+      path: '/traffic',
+      icon: ChartColumn,
+      activeIcon: ChartColumn
     })
   }
 

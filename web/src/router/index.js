@@ -170,6 +170,19 @@ const router = createRouter({
       ]
     },
     {
+      path: '/traffic',
+      name: 'traffic',
+      component: AppLayout,
+      children: [
+        {
+          path: '',
+          name: 'TrafficStats',
+          component: () => import('../views/TrafficStatsView.vue'),
+          meta: { keepAlive: false, requiresAuth: true, requiresAdmin: true }
+        }
+      ]
+    },
+    {
       path: '/dashboard',
       name: 'dashboard',
       component: AppLayout,

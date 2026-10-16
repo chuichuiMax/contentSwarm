@@ -774,6 +774,54 @@ def test_global_personal_gallery_contributions_stay_private_after_creator_demoti
     assert not _can_manage_item(other_admin, item, gallery)
 
 
+def test_mp_explicit_enterprise_rough_category_is_recognized():
+    from yuxi.services.material_library_service import is_enterprise_rough_root
+
+    gallery = ContentMaterialCategory(
+        owner_uid="tenant-owner",
+        material_type="image",
+        id="rough-shared",
+        visibility="enterprise",
+        image_design_role="rough",
+        name="毛坯房图库",
+    )
+    assert is_enterprise_rough_root(gallery)
+    case_gallery = ContentMaterialCategory(
+        owner_uid="tenant-owner",
+        material_type="image",
+        id="case-root",
+        visibility="enterprise",
+        image_design_role="reference",
+        name="案例图库",
+    )
+    assert not is_enterprise_rough_root(case_gallery)
+
+
+def test_enterprise_rough_items_are_only_manageable_by_uploader():
+    from yuxi.services.material_library_service import is_enterprise_rough_root
+
+    gallery = ContentMaterialCategory(
+        owner_uid="tenant-owner",
+        material_type="image",
+        id="rough-shared",
+        visibility="enterprise",
+        image_design_role="rough",
+        name="毛坯房图库",
+    )
+    assert is_enterprise_rough_root(gallery)
+    alice_item = ContentMaterialLibraryItem(owner_uid="alice")
+    bob_item = ContentMaterialLibraryItem(owner_uid="bob")
+    alice = SimpleNamespace(uid="alice", role="user")
+    bob = SimpleNamespace(uid="bob", role="user")
+    admin = SimpleNamespace(uid="admin-1", role="admin")
+
+    assert _can_manage_item(alice, alice_item, gallery)
+    assert not _can_manage_item(alice, bob_item, gallery)
+    assert _can_manage_item(bob, bob_item, gallery)
+    assert not _can_manage_item(admin, alice_item, gallery)
+    assert not _can_manage_item(admin, bob_item, gallery)
+
+
 def test_cover_template_item_exposes_linked_generation_status():
     asset = ContentCoverAsset(
         id="asset-1",

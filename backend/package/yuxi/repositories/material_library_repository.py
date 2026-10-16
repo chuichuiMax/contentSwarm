@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Any
 
 from sqlalchemy import and_, func, not_, or_, select, update
+from sqlalchemy.orm import aliased
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from yuxi.storage.postgres.models_business import User
@@ -122,6 +123,80 @@ class MaterialLibraryRepository:
                 ContentMaterialLibraryItem.deleted_at.is_(None),
                 ContentCoverAsset.deleted_at.is_(None),
                 *self.enterprise_rough_filters(),
+            )
+            .group_by(ContentMaterialLibraryItem.owner_uid)
+        )
+        return {owner_uid: int(count) for owner_uid, count in rows.all()}
+
+    @staticmethod
+    def _generated_root_clause(category):
+        return and_(
+            category.parent_id.is_(None),
+            category.visibility == "enterprise",
+            category.material_type == "image",
+            or_(category.image_design_role == "generated", category.name == "生图图库"),
+        )
+
+    def _enterprise_generated_join(self):
+        parent = aliased(ContentMaterialCategory)
+        join = (
+            ContentMaterialLibraryItem.__table__.join(
+                ContentCoverAsset, ContentCoverAsset.id == ContentMaterialLibraryItem.asset_id
+            )
+            .join(ContentMaterialCategory, self.category_join())
+            .outerjoin(parent, parent.id == ContentMaterialCategory.parent_id)
+        )
+        located = or_(self._generated_root_clause(ContentMaterialCategory), self._generated_root_clause(parent))
+        return join, located
+
+    async def count_personal_generated_images_by_owner(self, owner_uids: list[str]) -> dict[str, int]:
+        if not owner_uids:
+            return {}
+        names = ("AI生图图库", "AI生图图库（个人）", "生图图库")
+        rows = await self.db.execute(
+            select(ContentMaterialLibraryItem.owner_uid, func.count(ContentMaterialLibraryItem.id))
+            .join(ContentCoverAsset, ContentCoverAsset.id == ContentMaterialLibraryItem.asset_id)
+            .join(ContentMaterialCategory, self.category_join())
+            .where(
+                ContentMaterialLibraryItem.owner_uid.in_(owner_uids),
+                ContentMaterialLibraryItem.material_type == "image",
+                ContentMaterialLibraryItem.status == "enabled",
+                ContentMaterialLibraryItem.deleted_at.is_(None),
+                ContentCoverAsset.deleted_at.is_(None),
+                ContentMaterialCategory.visibility == "private",
+                ContentMaterialCategory.owner_uid == ContentMaterialLibraryItem.owner_uid,
+                or_(
+                    ContentMaterialCategory.id == "mp-generated-private",
+                    ContentMaterialCategory.name.in_(names),
+                    and_(
+                        ContentMaterialCategory.id.in_(["private-root", "uncategorized"]),
+                        or_(
+                            ContentMaterialLibraryItem.metadata_json["source_folder"].as_string() == "generated",
+                            ContentMaterialLibraryItem.metadata_json["source"].as_string().in_(
+                                ["image_design", "content_production"]
+                            ),
+                        ),
+                    ),
+                ),
+            )
+            .group_by(ContentMaterialLibraryItem.owner_uid)
+        )
+        return {owner_uid: int(count) for owner_uid, count in rows.all()}
+
+    async def count_enterprise_generated_images_by_owner(self, owner_uids: list[str]) -> dict[str, int]:
+        if not owner_uids:
+            return {}
+        join, located = self._enterprise_generated_join()
+        rows = await self.db.execute(
+            select(ContentMaterialLibraryItem.owner_uid, func.count(ContentMaterialLibraryItem.id))
+            .select_from(join)
+            .where(
+                ContentMaterialLibraryItem.owner_uid.in_(owner_uids),
+                ContentMaterialLibraryItem.material_type == "image",
+                ContentMaterialLibraryItem.status == "enabled",
+                ContentMaterialLibraryItem.deleted_at.is_(None),
+                ContentCoverAsset.deleted_at.is_(None),
+                located,
             )
             .group_by(ContentMaterialLibraryItem.owner_uid)
         )
@@ -549,6 +624,7 @@ class MaterialLibraryRepository:
         category_owner_uid: str | None = None,
         private_rough_only: bool = False,
         enterprise_rough_owner_uid: str | None = None,
+        enterprise_generated_owner_uid: str | None = None,
         uploaded_from: datetime | None = None,
         uploaded_before: datetime | None = None,
     ) -> tuple[list[tuple[ContentMaterialLibraryItem, ContentCoverAsset, ContentMaterialCategory]], int]:
@@ -574,6 +650,16 @@ class MaterialLibraryRepository:
             filters.extend(self.private_rough_filters(owner_uid))
         if enterprise_rough_owner_uid is not None:
             filters.extend(self.enterprise_rough_filters(enterprise_rough_owner_uid))
+        generated_parent = None
+        if enterprise_generated_owner_uid is not None:
+            generated_parent = aliased(ContentMaterialCategory)
+            filters.append(ContentMaterialLibraryItem.owner_uid == enterprise_generated_owner_uid)
+            filters.append(
+                or_(
+                    self._generated_root_clause(ContentMaterialCategory),
+                    self._generated_root_clause(generated_parent),
+                )
+            )
         if uploaded_from is not None:
             filters.append(ContentCoverAsset.created_at >= uploaded_from)
         if uploaded_before is not None:
@@ -594,6 +680,8 @@ class MaterialLibraryRepository:
             ContentMaterialCategory,
             self.category_join(),
         )
+        if generated_parent is not None:
+            join = join.outerjoin(generated_parent, generated_parent.id == ContentMaterialCategory.parent_id)
         total = int(
             (
                 await self.db.execute(

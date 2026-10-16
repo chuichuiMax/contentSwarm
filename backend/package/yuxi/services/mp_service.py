@@ -929,7 +929,7 @@ async def logout() -> dict[str, bool]:
 
 
 async def get_me(ctx: MpContext) -> dict[str, Any]:
-    return {"employee": _me_dict(ctx.employee)}
+    return {"employee": _me_dict(ctx.employee), "user_uid": str(ctx.user.uid)}
 
 
 async def update_me(db: AsyncSession, ctx: MpContext, payload: MeUpdatePayload) -> dict[str, Any]:
@@ -1271,28 +1271,28 @@ async def read_mp_work_file(db: AsyncSession, ctx: MpContext, asset_id: str) -> 
     return await get_cover_asset_file(db, ctx.user, asset_id)
 
 
-async def upload_cover(
+async def import_mp_material_upload(
     db: AsyncSession,
-    ctx: MpContext,
+    user: User,
     file: UploadFile,
     *,
     category: str | None = None,
     design_style: str | None = None,
     folder: Literal["rough", "uploads"] = "uploads",
+    actor_user: User | None = None,
 ) -> dict[str, Any]:
+    """小程序素材上传：与 PC material-library/images/import 共用 import_material_images，直传 MinIO。"""
     resolved_category = (category or "uncategorized").strip() or "uncategorized"
-    try:
-        imported = await import_material_images(
-            db,
-            ctx.user,
-            [file],
-            category=resolved_category,
-            design_style=design_style,
-            source_channel="mp",
-            source_folder=folder,
-        )
-    except HTTPException:
-        raise
+    imported = await import_material_images(
+        db,
+        user,
+        [file],
+        category=resolved_category,
+        design_style=design_style,
+        source_channel="mp",
+        source_folder=folder,
+        actor_user=actor_user or user,
+    )
     item = (imported.get("items") or [None])[0]
     if not item:
         raise _mp_error(500, "MATERIAL_UPLOAD_EMPTY", "素材上传失败")
@@ -1307,6 +1307,29 @@ async def upload_cover(
         "category": item.get("category") or resolved_category,
         "category_name": item.get("category_name") or "",
     }
+
+
+async def upload_cover(
+    db: AsyncSession,
+    ctx: MpContext,
+    file: UploadFile,
+    *,
+    category: str | None = None,
+    design_style: str | None = None,
+    folder: Literal["rough", "uploads"] = "uploads",
+) -> dict[str, Any]:
+    try:
+        return await import_mp_material_upload(
+            db,
+            ctx.user,
+            file,
+            category=category,
+            design_style=design_style,
+            folder=folder,
+            actor_user=ctx.user,
+        )
+    except HTTPException:
+        raise
 
 
 async def read_cover_file(db: AsyncSession, ctx: MpContext, asset_id: str) -> tuple[bytes, str, str]:

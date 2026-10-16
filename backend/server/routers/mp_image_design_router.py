@@ -73,10 +73,20 @@ async def add_library_item(
 @mp_image_design.post("/uploads")
 async def upload_image(
     file: UploadFile = File(...),
-    role: Literal["source", "reference", "rough"] = Form(...),
+    role: Literal["source", "reference", "rough"] = Form("source"),
+    category: str | None = Form(None),
+    folder: Literal["rough", "uploads"] | None = Form(None),
     ctx: MpContext = Depends(get_mp_context),
     db: AsyncSession = Depends(get_db),
 ):
+    if category is not None or folder is not None:
+        return await mp_service.upload_folder_material(
+            db,
+            ctx.user,
+            file,
+            category=(category or "uncategorized").strip() or "uncategorized",
+            folder=folder or "uploads",
+        )
     return await mp_service.upload_image(db, ctx.user, file, role=role)
 
 

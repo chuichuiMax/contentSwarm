@@ -9,8 +9,10 @@ from yuxi.services.employee_service import (
     create_employee,
     delete_employee,
     export_employees,
+    export_traffic_stats,
     get_current_employee,
     list_employees,
+    list_traffic_stats,
     update_employee,
 )
 from yuxi.storage.postgres.models_business import User
@@ -42,6 +44,34 @@ async def create_content_employee(
     db: AsyncSession = Depends(get_db),
 ):
     return await create_employee(db, current_user, payload)
+
+
+@employees.get("/traffic")
+async def content_traffic_stats(
+    keyword: str | None = Query(default=None),
+    branch: str | None = Query(default=None),
+    department: str | None = Query(default=None),
+    current_user: User = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    del current_user
+    return await list_traffic_stats(db, keyword=keyword, branch=branch, department=department)
+
+
+@employees.get("/traffic/export")
+async def export_content_traffic_stats(
+    keyword: str | None = Query(default=None),
+    branch: str | None = Query(default=None),
+    department: str | None = Query(default=None),
+    current_user: User = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    del current_user
+    return Response(
+        content=await export_traffic_stats(db, keyword=keyword, branch=branch, department=department),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="traffic-stats.xlsx"'},
+    )
 
 
 @employees.get("/export")

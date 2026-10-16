@@ -38,6 +38,7 @@ from yuxi.content.service_entry_form import (
     is_quote_content_type_name,
 )
 from yuxi.services.business_variable_service import list_business_variables
+from yuxi.services.employee_service import resolve_employee_material_owner
 from yuxi.services.content_photo_composition import GALLERY_SOURCE_ASSET_ROLES
 from yuxi.services.content_type_service import list_content_types
 from yuxi.services.process_standard_service import (
@@ -1369,9 +1370,15 @@ async def list_content_tasks(
     status: str | None,
     generated_only: bool = False,
     service_entry: str | None = None,
+    employee_id: str | None = None,
 ) -> dict[str, Any]:
     if service_entry is not None and service_entry not in SERVICE_ENTRIES:
         raise _content_error(422, "CONTENT_SERVICE_ENTRY_INVALID", "内容分类不存在")
+    owner_uid = None
+    if employee_id:
+        if user.role not in {"admin", "superadmin"}:
+            raise _content_error(403, "CONTENT_EMPLOYEE_FORBIDDEN", "只有管理员可以按员工查看生成历史")
+        owner_uid = str((await resolve_employee_material_owner(db, employee_id)).user.uid)
     repo = ContentRepository(db)
     items, total = await repo.list_tasks(
         user=user,
@@ -1380,6 +1387,7 @@ async def list_content_tasks(
         status=status,
         generated_only=generated_only,
         service_entry=service_entry,
+        owner_uid=owner_uid,
     )
     artifacts = {}
     if items:
