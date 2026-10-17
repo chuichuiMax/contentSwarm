@@ -153,7 +153,7 @@ const mainList = computed(() => {
     activePaths: ['/hycanvas', '/materials'],
     icon: PanelsTopLeft,
     activeIcon: PanelsTopLeft,
-    permissionAny: ['material_rough.upload']
+    materialLibraryAccess: true
   })
 
   items.push({
@@ -298,7 +298,11 @@ const mainList = computed(() => {
     })
   }
 
-  const allowed = (item) => !userStore.isPermissionScoped || userStore.canAny(item.permissionAny || [])
+  const allowed = (item) => {
+    if (!userStore.isPermissionScoped) return true
+    if (item.materialLibraryAccess) return userStore.canAccessMaterialLibrary
+    return userStore.canAny(item.permissionAny || [])
+  }
   return items.flatMap((item) => {
     if (!item.children) return allowed(item) ? [item] : []
     if (!userStore.isPermissionScoped) return [item]

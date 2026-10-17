@@ -3,7 +3,13 @@ import { ref, computed } from 'vue'
 import { useAgentStore } from './agent'
 import { apiUrl } from '@/utils/apiUrl'
 import { assetUrl } from '@/utils/assetUrl'
-import { canAccessScopedPath, hasAnyPermission, homePathForGrants } from '@/utils/permissions'
+import {
+  canAccessScopedPath,
+  hasAnyPermission,
+  hasMaterialLibraryAccess,
+  homePathForGrants,
+  isRoughUploadOnly
+} from '@/utils/permissions'
 
 export const useUserStore = defineStore('user', () => {
   const authFetch = (url, options) => fetch(apiUrl(url), options)
@@ -26,8 +32,9 @@ export const useUserStore = defineStore('user', () => {
   const isSuperAdmin = computed(() => userRole.value === 'superadmin')
   const isPermissionScoped = computed(() => permissionScoped.value && !isAdmin.value)
   const homePath = computed(() => homePathForGrants(isPermissionScoped.value, permissions.value))
-  const roughUploadOnly = computed(
-    () => isPermissionScoped.value && permissions.value.includes('material_rough.upload')
+  const roughUploadOnly = computed(() => isRoughUploadOnly(isPermissionScoped.value, permissions.value))
+  const canAccessMaterialLibrary = computed(
+    () => !isPermissionScoped.value || hasMaterialLibraryAccess(permissions.value)
   )
 
   function applyPermissionState(data) {
@@ -438,6 +445,7 @@ export const useUserStore = defineStore('user', () => {
     isPermissionScoped,
     homePath,
     roughUploadOnly,
+    canAccessMaterialLibrary,
 
     // 方法
     login,

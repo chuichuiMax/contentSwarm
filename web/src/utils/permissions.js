@@ -1,5 +1,18 @@
 export const ROUGH_UPLOAD_PERMISSION = 'material_rough.upload'
+export const MATERIAL_FOLDER_PERMISSION_PREFIX = 'material_folder.'
 export const IMAGE_DESIGN_PAGE_PERMISSION = 'image_design.access'
+
+export function hasExplicitFolderGrants(grants) {
+  return grants.some((key) => key.startsWith(MATERIAL_FOLDER_PERMISSION_PREFIX))
+}
+
+export function hasMaterialLibraryAccess(grants) {
+  return grants.includes(ROUGH_UPLOAD_PERMISSION) || hasExplicitFolderGrants(grants)
+}
+
+export function isRoughUploadOnly(permissionScoped, grants) {
+  return permissionScoped && grants.includes(ROUGH_UPLOAD_PERMISSION) && !hasExplicitFolderGrants(grants)
+}
 
 const HOME_CANDIDATES = [
   [ROUGH_UPLOAD_PERMISSION, '/materials/images'],
@@ -51,12 +64,16 @@ export function hasAnyPermission(grants, keys) {
 
 export function homePathForGrants(permissionScoped, grants) {
   if (!permissionScoped) return '/agent'
-  const match = HOME_CANDIDATES.find(([key]) => grants.includes(key))
+  if (hasMaterialLibraryAccess(grants)) return '/materials/images'
+  const match = HOME_CANDIDATES.find(([key]) => key !== 'material_folder.__any__' && grants.includes(key))
   return match ? match[1] : '/materials/images'
 }
 
 export function canAccessScopedPath(permissionScoped, grants, path) {
   if (!permissionScoped) return true
+  if (path === '/materials' || path.startsWith('/materials/')) {
+    return hasMaterialLibraryAccess(grants)
+  }
   const rule = SCOPED_PATH_RULES.find((item) => path === item.prefix || path.startsWith(`${item.prefix}/`))
   if (!rule) return false
   return hasAnyPermission(grants, rule.any)

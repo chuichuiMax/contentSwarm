@@ -67,44 +67,6 @@ async def process_direct_content_run(ctx, run_id: str):
         knowledge_context = ""
         if payload.get("skip_cover"):
             knowledge_context = await load_knowledge_base_text(str(run.uid), "好评笔记知识库")
-        stream_values = {"title": "", "body": "", "topics": []}
-        published_values = {"title": "", "body": "", "topics": []}
-        last_publish_at = asyncio.get_running_loop().time()
-
-        async def publish_stream_values() -> None:
-            nonlocal last_publish_at
-            if await has_cancel_signal(run_id):
-                raise asyncio.CancelledError
-            for field in ("title", "body", "topics"):
-                value = stream_values[field]
-                previous = published_values[field]
-                if value == previous:
-                    continue
-                if isinstance(value, str) and isinstance(previous, str):
-                    delta = value[len(previous) :] if value.startswith(previous) else value
-                elif isinstance(value, list) and isinstance(previous, list):
-                    delta = value[len(previous) :] if value[: len(previous)] == previous else value
-                else:
-                    delta = value
-                await append_run_stream_event(
-                    run_id,
-                    "content.direct.delta",
-                    {"field": field, "delta": delta, "value": value},
-                    thread_id=run.thread_id,
-                )
-                published_values[field] = value.copy() if isinstance(value, list) else value
-            last_publish_at = asyncio.get_running_loop().time()
-
-        async def handle_content_delta(update: dict) -> None:
-            field = update.get("field")
-            if field not in stream_values:
-                return
-            stream_values[field] = update.get("value")
-            now = asyncio.get_running_loop().time()
-            pending_body_length = len(str(stream_values["body"])) - len(str(published_values["body"]))
-            if field != "body" or pending_body_length >= 24 or now - last_publish_at >= 0.15:
-                await publish_stream_values()
-
         output = await generate_direct_content(
             model_spec=payload.get("model_spec"),
             creative_style=payload.get("creative_style") or {},
@@ -113,9 +75,15 @@ async def process_direct_content_run(ctx, run_id: str):
             generation_prompt=str(payload.get("generation_prompt", DEFAULT_DIRECT_GENERATION_PROMPT)),
             forbidden_lexicon=forbidden_snapshot["alternatives"],
             knowledge_context=knowledge_context,
-            on_delta=handle_content_delta,
         )
-        await publish_stream_values()
+        for field in ("title", "body", "topics"):
+            value = getattr(output, field)
+            await append_run_stream_event(
+                run_id,
+                "content.direct.delta",
+                {"field": field, "delta": value, "value": value},
+                thread_id=run.thread_id,
+            )
         if await has_cancel_signal(run_id):
             raise asyncio.CancelledError
         async with pg_manager.get_async_session_context() as db:

@@ -1,7 +1,20 @@
 import pytest
-from langchain_core.messages import AIMessageChunk
+from langchain_core.messages import AIMessage
 
 import yuxi.content.generation as generation
+
+
+def _tool_response(arguments: dict) -> AIMessage:
+    return AIMessage(
+        content="",
+        tool_calls=[
+            {
+                "name": "ContentArtifactAIEditOutput",
+                "args": arguments,
+                "id": "call-1",
+            }
+        ],
+    )
 
 
 @pytest.mark.unit
@@ -10,31 +23,15 @@ async def test_direct_generation_uses_only_requested_inputs(monkeypatch):
     calls = []
     bind_tool_calls = []
     load_model_calls = []
-    deltas = []
 
     class FakeModel:
         def bind_tools(self, schemas, **kwargs):
             bind_tool_calls.append((schemas, kwargs))
             return self
 
-        async def astream(self, messages):
+        async def ainvoke(self, messages):
             calls.append(messages)
-            for arguments in (
-                '{"title":"报价标',
-                '题","body":"报价正',
-                '文","topics":["报价"]}',
-            ):
-                yield AIMessageChunk(
-                    content="",
-                    tool_call_chunks=[
-                        {
-                            "name": "ContentArtifactAIEditOutput",
-                            "args": arguments,
-                            "id": "call-1",
-                            "index": 0,
-                        }
-                    ],
-                )
+            return _tool_response({"title": "报价标题", "body": "报价正文", "topics": ["报价"]})
 
     monkeypatch.setattr(generation, "resolve_chat_model_spec", lambda value: value or "default")
 
@@ -44,9 +41,6 @@ async def test_direct_generation_uses_only_requested_inputs(monkeypatch):
 
     monkeypatch.setattr(generation, "load_chat_model", fake_load_chat_model)
 
-    async def collect_delta(update):
-        deltas.append(update)
-
     result = await generation.generate_direct_content(
         model_spec="ark:doubao-seed-2-1-pro-260915",
         creative_style={"name": "反差价值型", "instruction": "用别人报 xx 万、我们 xx 万制造反差"},
@@ -54,7 +48,6 @@ async def test_direct_generation_uses_only_requested_inputs(monkeypatch):
         user_request='{"serialNo":"002","persona":{"age":"45"}}',
         generation_prompt="使用给定元素仿写，并符合北京本地口吻",
         forbidden_lexicon={"报价": ["费用"]},
-        on_delta=collect_delta,
     )
 
     assert result.title == "费用标题"
@@ -73,13 +66,6 @@ async def test_direct_generation_uses_only_requested_inputs(monkeypatch):
             [generation.ContentArtifactAIEditOutput],
             {"tool_choice": "ContentArtifactAIEditOutput"},
         )
-    ]
-    assert deltas == [
-        {"field": "title", "delta": "费用标", "value": "费用标"},
-        {"field": "title", "delta": "题", "value": "费用标题"},
-        {"field": "body", "delta": "费用正", "value": "费用正"},
-        {"field": "body", "delta": "文", "value": "费用正文"},
-        {"field": "topics", "delta": ["费用"], "value": ["费用"]},
     ]
     assert len(calls[0]) == 1
     prompt = calls[0][0].content
@@ -110,19 +96,9 @@ async def test_direct_generation_omits_empty_creative_style(monkeypatch):
         def bind_tools(self, schemas, **kwargs):
             return self
 
-        async def astream(self, messages):
+        async def ainvoke(self, messages):
             calls.append(messages)
-            yield AIMessageChunk(
-                content="",
-                tool_call_chunks=[
-                    {
-                        "name": "ContentArtifactAIEditOutput",
-                        "args": '{"title":"标题","body":"正文","topics":[]}',
-                        "id": "call-1",
-                        "index": 0,
-                    }
-                ],
-            )
+            return _tool_response({"title": "标题", "body": "正文", "topics": []})
 
     monkeypatch.setattr(generation, "resolve_chat_model_spec", lambda value: value or "default")
     monkeypatch.setattr(generation, "load_chat_model", lambda **kwargs: FakeModel())
@@ -148,19 +124,9 @@ async def test_review_notes_generation_uses_owner_voice_and_knowledge(monkeypatc
         def bind_tools(self, schemas, **kwargs):
             return self
 
-        async def astream(self, messages):
+        async def ainvoke(self, messages):
             calls.append(messages)
-            yield AIMessageChunk(
-                content="",
-                tool_call_chunks=[
-                    {
-                        "name": "ContentArtifactAIEditOutput",
-                        "args": '{"title":"看工地才放心","body":"我去工地看了水电。","topics":["装修日记"]}',
-                        "id": "call-1",
-                        "index": 0,
-                    }
-                ],
-            )
+            return _tool_response({"title": "看工地才放心", "body": "我去工地看了水电。", "topics": ["装修日记"]})
 
     monkeypatch.setattr(generation, "resolve_chat_model_spec", lambda value: value or "default")
     monkeypatch.setattr(generation, "load_chat_model", lambda **kwargs: FakeModel())
@@ -211,18 +177,8 @@ async def test_direct_generation_rejects_forbidden_terms_without_replacements(mo
         def bind_tools(self, schemas, **kwargs):
             return self
 
-        async def astream(self, messages):
-            yield AIMessageChunk(
-                content="",
-                tool_call_chunks=[
-                    {
-                        "name": "ContentArtifactAIEditOutput",
-                        "args": '{"title":"APP标题","body":"正文","topics":[]}',
-                        "id": "call-1",
-                        "index": 0,
-                    }
-                ],
-            )
+        async def ainvoke(self, messages):
+            return _tool_response({"title": "APP标题", "body": "正文", "topics": []})
 
     monkeypatch.setattr(generation, "resolve_chat_model_spec", lambda value: value or "default")
     monkeypatch.setattr(generation, "load_chat_model", lambda **kwargs: FakeModel())

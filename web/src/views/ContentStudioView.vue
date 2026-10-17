@@ -2,6 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
+import CaseGalleryStyleFilter from '@/components/material/CaseGalleryStyleFilter.vue'
 import ContentPhotoComposition from '@/components/content/ContentPhotoComposition.vue'
 import {
   ArrowLeft,
@@ -54,6 +55,7 @@ import {
   formatEvidenceReference,
   hasSelectedViralReference
 } from '@/utils/contentEvidencePresentation'
+import { filterCaseGalleryChildren, isEnterpriseCaseGallery } from '@/utils/caseGallery'
 import { formatDateTime } from '@/utils/time'
 import { copyTextToClipboard } from '@/utils/clipboard'
 import {
@@ -148,6 +150,7 @@ const coverSelectionAllowed = computed(() =>
   coverCandidates.value.some((item) => item.assetId === selectedCoverAssetId.value)
 )
 const materialGalleries = ref([])
+const caseGalleryStyleFilter = ref('')
 const photoLayouts = ref([])
 const activeGalleryId = ref('')
 const galleryImages = ref([])
@@ -238,6 +241,16 @@ const activeMaterialGalleryChildren = computed(() =>
     ? materialGalleries.value.filter((item) => item.parent_id === activeGalleryId.value)
     : rootMaterialGalleries.value
 )
+const isCaseGalleryModalContext = computed(() =>
+  isEnterpriseCaseGallery(activeMaterialGallery.value)
+)
+const visibleMaterialGalleryChildren = computed(() => {
+  const children = activeMaterialGalleryChildren.value
+  if (isEnterpriseCaseGallery(activeMaterialGallery.value)) {
+    return filterCaseGalleryChildren(children, caseGalleryStyleFilter.value)
+  }
+  return children
+})
 const activeMaterialGalleryPath = computed(() =>
   activeMaterialGalleryParent.value
     ? `${activeMaterialGalleryParent.value.name} / ${activeMaterialGallery.value?.name || ''}`
@@ -1434,6 +1447,8 @@ const loadGalleryImages = async () => {
 
 const openGallery = async (galleryId) => {
   const openingModal = !galleryModalOpen.value
+  const nextGallery = materialGalleryMap.value.get(galleryId)
+  if (!isEnterpriseCaseGallery(nextGallery)) caseGalleryStyleFilter.value = ''
   activeGalleryId.value = galleryId
   if (openingModal) {
     const selectedIds =
@@ -4559,14 +4574,19 @@ const returnToContentCreation = async () => {
         >
           <ArrowLeft :size="15" />返回 {{ activeMaterialGalleryParent?.name || '全部图库' }}
         </button>
-        <section v-if="activeMaterialGalleryChildren.length" class="gallery-modal-folders">
+        <section v-if="visibleMaterialGalleryChildren.length" class="gallery-modal-folders">
           <div class="gallery-modal-section-title">
             <strong>{{ activeGalleryId ? '二级图库' : '选择图库' }}</strong>
             <small>选择所属图库后查看其中的图片</small>
           </div>
+          <CaseGalleryStyleFilter
+            v-if="isCaseGalleryModalContext"
+            v-model="caseGalleryStyleFilter"
+            class="gallery-modal-style-filter"
+          />
           <div class="gallery-folder-grid">
             <button
-              v-for="gallery in activeMaterialGalleryChildren"
+              v-for="gallery in visibleMaterialGalleryChildren"
               :key="gallery.id"
               type="button"
               class="gallery-folder-card compact"
@@ -4589,7 +4609,7 @@ const returnToContentCreation = async () => {
         <div class="gallery-modal-heading">
           <p>
             {{
-              activeMaterialGalleryChildren.length
+              visibleMaterialGalleryChildren.length
                 ? '当前一级图库中的图片'
                 : compositionSlotIndex === null
                   ? '选择图片后统一确认，第一张为封面原图。'
@@ -5578,6 +5598,9 @@ const returnToContentCreation = async () => {
 }
 .gallery-modal-section-title small {
   color: var(--color-text-tertiary);
+}
+.gallery-modal-style-filter {
+  max-width: 220px;
 }
 .gallery-folder-card.compact {
   min-height: 76px;

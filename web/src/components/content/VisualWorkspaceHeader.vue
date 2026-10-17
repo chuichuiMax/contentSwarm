@@ -18,7 +18,8 @@ const sections = computed(() => {
     { label: '素材库', path: '/materials/images', icon: Image }
   ]
   if (!userStore.isPermissionScoped) return items
-  return items.filter((item) => item.path.startsWith('/materials') && userStore.roughUploadOnly)
+  if (!userStore.canAccessMaterialLibrary) return []
+  return items.filter((item) => item.path.startsWith('/materials'))
 })
 
 const isActive = (path) => path === '/hycanvas'

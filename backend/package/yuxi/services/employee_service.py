@@ -323,6 +323,14 @@ async def list_employees(db: AsyncSession, keyword: str | None = None) -> dict[s
 
 async def export_employees(db: AsyncSession) -> bytes:
     listing = await list_employees(db)
+    employees = sorted(
+        listing["employees"],
+        key=lambda employee: (
+            not (employee.get("current_branch") or "").strip(),
+            (employee.get("current_branch") or "").strip(),
+            -(employee.get("enterprise_rough_image_count") or 0),
+        ),
+    )
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = "员工管理"
@@ -342,7 +350,7 @@ async def export_employees(db: AsyncSession) -> bytes:
             "状态",
         ]
     )
-    for index, employee in enumerate(listing["employees"], start=1):
+    for index, employee in enumerate(employees, start=1):
         ports = employee.get("login_port") or []
         sheet.append(
             [

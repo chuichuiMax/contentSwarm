@@ -66,9 +66,6 @@ async def test_review_notes_direct_run_saves_draft_without_cover(monkeypatch):
 
     async def fake_generate(**kwargs):
         generate_calls.append(kwargs)
-        await kwargs["on_delta"]({"field": "title", "value": output.title})
-        await kwargs["on_delta"]({"field": "body", "value": output.body})
-        await kwargs["on_delta"]({"field": "topics", "value": output.topics})
         return output
 
     async def record_event(run_id, event_type, data, **kwargs):

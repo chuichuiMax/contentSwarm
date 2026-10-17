@@ -14,7 +14,13 @@ import {
   X
 } from 'lucide-vue-next'
 
+import CaseGalleryStyleFilter from '@/components/material/CaseGalleryStyleFilter.vue'
 import MaterialImagePickerModal from '@/components/material/MaterialImagePickerModal.vue'
+import {
+  isCaseGalleryChild,
+  isEnterpriseCaseGallery,
+  matchesCaseGalleryStyleFilter
+} from '@/utils/caseGallery'
 import {
   composeImageDesignPrompt,
   DEFAULT_IMAGE_DESIGN_KEYWORDS,
@@ -42,6 +48,7 @@ const resultDetail = ref(null)
 const detailReferenceUrl = ref('')
 const detailRawRoomUrl = ref('')
 const loadingGallery = ref(false)
+const designStyleFilter = ref('')
 const refinedPromptDraft = ref('')
 const refinedPromptDirty = ref(false)
 const lockedPromptLine = LOCKED_IMAGE_DESIGN_PROMPT_LINE
@@ -277,10 +284,41 @@ async function retryAnalysis(material, role) {
   }
 }
 
+const browsingCaseGallery = computed(() => {
+  const gallery = galleries.value.find((item) => item.id === activeGallery.value)
+  if (!gallery) return false
+  if (isEnterpriseCaseGallery(gallery)) return true
+  return isCaseGalleryChild(gallery, galleries.value)
+})
+
+const selectableGalleries = computed(() =>
+  galleries.value.filter((gallery) => {
+    if (isEnterpriseCaseGallery(gallery)) return false
+    return matchesCaseGalleryStyleFilter(gallery, galleries.value, designStyleFilter.value)
+  })
+)
+
+watch(designStyleFilter, () => {
+  const current = galleries.value.find((item) => item.id === activeGallery.value)
+  if (current && !matchesCaseGalleryStyleFilter(current, galleries.value, designStyleFilter.value)) {
+    const next =
+      selectableGalleries.value.find((item) => (item.count || item.direct_count || 0) > 0)
+      || selectableGalleries.value[0]
+    if (next) {
+      activeGallery.value = next.id
+      void refreshGallery()
+    }
+  }
+})
+
 async function loadGalleries() {
   const response = await materialLibraryApi.listGalleries()
   galleries.value = response.galleries || []
-  activeGallery.value = galleries.value.find((item) => (item.count || item.direct_count || 0) > 0)?.id || galleries.value[0]?.id || ''
+  designStyleFilter.value = ''
+  const next =
+    selectableGalleries.value.find((item) => (item.count || item.direct_count || 0) > 0)
+    || selectableGalleries.value[0]
+  activeGallery.value = next?.id || ''
   await refreshGallery()
 }
 
@@ -654,7 +692,14 @@ async function loadResultPreviews() {
       <aside class="workspace-panel card">
         <div class="workspace-tabs"><button :class="{ active: activeTab === 'materials' }" @click="activeTab = 'materials'">素材库 <small>{{ galleryItems.length }}</small></button><button :class="{ active: activeTab === 'results' }" @click="activeTab = 'results'; store.loadResults().then(loadResultPreviews)">生成结果 <small>{{ store.results.length }}</small></button><button :class="{ active: activeTab === 'showcase' }" @click="activeTab = 'showcase'">精选案例提示词 <small>{{ showcaseItems.length }}</small></button><button :class="{ active: activeTab === 'jobs' }" @click="activeTab = 'jobs'; store.loadJobs()">任务 <small>{{ store.jobs.filter((item) => !['succeeded','failed'].includes(item.status)).length }}</small></button><button :class="{ active: activeTab === 'assets' }" @click="activeTab = 'assets'">资产中心</button></div>
         <div v-if="activeTab === 'materials'" class="workspace-content">
-          <div class="library-toolbar"><select v-model="activeGallery" @change="refreshGallery"><option v-for="gallery in galleries" :key="gallery.id" :value="gallery.id">{{ gallery.name }}</option></select><button title="导入到素材库" @click="uploadInput?.click()"><Upload :size="15" /></button><button title="刷新" @click="refreshGallery"><RefreshCw :size="15" /></button></div>
+          <div class="library-toolbar">
+            <CaseGalleryStyleFilter v-if="browsingCaseGallery" v-model="designStyleFilter" />
+            <select v-model="activeGallery" @change="refreshGallery">
+              <option v-for="gallery in selectableGalleries" :key="gallery.id" :value="gallery.id">{{ gallery.name }}</option>
+            </select>
+            <button title="导入到素材库" @click="uploadInput?.click()"><Upload :size="15" /></button>
+            <button title="刷新" @click="refreshGallery"><RefreshCw :size="15" /></button>
+          </div>
           <div v-if="loadingGallery" class="empty-state"><LoaderCircle class="spin" :size="24" /></div>
           <div v-else-if="galleryItems.length" class="material-grid"><button v-for="item in galleryItems" :key="item.id" class="material-card" @click="setMaterial('reference', item)"><img v-if="galleryUrls[item.id]" :src="galleryUrls[item.id]" :alt="item.name" /><span>{{ item.name }}</span><small>{{ item.width }}×{{ item.height }}</small></button></div>
           <div v-else class="empty-state"><ImagePlus :size="28" /><p>素材库暂无图片</p><button @click="uploadInput?.click()">导入图片</button></div>

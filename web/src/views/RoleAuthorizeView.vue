@@ -139,7 +139,7 @@ onMounted(loadPermissions)
         <a-table-column title="模块" :width="160" :custom-cell="moduleCell">
           <template #default="{ record }">{{ record.module }}</template>
         </a-table-column>
-        <a-table-column title="列表" data-index="list" key="list" :width="160" />
+        <a-table-column title="列表" data-index="list" key="list" :width="320" />
         <a-table-column title="权限" key="actions">
           <template #default="{ record }">
             <div class="permission-actions">

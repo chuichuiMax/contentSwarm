@@ -2,6 +2,7 @@ from pydantic import ValidationError
 
 import pytest
 
+from yuxi.services.material_folder_permissions import is_valid_material_grant_key
 from yuxi.services.role_permissions import all_permission_keys, normalize_grants
 from yuxi.services.role_service import (
     RoleCreate,
@@ -78,7 +79,8 @@ def test_permission_catalog_keys_are_unique():
     assert "variable.view_list" in keys
     assert "business_variable.view_list" in keys
     assert "process_standard.view_list" in keys
-    assert "material_rough.upload" in keys
+    assert is_valid_material_grant_key("material_rough.upload")
+    assert is_valid_material_grant_key("material_folder.enterprise-initial-rough.view")
     assert "image_design.access" in keys
     assert not any(key.startswith("cover.") for key in keys)
     assert len(keys) == len(set(keys))

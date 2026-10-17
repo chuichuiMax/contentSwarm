@@ -338,6 +338,59 @@ async def test_material_share_rejects_legacy_decoration_gallery_without_project_
     assert error.value.detail["error"]["code"] == error_code
 
 
+@pytest.mark.asyncio
+async def test_material_share_denies_restricted_role_without_matching_folder_view(monkeypatch):
+    from yuxi.services.material_folder_permissions import material_folder_view_key
+
+    case_root_id = "enterprise-initial-reference"
+    child = ContentMaterialCategory(
+        owner_uid="owner-1",
+        material_type="image",
+        id="gallery-case-child",
+        parent_id=case_root_id,
+        industry_slug="decoration",
+        name="昭山印象",
+        design_style="复合写意",
+        building_name="昭山印象",
+        area="400",
+    )
+    case_root = ContentMaterialCategory(
+        owner_uid="owner-1",
+        material_type="image",
+        id=case_root_id,
+        parent_id=None,
+        visibility="enterprise",
+        image_design_role="reference",
+        name="案例图库",
+    )
+
+    class FakeRepo:
+        def __init__(self, _db, **_kwargs):
+            pass
+
+        async def list_image_items_with_assets_and_categories(self, _owner_uid, _item_ids):
+            return [(SimpleNamespace(id="item-1"), SimpleNamespace(), child)]
+
+        async def get_category(self, _owner_uid, _material_type, category_id):
+            return case_root if category_id == case_root_id else None
+
+    async def fake_folder_grants(_db, _user):
+        return True, [material_folder_view_key("enterprise-initial-rough")]
+
+    monkeypatch.setattr(material_library_service, "MaterialLibraryRepository", FakeRepo)
+    monkeypatch.setattr(material_library_service, "_material_folder_grants", fake_folder_grants)
+
+    with pytest.raises(HTTPException) as error:
+        await create_material_share(
+            object(),
+            SimpleNamespace(id="user-1", uid="owner-1", department_id=None, role="user"),
+            MaterialShareCreate(item_ids=["item-1"]),
+        )
+
+    assert error.value.status_code == 403
+    assert error.value.detail["error"]["code"] == "MATERIAL_PERMISSION_DENIED"
+
+
 @pytest.mark.parametrize("raw_area", ["120㎡", "120m²", "120 m²", "120m2"])
 def test_material_category_area_strips_supported_units_before_persisting(raw_area):
     create_payload = MaterialCategoryCreate(material_type="image", name="客厅案例", area=raw_area)
@@ -977,3 +1030,51 @@ async def test_folder_keeps_existing_thumbnails_and_waits_for_new_originals():
                 )
             )
             await db.commit()
+
+
+@pytest.mark.asyncio
+async def test_employee_generated_thumbnail_read_does_not_use_rough_only_filter(monkeypatch):
+    from yuxi.services.material_library_service import get_material_thumbnail
+
+    item = ContentMaterialLibraryItem(
+        id="mli_generated",
+        owner_uid="mp_employee",
+        asset_id="cca_gen",
+        material_type="image",
+        category="mp-generated-private",
+        status="enabled",
+    )
+    asset = ContentCoverAsset(
+        id="cca_gen",
+        owner_uid="mp_employee",
+        bucket_name="image",
+        object_name="gen.webp",
+        original_file_name="gen.webp",
+    )
+    repo = SimpleNamespace(
+        get_private_rough_item_for_owner=AsyncMock(return_value=None),
+        get_item_for_user=AsyncMock(return_value=item),
+        get_asset=AsyncMock(return_value=asset),
+    )
+    monkeypatch.setattr(
+        material_library_service,
+        "MaterialLibraryRepository",
+        lambda db, **kwargs: repo,
+    )
+    monkeypatch.setattr(
+        material_library_service,
+        "persist_material_thumbnail",
+        AsyncMock(return_value=b"thumb"),
+    )
+    monkeypatch.setattr(material_library_service, "material_access_mode", AsyncMock(return_value="full"))
+
+    data, name = await get_material_thumbnail(
+        SimpleNamespace(),
+        SimpleNamespace(uid="mp_employee"),
+        "mli_generated",
+        target_private=True,
+    )
+    assert data == b"thumb"
+    assert name == "gen"
+    repo.get_private_rough_item_for_owner.assert_not_awaited()
+    repo.get_item_for_user.assert_awaited_once_with("mli_generated", "mp_employee")

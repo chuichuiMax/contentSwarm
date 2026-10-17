@@ -31,6 +31,12 @@ from yuxi.image_design.save_targets import (
 )
 from yuxi.image_design.schemas import ImageDesignSaveTarget
 from yuxi.services.employee_service import resolve_employee_for_user
+from yuxi.services.material_folder_permissions import (
+    grant_allows_folder_upload,
+    grant_allows_folder_view,
+    material_permission_state,
+    uses_explicit_folder_grants,
+)
 from yuxi.services.personal_gallery_settings import (
     load_personal_gallery_settings, personal_gallery_fields, personal_gallery_is_active,
 )
@@ -396,13 +402,48 @@ def is_enterprise_rough_root(category: ContentMaterialCategory | None) -> bool:
     )
 
 
-async def material_access_mode(db: AsyncSession, user: User) -> Literal["full", "rough_upload"]:
-    from yuxi.services.role_service import effective_permission_grants
+async def _material_folder_grants(db: AsyncSession, user: User) -> tuple[bool, list[str]]:
+    mode, grants = await material_permission_state(db, user)
+    return mode == "restricted", grants or []
 
-    grants = await effective_permission_grants(db, user)
-    if not grants or "material_rough.upload" not in grants:
-        return "full"
-    return "rough_upload"
+
+async def material_access_mode(db: AsyncSession, user: User) -> Literal["full", "rough_upload"]:
+    restricted, _grants = await _material_folder_grants(db, user)
+    return "rough_upload" if restricted else "full"
+
+
+def _folder_view_allowed(
+    grants: list[str],
+    category: ContentMaterialCategory | None,
+    *,
+    case_parent: ContentMaterialCategory | None = None,
+    case_root_ids: set[str] | None = None,
+    include_case_for_designer: bool = False,
+) -> bool:
+    if grant_allows_folder_view(
+        grants,
+        category,
+        legacy_may_view=_designer_may_see_category,
+        legacy_may_browse_case=_designer_may_browse_case,
+        case_parent=case_parent,
+    ):
+        return True
+    if (
+        include_case_for_designer
+        and category is not None
+        and case_root_ids
+        and not uses_explicit_folder_grants(grants)
+    ):
+        return category.id in case_root_ids or category.parent_id in case_root_ids
+    return False
+
+
+def _folder_upload_allowed(grants: list[str], category: ContentMaterialCategory | None) -> bool:
+    return grant_allows_folder_upload(
+        grants,
+        category,
+        legacy_may_upload=_designer_may_see_category,
+    )
 
 
 def _designer_may_see_category(category: ContentMaterialCategory | None) -> bool:
@@ -415,7 +456,28 @@ def _designer_may_see_category(category: ContentMaterialCategory | None) -> bool
 
 def _reject_outside_rough_upload(category: ContentMaterialCategory | None) -> None:
     if not _designer_may_see_category(category):
-        raise _error(403, "MATERIAL_PERMISSION_DENIED", "当前岗位只能上传企业共享毛坯房图库，或使用自己的素材")
+        raise _error(403, "MATERIAL_PERMISSION_DENIED", "当前岗位无权访问该图库")
+
+
+def _reject_folder_upload(category: ContentMaterialCategory | None, grants: list[str]) -> None:
+    if not _folder_upload_allowed(grants, category):
+        _reject_outside_rough_upload(category)
+
+
+def _reject_folder_view(
+    category: ContentMaterialCategory | None,
+    grants: list[str],
+    *,
+    case_parent: ContentMaterialCategory | None = None,
+) -> None:
+    if not grant_allows_folder_view(
+        grants,
+        category,
+        legacy_may_view=_designer_may_see_category,
+        legacy_may_browse_case=_designer_may_browse_case,
+        case_parent=case_parent,
+    ):
+        _reject_outside_rough_upload(category)
 
 
 def _designer_may_browse_case(category: ContentMaterialCategory | None, parent: ContentMaterialCategory | None) -> bool:
@@ -924,7 +986,7 @@ async def import_material_images(
 ) -> dict[str, Any]:
     if not files or len(files) > 50:
         raise _error(422, "MATERIAL_FILE_COUNT_INVALID", "每次必须上传 1–50 张图片")
-    rough_upload_only = await material_access_mode(db, actor_user or user) == "rough_upload"
+    restricted, folder_grants = await _material_folder_grants(db, actor_user or user)
     owner_uid = _owner_uid(user)
     if source_channel == "mp":
         from yuxi.services.personal_materials import upload_category
@@ -1001,8 +1063,8 @@ async def import_material_images(
             raise _error(422, "MATERIAL_CATEGORY_INVALID", "图库不存在或共享范围已变更")
         if manage_target_private and not _is_target_rough_category(resolved_category, owner_uid):
             raise _error(403, "MATERIAL_TARGET_SCOPE_FORBIDDEN", "员工素材模式只能管理该员工的个人图库")
-        if rough_upload_only:
-            _reject_outside_rough_upload(resolved_category)
+        if restricted:
+            _reject_folder_upload(resolved_category, folder_grants)
         if not can_contribute_to_category(user, resolved_category):
             raise _error(403, "MATERIAL_UPLOAD_FORBIDDEN", "不能向该图库上传素材")
         upload_filename = (file.filename or "").replace("\\", "/").split("/")[-1].strip()
@@ -1132,8 +1194,6 @@ async def create_material_share(
     target_private: bool = False,
     sharer_employee: ContentEmployee | None = None,
 ) -> dict[str, Any]:
-    if await material_access_mode(db, actor_user or user) == "rough_upload":
-        raise _error(403, "MATERIAL_PERMISSION_DENIED", "当前岗位只能上传企业共享毛坯房图库")
     owner_uid = _owner_uid(user)
     repo = MaterialLibraryRepository(db, include_shared=True)
     rows = await repo.list_image_items_with_assets_and_categories(owner_uid, payload.item_ids)
@@ -1151,6 +1211,10 @@ async def create_material_share(
         raise _error(422, "MATERIAL_SHARE_CHILD_GALLERY_REQUIRED", "只能分享二级图库中的图片")
     if any(item_category.id != category.id for _, _, item_category in ordered_rows):
         raise _error(422, "MATERIAL_SHARE_GALLERY_MISMATCH", "请选择同一个二级图库中的图片")
+    restricted, folder_grants = await _material_folder_grants(db, actor_user or user)
+    if restricted:
+        case_parent = await _load_case_parent(repo, category)
+        _reject_folder_view(category, folder_grants, case_parent=case_parent)
     if category.industry_slug == DECORATION_GALLERY_INDUSTRY_SLUG:
         if not (category.design_style or "").strip():
             raise _error(422, "MATERIAL_DESIGN_STYLE_REQUIRED", "请选择设计风格")
@@ -1534,7 +1598,7 @@ async def list_material_items(
 ) -> dict[str, Any]:
     if personal_folder == "rough":
         raise _error(404, "MATERIAL_PERSONAL_GALLERY_DISABLED", "个人毛坯图库已停用")
-    rough_upload_only = await material_access_mode(db, actor_user or user) == "rough_upload"
+    restricted, folder_grants = await _material_folder_grants(db, actor_user or user)
     if date_from and date_to and date_from > date_to:
         raise _error(422, "MATERIAL_DATE_RANGE_INVALID", "开始日期不能晚于结束日期")
     uploaded_from = (
@@ -1582,11 +1646,16 @@ async def list_material_items(
         if category
         else None
     )
-    if rough_upload_only:
+    if restricted and resolved_category is not None:
         case_parent = None
         if include_case_for_designer:
             case_parent = await _load_case_parent(MaterialLibraryRepository(db, include_shared=True), resolved_category)
-        if not _designer_may_browse_case(resolved_category, case_parent):
+        if not _folder_view_allowed(
+            folder_grants,
+            resolved_category,
+            case_parent=case_parent,
+            include_case_for_designer=include_case_for_designer,
+        ):
             _reject_outside_rough_upload(resolved_category)
     if (
         resolved_category is not None
@@ -1726,10 +1795,12 @@ async def update_material_item(
     previous_category = await repo.get_category(
         item.category_owner_uid or item.owner_uid, item.material_type, item.category
     )
-    if await material_access_mode(db, actor_user or user) == "rough_upload" and (
-        previous_category is None or previous_category.visibility != "private"
+    restricted, folder_grants = await _material_folder_grants(db, actor_user or user)
+    if restricted and (
+        previous_category is None
+        or not _folder_upload_allowed(folder_grants, previous_category)
     ):
-        raise _error(403, "MATERIAL_PERMISSION_DENIED", "企业共享毛坯房图库仅可上传")
+        raise _error(403, "MATERIAL_PERMISSION_DENIED", "当前岗位无权修改该图库素材")
     if previous_category is None or not _can_manage_item(user, item, previous_category):
         raise _error(403, "MATERIAL_MANAGE_FORBIDDEN", "只能管理自己上传的素材，管理员可管理企业共享素材")
     changes = payload.model_dump(exclude_unset=True)
@@ -1834,13 +1905,13 @@ async def get_material_categories(
         tenant_id=_tenant_id(user),
         material_type=material_type,
     )
-    rough_upload_only = await material_access_mode(db, user) == "rough_upload"
+    restricted, folder_grants = await _material_folder_grants(db, user)
     personal_settings = await load_personal_gallery_settings(db)
     categories = [
         category
         for category in await repo.list_categories(_owner_uid(user), material_type)
         if personal_gallery_is_active(category, personal_settings)
-        if not rough_upload_only or _designer_may_see_category(category)
+        if not restricted or _folder_view_allowed(folder_grants, category)
         if personal_folder != "rough" or _is_target_rough_category(category, _owner_uid(user))
         if not enterprise_rough_only or is_enterprise_rough_root(category)
         if not enterprise_generated_only or is_enterprise_generated_root(category)
@@ -1886,7 +1957,7 @@ async def get_material_categories(
                 **personal_gallery_fields(category, personal_settings),
                 "can_upload": can_contribute_to_category(user, category)
                 and personal_folder_key(category) not in {"generated", "works"}
-                and (not rough_upload_only or _designer_may_see_category(category)),
+                and (not restricted or _folder_upload_allowed(folder_grants, category)),
                 "can_manage": _can_manage_category(user, category),
                 "can_edit": user.role == "superadmin" if key else _can_manage_category(user, category),
                 "can_delete": user.role == "superadmin" if personal_folder_key(category) else (
@@ -1919,8 +1990,9 @@ async def create_material_category(
     actor_user: User | None = None,
     target_private: bool = False,
 ) -> dict[str, Any]:
-    if await material_access_mode(db, actor_user or user) == "rough_upload":
-        raise _error(403, "MATERIAL_PERMISSION_DENIED", "当前岗位只能上传企业共享毛坯房图库")
+    restricted, _folder_grants = await _material_folder_grants(db, actor_user or user)
+    if restricted:
+        raise _error(403, "MATERIAL_PERMISSION_DENIED", "当前岗位无权新建图库")
     if target_private:
         raise _error(403, "MATERIAL_TARGET_SCOPE_FORBIDDEN", "员工素材模式只能管理该员工的毛坯房图库")
     if payload.material_type == "image" and not _is_admin(user):
@@ -2030,8 +2102,9 @@ async def update_material_category(
     actor_user: User | None = None,
     target_private: bool = False,
 ) -> dict[str, Any]:
-    if await material_access_mode(db, actor_user or user) == "rough_upload":
-        raise _error(403, "MATERIAL_PERMISSION_DENIED", "当前岗位只能上传企业共享毛坯房图库")
+    restricted, _folder_grants = await _material_folder_grants(db, actor_user or user)
+    if restricted:
+        raise _error(403, "MATERIAL_PERMISSION_DENIED", "当前岗位无权修改图库")
     if material_type not in {"image", "cover_template"}:
         raise _error(422, "MATERIAL_TYPE_INVALID", "素材类型不存在")
     if material_type == "image":
@@ -2189,8 +2262,9 @@ async def delete_material_category(
     actor_user: User | None = None,
     target_private: bool = False,
 ) -> dict[str, Any]:
-    if await material_access_mode(db, actor_user or user) == "rough_upload":
-        raise _error(403, "MATERIAL_PERMISSION_DENIED", "当前岗位只能上传企业共享毛坯房图库")
+    restricted, _folder_grants = await _material_folder_grants(db, actor_user or user)
+    if restricted:
+        raise _error(403, "MATERIAL_PERMISSION_DENIED", "当前岗位无权删除图库")
     if material_type not in {"image", "cover_template"}:
         raise _error(422, "MATERIAL_TYPE_INVALID", "素材类型不存在")
     if material_type == "image":
@@ -2299,7 +2373,7 @@ async def list_image_galleries(
         material_type="image",
     )
     repo = MaterialLibraryRepository(db, include_shared=True)
-    rough_upload_only = await material_access_mode(db, user) == "rough_upload"
+    restricted, folder_grants = await _material_folder_grants(db, user)
     personal_settings = await load_personal_gallery_settings(db)
     listed_categories = [category for category in await repo.list_categories(_owner_uid(user), "image")
                          if personal_gallery_is_active(category, personal_settings)]
@@ -2307,11 +2381,12 @@ async def list_image_galleries(
     categories = [
         category
         for category in listed_categories
-        if not rough_upload_only
-        or _designer_may_see_category(category)
-        or (
-            include_case_for_designer
-            and (category.id in case_root_ids or category.parent_id in case_root_ids)
+        if not restricted
+        or _folder_view_allowed(
+            folder_grants,
+            category,
+            case_root_ids=case_root_ids,
+            include_case_for_designer=include_case_for_designer,
         )
         if personal_folder != "rough" or _is_target_rough_category(category, _owner_uid(user))
         if not is_storage_root(category)
@@ -2373,7 +2448,7 @@ async def list_image_galleries(
                 **personal_gallery_fields(category, personal_settings),
                 "can_upload": can_contribute_to_category(user, category)
                 and personal_folder_key(category) not in {"generated", "works"}
-                and (not rough_upload_only or _designer_may_see_category(category)),
+                and (not restricted or _folder_upload_allowed(folder_grants, category)),
                 "can_manage": _can_manage_category(user, category),
                 "can_edit": user.role == "superadmin" if personal_folder_key(category) else (
                     _can_manage_category(user, category)),
@@ -2400,6 +2475,22 @@ async def list_image_galleries(
     }
 
 
+async def _get_material_item_for_read(
+    db: AsyncSession,
+    repo: MaterialLibraryRepository,
+    user: User,
+    item_id: str,
+) -> ContentMaterialLibraryItem | None:
+    """Read path for file/thumbnail; employee admin view uses owner user, not rough-only filter."""
+    item = await repo.get_item_for_user(item_id, _owner_uid(user))
+    if item is None:
+        from yuxi.services.personal_materials import can_read_fixed_item
+
+        if await can_read_fixed_item(db, user, item_id):
+            item = await db.get(ContentMaterialLibraryItem, item_id)
+    return item
+
+
 async def get_material_file(
     db: AsyncSession,
     user: User,
@@ -2408,23 +2499,21 @@ async def get_material_file(
     target_private: bool = False,
     allow_case_browse: bool = False,
 ) -> tuple[bytes, str, str]:
+    del target_private
     repo = MaterialLibraryRepository(db, include_shared=True)
-    item = (
-        await repo.get_private_rough_item_for_owner(item_id, _owner_uid(user))
-        if target_private
-        else await repo.get_item_for_user(item_id, _owner_uid(user))
-    )
-    if item is None and not target_private:
-        from yuxi.services.personal_materials import can_read_fixed_item
-
-        if await can_read_fixed_item(db, user, item_id):
-            item = await db.get(ContentMaterialLibraryItem, item_id)
+    item = await _get_material_item_for_read(db, repo, user, item_id)
     if item is None:
         raise _error(404, "MATERIAL_NOT_FOUND", "素材不存在")
-    if await material_access_mode(db, user) == "rough_upload":
+    restricted, folder_grants = await _material_folder_grants(db, user)
+    if restricted:
         category = await repo.get_category(item.category_owner_uid or item.owner_uid, item.material_type, item.category)
         parent = await _load_case_parent(repo, category) if allow_case_browse else None
-        if not _designer_may_browse_case(category, parent):
+        if not _folder_view_allowed(
+            folder_grants,
+            category,
+            case_parent=parent,
+            include_case_for_designer=allow_case_browse,
+        ):
             _reject_outside_rough_upload(category)
     asset = await repo.get_asset(item.asset_id, item.owner_uid)
     if asset is None:
@@ -2447,23 +2536,21 @@ async def get_material_thumbnail_presigned_url(
     allow_case_browse: bool = False,
     presign_days: int = 1,
 ) -> str | None:
+    del target_private
     repo = MaterialLibraryRepository(db, include_shared=True)
-    item = (
-        await repo.get_private_rough_item_for_owner(item_id, _owner_uid(user))
-        if target_private
-        else await repo.get_item_for_user(item_id, _owner_uid(user))
-    )
-    if item is None and not target_private:
-        from yuxi.services.personal_materials import can_read_fixed_item
-
-        if await can_read_fixed_item(db, user, item_id):
-            item = await db.get(ContentMaterialLibraryItem, item_id)
+    item = await _get_material_item_for_read(db, repo, user, item_id)
     if item is None:
         raise _error(404, "MATERIAL_NOT_FOUND", "素材不存在")
-    if await material_access_mode(db, user) == "rough_upload":
+    restricted, folder_grants = await _material_folder_grants(db, user)
+    if restricted:
         category = await repo.get_category(item.category_owner_uid or item.owner_uid, item.material_type, item.category)
         parent = await _load_case_parent(repo, category) if allow_case_browse else None
-        if not _designer_may_browse_case(category, parent):
+        if not _folder_view_allowed(
+            folder_grants,
+            category,
+            case_parent=parent,
+            include_case_for_designer=allow_case_browse,
+        ):
             _reject_outside_rough_upload(category)
     asset = await repo.get_asset(item.asset_id, item.owner_uid)
     if asset is None:
@@ -2482,23 +2569,21 @@ async def get_material_thumbnail(
     target_private: bool = False,
     allow_case_browse: bool = False,
 ) -> tuple[bytes, str]:
+    del target_private
     repo = MaterialLibraryRepository(db, include_shared=True)
-    item = (
-        await repo.get_private_rough_item_for_owner(item_id, _owner_uid(user))
-        if target_private
-        else await repo.get_item_for_user(item_id, _owner_uid(user))
-    )
-    if item is None and not target_private:
-        from yuxi.services.personal_materials import can_read_fixed_item
-
-        if await can_read_fixed_item(db, user, item_id):
-            item = await db.get(ContentMaterialLibraryItem, item_id)
+    item = await _get_material_item_for_read(db, repo, user, item_id)
     if item is None:
         raise _error(404, "MATERIAL_NOT_FOUND", "素材不存在")
-    if await material_access_mode(db, user) == "rough_upload":
+    restricted, folder_grants = await _material_folder_grants(db, user)
+    if restricted:
         category = await repo.get_category(item.category_owner_uid or item.owner_uid, item.material_type, item.category)
         parent = await _load_case_parent(repo, category) if allow_case_browse else None
-        if not _designer_may_browse_case(category, parent):
+        if not _folder_view_allowed(
+            folder_grants,
+            category,
+            case_parent=parent,
+            include_case_for_designer=allow_case_browse,
+        ):
             _reject_outside_rough_upload(category)
     asset = await repo.get_asset(item.asset_id, item.owner_uid)
     if asset is None:
@@ -2530,10 +2615,9 @@ async def delete_material_item(
     if item is None:
         raise _error(404, "MATERIAL_NOT_FOUND", "素材不存在")
     category = await repo.get_category(item.category_owner_uid or item.owner_uid, item.material_type, item.category)
-    if await material_access_mode(db, actor_user or user) == "rough_upload" and (
-        category is None or category.visibility != "private"
-    ):
-        raise _error(403, "MATERIAL_PERMISSION_DENIED", "企业共享毛坯房图库仅可上传")
+    restricted, folder_grants = await _material_folder_grants(db, actor_user or user)
+    if restricted and (category is None or not _folder_upload_allowed(folder_grants, category)):
+        raise _error(403, "MATERIAL_PERMISSION_DENIED", "当前岗位无权删除该图库素材")
     if category is None or not _can_manage_item(user, item, category):
         raise _error(
             403,

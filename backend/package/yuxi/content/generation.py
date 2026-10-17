@@ -2,12 +2,10 @@ from __future__ import annotations
 
 import json
 import time
-from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_core.utils.json import parse_partial_json
 
 from yuxi.agents import load_chat_model, resolve_chat_model_spec
 from yuxi.utils.line_breaks import normalize_escaped_newlines
@@ -207,7 +205,6 @@ async def generate_direct_content(
     generation_prompt: str = DEFAULT_DIRECT_GENERATION_PROMPT,
     forbidden_lexicon: dict[str, list[str]] | None = None,
     knowledge_context: str = "",
-    on_delta: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
 ) -> ContentArtifactAIEditOutput:
     """用创作风格、爆款原文和用户原始输入直接生成内容，不执行工作流审核。"""
 
@@ -237,71 +234,18 @@ async def generate_direct_content(
     messages = [
         HumanMessage(content=prompt),
     ]
-    streaming_model = model.bind_tools(
+    generation_started_at = time.monotonic()
+    response = await model.bind_tools(
         [ContentArtifactAIEditOutput],
         tool_choice=ContentArtifactAIEditOutput.__name__,
-    )
-    arguments_by_index: dict[int, str] = {}
-    streamed_values: dict[str, Any] = {"title": "", "body": "", "topics": []}
-    generation_started_at = time.monotonic()
-    first_chunk_elapsed: float | None = None
-
-    async for chunk in streaming_model.astream(messages):
-        arguments_changed = False
-        for tool_chunk in getattr(chunk, "tool_call_chunks", None) or []:
-            arguments = tool_chunk.get("args") or ""
-            if not arguments:
-                continue
-            index = tool_chunk.get("index")
-            normalized_index = index if isinstance(index, int) else 0
-            arguments_by_index[normalized_index] = arguments_by_index.get(normalized_index, "") + arguments
-            arguments_changed = True
-            if first_chunk_elapsed is None:
-                first_chunk_elapsed = time.monotonic() - generation_started_at
-                logger.info(
-                    "Direct content model first chunk: model={} elapsed={:.2f}s",
-                    resolved_model,
-                    first_chunk_elapsed,
-                )
-        if not arguments_changed or on_delta is None:
-            continue
-
-        partial = parse_partial_json(arguments_by_index.get(0, ""))
-        if not isinstance(partial, dict):
-            continue
-        for field in ("title", "body", "topics"):
-            if field not in partial:
-                continue
-            value = partial[field]
-            if field in {"title", "body"}:
-                if not isinstance(value, str):
-                    continue
-                value = normalize_escaped_newlines(replace_forbidden_words(value, forbidden_replacements))
-                if field == "title":
-                    value = limit_content_title(value)
-                if value == streamed_values[field]:
-                    continue
-                previous = streamed_values[field]
-                delta = value[len(previous) :] if value.startswith(previous) else value
-            else:
-                if not isinstance(value, list):
-                    continue
-                value = [
-                    replace_forbidden_words(item, forbidden_replacements)
-                    for item in value
-                    if isinstance(item, str) and item
-                ]
-                if value == streamed_values[field]:
-                    continue
-                previous = streamed_values[field]
-                delta = value[len(previous) :] if value[: len(previous)] == previous else value
-            streamed_values[field] = value
-            await on_delta({"field": field, "delta": delta, "value": value})
-
-    arguments = arguments_by_index.get(0, "")
-    if not arguments:
+    ).ainvoke(messages)
+    tool_calls = getattr(response, "tool_calls", None) or []
+    arguments = tool_calls[0].get("args") if tool_calls else None
+    if isinstance(arguments, str):
+        arguments = json.loads(arguments)
+    if not isinstance(arguments, dict):
         raise ValueError("模型没有返回内容生成工具调用")
-    raw_output = ContentArtifactAIEditOutput.model_validate(json.loads(arguments))
+    raw_output = ContentArtifactAIEditOutput.model_validate(arguments)
     output = ContentArtifactAIEditOutput(
         title=limit_content_title(
             normalize_escaped_newlines(replace_forbidden_words(raw_output.title, forbidden_replacements))
@@ -317,9 +261,8 @@ async def generate_direct_content(
     if residual:
         raise ValueError("封禁词替换后仍有残留：" + "、".join(residual))
     logger.info(
-        "Direct content model completed: model={} first_chunk={:.2f}s total={:.2f}s",
+        "Direct content model completed: model={} total={:.2f}s",
         resolved_model,
-        first_chunk_elapsed or 0.0,
         time.monotonic() - generation_started_at,
     )
     return output

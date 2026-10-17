@@ -4,7 +4,9 @@ import { useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
 import { CheckCircle2, ChevronRight, FolderOpen, Image as ImageIcon, Search } from 'lucide-vue-next'
 
+import CaseGalleryStyleFilter from '@/components/material/CaseGalleryStyleFilter.vue'
 import { materialLibraryApi } from '@/apis/material_library_api'
+import { filterCaseGalleryChildren, isEnterpriseCaseGallery } from '@/utils/caseGallery'
 
 const props = defineProps({
   open: { type: Boolean, default: false },
@@ -32,6 +34,7 @@ const pageSize = 24
 const total = ref(0)
 const pendingItem = ref(null)
 const expandedGalleryIds = ref(new Set())
+const designStyleFilter = ref('')
 let loadVersion = 0
 
 const activeGallery = computed(() => galleries.value.find((item) => item.id === activeGalleryId.value))
@@ -46,13 +49,14 @@ function galleryChildren(parentId) {
   return galleries.value.filter((item) => item.parent_id === parentId)
 }
 
-function isCaseGallery(gallery) {
-  return Boolean(
-    gallery
-    && !gallery.parent_id
-    && gallery.visibility === 'enterprise'
-    && (gallery.image_design_role === 'reference' || gallery.name === '案例图库')
-  )
+const isCaseGallery = isEnterpriseCaseGallery
+
+const caseGalleryExpanded = computed(() =>
+  rootGalleries.value.some((gallery) => isCaseGallery(gallery) && isGalleryExpanded(gallery.id))
+)
+
+function filteredCaseChildren(parentId) {
+  return filterCaseGalleryChildren(galleryChildren(parentId), designStyleFilter.value)
 }
 
 function isGalleryExpanded(galleryId) {
@@ -185,12 +189,27 @@ async function manageMaterials() {
   await router.push('/materials/images')
 }
 
+watch(designStyleFilter, async () => {
+  const active = galleries.value.find((item) => item.id === activeGalleryId.value)
+  if (active && active.parent_id && isCaseGallery(galleries.value.find((item) => item.id === active.parent_id))) {
+    const visible = filteredCaseChildren(active.parent_id)
+    if (designStyleFilter.value && !visible.some((item) => item.id === activeGalleryId.value)) {
+      if (visible[0]) await chooseGallery(visible[0].id)
+      else {
+        activeGalleryId.value = active.parent_id
+        await loadItems()
+      }
+    }
+  }
+})
+
 watch(() => props.open, (open) => {
   if (!open) return
   pendingItem.value = null
   queryInput.value = ''
   query.value = ''
   page.value = 1
+  designStyleFilter.value = ''
   expandedGalleryIds.value = new Set()
   void loadGalleries()
 })
@@ -213,6 +232,9 @@ onBeforeUnmount(() => {
     <div class="material-picker">
       <aside class="gallery-sidebar">
         <div class="sidebar-heading"><strong>图库</strong><span>{{ rootGalleries.length }}</span></div>
+        <div v-if="caseGalleryExpanded" class="sidebar-style-filter">
+          <CaseGalleryStyleFilter v-model="designStyleFilter" />
+        </div>
         <div v-if="loadingGalleries" class="sidebar-state">正在加载…</div>
         <template v-else>
           <div v-for="gallery in rootGalleries" :key="gallery.id" class="gallery-tree-group">
@@ -229,7 +251,7 @@ onBeforeUnmount(() => {
             </button>
             <div v-if="galleryChildren(gallery.id).length && (!isCaseGallery(gallery) || isGalleryExpanded(gallery.id))" class="gallery-tree-children">
               <button
-                v-for="child in galleryChildren(gallery.id)"
+                v-for="child in (isCaseGallery(gallery) ? filteredCaseChildren(gallery.id) : galleryChildren(gallery.id))"
                 :key="child.id"
                 type="button"
                 class="gallery-button child"
@@ -305,6 +327,8 @@ onBeforeUnmount(() => {
 .material-picker { min-height: 560px; display: grid; grid-template-columns: 190px minmax(0, 1fr); border: 1px solid var(--gray-150); border-radius: 9px; overflow: hidden; background: var(--gray-0); }
 .gallery-sidebar { padding: 14px 10px; border-right: 1px solid var(--gray-150); background: var(--gray-25); }
 .sidebar-heading { padding: 0 8px 10px; display: flex; align-items: center; justify-content: space-between; color: var(--color-text); }
+.sidebar-style-filter { padding: 0 4px 10px; }
+.sidebar-style-filter :deep(.case-style-select) { width: 100%; }
 .sidebar-heading span { color: var(--color-text-tertiary); font-size: 11px; }
 .gallery-tree-group { margin-bottom: 4px; }
 .gallery-button { width: 100%; padding: 9px 8px; border: 0; border-radius: 7px; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 7px; color: var(--color-text-secondary); background: transparent; text-align: left; cursor: pointer; }

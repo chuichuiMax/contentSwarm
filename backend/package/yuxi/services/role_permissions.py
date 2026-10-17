@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from yuxi.services.material_folder_permissions import is_valid_material_grant_key
+
 _CRUD = (("view_list", "列表查看"), ("create", "新增"), ("view", "查看"), ("delete", "删除"))
 
 
@@ -30,7 +32,7 @@ PERMISSION_CATALOG: list[dict[str, Any]] = [
     {
         "module_key": "visual",
         "module": "视觉创作",
-        "lists": [_entry("material_rough", "素材库-企业共享-毛坯房图库", (("upload", "上传"),))],
+        "lists": [],
     },
     {
         "module_key": "image_design",
@@ -83,12 +85,19 @@ def all_permission_keys() -> set[str]:
     return {action["key"] for module in PERMISSION_CATALOG for item in module["lists"] for action in item["actions"]}
 
 
-def normalize_grants(grants: list[str] | None, *, strict: bool = True) -> list[str]:
+def normalize_grants(
+    grants: list[str] | None,
+    *,
+    strict: bool = True,
+    extra_allowed: set[str] | None = None,
+) -> list[str]:
     allowed = all_permission_keys()
+    if extra_allowed:
+        allowed |= extra_allowed
     normalized: list[str] = []
     seen: set[str] = set()
     for key in grants or []:
-        if key not in allowed:
+        if key not in allowed and not is_valid_material_grant_key(key):
             if strict:
                 raise ValueError(key)
             continue
@@ -97,3 +106,25 @@ def normalize_grants(grants: list[str] | None, *, strict: bool = True) -> list[s
         seen.add(key)
         normalized.append(key)
     return normalized
+
+
+async def permission_catalog(db) -> list[dict[str, Any]]:
+    from yuxi.services.material_folder_permissions import list_material_folder_permission_entries
+
+    folder_entries = await list_material_folder_permission_entries(db)
+    catalog: list[dict[str, Any]] = []
+    for module in PERMISSION_CATALOG:
+        if module["module_key"] == "visual":
+            catalog.append({**module, "lists": folder_entries})
+        else:
+            catalog.append(module)
+    return catalog
+
+
+def catalog_permission_keys(catalog: list[dict[str, Any]]) -> set[str]:
+    keys = set(all_permission_keys())
+    for module in catalog:
+        for item in module.get("lists") or []:
+            for action in item.get("actions") or []:
+                keys.add(action["key"])
+    return keys

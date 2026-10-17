@@ -24,9 +24,12 @@ import {
 import { contentApi } from '@/apis/content_api'
 import { materialLibraryApi } from '@/apis/material_library_api'
 import { useUserStore } from '@/stores/user'
+import CaseGalleryStyleFilter from '@/components/material/CaseGalleryStyleFilter.vue'
 import PageHeader from '@/components/shared/PageHeader.vue'
 import PosterOcrReviewModal from '@/components/content/PosterOcrReviewModal.vue'
 import VisualWorkspaceHeader from '@/components/content/VisualWorkspaceHeader.vue'
+import { DECORATION_GALLERY_STYLES } from '@/data/decorationGalleryStyles'
+import { isEnterpriseCaseGallery } from '@/utils/caseGallery'
 
 const route = useRoute()
 const router = useRouter()
@@ -223,11 +226,6 @@ const uploadProgressText = computed(() => {
 const deleteTargetOptions = computed(() => categories.value.filter((item) => item.id !== deletingCategory.value?.id &&
   (deletingCategory.value?.personal_folder ? item.visibility === 'private' && (item.personal_folder || item.is_global_personal)
     : (deletingCategory.value?.visibility !== 'enterprise' || item.visibility === 'enterprise'))))
-const decorationGalleryStyles = [
-  '复合写意', '写意木构', '江南印象', '轻欧简美', '欧美香颂', '新装饰主义', '北欧之光',
-  '意境东方', '雅致现代', '优雅缤纷', '极简侘寂', '复古风潮', '艺术室界',
-  '雅致灰调', '意式轻奢', '意式极简', '中古风潮', '宋氏美学', '现代之源', '复古写意'
-]
 const isDecorationGalleryChild = computed(() =>
   ['create', 'edit'].includes(categoryEditorMode.value) &&
   materialType.value === 'image' &&
@@ -237,12 +235,6 @@ const isDecorationGalleryChild = computed(() =>
     isEnterpriseCaseGallery(categoryMap.value[categoryParentId.value])
   )
 )
-function isEnterpriseCaseGallery(gallery, parent = null) {
-  const root = gallery?.parent_id ? parent : gallery
-  return gallery?.visibility === 'enterprise' &&
-    root?.visibility === 'enterprise' && root?.image_design_role === 'reference'
-}
-
 const isCaseGalleryPage = computed(() =>
   materialType.value === 'image' &&
   isTopLevelGallery.value &&
@@ -1314,6 +1306,7 @@ onBeforeUnmount(() => {
           <a-select-option v-for="item in industries" :key="item.slug" :value="item.slug">{{ item.name }}</a-select-option>
           <a-select-option value="uncategorized">未分类行业</a-select-option>
         </a-select>
+        <CaseGalleryStyleFilter v-else-if="isCaseGalleryPage" v-model="designStyleFilter" />
         <a-select v-else-if="materialType === 'cover_template'" v-model:value="categoryFilter" class="category-filter" placeholder="全部分类" allow-clear @change="page = 1; loadItems()">
           <a-select-option v-for="item in categories" :key="item.code" :value="item.code">{{ item.name }}</a-select-option>
         </a-select>
@@ -1336,24 +1329,6 @@ onBeforeUnmount(() => {
         </a-result>
         <div v-for="group in galleryGroups" :key="group.slug" class="gallery-section">
           <h3>{{ group.name }}</h3>
-          <div v-if="isCaseGalleryPage" class="design-style-filter" role="tablist" aria-label="设计风格筛选">
-            <button
-              type="button"
-              role="tab"
-              :aria-selected="!designStyleFilter"
-              :class="{ active: !designStyleFilter }"
-              @click="designStyleFilter = ''"
-            >全部</button>
-            <button
-              v-for="style in decorationGalleryStyles"
-              :key="style"
-              type="button"
-              role="tab"
-              :aria-selected="designStyleFilter === style"
-              :class="{ active: designStyleFilter === style }"
-              @click="designStyleFilter = style"
-            >{{ style }}</button>
-          </div>
           <div class="gallery-grid">
           <article v-for="gallery in group.galleries" :key="gallery.id" class="gallery-card">
             <button type="button" class="gallery-open" @click="enterGallery(gallery)">
@@ -1476,7 +1451,7 @@ onBeforeUnmount(() => {
         </a-select></label>
         <label v-if="isCaseGalleryUpload"><span>设计风格 <b>*</b></span>
           <a-select v-model:value="uploadDesignStyle" placeholder="请选择设计风格" :disabled="uploading">
-            <a-select-option v-for="style in decorationGalleryStyles" :key="style" :value="style">{{ style }}</a-select-option>
+            <a-select-option v-for="style in DECORATION_GALLERY_STYLES" :key="style" :value="style">{{ style }}</a-select-option>
           </a-select>
         </label>
       </div>
@@ -1520,7 +1495,7 @@ onBeforeUnmount(() => {
         <label v-if="isDecorationGalleryChild"><span>楼盘名称 <b>*</b></span><a-input v-model:value="categoryForm.building_name" maxlength="80" placeholder="请输入楼盘名称" /></label>
         <label v-if="isDecorationGalleryChild"><span>面积㎡ <b>*</b></span><a-input v-model:value="categoryForm.area" maxlength="32" placeholder="请输入面积" /></label>
         <label v-if="isDecorationGalleryChild"><span>设计风格 <b>*</b></span><a-select v-model:value="categoryForm.design_style" placeholder="请选择设计风格">
-          <a-select-option v-for="style in decorationGalleryStyles" :key="style" :value="style">{{ style }}</a-select-option>
+          <a-select-option v-for="style in DECORATION_GALLERY_STYLES" :key="style" :value="style">{{ style }}</a-select-option>
         </a-select></label>
         <label><span>说明</span><a-textarea v-model:value="categoryForm.description" :rows="3" maxlength="255" show-count :placeholder="materialType === 'image' ? '说明图库收纳的图片范围，方便团队快速判断' : '说明这个分类适用的封面场景'" /></label>
       </div>
@@ -1586,11 +1561,6 @@ onBeforeUnmount(() => {
 .upload-failure-notice strong { font-size: 14px; }
 .gallery-section, .material-section { margin-bottom: 22px; }
 .gallery-section h3, .material-section h3 { margin: 0 0 12px; color: var(--color-text); font-size: 15px; }
-.design-style-filter { display: flex; gap: 24px; margin: -2px 0 16px; overflow-x: auto; border-bottom: 1px solid var(--gray-100); white-space: nowrap; }
-.design-style-filter button { position: relative; padding: 0 0 10px; border: 0; background: transparent; color: var(--color-text-secondary); cursor: pointer; font-size: 14px; }
-.design-style-filter button::after { position: absolute; right: 0; bottom: -1px; left: 0; height: 2px; background: transparent; content: ''; }
-.design-style-filter button:hover, .design-style-filter button.active { color: var(--color-primary); }
-.design-style-filter button.active { font-weight: 600; }.design-style-filter button.active::after { background: var(--color-primary); }
 .gallery-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 18px; }
 .gallery-card { position: relative; overflow: hidden; border: 1px solid var(--gray-150); border-radius: 14px; background: var(--gray-0); transition: transform .18s, box-shadow .18s, border-color .18s; }
 .gallery-card:hover { transform: translateY(-2px); border-color: var(--color-primary); box-shadow: 0 8px 24px rgb(20 35 70 / 10%); }

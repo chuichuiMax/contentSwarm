@@ -13,9 +13,10 @@ from yuxi.repositories.role_repository import RoleRepository
 from yuxi.repositories.user_repository import UserRepository
 from yuxi.services.role_permissions import (
     IMAGE_DESIGN_PAGE_PERMISSION,
-    PERMISSION_CATALOG,
     ROUGH_UPLOAD_PERMISSION,
+    catalog_permission_keys,
     normalize_grants,
+    permission_catalog,
 )
 from yuxi.storage.postgres.models_business import User
 from yuxi.storage.postgres.models_content import ContentRole
@@ -321,8 +322,13 @@ async def get_role_permissions(db: AsyncSession, role_pk: str) -> dict[str, Any]
     role = await RoleRepository(db).get(role_pk)
     if role is None:
         raise _role_error(404, "ROLE_NOT_FOUND", "角色不存在")
-    grants = normalize_grants(role.permissions, strict=False)
-    return {"role": role.to_dict(), "catalog": PERMISSION_CATALOG, "grants": grants}
+    catalog = await permission_catalog(db)
+    grants = normalize_grants(
+        role.permissions,
+        strict=False,
+        extra_allowed=catalog_permission_keys(catalog),
+    )
+    return {"role": role.to_dict(), "catalog": catalog, "grants": grants}
 
 
 async def update_role_permissions(
@@ -332,12 +338,14 @@ async def update_role_permissions(
     role = await repo.get(role_pk)
     if role is None:
         raise _role_error(404, "ROLE_NOT_FOUND", "角色不存在")
+    catalog = await permission_catalog(db)
+    allowed = catalog_permission_keys(catalog)
     try:
-        grants = normalize_grants(payload.grants)
+        grants = normalize_grants(payload.grants, extra_allowed=allowed)
     except ValueError as exc:
         raise _role_error(422, "ROLE_PERMISSION_INVALID", "存在无效权限项") from exc
     role = await repo.update(role, {"permissions": grants})
-    return {"role": role.to_dict(), "catalog": PERMISSION_CATALOG, "grants": grants}
+    return {"role": role.to_dict(), "catalog": catalog, "grants": grants}
 
 
 async def delete_role(db: AsyncSession, role_pk: str) -> dict[str, Any]:
