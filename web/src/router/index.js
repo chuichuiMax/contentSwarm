@@ -33,6 +33,16 @@ const router = createRouter({
       meta: { requiresAuth: false }
     },
     {
+      path: '/customer-leads',
+      component: AppLayout,
+      children: [{
+        path: '',
+        name: 'CustomerLeads',
+        component: () => import('../views/CustomerLeadView.vue'),
+        meta: { requiresAuth: true }
+      }]
+    },
+    {
       path: '/auth/oidc/callback', // oidc登录回调页面
       name: 'OIDCCallback',
       component: () => import('@/views/OIDCCallbackView.vue'),

@@ -72,6 +72,7 @@ x-api-worker-env: &api-worker-env
   HYCANVAS_WORKSPACE_ID: ${HYCANVAS_WORKSPACE_ID:-00000000-0000-4000-8000-000000001001}
   WECHAT_MP_APPID: ${WECHAT_MP_APPID:-}
   WECHAT_MP_SECRET: ${WECHAT_MP_SECRET:-}
+  WECHAT_MP_ENTRY_ENV_VERSION: ${WECHAT_MP_ENTRY_ENV_VERSION:-release}
   # Model request timeouts
   EMBEDDING_TIMEOUT: ${EMBEDDING_TIMEOUT:-600}
   LLM_TIMEOUT: ${LLM_TIMEOUT:-600}
@@ -200,8 +201,15 @@ services:
       - .env
     environment:
       <<: *api-worker-env
-    command: watchfiles --filter python "arq server.worker_main.WorkerSettings" /app/server /app/package
+    command: python -m server.worker_dev
     restart: unless-stopped
+    stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os,sys; from redis import Redis; sys.exit(not Redis.from_url(os.environ['REDIS_URL']).exists('arq:queue:health-check'))"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 180s
     depends_on:
       postgres:
         condition: service_healthy

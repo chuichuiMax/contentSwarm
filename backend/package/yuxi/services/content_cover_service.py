@@ -1312,6 +1312,10 @@ async def delete_cover_asset(db: AsyncSession, user: User, asset_id: str) -> dic
         raise _error(409, "POSTER_TEMPLATE_DELETE_REQUIRED", "请从大字报素材库删除蒙版")
     if await repo.asset_is_in_active_job(item.id, owner_uid):
         raise _error(409, "COVER_ASSET_IN_USE", "素材正在被封面任务使用，任务结束后再删除")
+    from yuxi.services.material_share_jobs import asset_has_pending_share
+
+    if await asset_has_pending_share(db, item.id):
+        raise _error(409, "MATERIAL_SHARE_IN_PROGRESS", "素材正在生成案例分享，请完成后再删除")
     try:
         await get_minio_client().adelete_file(item.bucket_name, item.object_name)
     except StorageError as exc:

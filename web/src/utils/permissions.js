@@ -30,10 +30,12 @@ const HOME_CANDIDATES = [
   ['resident_population.view_list', '/config-manage/resident-populations'],
   ['variable.view_list', '/config-manage/variables'],
   ['business_variable.view_list', '/config-manage/business-variables'],
-  ['process_standard.view_list', '/config-manage/process-standards']
+  ['process_standard.view_list', '/config-manage/process-standards'],
+  ['customer_lead.view_list', '/customer-leads']
 ]
 
 const SCOPED_PATH_RULES = [
+  { prefix: '/customer-leads', any: ['customer_lead.view_list'] },
   { prefix: '/materials', any: [ROUGH_UPLOAD_PERMISSION] },
   { prefix: '/content/image-design', any: [IMAGE_DESIGN_PAGE_PERMISSION] },
   { prefix: '/hycanvas', any: [] },

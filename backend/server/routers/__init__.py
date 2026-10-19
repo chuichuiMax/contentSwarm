@@ -31,6 +31,7 @@ from server.routers.process_standard_router import content_process_standards
 from server.routers.target_audience_router import content_target_audiences
 from server.routers.resident_population_router import content_resident_populations
 from server.routers.mp_router import mp
+from server.routers.case_visit_router import case_visits
 from server.routers.material_library_router import material_library, public_share_router as public_share_router
 from server.routers.dangjia_router import dangjia
 
@@ -72,6 +73,7 @@ router.include_router(content_business_variables)  # /api/content-business-varia
 router.include_router(content_process_standards)  # /api/content-process-standards/* 工艺类型列表
 router.include_router(material_library)  # /api/material-library/* 素材库
 router.include_router(mp)  # /api/mp/* 获客小程序
+router.include_router(case_visits)  # 访客预约与客资报表
 router.include_router(dangjia)  # /api/dangjia/* 当家外部内容接入
 
 if not _LITE_MODE:

@@ -173,6 +173,14 @@ const mainList = computed(() => {
     permissionAny: ['workspace.view_list']
   })
 
+  items.push({
+    name: '客资报表',
+    path: '/customer-leads',
+    icon: ClipboardList,
+    activeIcon: ClipboardList,
+    permissionAny: ['customer_lead.view_list']
+  })
+
   if (userStore.isAdmin) {
     items.push({
       name: infoStore.kbMenuLabel,

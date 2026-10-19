@@ -427,6 +427,42 @@ class PostgresManager(metaclass=SingletonMeta):
             "ALTER TABLE IF EXISTS content_material_shares ADD COLUMN IF NOT EXISTS design_style VARCHAR(32)",
             "ALTER TABLE IF EXISTS content_material_shares ADD COLUMN IF NOT EXISTS sharer_name VARCHAR(80)",
             "ALTER TABLE IF EXISTS content_material_shares ADD COLUMN IF NOT EXISTS sharer_phone VARCHAR(64)",
+            """
+            DO $$ BEGIN
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = current_schema() AND table_name = 'content_material_shares'
+                    AND column_name = 'sharer_uid') THEN
+                    ALTER TABLE content_material_shares ADD COLUMN IF NOT EXISTS sharer_uid VARCHAR(255);
+                    UPDATE content_roles SET permissions = (
+                        SELECT jsonb_agg(DISTINCT grant_key)
+                        FROM jsonb_array_elements_text(permissions::jsonb ||
+                            '["customer_lead.view_list","customer_lead.delete"]'::jsonb) AS grant_key
+                    ) WHERE jsonb_array_length(permissions::jsonb) > 0;
+                END IF;
+            END $$
+            """,
+            "ALTER TABLE content_material_shares ADD COLUMN IF NOT EXISTS sharer_employee_id VARCHAR(64)",
+            "ALTER TABLE content_material_shares ADD COLUMN IF NOT EXISTS sharer_department_id INTEGER",
+            "ALTER TABLE content_material_shares ADD COLUMN IF NOT EXISTS source_platform VARCHAR(16)",
+            "ALTER TABLE content_material_shares ADD COLUMN IF NOT EXISTS mp_entry_code VARCHAR(24)",
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_material_share_mp_entry_code "
+            "ON content_material_shares(mp_entry_code)",
+            "ALTER TABLE content_case_visit_leads ADD COLUMN IF NOT EXISTS booking_revision INTEGER NOT NULL DEFAULT 1",
+            "ALTER TABLE content_case_visit_leads ADD COLUMN IF NOT EXISTS read_revision INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE content_case_visit_leads "
+            "ADD COLUMN IF NOT EXISTS follow_status VARCHAR(16) NOT NULL DEFAULT 'pending'",
+            "ALTER TABLE content_case_visit_leads ADD COLUMN IF NOT EXISTS followed_at TIMESTAMP",
+            """UPDATE content_material_shares AS s SET source_platform = 'mp'
+               FROM content_material_share_jobs AS j
+               WHERE s.token = j.token AND s.sharer_uid = j.requester_uid AND s.source_platform IS NULL""",
+            "CREATE INDEX IF NOT EXISTS ix_content_material_shares_sharer_uid ON content_material_shares(sharer_uid)",
+            """
+            UPDATE content_material_shares AS s
+            SET sharer_uid = u.uid, sharer_employee_id = e.id, sharer_department_id = u.department_id
+            FROM users AS u JOIN content_employees AS e ON e.login_account = u.phone_number
+            WHERE s.sharer_uid IS NULL AND s.owner_uid = u.uid AND u.is_deleted = 0
+                AND s.sharer_phone = e.login_account AND s.sharer_name = e.name
+            """,
             "ALTER TABLE IF EXISTS content_material_categories ADD COLUMN IF NOT EXISTS parent_id VARCHAR(64)",
             "ALTER TABLE IF EXISTS content_material_categories ADD COLUMN IF NOT EXISTS design_style VARCHAR(32)",
             "ALTER TABLE IF EXISTS content_material_categories ADD COLUMN IF NOT EXISTS building_name VARCHAR(80)",

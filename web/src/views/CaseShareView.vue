@@ -1,7 +1,10 @@
 <template>
   <main class="case-share-page">
     <p v-if="loading" class="state">正在加载案例…</p>
-    <p v-else-if="error" class="state error">{{ error }}</p>
+    <div v-else-if="error || statusMessage" class="state">
+      <p :class="{ error }">{{ error || statusMessage }}</p>
+      <button @click="loadShare()">重新加载</button>
+    </div>
     <article v-else-if="share" class="case-share">
       <img v-if="firstImage" class="case-image case-cover" :src="imageUrl(firstImage.url)" :alt="firstImage.file_name" />
       <section class="case-details">
@@ -26,19 +29,30 @@
         :alt="image.file_name"
       />
     </article>
+    <footer v-if="share && !loading && !error && !statusMessage" class="booking-bar">
+      <a :href="bookingUrl">免费预约参观工地</a>
+    </footer>
   </main>
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onBeforeUnmount, ref } from 'vue'
 import { useRoute } from 'vue-router'
-import { apiGet } from '@/apis/base'
+import { materialLibraryApi } from '@/apis/material_library_api'
 import { apiUrl } from '@/utils/apiUrl'
 
 const route = useRoute()
 const loading = ref(true)
 const error = ref('')
 const share = ref(null)
+const statusMessage = computed(() => ({
+  pending: '案例正在准备中',
+  unknown: '案例暂未就绪，请稍后重试',
+  failed: '案例生成失败，请联系分享人重新分享'
+})[share.value?.status] || '')
+let pollTimer
+let loadVersion = 0
+let disposed = false
 
 const firstImage = computed(() => share.value?.images?.[0] || null)
 const remainingImages = computed(() => share.value?.images?.slice(1) || [])
@@ -47,23 +61,40 @@ const formattedArea = computed(() => {
   return area && !area.endsWith('㎡') ? `${area}㎡` : area
 })
 const imageUrl = (url) => apiUrl(url || '')
+const bookingUrl = computed(() => apiUrl(`/api/material-library/shares/${encodeURIComponent(route.params.shareId)}/booking`))
 
-onMounted(async () => {
+async function loadShare(attempt = 0) {
+  clearTimeout(pollTimer)
+  const version = ++loadVersion
+  if (!attempt) loading.value = true
+  error.value = ''
   try {
-    const response = await apiGet(`/api/material-library/shares/${encodeURIComponent(route.params.shareId)}`, {}, false)
+    const response = await materialLibraryApi.getPublicShare(route.params.shareId)
+    if (disposed || version !== loadVersion) return
     share.value = response.share
-    document.title = share.value?.gallery_name || '案例分享'
+    document.title = share.value?.gallery_name || share.value?.title || '案例分享'
+    if (['unknown', 'pending'].includes(share.value?.status) && attempt < 15) {
+      pollTimer = setTimeout(() => loadShare(attempt + 1), 2000)
+    }
   } catch (requestError) {
+    if (disposed || version !== loadVersion) return
     error.value = requestError?.message || '案例不存在或已不可用'
   } finally {
-    loading.value = false
+    if (!disposed && version === loadVersion) loading.value = false
   }
+}
+onMounted(() => loadShare())
+onBeforeUnmount(() => {
+  disposed = true
+  clearTimeout(pollTimer)
 })
 </script>
 
 <style scoped lang="less">
 .case-share-page { min-height: 100vh; background: #f5f4f1; color: #27231f; }
-.case-share { max-width: 760px; margin: 0 auto; padding-bottom: 24px; }
+.case-share { max-width: 760px; margin: 0 auto; padding-bottom: 108px; }
+.booking-bar { position: fixed; z-index: 3; bottom: 0; left: 0; right: 0; padding: 12px 20px calc(12px + env(safe-area-inset-bottom)); background: var(--gray-0); box-shadow: 0 -2px 16px #0001; }
+.booking-bar a { display: block; max-width: 680px; margin: auto; padding: 12px; border-radius: 8px; background: var(--main-700); color: var(--gray-0); text-align: center; text-decoration: none; font-weight: 600; }
 .case-image { display: block; width: 100%; height: auto; background: #e7e3dd; }
 .case-details { padding: 18px 20px 20px; background: #fff; }
 .case-details h1 { margin: 0; font-size: 21px; line-height: 1.35; }

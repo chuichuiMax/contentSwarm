@@ -1,8 +1,9 @@
+import io
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-from fastapi import HTTPException
+from fastapi import HTTPException, UploadFile
 
 from yuxi.services import material_library_service
 from yuxi.storage.postgres.models_content import ContentMaterialCategory
@@ -36,6 +37,8 @@ async def test_pc_uncategorized_upload_keeps_private_category(monkeypatch):
         deleted_at=None,
         image_design_role=None,
         name="未分类",
+        material_type="image",
+        parent_id=None,
     )
     resolve = AsyncMock(return_value=(category, None))
     recheck = AsyncMock(return_value=category)
@@ -50,7 +53,7 @@ async def test_pc_uncategorized_upload_keeps_private_category(monkeypatch):
         await material_library_service.import_material_images(
             object(),
             SimpleNamespace(uid="owner", role="user"),
-            [SimpleNamespace(filename="")],
+            [UploadFile(file=io.BytesIO(), filename="empty.png")],
             category="uncategorized",
         )
 

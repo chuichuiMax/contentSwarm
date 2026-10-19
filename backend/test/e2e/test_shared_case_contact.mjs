@@ -3,9 +3,13 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import test from 'node:test'
 import { runInNewContext } from 'node:vm'
+import { pathToFileURL } from 'node:url'
 
 assert.ok(process.env.SHARE_MINIAPP_ROOT, 'Set SHARE_MINIAPP_ROOT to the mini-program source directory')
 const page = readFileSync(resolve(process.env.SHARE_MINIAPP_ROOT, 'pages/materials/shared-case.vue'), 'utf8')
+const { caseShareViewData } = await import(pathToFileURL(resolve(process.env.SHARE_MINIAPP_ROOT, 'utils/case-share-view.mjs')))
+const content = readFileSync(resolve(process.env.SHARE_MINIAPP_ROOT, 'components/case-share-content.vue'), 'utf8')
+const contentComponent = runInNewContext(content.match(/<script>([\s\S]*?)<\/script>/)[1].replace(/^import .*$/gm, '').replace('export default', 'globalThis.content =') + '\ncontent', { formatArea: area => `${area}㎡` })
 const script = page.match(/<script>([\s\S]*?)<\/script>/)[1]
   .replace(/^import .*$/gm, '')
   .replace('export default', 'globalThis.component =')
@@ -13,8 +17,10 @@ const script = page.match(/<script>([\s\S]*?)<\/script>/)[1]
 function loadComponent(share) {
   const calls = []
   const context = {
+    clearTimeout, setTimeout,
+    DEFAULT_CASE_SHARE_COVER: '/static/case-share-default.jpg',
     mpContentApi: { getShare: async () => ({ share }) },
-    buildSharedCaseImages: () => [],
+    CaseShareContent: {}, caseShareViewData,
     formatArea: (area) => `${area}㎡`,
     publicMediaUrl: (url) => url,
     saveLastShareId: () => {},
@@ -45,18 +51,18 @@ test('mini-program loads the original sharer contact and dials that number', asy
   assert.equal(instance.caseInfo.sharerName, '测试分享员工')
   assert.equal(instance.caseInfo.sharerPhone, '19900000001')
   assert.deepEqual(calls, ['19900000001'])
-  const fields = component.computed.metaItems.call(instance)
+  const fields = contentComponent.computed.metaItems.call(instance)
   assert.equal(fields.map((item) => item.label).join(','), '楼盘,面积,联系人,风格')
   assert.equal(fields.find((item) => item.label === '联系人').value, '测试分享员工')
   const style = fields.find((item) => item.label === '风格')
   assert.equal(style.wide, false)
   assert.equal(component.onShareAppMessage.call(instance).path,
     '/pages/materials/shared-case?shareId=original-share-token')
-  assert.match(page, /v-if="caseInfo\.sharerPhone"[^>]*class="project-field share-phone"[^>]*@click="callSharer"/)
-  assert.match(page, /v-if="metaItems\.length \|\| caseInfo\.sharerPhone" class="project-card"/)
-  assert.match(page, /<text class="field-value">\{\{ caseInfo\.sharerPhone \}\}<\/text>/)
-  assert.match(page, /\.share-phone\s*\{\s*grid-column:\s*1 \/ -1;\s*color:\s*var\(--share-phone-color\);/)
-  assert.match(page, /--share-phone-color:\s*#5b7cff;/)
+  assert.match(content, /v-if="caseInfo\.sharerPhone"[^>]*class="project-field share-phone"[^>]*@click="callSharer"/)
+  assert.match(content, /v-if="metaItems\.length \|\| caseInfo\.sharerPhone" class="project-card"/)
+  assert.match(content, /<text class="field-value">\{\{ caseInfo\.sharerPhone \}\}<\/text>/)
+  assert.match(content, /\.share-phone\s*\{\s*grid-column:\s*1 \/ -1;\s*color:\s*var\(--share-phone-color\);/)
+  assert.match(content, /--share-phone-color:\s*#5b7cff;/)
 })
 
 test('legacy mini-program share keeps style full width with no contact', async () => {
@@ -68,7 +74,7 @@ test('legacy mini-program share keeps style full width with no contact', async (
 
   assert.equal(instance.caseInfo.sharerName, '')
   assert.equal(instance.caseInfo.sharerPhone, '')
-  assert.equal(component.computed.metaItems.call(instance).find((item) => item.label === '风格').wide, true)
+  assert.equal(contentComponent.computed.metaItems.call(instance).find((item) => item.label === '风格').wide, true)
 })
 
 test('mini-program displays partial contact without inventing a missing name or phone', async () => {
@@ -77,7 +83,7 @@ test('mini-program displays partial contact without inventing a missing name or 
       gallery_name: '旧案例', building_name: '洋湖天序', area: '120', design_style: '复古写意', ...contact
     })
     await instance.loadShare()
-    const fields = component.computed.metaItems.call(instance)
+    const fields = contentComponent.computed.metaItems.call(instance)
     assert.equal(fields.some((item) => item.label === '联系人'), Boolean(contact.sharer_name))
     assert.equal(fields.find((item) => item.label === '风格').wide, !contact.sharer_name)
     assert.equal(instance.caseInfo.sharerPhone, contact.sharer_phone || '')

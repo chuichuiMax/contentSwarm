@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import re
 from datetime import date
 from typing import Literal
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile, status
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from yuxi.services.material_library_service import (
     MaterialCategoryCreate,
@@ -33,6 +34,10 @@ from yuxi.services.material_library_service import (
     update_material_item,
 )
 from yuxi.services.employee_service import EmployeeMaterialOwner, resolve_employee_material_owner
+from yuxi.services.material_share_jobs import read_material_share_state, render_share_status_page
+from yuxi.services.case_share_entry_service import (
+    booking_share, render_booking_entry, render_entry_failure, resolve_entry, wechat_entry_asset,
+)
 from yuxi.services.personal_materials import (
     folder_counts,
     list_folder,
@@ -313,7 +318,39 @@ async def create_share(
         public_base_url=request_public_base_url(request),
         actor_user=current_user,
         target_private=target is not None,
+        source_platform="pc",
     )
+
+
+@material_library.get("/share-entries/{code}")
+async def public_share_entry(code: str, db: AsyncSession = Depends(get_db)):
+    return JSONResponse(await resolve_entry(db, code), headers={"Cache-Control": "no-store"})
+
+
+@material_library.get("/shares/{token}/booking", response_class=HTMLResponse)
+async def public_booking_entry(token: str, request: Request, db: AsyncSession = Depends(get_db)):
+    share = await booking_share(db, token)
+    return HTMLResponse(render_booking_entry(share, request_public_base_url(request)),
+                        headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"})
+
+
+@material_library.get("/shares/{token}/mp-code")
+async def public_booking_code(token: str, db: AsyncSession = Depends(get_db)):
+    data, content_type = await wechat_entry_asset(db, token, "qrcode")
+    return Response(data, media_type=content_type,
+                    headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
+
+
+@material_library.get("/shares/{token}/open-mp")
+async def public_booking_open(token: str, request: Request, db: AsyncSession = Depends(get_db)):
+    try:
+        url = await wechat_entry_asset(db, token, "link")
+    except HTTPException as exc:
+        message = exc.detail["error"]["message"] if isinstance(exc.detail, dict) else str(exc.detail)
+        booking_url = f"{request_public_base_url(request)}/api/material-library/shares/{token}/booking"
+        return HTMLResponse(render_entry_failure(message, booking_url), status_code=exc.status_code,
+                            headers={"Cache-Control": "no-store"})
+    return RedirectResponse(url, status_code=302, headers={"Cache-Control": "no-store"})
 
 
 @material_library.get("/shares/{token}/page", response_class=HTMLResponse)
@@ -322,6 +359,13 @@ async def public_share_page(
     request: Request,
     db: AsyncSession = Depends(get_db),
 ):
+    if re.fullmatch(r"[0-9a-f]{64}", token):
+        state = await read_material_share_state(db, token)
+        if state["share"]["status"] != "completed":
+            return HTMLResponse(
+                render_share_status_page(token, state, request_public_base_url(request)),
+                headers={"Cache-Control": "no-store"},
+            )
     share, items = await get_public_material_share(db, token)
     return HTMLResponse(render_public_material_share_page(share, items, request_public_base_url(request)))
 
@@ -332,6 +376,13 @@ async def canonical_public_share_page(
     request: Request,
     db: AsyncSession = Depends(get_db),
 ):
+    if re.fullmatch(r"[0-9a-f]{64}", token):
+        state = await read_material_share_state(db, token)
+        if state["share"]["status"] != "completed":
+            return HTMLResponse(
+                render_share_status_page(token, state, request_public_base_url(request)),
+                headers={"Cache-Control": "no-store"},
+            )
     share, items = await get_public_material_share(db, token)
     return HTMLResponse(render_public_material_share_page(share, items, request_public_base_url(request)))
 
@@ -341,6 +392,8 @@ async def public_share_data(
     token: str,
     db: AsyncSession = Depends(get_db),
 ):
+    if re.fullmatch(r"[0-9a-f]{64}", token):
+        return JSONResponse(await read_material_share_state(db, token), headers={"Cache-Control": "no-store"})
     share, items = await get_public_material_share(db, token)
     return serialize_public_material_share(share, items)
 

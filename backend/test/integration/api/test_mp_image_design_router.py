@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from test.integration.api import test_material_library_router as material_fixtures
 from yuxi.services.employee_service import EmployeeCreate, create_employee, delete_employee
 from yuxi.storage.postgres.models_business import User
+from yuxi.storage.postgres.models_content import ContentMaterialCategory
 from yuxi.utils.auth_utils import AuthUtils
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
@@ -296,6 +297,12 @@ async def test_pc_personal_materials_follow_mp_folder_rules(test_client, mp_acco
         other_user = (await db.execute(select(User).where(User.uid == other_uid))).scalar_one()
         pc_headers = {"Authorization": f"Bearer {AuthUtils.create_access_token({'sub': str(user.id)})}"}
         other_pc_headers = {"Authorization": f"Bearer {AuthUtils.create_access_token({'sub': str(other_user.id)})}"}
+        # The retired personal rough folder is no longer auto-created; seed its historical row explicitly.
+        db.add(ContentMaterialCategory(
+            owner_uid=uid, id="mp-rough-private", material_type="image", visibility="private",
+            name="毛坯房图库", industry_slug="uncategorized", is_system=True,
+        ))
+        await db.commit()
     await engine.dispose()
 
     raw = io.BytesIO()

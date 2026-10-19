@@ -30,7 +30,9 @@ DEFAULT_ROLES: tuple[tuple[str, str], ...] = (
 )
 DESIGNER_ROLE_CODE = "JS0006"
 DESIGNER_ROLE_NAME = "设计师"
-DESIGNER_DEFAULT_GRANTS = (ROUGH_UPLOAD_PERMISSION, IMAGE_DESIGN_PAGE_PERMISSION)
+DESIGNER_DEFAULT_GRANTS = (
+    ROUGH_UPLOAD_PERMISSION, IMAGE_DESIGN_PAGE_PERMISSION, "customer_lead.view_list", "customer_lead.delete",
+)
 
 SYSTEM_ROLES: tuple[tuple[str, str], ...] = (
     ("user", "普通用户"),

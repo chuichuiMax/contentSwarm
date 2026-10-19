@@ -12,6 +12,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     String,
     Text,
     UniqueConstraint,
@@ -1225,7 +1226,68 @@ class ContentMaterialShare(Base):
     design_style = Column(String(32), nullable=True)
     sharer_name = Column(String(80), nullable=True)
     sharer_phone = Column(String(64), nullable=True)
+    sharer_uid = Column(String(255), nullable=True, index=True)
+    sharer_employee_id = Column(String(64), nullable=True)
+    sharer_department_id = Column(Integer, nullable=True)
+    source_platform = Column(String(16), nullable=True)
+    mp_entry_code = Column(String(24), nullable=True)
     created_at = Column(DateTime, default=utc_now_naive, index=True)
+
+    __table_args__ = (Index("uq_material_share_mp_entry_code", "mp_entry_code", unique=True),)
+
+
+class ContentCaseVisitLead(Base):
+    """一次案例分享对应的访客预约；头像随记录保存和删除。"""
+
+    __tablename__ = "content_case_visit_leads"
+
+    id = Column(String(64), primary_key=True)
+    share_id = Column(String(64), ForeignKey("content_material_shares.id"), nullable=False)
+    appid = Column(String(64), nullable=False)
+    openid = Column(String(128), nullable=False)
+    nickname = Column(String(32), nullable=False)
+    phone = Column(String(64), nullable=False)
+    avatar_data = Column(LargeBinary, nullable=False)
+    sharer_uid = Column(String(255), nullable=True)
+    department_id = Column(Integer, nullable=True)
+    created_at = Column(DateTime, default=utc_now_naive, nullable=False)
+    acquired_at = Column(DateTime, default=utc_now_naive, nullable=False)
+    booking_revision = Column(Integer, nullable=False, default=1, server_default="1")
+    read_revision = Column(Integer, nullable=False, default=0, server_default="0")
+    follow_status = Column(String(16), nullable=False, default="pending", server_default="pending")
+    followed_at = Column(DateTime, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("appid", "openid", "share_id", name="uq_case_visit_visitor_share"),
+        Index("idx_case_visit_sharer_time", "sharer_uid", "acquired_at"),
+        Index("idx_case_visit_department_time", "department_id", "acquired_at"),
+    )
+
+
+class ContentCaseVisitSubmission(Base):
+    """预约提交回执，与客资更新在同一事务保存，网络重试不重置状态。"""
+
+    __tablename__ = "content_case_visit_submissions"
+
+    session_id = Column(String(64), primary_key=True)
+    lead_id = Column(String(64), ForeignKey("content_case_visit_leads.id", ondelete="CASCADE"), nullable=False)
+    created_at = Column(DateTime, nullable=False, default=utc_now_naive)
+
+
+class ContentMaterialShareJob(Base):
+    """点击渠道后持久化的分享意图，同时作为后台任务的 outbox。"""
+
+    __tablename__ = "content_material_share_jobs"
+
+    token = Column(String(64), primary_key=True)
+    requester_uid = Column(String(255), nullable=False)
+    item_ids = Column(JSON, nullable=False)
+    share_json = Column(JSON, nullable=False)
+    sources_json = Column(JSON, nullable=False)
+    status = Column(String(16), nullable=False, default="pending", index=True)
+    error_code = Column(String(80), nullable=True)
+    created_at = Column(DateTime, nullable=False, default=utc_now_naive)
+    completed_at = Column(DateTime, nullable=True)
 
 
 class ContentMaterialShareItem(Base):

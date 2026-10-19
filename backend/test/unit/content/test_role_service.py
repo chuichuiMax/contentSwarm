@@ -45,7 +45,9 @@ def test_content_roles_store_display_name_for_users():
 def test_designer_default_grant_is_enterprise_rough_upload():
     from yuxi.services.role_service import DESIGNER_DEFAULT_GRANTS
 
-    assert DESIGNER_DEFAULT_GRANTS == ("material_rough.upload", "image_design.access")
+    assert DESIGNER_DEFAULT_GRANTS == (
+        "material_rough.upload", "image_design.access", "customer_lead.view_list", "customer_lead.delete",
+    )
 
 
 @pytest.mark.asyncio
@@ -66,7 +68,10 @@ async def test_existing_designer_role_gains_image_design_page(monkeypatch):
 
     monkeypatch.setattr(service, "RoleRepository", lambda _db: FakeRepo())
     updated = await service.ensure_designer_role(object())
-    assert updated.permissions == ["material_rough.upload", "chat.access", "image_design.access"]
+    assert updated.permissions == [
+        "material_rough.upload", "chat.access", "image_design.access",
+        "customer_lead.view_list", "customer_lead.delete",
+    ]
 
 
 def test_permission_catalog_keys_are_unique():
@@ -82,6 +87,8 @@ def test_permission_catalog_keys_are_unique():
     assert is_valid_material_grant_key("material_rough.upload")
     assert is_valid_material_grant_key("material_folder.enterprise-initial-rough.view")
     assert "image_design.access" in keys
+    assert "customer_lead.view_list" in keys
+    assert "customer_lead.delete" in keys
     assert not any(key.startswith("cover.") for key in keys)
     assert len(keys) == len(set(keys))
 
