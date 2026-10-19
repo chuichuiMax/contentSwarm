@@ -10,7 +10,7 @@ Yuxi 是一个面向 RAG、知识图谱和多智能体工作流的知识库平�
 
 - `web-dev`：Vue/Vite 前端，挂载 `web/src` 并热重载。
 - `api-dev`：FastAPI API 服务，挂载 `backend/server` 和 `backend/package` 并热重载。
-- `worker-dev`：ARQ 后台任务 worker，处理智能体运行等异步任务。
+- `worker-dev`：ARQ 后台任务 worker，处理智能体运行等异步任务。开发热重载入口 `server.worker_dev` 同时检查 ARQ 子进程退出，退出时交由 Docker 重启；健康检查读取 ARQ 队列心跳。
 - `sandbox-provisioner`：为智能体工具执行提供沙盒环境。
 - `postgres`、`redis`、`minio`、`milvus`、`graph`：分别承载业务/知识库元数据、运行事件与队列状态、对象存储、向量检索、Neo4j 图谱。
 - `mineru-*`、`paddlex`：按 `all` profile 启动的文档解析/OCR 能力。

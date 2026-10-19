@@ -555,6 +555,7 @@ class WorkerSettings:
     retry_jobs = True
     job_timeout = 3600
     keep_result = 60
+    health_check_interval = 15
     on_startup = _worker_startup
     on_shutdown = _worker_shutdown
     try:
