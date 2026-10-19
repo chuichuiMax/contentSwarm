@@ -16,7 +16,7 @@ from yuxi.content.v3.modular_rules import (
     requires_persona_review,
     select_modular_generation_skills,
 )
-from yuxi.content.validators import validate_modular_content
+from yuxi.content.validators import lock_modular_topics, validate_modular_content
 
 
 def _payload(*, price=False, report=None):
@@ -49,6 +49,9 @@ def test_rule_bundle_freezes_each_skill_hash_and_topic_pool():
     }
     assert all(len(item["content_hash"]) == 64 and len(item["rules_hash"]) == 64 for item in bundle["modules"])
     assert "长沙装修" in bundle["topic_candidates"]
+    assert lock_modular_topics(bundle["topic_candidates"][-10:], bundle)[:2] == bundle["pinned_topics"]
+    assert "长沙装修公司推荐" in bundle["topic_candidates"]
+    assert bundle["pinned_topics"] == ["长沙装修公司推荐", "装修避坑"]
     assert len(bundle["topic_candidates"]) >= 10
     assert bundle["runtime_rules"]["viral-author-core"]["reference_policy"] == {
         "required_slot_mode": "mapped_facts_only",

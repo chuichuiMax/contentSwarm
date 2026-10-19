@@ -3,7 +3,8 @@ import { DECORATION_GALLERY_STYLES } from '@/data/decorationGalleryStyles'
 
 defineProps({
   modelValue: { type: String, default: '' },
-  variant: { type: String, default: 'select' }
+  variant: { type: String, default: 'select' },
+  placeholder: { type: String, default: '全部风格' }
 })
 
 const emit = defineEmits(['update:modelValue'])
@@ -18,7 +19,7 @@ function pick(style) {
     v-if="variant === 'select'"
     :value="modelValue || undefined"
     class="case-style-select"
-    placeholder="全部风格"
+    :placeholder="placeholder"
     allow-clear
     @update:value="pick($event || '')"
   >

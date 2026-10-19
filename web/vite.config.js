@@ -2,6 +2,38 @@ import { fileURLToPath, URL } from 'node:url'
 import { defineConfig, loadEnv } from 'vite'
 import vue from '@vitejs/plugin-vue'
 
+/** @returns {import('vite').Plugin} */
+function blockEnvProbeRequests() {
+  const isEnvProbePath = (pathname) =>
+    pathname === '/.env' ||
+    pathname === '/.envrc' ||
+    pathname.startsWith('/.env.') ||
+    pathname.endsWith('/.env') ||
+    pathname.endsWith('/.envrc')
+
+  return {
+    name: 'block-env-probe-requests',
+    enforce: 'pre',
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => {
+        const pathname = (req.url || '').split('?')[0]
+        if (isEnvProbePath(pathname)) {
+          res.statusCode = 404
+          res.end()
+          return
+        }
+        next()
+      })
+    },
+    load(id) {
+      const file = id.split('?')[0]
+      if (isEnvProbePath(file)) {
+        return 'export default {}'
+      }
+    }
+  }
+}
+
 export default defineConfig(({ mode }) => {
   // eslint-disable-next-line no-undef
   const env = loadEnv(mode, process.cwd(), '')
@@ -19,7 +51,7 @@ export default defineConfig(({ mode }) => {
   }
   return {
     base: env.VITE_BASE_PATH || '/',
-    plugins: [vue()],
+    plugins: [blockEnvProbeRequests(), vue()],
     resolve: {
       alias: {
         '@': fileURLToPath(new URL('./src', import.meta.url))

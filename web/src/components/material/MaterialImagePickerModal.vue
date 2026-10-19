@@ -2,11 +2,15 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
-import { CheckCircle2, ChevronRight, FolderOpen, Image as ImageIcon, Search } from 'lucide-vue-next'
+import { CheckCircle2, Folder, FolderOpen, Image as ImageIcon, Search } from 'lucide-vue-next'
 
 import CaseGalleryStyleFilter from '@/components/material/CaseGalleryStyleFilter.vue'
 import { materialLibraryApi } from '@/apis/material_library_api'
-import { filterCaseGalleryChildren, isEnterpriseCaseGallery } from '@/utils/caseGallery'
+import {
+  filterCaseGalleryChildren,
+  isEnterpriseCaseGallery,
+  materialGalleryListLabel
+} from '@/utils/caseGallery'
 
 const props = defineProps({
   open: { type: Boolean, default: false },
@@ -33,48 +37,26 @@ const page = ref(1)
 const pageSize = 24
 const total = ref(0)
 const pendingItem = ref(null)
-const expandedGalleryIds = ref(new Set())
-const designStyleFilter = ref('')
+const styleDraft = ref('')
+const styleApplied = ref('')
+const addressDraft = ref('')
+const addressApplied = ref('')
 let loadVersion = 0
 
 const activeGallery = computed(() => galleries.value.find((item) => item.id === activeGalleryId.value))
 const rootGalleries = computed(() => galleries.value.filter((item) => !item.parent_id))
-const orderedGalleries = computed(() => {
-  const roots = rootGalleries.value
-  return roots.flatMap((root) => [root, ...galleryChildren(root.id)])
-})
+const activeRootId = computed(() => activeGallery.value?.parent_id || activeGallery.value?.id || '')
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize)))
+const showingCaseFolders = computed(() => {
+  const gallery = galleries.value.find((item) => item.id === activeGalleryId.value)
+  return isEnterpriseCaseGallery(gallery) && !gallery.parent_id && galleryChildren(gallery.id).length > 0
+})
+const visibleCaseFolders = computed(() =>
+  filterCaseGalleryChildren(galleryChildren(activeRootId.value), styleApplied.value, addressApplied.value)
+)
 
 function galleryChildren(parentId) {
   return galleries.value.filter((item) => item.parent_id === parentId)
-}
-
-const isCaseGallery = isEnterpriseCaseGallery
-
-const caseGalleryExpanded = computed(() =>
-  rootGalleries.value.some((gallery) => isCaseGallery(gallery) && isGalleryExpanded(gallery.id))
-)
-
-function filteredCaseChildren(parentId) {
-  return filterCaseGalleryChildren(galleryChildren(parentId), designStyleFilter.value)
-}
-
-function isGalleryExpanded(galleryId) {
-  return expandedGalleryIds.value.has(galleryId)
-}
-
-function setGalleryExpanded(galleryId, expanded) {
-  const next = new Set(expandedGalleryIds.value)
-  if (expanded) next.add(galleryId)
-  else next.delete(galleryId)
-  expandedGalleryIds.value = next
-}
-
-function expandCaseParent(galleryId) {
-  const gallery = galleries.value.find((item) => item.id === galleryId)
-  if (!gallery?.parent_id) return
-  const parent = galleries.value.find((item) => item.id === gallery.parent_id)
-  if (isCaseGallery(parent)) setGalleryExpanded(parent.id, true)
 }
 
 function releaseItemUrls(urls = itemUrls.value) {
@@ -135,11 +117,11 @@ async function loadGalleries() {
       props.selectedGalleryId
       && galleries.value.some((item) => item.id === props.selectedGalleryId)
         ? props.selectedGalleryId
-        : orderedGalleries.value.find((item) => (item.parent_id ? item.count : item.direct_count) > 0)?.id
-          || orderedGalleries.value[0]?.id
+        : rootGalleries.value.find((item) => isEnterpriseCaseGallery(item))?.id
+          || rootGalleries.value[0]?.id
           || ''
     )
-    expandCaseParent(activeGalleryId.value)
+    if (showingCaseFolders.value) return
     await loadItems()
   } catch (error) {
     message.error(error.message || '图片素材库加载失败')
@@ -148,18 +130,33 @@ async function loadGalleries() {
   }
 }
 
-function toggleCaseGallery(gallery) {
-  setGalleryExpanded(gallery.id, !isGalleryExpanded(gallery.id))
+function resetCaseFolderQuery() {
+  styleDraft.value = ''
+  styleApplied.value = ''
+  addressDraft.value = ''
+  addressApplied.value = ''
+}
+
+function searchCaseFolders() {
+  styleApplied.value = styleDraft.value
+  addressApplied.value = addressDraft.value.trim()
 }
 
 async function chooseGallery(galleryId) {
-  if (galleryId === activeGalleryId.value) return
+  if (galleryId === activeGalleryId.value && showingCaseFolders.value) return
+  const gallery = galleries.value.find((item) => item.id === galleryId)
+  const switchingRoot = !gallery?.parent_id && galleryId !== activeRootId.value
   activeGalleryId.value = galleryId
-  expandCaseParent(galleryId)
+  if (switchingRoot) resetCaseFolderQuery()
   pendingItem.value = null
   queryInput.value = ''
   query.value = ''
   page.value = 1
+  if (isEnterpriseCaseGallery(gallery) && !gallery.parent_id && galleryChildren(gallery.id).length) {
+    items.value = []
+    total.value = 0
+    return
+  }
   await loadItems()
 }
 
@@ -189,28 +186,13 @@ async function manageMaterials() {
   await router.push('/materials/images')
 }
 
-watch(designStyleFilter, async () => {
-  const active = galleries.value.find((item) => item.id === activeGalleryId.value)
-  if (active && active.parent_id && isCaseGallery(galleries.value.find((item) => item.id === active.parent_id))) {
-    const visible = filteredCaseChildren(active.parent_id)
-    if (designStyleFilter.value && !visible.some((item) => item.id === activeGalleryId.value)) {
-      if (visible[0]) await chooseGallery(visible[0].id)
-      else {
-        activeGalleryId.value = active.parent_id
-        await loadItems()
-      }
-    }
-  }
-})
-
 watch(() => props.open, (open) => {
   if (!open) return
   pendingItem.value = null
   queryInput.value = ''
   query.value = ''
   page.value = 1
-  designStyleFilter.value = ''
-  expandedGalleryIds.value = new Set()
+  resetCaseFolderQuery()
   void loadGalleries()
 })
 
@@ -232,42 +214,52 @@ onBeforeUnmount(() => {
     <div class="material-picker">
       <aside class="gallery-sidebar">
         <div class="sidebar-heading"><strong>图库</strong><span>{{ rootGalleries.length }}</span></div>
-        <div v-if="caseGalleryExpanded" class="sidebar-style-filter">
-          <CaseGalleryStyleFilter v-model="designStyleFilter" />
-        </div>
         <div v-if="loadingGalleries" class="sidebar-state">正在加载…</div>
         <template v-else>
-          <div v-for="gallery in rootGalleries" :key="gallery.id" class="gallery-tree-group">
-            <button
-              type="button"
-              class="gallery-button"
-              :class="{ active: activeGalleryId === gallery.id, expanded: isCaseGallery(gallery) && isGalleryExpanded(gallery.id) }"
-              @click="isCaseGallery(gallery) ? toggleCaseGallery(gallery) : chooseGallery(gallery.id)"
-            >
-              <ChevronRight v-if="isCaseGallery(gallery)" :size="14" class="expand-icon" :class="{ open: isGalleryExpanded(gallery.id) }" />
-              <FolderOpen v-else :size="16" />
-              <span>{{ gallery.visibility === 'enterprise' ? '企业共享 · ' : '' }}{{ gallery.name }}</span>
-              <small>{{ isCaseGallery(gallery) ? galleryChildren(gallery.id).length : (gallery.direct_count || 0) }}</small>
-            </button>
-            <div v-if="galleryChildren(gallery.id).length && (!isCaseGallery(gallery) || isGalleryExpanded(gallery.id))" class="gallery-tree-children">
-              <button
-                v-for="child in (isCaseGallery(gallery) ? filteredCaseChildren(gallery.id) : galleryChildren(gallery.id))"
-                :key="child.id"
-                type="button"
-                class="gallery-button child"
-                :class="{ active: activeGalleryId === child.id }"
-                @click="chooseGallery(child.id)"
-              >
-                <FolderOpen :size="14" />
-                <span>{{ child.name }}</span>
-                <small>{{ child.count || 0 }}</small>
-              </button>
-            </div>
-          </div>
+          <button
+            v-for="gallery in rootGalleries"
+            :key="gallery.id"
+            type="button"
+            class="gallery-button"
+            :class="{ active: activeRootId === gallery.id }"
+            @click="chooseGallery(gallery.id)"
+          >
+            <FolderOpen :size="16" />
+            <span>{{ materialGalleryListLabel(gallery) }}</span>
+          </button>
         </template>
       </aside>
 
       <section class="picker-content">
+        <div v-if="showingCaseFolders" class="case-folder-browser">
+          <div class="case-folder-toolbar">
+            <CaseGalleryStyleFilter v-model="styleDraft" placeholder="请选择设计风格" />
+            <input v-model="addressDraft" placeholder="请输入楼盘地址" @keyup.enter="searchCaseFolders" />
+            <a-button type="primary" @click="searchCaseFolders">查询</a-button>
+            <a-button type="primary" @click="resetCaseFolderQuery">重置</a-button>
+          </div>
+          <div v-if="visibleCaseFolders.length" class="case-folder-grid">
+            <button
+              v-for="gallery in visibleCaseFolders"
+              :key="gallery.id"
+              type="button"
+              class="case-folder-card"
+              :title="gallery.name"
+              @click="chooseGallery(gallery.id)"
+            >
+              <span class="case-folder-icon"><Folder :size="20" /></span>
+              <span class="case-folder-copy">
+                <strong>{{ gallery.name }}</strong>
+                <small>{{ gallery.count || 0 }}张图片素材</small>
+              </span>
+            </button>
+          </div>
+          <div v-else class="picker-state empty">
+            <Folder :size="30" />
+            <strong>没有匹配的案例文件夹</strong>
+          </div>
+        </div>
+        <template v-else>
         <div class="picker-toolbar">
           <div>
             <strong>{{ activeGallery?.name || '素材图片' }}</strong>
@@ -318,29 +310,35 @@ onBeforeUnmount(() => {
             <a-button type="primary" :disabled="!pendingItem || disabled" @click="confirm">{{ props.confirmText }}</a-button>
           </div>
         </div>
+        </template>
       </section>
     </div>
   </a-modal>
 </template>
 
 <style scoped lang="less">
-.material-picker { min-height: 560px; display: grid; grid-template-columns: 190px minmax(0, 1fr); border: 1px solid var(--gray-150); border-radius: 9px; overflow: hidden; background: var(--gray-0); }
-.gallery-sidebar { padding: 14px 10px; border-right: 1px solid var(--gray-150); background: var(--gray-25); }
+.material-picker { min-height: 560px; display: grid; grid-template-columns: 220px minmax(0, 1fr); border: 1px solid var(--gray-150); border-radius: 9px; overflow: hidden; background: var(--gray-0); }
+.gallery-sidebar { padding: 14px 10px; border-right: 1px solid var(--gray-150); background: var(--gray-25); overflow-y: auto; }
 .sidebar-heading { padding: 0 8px 10px; display: flex; align-items: center; justify-content: space-between; color: var(--color-text); }
-.sidebar-style-filter { padding: 0 4px 10px; }
-.sidebar-style-filter :deep(.case-style-select) { width: 100%; }
 .sidebar-heading span { color: var(--color-text-tertiary); font-size: 11px; }
-.gallery-tree-group { margin-bottom: 4px; }
-.gallery-button { width: 100%; padding: 9px 8px; border: 0; border-radius: 7px; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 7px; color: var(--color-text-secondary); background: transparent; text-align: left; cursor: pointer; }
+.gallery-button { width: 100%; margin-bottom: 4px; padding: 9px 8px; border: 0; border-radius: 7px; display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 7px; color: var(--color-text-secondary); background: transparent; text-align: left; cursor: pointer; }
 .gallery-button span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.gallery-button small { color: var(--color-text-tertiary); }
-.expand-icon { transition: transform .15s; } .expand-icon.open { transform: rotate(90deg); }
 .gallery-button:hover { color: var(--main-700); background: var(--main-30); }
 .gallery-button.active { color: var(--main-700); background: var(--main-50); font-weight: 650; }
-.gallery-tree-children { margin: 2px 0 5px 17px; padding-left: 7px; border-left: 1px solid var(--main-100); }
-.gallery-button.child { padding: 7px 7px; font-size: 12px; }
 .sidebar-state { padding: 12px 8px; color: var(--color-text-secondary); font-size: 12px; }
 .picker-content { min-width: 0; padding: 16px; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; gap: 14px; }
+.picker-content:has(.case-folder-browser) { display: block; }
+.case-folder-browser { display: grid; gap: 22px; align-content: start; }
+.case-folder-toolbar { display: flex; align-items: center; gap: 12px; }
+.case-folder-toolbar :deep(.case-style-select) { width: 180px; }
+.case-folder-toolbar input { flex: 1; min-width: 0; height: 32px; padding: 0 11px; border: 1px solid var(--gray-200); border-radius: 6px; color: var(--color-text); background: var(--gray-0); outline: none; }
+.case-folder-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 22px 16px; }
+.case-folder-card { min-width: 0; padding: 0; border: 0; display: flex; align-items: center; gap: 10px; color: var(--color-text); background: transparent; text-align: left; cursor: pointer; }
+.case-folder-icon { flex: 0 0 auto; display: grid; place-items: center; width: 44px; height: 44px; border-radius: 10px; color: #7b88f6; background: #eef0fb; }
+.case-folder-copy { min-width: 0; display: grid; gap: 2px; }
+.case-folder-copy strong, .case-folder-copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.case-folder-copy strong { font-size: 14px; font-weight: 500; }
+.case-folder-copy small { color: var(--color-text-tertiary); font-size: 12px; }
 .picker-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .picker-toolbar > div { min-width: 0; display: grid; gap: 2px; }
 .picker-toolbar > div small { color: var(--color-text-secondary); font-size: 12px; }
@@ -363,5 +361,5 @@ onBeforeUnmount(() => {
 .picker-footer { padding-top: 13px; border-top: 1px solid var(--gray-150); display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .pagination, .footer-actions { display: flex; align-items: center; gap: 8px; }
 .pagination span { color: var(--color-text-tertiary); font-size: 11px; }
-@media (max-width: 760px) { .material-picker { min-height: 620px; grid-template-columns: 1fr; grid-template-rows: auto 1fr; }.gallery-sidebar { border-right: 0; border-bottom: 1px solid var(--gray-150); display: flex; gap: 6px; overflow-x: auto; }.sidebar-heading { display: none; }.gallery-tree-group { min-width: 150px; margin: 0; }.picker-toolbar, .picker-footer { align-items: stretch; flex-direction: column; }.picker-search { width: 100%; }.image-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }.footer-actions { justify-content: flex-end; } }
+@media (max-width: 760px) { .material-picker { min-height: 620px; grid-template-columns: 1fr; grid-template-rows: auto 1fr; }.gallery-sidebar { border-right: 0; border-bottom: 1px solid var(--gray-150); display: flex; gap: 6px; overflow-x: auto; }.sidebar-heading { display: none; }.gallery-button { min-width: 150px; margin: 0; }.case-folder-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }.case-folder-toolbar { flex-wrap: wrap; }.picker-toolbar, .picker-footer { align-items: stretch; flex-direction: column; }.picker-search { width: 100%; }.image-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }.footer-actions { justify-content: flex-end; } }
 </style>

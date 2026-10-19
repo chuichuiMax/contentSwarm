@@ -8,9 +8,28 @@ export function isEnterpriseCaseGallery(gallery, parent = null) {
   )
 }
 
-export function filterCaseGalleryChildren(children, designStyle) {
-  if (!designStyle) return children
-  return children.filter((item) => item.design_style === designStyle)
+export function filterCaseGalleryChildren(children, designStyle, address = '') {
+  const keyword = address.trim().toLowerCase()
+  return children.filter((item) => {
+    if (designStyle && item.design_style !== designStyle) return false
+    if (!keyword) return true
+    const building = `${item.building_name || ''} ${item.name || ''}`.toLowerCase()
+    return building.includes(keyword)
+  })
+}
+
+export function caseGalleryFolderLabel(gallery) {
+  const building = (gallery?.building_name || '').trim()
+  const style = (gallery?.design_style || '').trim()
+  const area = (gallery?.area || '').trim()
+  const areaText = area ? (area.endsWith('㎡') || area.endsWith('m²') ? area : `${area}㎡`) : ''
+  if (building && style && areaText) return `${building}·${style}·${areaText}`
+  return gallery?.name || ''
+}
+
+export function materialGalleryListLabel(gallery) {
+  if (!gallery?.name) return ''
+  return gallery.visibility === 'enterprise' ? `企业共享·${gallery.name}` : gallery.name
 }
 
 export function isCaseGalleryChild(gallery, galleries) {

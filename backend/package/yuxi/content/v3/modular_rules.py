@@ -129,22 +129,79 @@ def _skill_content_hash(slug: str) -> str:
     return hasher.hexdigest()
 
 
+def topic_region_name(value: Any) -> str:
+    """从所在区域或城市字段取出用于话题的城市名，例如长沙市、株洲。"""
+
+    text = str(value or "").strip()
+    matched = re.search(r"([\u4e00-\u9fff]{2,4})市", text)
+    if matched:
+        return matched.group(1)
+    head = re.split(r"[·|]", text)[0].strip().removesuffix("市")
+    parts = [part.removesuffix("市") for part in re.split(r"[\s,，/]+", head) if part]
+    candidate = parts[-1] if parts else ""
+    if 2 <= len(candidate) <= 4 and candidate.isalpha():
+        return candidate
+    return ""
+
+
+def pinned_content_topics(region: Any) -> list[str]:
+    topics = [f"{name}装修公司推荐"] if (name := topic_region_name(region)) else []
+    topics.append("装修避坑")
+    return topics
+
+
+def merge_pinned_topics(topics: list[str], region: Any, *, limit: int | None = None) -> list[str]:
+    merged: list[str] = []
+    seen: set[str] = set()
+    for item in [*pinned_content_topics(region), *topics]:
+        text = str(item or "").strip().lstrip("#").strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        merged.append(text)
+        if limit is not None and len(merged) == limit:
+            break
+    return merged
+
+
+def _brief_region(content_brief: dict[str, Any]) -> str:
+    variables = brief_variable_map(content_brief)
+    for key in ("所在区域", "city", "location", "region", "serviceCity"):
+        if name := topic_region_name(variables.get(key)):
+            return name
+    haystack = " ".join(str(value) for value in variables.values() if isinstance(value, str))
+    for pattern in (
+        r'["\']所在区域["\']\s*:\s*["\']([^"\']{2,12})["\']',
+        r'["\']serviceCity["\']\s*:\s*["\']([^"\']{2,12})["\']',
+    ):
+        matched = re.search(pattern, haystack)
+        if matched and (name := topic_region_name(matched.group(1))):
+            return name
+    return ""
+
+
 def _topic_candidates(content_brief: dict[str, Any]) -> list[str]:
     candidates = list(_BASE_TOPIC_CANDIDATES)
     variables = brief_variable_map(content_brief)
     city = ""
-    for key in ("city", "location", "region", "serviceCity"):
+    for key in ("所在区域", "city", "location", "region", "serviceCity"):
         value = str(variables.get(key) or "").strip()
         if value and len(value) <= 12:
             city = value
             break
     if not city:
         haystack = " ".join(str(value) for value in variables.values() if isinstance(value, str))
-        matched = re.search(r'["\']serviceCity["\']\s*:\s*["\']([^"\']{2,12})["\']', haystack)
+        matched = re.search(
+            r'["\'](?:所在区域|serviceCity)["\']\s*:\s*["\']([^"\']{2,12})["\']',
+            haystack,
+        )
         city = matched.group(1).strip() if matched else ""
+    region = topic_region_name(city) or _brief_region(content_brief)
     if city:
         short_city = city.removesuffix("市")
         candidates.extend((f"{short_city}装修", f"{short_city}工长", f"{short_city}装修报价"))
+    if region:
+        candidates.insert(0, f"{region}装修公司推荐")
     for key in ("project", "business", "house_type", "style", "audience"):
         value = str(variables.get(key) or "").strip()
         if value and len(value) <= 16:
@@ -178,6 +235,7 @@ def build_modular_rule_bundle(content_brief: dict[str, Any], *, single_blueprint
         "active_rule_ids": active_rule_ids,
         "runtime_rules": runtime_rules,
         "topic_candidates": _topic_candidates(content_brief),
+        "pinned_topics": pinned_content_topics(_brief_region(content_brief)),
     }
     if single_blueprint:
         snapshot["single_blueprint"] = json.loads(
@@ -211,6 +269,7 @@ def build_modular_rule_bundle(content_brief: dict[str, Any], *, single_blueprint
         if snapshot["single_blueprint"].get("writing_mode") in {"direct_reference", "raw_reference_text"}:
             snapshot["runtime_rules"]["viral-topic-author"] = {"must_use_candidate_pool": False}
             snapshot["topic_candidates"] = []
+            snapshot["pinned_topics"] = []
     canonical = json.dumps(snapshot, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return {**snapshot, "bundle_hash": hashlib.sha256(canonical.encode()).hexdigest()}
 

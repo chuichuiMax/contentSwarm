@@ -342,6 +342,7 @@ def lock_modular_topics(topics: list[str], rule_bundle: dict[str, Any]) -> list[
 
     pool = list(dict.fromkeys(text for item in rule_bundle.get("topic_candidates") or [] if (text := normalize(item))))
     allowed = set(pool)
+    pinned = [text for item in rule_bundle.get("pinned_topics") or [] if (text := normalize(item))]
     locked: list[str] = []
     seen: set[str] = set()
     for item in topics:
@@ -351,14 +352,18 @@ def lock_modular_topics(topics: list[str], rule_bundle: dict[str, Any]) -> list[
         locked.append(text)
         seen.add(text)
         if len(locked) == required:
-            return locked
-    for item in pool:
-        if item in seen:
-            continue
-        locked.append(item)
-        seen.add(item)
-        if len(locked) == required:
-            return locked
+            break
+    if len(locked) < required:
+        for item in pool:
+            if item in seen:
+                continue
+            locked.append(item)
+            seen.add(item)
+            if len(locked) == required:
+                break
+    missing = [item for item in pinned if item not in seen and (not must_use_pool or item in allowed)]
+    if missing:
+        locked = [*missing, *[item for item in locked if item not in missing]][:required]
     return locked
 
 

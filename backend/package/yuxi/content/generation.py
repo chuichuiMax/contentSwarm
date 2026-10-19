@@ -11,6 +11,7 @@ from yuxi.agents import load_chat_model, resolve_chat_model_spec
 from yuxi.utils.line_breaks import normalize_escaped_newlines
 from yuxi.content.model.forbidden_words import replace_forbidden_words
 from yuxi.content.schemas import ContentArtifactAIEditOutput, ReviewReport
+from yuxi.content.v3.modular_rules import merge_pinned_topics, topic_region_name
 from yuxi.utils.logging_config import logger
 
 SKILLS_ROOT = Path(__file__).resolve().parents[1] / "agents" / "skills" / "buildin"
@@ -21,6 +22,8 @@ NATURAL_CLOSING_INSTRUCTION = (
     "用一两句口语收束即可，例如：最近有打算装修的朋友，有什么问题都可以一起聊一聊。"
 )
 DIRECT_TITLE_MAX_CHARS = 20
+DIRECT_TOPIC_LIMIT = 10
+_TOPIC_REGION_KEYS = ("所在区域", "city", "location", "region", "serviceCity")
 SKILL_VERSIONS = {
     "content-value-analyzer": "1.3.0",
     "content-strategy-planner": "4.0.1",
@@ -130,6 +133,27 @@ async def _invoke_json(model_spec: str | None, *, skill_slug: str, prompt: str) 
     return _parse_json(_response_text(response))
 
 
+def _region_from_user_request(user_request: str) -> str:
+    try:
+        payload = json.loads(user_request)
+    except json.JSONDecodeError:
+        return ""
+    if not isinstance(payload, dict):
+        return ""
+    sources: list[Any] = []
+    for key in ("businessVariables", "business_variables", "form_values"):
+        section = payload.get(key)
+        if isinstance(section, dict):
+            sources.extend(section.get(name) for name in _TOPIC_REGION_KEYS)
+    facts = payload.get("facts")
+    if isinstance(facts, dict):
+        sources.append(facts.get("location"))
+    for value in sources:
+        if name := topic_region_name(value):
+            return name
+    return ""
+
+
 def _direct_generation_prompt(
     *,
     style_block: str,
@@ -159,7 +183,9 @@ def _direct_generation_prompt(
             "用户输入里的 persona 是当前登录员工，只用来核对岗位和店面；正文必须是业主在评价他们。\n"
             "用好评笔记知识库里的业主口吻、服务场景和工艺细节来填充。"
             "知识库中另一户的金额、退款、小区、工期和人名，表单没有就不要写入这篇。\n"
-            "话题写 8 到 10 个，像装修日记标签，包含鸿扬家装，不要带 # 号。\n"
+            "话题写 8 到 10 个，像装修日记标签，包含鸿扬家装和装修避坑；"
+            "能确定城市时再包含「城市名+装修公司推荐」，例如长沙装修公司推荐、株洲装修公司推荐。"
+            "不要带 # 号。\n"
             "不要写成员工自荐、销售转化，也不要让读者留下小区和面积。"
             "结尾用业主自己的一句感受收住。\n"
             "正文分段使用真实换行，不要输出反斜杠和字母 n。\n\n"
@@ -183,7 +209,10 @@ def _direct_generation_prompt(
         "装修家居成品不得出现员工真实姓名、工号、登录账号或与工号相同的编号；"
         "persona 里若仍有岗位、门店、从业年限，只能用来把握口吻，不要把个人标识写进 title/body/topics。"
         f"标题不超过{DIRECT_TITLE_MAX_CHARS}个字，汉字、数字、字母、标点、单位和 Emoji 都各计 1 个字，"
-        "并且必须是完整表达。正文分段使用真实换行，不要输出反斜杠和字母 n。"
+        "并且必须是完整表达。"
+        "话题必须包含装修避坑；用户数据里能确定城市时，还要包含「城市名+装修公司推荐」，"
+        "例如长沙装修公司推荐、株洲装修公司推荐。不要带 # 号。"
+        "正文分段使用真实换行，不要输出反斜杠和字母 n。"
         f"{NATURAL_CLOSING_INSTRUCTION}\n\n"
         f"{style_block}"
         "爆款原文：\n"
@@ -251,10 +280,14 @@ async def generate_direct_content(
             normalize_escaped_newlines(replace_forbidden_words(raw_output.title, forbidden_replacements))
         ),
         body=normalize_escaped_newlines(replace_forbidden_words(raw_output.body, forbidden_replacements)),
-        topics=[
-            normalize_escaped_newlines(replace_forbidden_words(topic, forbidden_replacements))
-            for topic in raw_output.topics
-        ],
+        topics=merge_pinned_topics(
+            [
+                normalize_escaped_newlines(replace_forbidden_words(topic, forbidden_replacements))
+                for topic in raw_output.topics
+            ],
+            _region_from_user_request(user_request),
+            limit=DIRECT_TOPIC_LIMIT,
+        ),
     )
     combined = "\n".join([output.title, output.body, *output.topics])
     residual = [term for term in forbidden_lexicon if term in combined]

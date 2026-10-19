@@ -55,7 +55,11 @@ import {
   formatEvidenceReference,
   hasSelectedViralReference
 } from '@/utils/contentEvidencePresentation'
-import { filterCaseGalleryChildren, isEnterpriseCaseGallery } from '@/utils/caseGallery'
+import {
+  filterCaseGalleryChildren,
+  isEnterpriseCaseGallery,
+  materialGalleryListLabel
+} from '@/utils/caseGallery'
 import { formatDateTime } from '@/utils/time'
 import { copyTextToClipboard } from '@/utils/clipboard'
 import {
@@ -151,6 +155,9 @@ const coverSelectionAllowed = computed(() =>
 )
 const materialGalleries = ref([])
 const caseGalleryStyleFilter = ref('')
+const caseStyleDraft = ref('')
+const caseAddressDraft = ref('')
+const caseAddressQuery = ref('')
 const photoLayouts = ref([])
 const activeGalleryId = ref('')
 const galleryImages = ref([])
@@ -236,25 +243,23 @@ const activeMaterialGallery = computed(
 const activeMaterialGalleryParent = computed(
   () => materialGalleryMap.value.get(activeMaterialGallery.value?.parent_id) || null
 )
-const activeMaterialGalleryChildren = computed(() =>
-  activeGalleryId.value
-    ? materialGalleries.value.filter((item) => item.parent_id === activeGalleryId.value)
-    : rootMaterialGalleries.value
+const caseRootHasFolders = (gallery) =>
+  Boolean(
+    gallery &&
+      isEnterpriseCaseGallery(gallery) &&
+      !gallery.parent_id &&
+      materialGalleries.value.some((item) => item.parent_id === gallery.id)
+  )
+const showingCaseFolders = computed(() => caseRootHasFolders(activeMaterialGallery.value))
+const selectedMaterialRootId = computed(
+  () => activeMaterialGallery.value?.parent_id || activeMaterialGallery.value?.id || ''
 )
-const isCaseGalleryModalContext = computed(() =>
-  isEnterpriseCaseGallery(activeMaterialGallery.value)
-)
-const visibleMaterialGalleryChildren = computed(() => {
-  const children = activeMaterialGalleryChildren.value
-  if (isEnterpriseCaseGallery(activeMaterialGallery.value)) {
-    return filterCaseGalleryChildren(children, caseGalleryStyleFilter.value)
-  }
-  return children
-})
-const activeMaterialGalleryPath = computed(() =>
-  activeMaterialGalleryParent.value
-    ? `${activeMaterialGalleryParent.value.name} / ${activeMaterialGallery.value?.name || ''}`
-    : activeMaterialGallery.value?.name || '图库'
+const visibleCaseFolders = computed(() =>
+  filterCaseGalleryChildren(
+    materialGalleries.value.filter((item) => item.parent_id === selectedMaterialRootId.value),
+    caseGalleryStyleFilter.value,
+    caseAddressQuery.value
+  )
 )
 const selectedImageGallery = computed(
   () => materialGalleryMap.value.get(selectedImageGalleryId.value) || null
@@ -1445,11 +1450,40 @@ const loadGalleryImages = async () => {
   }
 }
 
+const resetCaseFolderQuery = () => {
+  caseStyleDraft.value = ''
+  caseGalleryStyleFilter.value = ''
+  caseAddressDraft.value = ''
+  caseAddressQuery.value = ''
+}
+
+const searchCaseFolders = () => {
+  caseGalleryStyleFilter.value = caseStyleDraft.value
+  caseAddressQuery.value = caseAddressDraft.value.trim()
+}
+
+const selectMaterialRoot = async (galleryId) => {
+  const gallery = materialGalleryMap.value.get(galleryId)
+  if (galleryId !== selectedMaterialRootId.value) resetCaseFolderQuery()
+  activeGalleryId.value = galleryId
+  if (caseRootHasFolders(gallery)) {
+    galleryImages.value = []
+    galleryImagesLoading.value = false
+    return
+  }
+  await loadGalleryImages()
+}
+
 const openGallery = async (galleryId) => {
   const openingModal = !galleryModalOpen.value
-  const nextGallery = materialGalleryMap.value.get(galleryId)
-  if (!isEnterpriseCaseGallery(nextGallery)) caseGalleryStyleFilter.value = ''
-  activeGalleryId.value = galleryId
+  const resolvedId =
+    galleryId ||
+    rootMaterialGalleries.value.find((item) => isEnterpriseCaseGallery(item))?.id ||
+    rootMaterialGalleries.value[0]?.id ||
+    ''
+  const nextGallery = materialGalleryMap.value.get(resolvedId)
+  if (!isEnterpriseCaseGallery(nextGallery) && !nextGallery?.parent_id) resetCaseFolderQuery()
+  activeGalleryId.value = resolvedId
   if (openingModal) {
     const selectedIds =
       compositionSlotIndex.value === null
@@ -1463,6 +1497,11 @@ const openGallery = async (galleryId) => {
     )
   }
   galleryModalOpen.value = true
+  if (caseRootHasFolders(nextGallery)) {
+    galleryImages.value = []
+    galleryImagesLoading.value = false
+    return
+  }
   await loadGalleryImages()
 }
 
@@ -4561,59 +4600,69 @@ const returnToContentCreation = async () => {
     </a-drawer>
     <a-modal
       v-model:open="galleryModalOpen"
-      :title="`选择图片 · ${activeMaterialGalleryPath}`"
-      width="920px"
+      title="从素材库选择图片"
+      width="min(1040px, 94vw)"
       :footer="null"
     >
-      <div class="gallery-modal-content">
-        <button
-          v-if="activeGalleryId"
-          type="button"
-          class="gallery-modal-back"
-          @click="openGallery(activeMaterialGalleryParent?.id || '')"
-        >
-          <ArrowLeft :size="15" />返回 {{ activeMaterialGalleryParent?.name || '全部图库' }}
-        </button>
-        <section v-if="visibleMaterialGalleryChildren.length" class="gallery-modal-folders">
-          <div class="gallery-modal-section-title">
-            <strong>{{ activeGalleryId ? '二级图库' : '选择图库' }}</strong>
-            <small>选择所属图库后查看其中的图片</small>
+      <div class="gallery-picker">
+        <aside class="gallery-picker-sidebar">
+          <button
+            v-for="gallery in rootMaterialGalleries"
+            :key="gallery.id"
+            type="button"
+            class="gallery-picker-root"
+            :class="{ active: selectedMaterialRootId === gallery.id }"
+            @click="selectMaterialRoot(gallery.id)"
+          >
+            <FolderOpen :size="16" />
+            <span>{{ materialGalleryListLabel(gallery) }}</span>
+          </button>
+        </aside>
+        <div class="gallery-modal-content">
+        <div v-if="showingCaseFolders" class="case-folder-browser">
+          <div class="case-folder-toolbar">
+            <CaseGalleryStyleFilter v-model="caseStyleDraft" placeholder="请选择设计风格" />
+            <input
+              v-model="caseAddressDraft"
+              placeholder="请输入楼盘地址"
+              @keyup.enter="searchCaseFolders"
+            />
+            <a-button type="primary" @click="searchCaseFolders">查询</a-button>
+            <a-button type="primary" @click="resetCaseFolderQuery">重置</a-button>
           </div>
-          <CaseGalleryStyleFilter
-            v-if="isCaseGalleryModalContext"
-            v-model="caseGalleryStyleFilter"
-            class="gallery-modal-style-filter"
-          />
-          <div class="gallery-folder-grid">
+          <div v-if="visibleCaseFolders.length" class="case-folder-grid">
             <button
-              v-for="gallery in visibleMaterialGalleryChildren"
+              v-for="gallery in visibleCaseFolders"
               :key="gallery.id"
               type="button"
-              class="gallery-folder-card compact"
-              :class="{ selected: selectedImageItemId && selectedImageGalleryId === gallery.id }"
+              class="case-folder-card"
+              :title="gallery.name"
               @click="openGallery(gallery.id)"
             >
-              <span class="gallery-folder-icon"><Folder :size="26" /></span>
-              <span class="gallery-folder-copy">
+              <span class="case-folder-icon"><Folder :size="20" /></span>
+              <span class="case-folder-copy">
                 <strong>{{ gallery.name }}</strong>
-                <small>{{ gallery.count }} 张图片素材</small>
+                <small>{{ gallery.count || 0 }}张图片素材</small>
               </span>
-              <span
-                v-if="selectedImageItemId && selectedImageGalleryId === gallery.id"
-                class="gallery-selected-badge"
-                >已选择</span
-              >
             </button>
           </div>
-        </section>
+          <a-empty v-else description="没有匹配的案例文件夹" />
+        </div>
+        <div v-else class="gallery-modal-images">
+        <button
+          v-if="activeMaterialGalleryParent && isEnterpriseCaseGallery(activeMaterialGalleryParent)"
+          type="button"
+          class="gallery-modal-back"
+          @click="selectMaterialRoot(activeMaterialGalleryParent.id)"
+        >
+          <ArrowLeft :size="15" />返回案例文件夹
+        </button>
         <div class="gallery-modal-heading">
           <p>
             {{
-              visibleMaterialGalleryChildren.length
-                ? '当前一级图库中的图片'
-                : compositionSlotIndex === null
-                  ? '选择图片后统一确认，第一张为封面原图。'
-                  : '可多选图片，从当前位置开始依次填入空位。'
+              compositionSlotIndex === null
+                ? '选择图片后统一确认，第一张为封面原图。'
+                : '可多选图片，从当前位置开始依次填入空位。'
             }}
           </p>
           <span
@@ -4657,6 +4706,7 @@ const returnToContentCreation = async () => {
           </button>
         </div>
         <a-empty v-else description="当前文件夹暂无可用图片" />
+        </div>
         <div class="gallery-modal-actions">
           <a-button
             v-if="pendingImageItems.length"
@@ -4676,6 +4726,7 @@ const returnToContentCreation = async () => {
           >
             确认选择<span v-if="pendingImageItems.length">（{{ pendingImageItems.length }}）</span>
           </a-button>
+        </div>
         </div>
       </div>
     </a-modal>
@@ -5566,10 +5617,136 @@ const returnToContentCreation = async () => {
   padding: 2px 2px 8px;
   overflow-x: auto;
 }
-.gallery-modal-content {
+.gallery-picker {
+  min-height: 560px;
   display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  border: 1px solid var(--gray-150);
+  border-radius: 9px;
+  overflow: hidden;
+}
+.gallery-picker-sidebar {
+  padding: 14px 10px;
+  border-right: 1px solid var(--gray-150);
+  background: var(--gray-25);
+  overflow-y: auto;
+}
+.gallery-picker-root {
+  width: 100%;
+  margin-bottom: 4px;
+  padding: 9px 8px;
+  border: 0;
+  border-radius: 7px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  color: var(--color-text-secondary);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+.gallery-picker-root span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gallery-picker-root:hover {
+  color: var(--main-700);
+  background: var(--main-30);
+}
+.gallery-picker-root.active {
+  color: var(--main-700);
+  background: var(--main-50);
+  font-weight: 650;
+}
+.gallery-modal-content {
+  min-width: 0;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
   gap: 16px;
-  padding-top: 4px;
+  padding: 16px;
+}
+.case-folder-browser {
+  display: grid;
+  gap: 22px;
+  align-content: start;
+}
+.case-folder-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.case-folder-toolbar :deep(.case-style-select) {
+  width: 180px;
+}
+.case-folder-toolbar input {
+  flex: 1;
+  min-width: 0;
+  height: 32px;
+  padding: 0 11px;
+  border: 1px solid var(--gray-200);
+  border-radius: 6px;
+  color: var(--color-text);
+  background: var(--gray-0);
+  outline: none;
+}
+.case-folder-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 22px 16px;
+}
+.case-folder-card {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--color-text);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+.case-folder-icon {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  color: #7b88f6;
+  background: #eef0fb;
+}
+.case-folder-copy {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+.case-folder-copy strong,
+.case-folder-copy small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.case-folder-copy strong {
+  font-size: 14px;
+  font-weight: 500;
+}
+.case-folder-copy small {
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+}
+@media (max-width: 760px) {
+  .case-folder-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+.gallery-modal-images {
+  min-width: 0;
+  display: grid;
+  align-content: start;
+  gap: 16px;
 }
 .gallery-modal-back {
   width: fit-content;

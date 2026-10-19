@@ -52,7 +52,7 @@ async def test_direct_generation_uses_only_requested_inputs(monkeypatch):
 
     assert result.title == "费用标题"
     assert result.body == "费用正文"
-    assert result.topics == ["费用"]
+    assert result.topics == ["装修避坑", "费用"]
     assert load_model_calls == [
         {
             "fully_specified_name": "ark:doubao-seed-2-1-pro-260915",
@@ -85,6 +85,34 @@ async def test_direct_generation_uses_only_requested_inputs(monkeypatch):
     assert "最近有打算装修的朋友，有什么问题都可以一起聊一聊" in prompt
     assert "不要硬凑引流话术" in prompt
     assert "在下方留下" not in prompt
+    assert "装修避坑" in prompt
+    assert "装修公司推荐" in prompt
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_direct_generation_pins_region_company_topic(monkeypatch):
+    class FakeModel:
+        def bind_tools(self, schemas, **kwargs):
+            return self
+
+        async def ainvoke(self, messages):
+            return _tool_response({"title": "标题", "body": "正文", "topics": ["#装修避坑", "装修日记"]})
+
+    monkeypatch.setattr(generation, "resolve_chat_model_spec", lambda value: value or "default")
+    monkeypatch.setattr(generation, "load_chat_model", lambda **kwargs: FakeModel())
+
+    result = await generation.generate_direct_content(
+        model_spec=None,
+        creative_style={},
+        viral_source={"title": "爆款标题", "body": "爆款正文"},
+        user_request='{"businessVariables":{"所在区域":"株洲市"}}',
+    )
+
+    assert result.topics[0] == "株洲装修公司推荐"
+    assert result.topics[1] == "装修避坑"
+    assert "装修日记" in result.topics
+    assert all(not topic.startswith("#") for topic in result.topics)
 
 
 @pytest.mark.unit
