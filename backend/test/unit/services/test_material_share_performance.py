@@ -152,7 +152,7 @@ async def test_share_copies_ready_images_in_order_and_cleans_all_completed_copie
         with pytest.raises(HTTPException) as error:
             await service.create_material_share(
                 db,
-                SimpleNamespace(uid="owner", id=1, role="superadmin"),
+                SimpleNamespace(uid="owner", id=1, role="superadmin", department_id=None),
                 service.MaterialShareCreate(item_ids=[row[0].id for row in rows]),
             )
         assert error.value.detail["error"]["code"] == "MATERIAL_SHARE_STORAGE_FAILED"
@@ -162,7 +162,7 @@ async def test_share_copies_ready_images_in_order_and_cleans_all_completed_copie
     else:
         result = await service.create_material_share(
             db,
-            SimpleNamespace(uid="owner", id=1, role="superadmin"),
+            SimpleNamespace(uid="owner", id=1, role="superadmin", department_id=None),
             service.MaterialShareCreate(item_ids=[row[0].id for row in rows]),
         )
         _, snapshots = repo.create_share.await_args.args
@@ -262,7 +262,7 @@ async def test_pending_upload_share_preserves_staged_original_without_waiting_fo
     monkeypatch.setattr(service, "_audit_material", lambda *a, **kw: None)
     await service.create_material_share(
         SimpleNamespace(commit=AsyncMock(), rollback=AsyncMock()),
-        SimpleNamespace(uid="owner", id=1, role="superadmin"),
+        SimpleNamespace(uid="owner", id=1, role="superadmin", department_id=None),
         service.MaterialShareCreate(item_ids=["item"]),
     )
     _, snapshots = repo.create_share.await_args.args
@@ -309,7 +309,7 @@ async def test_share_uses_thumbnail_when_original_is_missing(share_env, monkeypa
     monkeypatch.setattr(service, "_audit_material", lambda *a, **kw: None)
     await service.create_material_share(
         SimpleNamespace(commit=AsyncMock(), rollback=AsyncMock()),
-        SimpleNamespace(uid="owner", id=1, role="superadmin"),
+        SimpleNamespace(uid="owner", id=1, role="superadmin", department_id=None),
         service.MaterialShareCreate(item_ids=["item"]),
     )
     _, snapshots = repo.create_share.await_args.args

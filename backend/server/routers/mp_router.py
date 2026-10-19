@@ -10,7 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from server.utils.auth_middleware import get_db, get_mp_context
 from server.utils.public_url import request_public_base_url
-from yuxi.services.material_library_service import MaterialShareCreate, create_material_share
+from yuxi.services.material_library_service import create_material_share
+from yuxi.services.material_share_jobs import MaterialShareRequest, accept_material_share
 from yuxi.services.personal_materials import folder_counts, list_folder
 from yuxi.services.mp_service import (
     AuthCancelPayload,
@@ -204,10 +205,11 @@ async def mp_hycanvas_template_overlay(
 @mp.get("/content/galleries")
 async def mp_galleries(
     scope: Literal["private", "enterprise"] | None = Query(None),
+    rough_only: bool = Query(False),
     ctx: MpContext = Depends(get_mp_context),
     db: AsyncSession = Depends(get_db),
 ):
-    return await list_mp_galleries(db, ctx, scope=scope)
+    return await list_mp_galleries(db, ctx, scope=scope, rough_only=rough_only)
 
 
 @mp.get("/content/gallery-items")
@@ -217,6 +219,8 @@ async def mp_gallery_items(
     include_descendants: bool = Query(False),
     page: int = Query(1, ge=1),
     page_size: int = Query(30, ge=1, le=100),
+    date_from: date | None = Query(None),
+    date_to: date | None = Query(None),
     ctx: MpContext = Depends(get_mp_context),
     db: AsyncSession = Depends(get_db),
 ):
@@ -228,6 +232,8 @@ async def mp_gallery_items(
         include_descendants=include_descendants,
         page=page,
         page_size=page_size,
+        date_from=date_from,
+        date_to=date_to,
     )
 
 
@@ -329,17 +335,20 @@ async def mp_hide_work(
 
 @mp.post("/share/cases", status_code=status.HTTP_201_CREATED)
 async def mp_create_material_share(
-    payload: MaterialShareCreate,
+    payload: MaterialShareRequest,
     request: Request,
     ctx: MpContext = Depends(get_mp_context),
     db: AsyncSession = Depends(get_db),
 ):
+    if payload.request_token:
+        return await accept_material_share(db, ctx.user, payload, ctx.employee)
     return await create_material_share(
         db,
         ctx.user,
         payload,
         public_base_url=request_public_base_url(request),
         sharer_employee=ctx.employee,
+        source_platform="mp",
     )
 
 
@@ -349,10 +358,11 @@ async def mp_upload_cover(
     category: str = Form("uncategorized"),
     design_style: str | None = Form(None),
     folder: Literal["rough", "uploads"] = Form("uploads"),
+    scope: Literal["private", "enterprise"] = Form("private"),
     ctx: MpContext = Depends(get_mp_context),
     db: AsyncSession = Depends(get_db),
 ):
-    return await upload_cover(db, ctx, file, category=category, design_style=design_style, folder=folder)
+    return await upload_cover(db, ctx, file, category=category, design_style=design_style, folder=folder, scope=scope)
 
 
 @mp.get("/content/covers/{asset_id}/file")

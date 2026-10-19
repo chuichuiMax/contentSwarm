@@ -83,8 +83,8 @@ def test_partial_sharer_contact_displays_only_the_available_field(name, phone):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("pc_actor", [False, True], ids=["mini-program-employee", "pc-sharing-actor"])
 async def test_same_case_shares_snapshot_each_sharers_contact(monkeypatch, pc_actor):
-    owner = SimpleNamespace(uid="material-owner", id=1, role="superadmin")
-    actor = SimpleNamespace(uid="sharing-actor", id=2, role="superadmin")
+    owner = SimpleNamespace(uid="material-owner", id=1, role="superadmin", department_id=1)
+    actor = SimpleNamespace(uid="sharing-actor", id=2, role="superadmin", department_id=2)
     category = SimpleNamespace(
         id="enterprise-case",
         parent_id="case-root",
@@ -109,6 +109,7 @@ async def test_same_case_shares_snapshot_each_sharers_contact(monkeypatch, pc_ac
         create_share=AsyncMock(),
     )
     storage = SimpleNamespace(
+        astat_file=AsyncMock(return_value=object()),
         aupload_file=AsyncMock(return_value=SimpleNamespace(bucket_name="image", object_name="test-snapshot")),
         adelete_file=AsyncMock(),
         acopy_file=AsyncMock(return_value=SimpleNamespace(bucket_name="image", object_name="test-snapshot")),
@@ -138,8 +139,11 @@ async def test_same_case_shares_snapshot_each_sharers_contact(monkeypatch, pc_ac
             service.MaterialShareCreate(item_ids=["case-image"]),
             actor_user=actor if pc_actor else None,
             sharer_employee=None if pc_actor else employee,
+            source_platform="pc" if pc_actor else "mp",
         )
     snapshots = [call.args[0] for call in repo.create_share.call_args_list]
+    assert all(share.sharer_uid == (actor.uid if pc_actor else owner.uid) for share in snapshots)
+    assert all(share.sharer_department_id == (2 if pc_actor else 1) for share in snapshots)
     employees[0].name = "修改后的姓名"
     employees[0].login_account = "19900000003"
 
@@ -149,6 +153,8 @@ async def test_same_case_shares_snapshot_each_sharers_contact(monkeypatch, pc_ac
     ]
     assert snapshots[0].token != snapshots[1].token
     assert all(share.owner_uid == owner.uid for share in snapshots)
+    assert all(share.source_platform == ("pc" if pc_actor else "mp") for share in snapshots)
+    assert all(len(share.mp_entry_code) == 24 for share in snapshots)
     if pc_actor:
         assert resolver.await_count == 2
         resolver.assert_awaited_with(db, actor)

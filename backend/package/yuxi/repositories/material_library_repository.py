@@ -564,6 +564,20 @@ class MaterialLibraryRepository:
         self.db.add_all(items)
         await self.db.flush()
 
+    async def share_by_token(self, token: str) -> ContentMaterialShare | None:
+        return await self.db.scalar(select(ContentMaterialShare).where(ContentMaterialShare.token == token))
+
+    async def share_by_entry_code(self, code: str) -> ContentMaterialShare | None:
+        return await self.db.scalar(select(ContentMaterialShare).where(ContentMaterialShare.mp_entry_code == code))
+
+    async def ensure_share_entry_code(self, share_id: str, code: str) -> str:
+        result = await self.db.execute(
+            update(ContentMaterialShare).where(ContentMaterialShare.id == share_id)
+            .values(mp_entry_code=func.coalesce(ContentMaterialShare.mp_entry_code, code))
+            .returning(ContentMaterialShare.mp_entry_code)
+        )
+        return result.scalar_one()
+
     async def get_share_with_items(
         self, token: str
     ) -> tuple[ContentMaterialShare | None, list[ContentMaterialShareItem]]:

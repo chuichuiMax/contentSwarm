@@ -8,6 +8,7 @@ import re
 import secrets
 import uuid
 from dataclasses import dataclass
+from datetime import date
 from typing import Any, Literal
 
 import httpx
@@ -1152,12 +1153,17 @@ async def list_mp_galleries(
     db: AsyncSession,
     ctx: MpContext,
     scope: Literal["private", "enterprise"] | None = None,
+    rough_only: bool = False,
 ) -> dict[str, Any]:
+    if rough_only and scope != "enterprise":
+        raise _mp_error(422, "MATERIAL_SCOPE_INVALID", "毛坯图库入口必须使用企业共享范围")
     result = await list_image_galleries(db, ctx.user, include_case_for_designer=True)
     galleries = []
     for item in result.get("galleries") or []:
         visibility = item.get("visibility") or "private"
         if scope and visibility != scope:
+            continue
+        if rough_only and (item.get("parent_id") or item.get("image_design_role") != "rough"):
             continue
         cover_item_id = item.get("cover_item_id")
         cover_work_id = item.get("cover_work_asset_id")
@@ -1175,6 +1181,8 @@ async def list_mp_galleries(
                 ),
             }
         )
+    if rough_only and len(galleries) != 1:
+        raise _mp_error(409, "MATERIAL_ROUGH_GALLERY_UNAVAILABLE", "企业毛坯房图库不存在或配置有误，请联系管理员")
     return {"galleries": galleries}
 
 
@@ -1186,6 +1194,8 @@ async def list_mp_gallery_items(
     include_descendants: bool = False,
     page: int = 1,
     page_size: int = 30,
+    date_from: date | None = None,
+    date_to: date | None = None,
 ) -> dict[str, Any]:
     result = await list_material_items(
         db,
@@ -1200,13 +1210,20 @@ async def list_mp_gallery_items(
         scope=scope,
         include_descendants=include_descendants,
         include_case_for_designer=True,
+        date_from=date_from,
+        date_to=date_to,
     )
-    items = [_mp_gallery_item(item) for item in result.get("items") or []]
+    items = [
+        _mp_gallery_item({**item, "can_delete": item.get("uploaded_by") == str(ctx.user.uid)})
+        for item in result.get("items") or []
+    ]
     return {
         "items": items,
         "total": result.get("total") or 0,
         "page": result.get("page") or page,
         "page_size": result.get("page_size") or page_size,
+        "pending_upload_count": result.get("pending_upload_count") or 0,
+        "upload_failures": result.get("upload_failures") or [],
     }
 
 
@@ -1233,7 +1250,7 @@ async def read_mp_gallery_item_thumbnail(db: AsyncSession, ctx: MpContext, item_
 
 
 async def delete_mp_gallery_item(db: AsyncSession, ctx: MpContext, item_id: str) -> dict[str, Any]:
-    return await delete_material_item(db, ctx.user, item_id)
+    return await delete_material_item(db, ctx.user, item_id, mp_owner_only=True)
 
 
 async def visible_mp_works(db: AsyncSession, owner_uid: str) -> list[dict[str, Any]]:
@@ -1280,6 +1297,7 @@ async def import_mp_material_upload(
     design_style: str | None = None,
     folder: Literal["rough", "uploads"] = "uploads",
     actor_user: User | None = None,
+    scope: Literal["private", "enterprise"] = "private",
 ) -> dict[str, Any]:
     """小程序素材上传：与 PC material-library/images/import 共用 import_material_images，直传 MinIO。"""
     resolved_category = (category or "uncategorized").strip() or "uncategorized"
@@ -1292,6 +1310,7 @@ async def import_mp_material_upload(
         source_channel="mp",
         source_folder=folder,
         actor_user=actor_user or user,
+        mp_scope=scope,
     )
     item = (imported.get("items") or [None])[0]
     if not item:
@@ -1317,6 +1336,7 @@ async def upload_cover(
     category: str | None = None,
     design_style: str | None = None,
     folder: Literal["rough", "uploads"] = "uploads",
+    scope: Literal["private", "enterprise"] = "private",
 ) -> dict[str, Any]:
     try:
         return await import_mp_material_upload(
@@ -1327,6 +1347,7 @@ async def upload_cover(
             design_style=design_style,
             folder=folder,
             actor_user=ctx.user,
+            scope=scope,
         )
     except HTTPException:
         raise

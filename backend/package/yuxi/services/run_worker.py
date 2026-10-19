@@ -8,6 +8,7 @@ import os
 import time
 from dataclasses import dataclass, field
 
+from arq import cron
 from sqlalchemy import select
 from sqlalchemy.exc import OperationalError
 from yuxi.agents.mcp.service import ensure_builtin_mcp_servers_in_db
@@ -20,6 +21,7 @@ from yuxi.services.content_cover_worker import process_content_cover_job
 from yuxi.services.remote_material_library_worker import process_remote_material_sync_job
 from yuxi.image_design.worker import process_image_design_job
 from yuxi.services.material_upload_queue import process_material_upload
+from yuxi.services.material_share_jobs import process_material_share, dispatch_material_shares
 from yuxi.services.viral_asset_worker import process_viral_asset
 from yuxi.services.viral_document_worker import process_viral_document
 from yuxi.services.xiaohongshu_worker import (
@@ -550,7 +552,9 @@ class WorkerSettings:
         process_xiaohongshu_profile_cleanup,
         process_xiaohongshu_distribution,
         process_material_upload,
+        process_material_share,
     ]
+    cron_jobs = [cron(dispatch_material_shares, second={0, 15, 30, 45}, run_at_startup=True)]
     max_tries = 2
     retry_jobs = True
     job_timeout = 3600

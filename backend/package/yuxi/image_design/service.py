@@ -672,10 +672,14 @@ async def delete_result(db: AsyncSession, user: User, asset_id: str) -> dict[str
             ContentCoverAsset.owner_uid == _owner_uid(user),
             ContentCoverAsset.role == "output",
             ContentCoverAsset.deleted_at.is_(None),
-        )
+        ).with_for_update()
     )
     if asset is None or (asset.metadata_json or {}).get("domain") != "image_design":
         raise _error("IMAGE_DESIGN_RESULT_NOT_FOUND", "图片设计结果不存在", 404)
+    from yuxi.services.material_share_jobs import asset_has_pending_share
+
+    if await asset_has_pending_share(db, asset.id):
+        raise _error("MATERIAL_SHARE_IN_PROGRESS", "素材正在生成案例分享，请完成后再删除", 409)
     await get_minio_client().adelete_file(asset.bucket_name, asset.object_name)
     asset.deleted_at = utc_now_naive()
     await db.commit()

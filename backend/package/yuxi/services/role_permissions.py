@@ -18,6 +18,11 @@ IMAGE_DESIGN_PAGE_PERMISSION = "image_design.access"
 
 PERMISSION_CATALOG: list[dict[str, Any]] = [
     {
+        "module_key": "customer_lead",
+        "module": "客资报表",
+        "lists": [_entry("customer_lead", "客资报表", (("view_list", "列表查看"), ("delete", "删除")))],
+    },
+    {
         "module_key": "chat",
         "module": "创建新对话",
         "lists": [_entry("chat", "创建新对话", (("access", "对话"),))],

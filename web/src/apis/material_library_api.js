@@ -14,6 +14,7 @@ const encodeQuery = (params = {}) => {
 }
 
 export const materialLibraryApi = {
+  getPublicShare: (token) => apiGet(`/api/material-library/shares/${encodeURIComponent(token)}`, { cache: 'no-store' }, false),
   listItems: (params) => apiGet(`/api/material-library/items${encodeQuery(params)}`),
   listCategories: (materialType, employeeId = '', uploaderEmployeeId = '', folder = '') =>
     apiGet(`/api/material-library/categories${encodeQuery({ material_type: materialType, employee_id: employeeId, uploader_employee_id: uploaderEmployeeId, folder })}`),

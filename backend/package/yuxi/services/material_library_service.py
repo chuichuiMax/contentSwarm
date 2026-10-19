@@ -919,6 +919,7 @@ async def import_material_images(
     design_style: str | None = None,
     source_channel: Literal["pc", "mp"] = "pc",
     source_folder: Literal["rough", "uploads"] | None = None,
+    mp_scope: Literal["private", "enterprise"] = "private",
     actor_user: User | None = None,
     manage_target_private: bool = False,
 ) -> dict[str, Any]:
@@ -926,7 +927,15 @@ async def import_material_images(
         raise _error(422, "MATERIAL_FILE_COUNT_INVALID", "每次必须上传 1–50 张图片")
     rough_upload_only = await material_access_mode(db, actor_user or user) == "rough_upload"
     owner_uid = _owner_uid(user)
-    if source_channel == "mp":
+    if source_channel == "mp" and mp_scope == "enterprise":
+        resolved_category = await resolve_material_category(
+            db, owner_uid=owner_uid, tenant_id=_tenant_id(user), material_type="image", category_id=category,
+        )
+        if not is_enterprise_rough_root(resolved_category) or resolved_category.image_design_role != "rough":
+            raise _error(403, "MATERIAL_UPLOAD_FORBIDDEN", "小程序企业共享仅支持上传毛坯房图库")
+        style = None
+        source_folder = None
+    elif source_channel == "mp":
         from yuxi.services.personal_materials import upload_category
 
         source_folder = source_folder or "uploads"
@@ -999,6 +1008,10 @@ async def import_material_images(
         )
         if resolved_category is None:
             raise _error(422, "MATERIAL_CATEGORY_INVALID", "图库不存在或共享范围已变更")
+        if source_channel == "mp" and mp_scope == "enterprise" and (
+            not is_enterprise_rough_root(resolved_category) or resolved_category.image_design_role != "rough"
+        ):
+            raise _error(403, "MATERIAL_UPLOAD_FORBIDDEN", "小程序企业共享仅支持上传毛坯房图库")
         if manage_target_private and not _is_target_rough_category(resolved_category, owner_uid):
             raise _error(403, "MATERIAL_TARGET_SCOPE_FORBIDDEN", "员工素材模式只能管理该员工的个人图库")
         if rough_upload_only:
@@ -1131,7 +1144,24 @@ async def create_material_share(
     actor_user: User | None = None,
     target_private: bool = False,
     sharer_employee: ContentEmployee | None = None,
+    source_platform: Literal["pc", "mp"] | None = None,
 ) -> dict[str, Any]:
+    share, assets = await prepare_material_share_snapshot(
+        db, user, payload, actor_user=actor_user, target_private=target_private, sharer_employee=sharer_employee,
+        source_platform=source_platform,
+    )
+    return await store_material_share_snapshot(db, user, share, assets, public_base_url, actor_user)
+
+
+async def prepare_material_share_snapshot(
+    db: AsyncSession,
+    user: User,
+    payload: MaterialShareCreate,
+    actor_user: User | None = None,
+    target_private: bool = False,
+    sharer_employee: ContentEmployee | None = None,
+    source_platform: Literal["pc", "mp"] | None = None,
+) -> tuple[ContentMaterialShare, list[ContentCoverAsset]]:
     if await material_access_mode(db, actor_user or user) == "rough_upload":
         raise _error(403, "MATERIAL_PERMISSION_DENIED", "当前岗位只能上传企业共享毛坯房图库")
     owner_uid = _owner_uid(user)
@@ -1172,7 +1202,25 @@ async def create_material_share(
         design_style=category.design_style,
         sharer_name=sharer_employee.name if sharer_employee else None,
         sharer_phone=sharer_employee.login_account if sharer_employee else None,
+        sharer_uid=str((actor_user or user).uid),
+        sharer_employee_id=sharer_employee.id if sharer_employee else None,
+        sharer_department_id=(actor_user or user).department_id,
+        source_platform=source_platform,
+        mp_entry_code=uuid.uuid4().hex[:24],
     )
+    return share, [row[1] for row in ordered_rows]
+
+
+async def store_material_share_snapshot(
+    db: AsyncSession,
+    user: User,
+    share: ContentMaterialShare,
+    assets: list[ContentCoverAsset],
+    public_base_url: str | None = None,
+    actor_user: User | None = None,
+) -> dict[str, Any]:
+    owner_uid = share.owner_uid
+    repo = MaterialLibraryRepository(db)
     snapshots: list[ContentMaterialShareItem] = []
     uploaded_objects: list[tuple[str, str]] = []
     storage = get_minio_client()
@@ -1240,7 +1288,7 @@ async def create_material_share(
     try:
         # Wait for every copy before rollback/cleanup, including siblings of a failed copy.
         results = await asyncio.gather(
-            *(copy_snapshot(order, row[1]) for order, row in enumerate(ordered_rows, start=1)),
+            *(copy_snapshot(order, asset) for order, asset in enumerate(assets, start=1)),
             return_exceptions=True,
         )
         for result in results:
@@ -1248,7 +1296,7 @@ async def create_material_share(
                 raise result
         snapshots = [result[0] for result in results]
         await repo.create_share(share, snapshots)
-        _audit_material(db, user, actor_user, "material.share.create", share_id=share.id, category_id=category.id)
+        _audit_material(db, user, actor_user, "material.share.create", share_id=share.id, category_id=share.category_id)
         await db.commit()
     except StorageError as exc:
         await db.rollback()
@@ -1381,6 +1429,9 @@ def render_public_material_share_page(
             f'<img src="{html.escape(image_url, quote=True)}" alt="{title} 第 {item.display_order} 张" loading="lazy">'
         )
     images = "".join(image_tags)
+    booking_url = html.escape(_share_browser_path(
+        base_url, f"/api/material-library/shares/{share.token}/booking"
+    ), quote=True)
     return "\n".join(
         [
             "<!doctype html>",
@@ -1410,7 +1461,11 @@ def render_public_material_share_page(
                 "min-height:74px;padding:0 24px;background:#fff}"
             ),
             "h1{margin:0;font-size:21px;line-height:1.4;text-align:center}",
-            "main{max-width:720px;margin:auto;padding:0 0 36px}",
+            "main{max-width:720px;margin:auto;padding:0 0 108px}",
+            ".booking-bar{position:fixed;z-index:3;bottom:0;left:0;right:0;background:#fff;"
+            "padding:12px 20px calc(12px + env(safe-area-inset-bottom));box-shadow:0 -2px 16px #0001}"
+            ".booking-bar a{display:block;max-width:680px;margin:auto;padding:12px;text-align:center;"
+            "border-radius:8px;background:#267345;color:white;text-decoration:none;font-weight:600}",
             ".share-hero{background:#eef0f0}",
             ".share-hero img{display:block;width:100%;height:auto;margin:0}",
             (
@@ -1438,7 +1493,8 @@ def render_public_material_share_page(
             (
                 f"<header><h1>{title}</h1></header><main>{hero}{details}"
                 f'<section class="case-section"><h2>实景案例</h2>'
-                f'<div class="case-images">{images}</div></section></main></body></html>'
+                f'<div class="case-images">{images}</div></section></main>'
+                f'<footer class="booking-bar"><a href="{booking_url}">免费预约参观工地</a></footer></body></html>'
             ),
         ]
     )
@@ -2519,6 +2575,7 @@ async def delete_material_item(
     *,
     actor_user: User | None = None,
     target_private: bool = False,
+    mp_owner_only: bool = False,
 ) -> dict[str, Any]:
     owner_uid = _owner_uid(user)
     repo = MaterialLibraryRepository(db, include_shared=True)
@@ -2530,9 +2587,12 @@ async def delete_material_item(
     if item is None:
         raise _error(404, "MATERIAL_NOT_FOUND", "素材不存在")
     category = await repo.get_category(item.category_owner_uid or item.owner_uid, item.material_type, item.category)
+    mp_rough = mp_owner_only and is_enterprise_rough_root(category)
+    if mp_rough and item.owner_uid != owner_uid:
+        raise _error(403, "MATERIAL_MANAGE_FORBIDDEN", "只能删除本人上传的图片")
     if await material_access_mode(db, actor_user or user) == "rough_upload" and (
         category is None or category.visibility != "private"
-    ):
+    ) and not mp_rough:
         raise _error(403, "MATERIAL_PERMISSION_DENIED", "企业共享毛坯房图库仅可上传")
     if category is None or not _can_manage_item(user, item, category):
         raise _error(
@@ -2567,6 +2627,10 @@ async def delete_material_item(
     )
     if referenced or poster_referenced or task_referenced or poster_task_referenced:
         raise _error(409, "MATERIAL_IN_USE", "素材正在被内容任务或封面任务使用，不能删除")
+    from yuxi.services.material_share_jobs import asset_has_pending_share
+
+    if await asset_has_pending_share(db, asset.id):
+        raise _error(409, "MATERIAL_SHARE_IN_PROGRESS", "素材正在生成案例分享，请完成后再删除")
     await delete_material_display_cache(asset.id)
     storage = get_minio_client()
     try:
