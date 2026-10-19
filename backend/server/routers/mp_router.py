@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date
 from typing import Literal
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Form, Query, Request, UploadFile, status
 from fastapi.responses import RedirectResponse, Response, StreamingResponse
@@ -261,7 +262,7 @@ async def mp_gallery_item_file(
     return Response(
         content=data,
         media_type=content_type,
-        headers={"Content-Disposition": f'inline; filename="{file_name}"'},
+        headers={"Content-Disposition": f"inline; filename*=UTF-8''{quote(file_name, safe='')}"},
     )
 
 
