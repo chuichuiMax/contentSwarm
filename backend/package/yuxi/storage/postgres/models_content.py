@@ -1237,7 +1237,7 @@ class ContentMaterialShare(Base):
 
 
 class ContentCaseVisitLead(Base):
-    """一次案例分享对应的访客预约；头像随记录保存和删除。"""
+    """一次案例分享对应的访客预约；旧版提供的头像昵称可保留。"""
 
     __tablename__ = "content_case_visit_leads"
 
@@ -1245,9 +1245,9 @@ class ContentCaseVisitLead(Base):
     share_id = Column(String(64), ForeignKey("content_material_shares.id"), nullable=False)
     appid = Column(String(64), nullable=False)
     openid = Column(String(128), nullable=False)
-    nickname = Column(String(32), nullable=False)
+    nickname = Column(String(32), nullable=True)
     phone = Column(String(64), nullable=False)
-    avatar_data = Column(LargeBinary, nullable=False)
+    avatar_data = Column(LargeBinary, nullable=True)
     sharer_uid = Column(String(255), nullable=True)
     department_id = Column(Integer, nullable=True)
     created_at = Column(DateTime, default=utc_now_naive, nullable=False)

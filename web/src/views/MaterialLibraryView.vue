@@ -22,6 +22,7 @@ import {
 } from 'lucide-vue-next'
 
 import { contentApi } from '@/apis/content_api'
+import { employeeApi } from '@/apis/employee_api'
 import { materialLibraryApi } from '@/apis/material_library_api'
 import { useUserStore } from '@/stores/user'
 import CaseGalleryStyleFilter from '@/components/material/CaseGalleryStyleFilter.vue'
@@ -130,6 +131,16 @@ const selectedShareItemIds = ref([])
 const shareOpen = ref(false)
 const shareCreating = ref(false)
 const shareUrlForManualCopy = ref('')
+const shareContact = reactive({ contact_name: '', contact_phone: '' })
+const shareContactLoading = ref(false)
+const lastShareContact = ref(null)
+const shareAccountUid = ref('')
+let shareContactRequest = 0
+const shareContactError = computed(() => {
+  if (!shareContact.contact_name.trim()) return '请填写联系人'
+  if (!/^1[3-9]\d{9}$/.test(shareContact.contact_phone.trim())) return '请填写正确的11位手机号码'
+  return ''
+})
 const previewUrls = new Map()
 const maxUploadBytes = 100 * 1024 * 1024
 const supportedImageTypes = new Set(['image/png', 'image/jpeg', 'image/webp'])
@@ -997,21 +1008,76 @@ async function copyShareUrl(url) {
 }
 
 function currentPublicShareUrl(path) {
-  if (/^https?:\/\//i.test(path)) return path
   const basePath = import.meta.env.BASE_URL.replace(/\/$/, '')
-  const routePath = path.startsWith('/') ? path : `/${path}`
-  return new URL(`${basePath}${routePath}`, window.location.origin).href
+  const routePath = /^https?:\/\//i.test(path) ? path : `${basePath}${path.startsWith('/') ? path : `/${path}`}`
+  const url = new URL(routePath, window.location.origin)
+  const host = url.hostname.toLowerCase()
+  if (/^127\./.test(host) || ['localhost', '0.0.0.0', '[::1]', '[::]'].includes(host) || host.endsWith('.localhost')) {
+    throw new Error('当前分享地址是本机地址，手机微信无法访问。请使用公网 PC 地址，或配置同一测试环境的公网预览入口。')
+  }
+  return url.href
 }
 
-async function createShare() {
+async function openShareContact() {
   if (!selectedShareItemIds.value.length) return message.warning('请先选择要分享的图片')
-  shareCreating.value = true
+  const requestId = ++shareContactRequest
+  shareAccountUid.value = userStore.uid
+  const accountUid = shareAccountUid.value
+  shareContact.contact_name = ''
+  shareContact.contact_phone = ''
   shareUrlForManualCopy.value = ''
+  lastShareContact.value = null
+  shareContactLoading.value = true
+  shareOpen.value = true
   try {
-    const response = await materialLibraryApi.createShare(selectedShareItemIds.value, targetEmployeeId.value)
-    const shareUrl = currentPublicShareUrl(response.share.url || response.share.page_url || response.share.page_path)
-    shareUrlForManualCopy.value = shareUrl
-    await copyShareUrl(shareUrl)
+    const response = await employeeApi.getMyEmployee()
+    if (requestId !== shareContactRequest || userStore.uid !== accountUid || !shareOpen.value) return
+    shareContact.contact_name = response.employee?.name || userStore.username || ''
+    shareContact.contact_phone = response.employee?.login_account || userStore.phoneNumber || ''
+    try {
+      const saved = JSON.parse(localStorage.getItem(`case-share-contact:${accountUid}`) || 'null')
+      if (saved?.contact_name?.trim() && /^1[3-9]\d{9}$/.test(saved.contact_phone)) lastShareContact.value = saved
+    } catch {
+      lastShareContact.value = null
+    }
+  } catch (error) {
+    if (requestId !== shareContactRequest || userStore.uid !== accountUid || !shareOpen.value) return
+    message.error(error.message || '无法读取登录人信息，请重试')
+    shareOpen.value = false
+  } finally {
+    if (requestId === shareContactRequest) shareContactLoading.value = false
+  }
+}
+
+watch([() => shareContact.contact_name, () => shareContact.contact_phone], () => {
+  shareUrlForManualCopy.value = ''
+})
+
+async function createShare() {
+  if (shareCreating.value || shareContactLoading.value) return
+  if (shareAccountUid.value !== userStore.uid) {
+    shareOpen.value = false
+    return message.warning('登录账号已变化，请重新分享')
+  }
+  if (!selectedShareItemIds.value.length) return message.warning('请先选择要分享的图片')
+  if (shareContactError.value) return message.warning(shareContactError.value)
+  const contact = {
+    contact_name: shareContact.contact_name.trim(),
+    contact_phone: shareContact.contact_phone.trim()
+  }
+  try {
+    localStorage.setItem(`case-share-contact:${shareAccountUid.value}`, JSON.stringify(contact))
+    lastShareContact.value = contact
+  } catch {
+    message.warning('无法保存上次使用的联系方式，本次分享仍可继续')
+  }
+  shareCreating.value = true
+  try {
+    if (!shareUrlForManualCopy.value) {
+      const response = await materialLibraryApi.createShare(selectedShareItemIds.value, targetEmployeeId.value, contact)
+      shareUrlForManualCopy.value = currentPublicShareUrl(response.share.mini_program_url)
+    }
+    await copyShareUrl(shareUrlForManualCopy.value)
     shareOpen.value = false
     message.success('链接已复制，请粘贴到微信或企业微信')
   } catch (error) {
@@ -1259,7 +1325,7 @@ onBeforeUnmount(() => {
           <a-button v-if="canCreateChildGallery" class="lucide-icon-btn" @click="openCreateCategory(activeGallery)">
             <FolderPlus :size="15" />新建二级图库
           </a-button>
-          <a-button v-if="isChildGallery" class="lucide-icon-btn" :disabled="!selectedShareItemIds.length" @click="shareOpen = true">
+          <a-button v-if="isChildGallery" class="lucide-icon-btn" :disabled="!selectedShareItemIds.length" @click="openShareContact">
             <Share2 :size="15" />分享{{ selectedShareItemIds.length ? ` (${selectedShareItemIds.length})` : '' }}
           </a-button>
         </template>
@@ -1461,10 +1527,28 @@ onBeforeUnmount(() => {
       <img v-if="previewItem" class="large-preview" :src="previewItem.previewUrl" :alt="previewItem.name" />
     </a-modal>
 
-    <a-modal v-model:open="shareOpen" title="分享图库图片" :confirm-loading="shareCreating" ok-text="复制链接" @ok="createShare">
+    <a-modal v-model:open="shareOpen" title="修改联系方式" :confirm-loading="shareCreating" ok-text="确定"
+      :ok-button-props="{ disabled: shareContactLoading || Boolean(shareContactError) }"
+      :closable="!shareCreating" :mask-closable="!shareCreating" :keyboard="!shareCreating"
+      :cancel-button-props="{ disabled: shareCreating }" @ok="createShare">
       <div class="share-form">
-        <p>将分享 {{ selectedShareItemIds.length }} 张图片。链接长期有效，原图库图片删除后仍可查看本次分享的快照。</p>
-        <small>点击“复制链接”后，请打开普通微信或企业微信，粘贴到个人会话或群聊。平台会自行抓取 H5 页面生成预览卡片。</small>
+        <p>业主拨打该号码可联系你</p>
+        <label class="share-contact-field"><span>联系人</span>
+          <a-input v-model:value="shareContact.contact_name" :maxlength="80" aria-label="联系人"
+            :disabled="shareContactLoading || shareCreating" placeholder="请输入联系人" />
+        </label>
+        <label class="share-contact-field"><span>手机号码</span>
+          <div class="share-contact-phone">
+            <a-input v-model:value="shareContact.contact_phone" :maxlength="11" type="tel" aria-label="手机号码"
+              :disabled="shareContactLoading || shareCreating" placeholder="请输入11位手机号码" />
+            <a-button :disabled="!lastShareContact || shareContactLoading || shareCreating"
+              @click="Object.assign(shareContact, lastShareContact)">上次使用</a-button>
+          </div>
+        </label>
+        <p class="share-contact-status" :class="{ valid: !shareContactError && !shareContactLoading }" role="status">
+          {{ shareContactLoading ? '正在读取登录人信息…' : (shareContactError || '格式正确，点击确定保存') }}
+        </p>
+        <small>确认后复制 {{ selectedShareItemIds.length }} 张图片的分享链接，业主在微信打开后可进入小程序查看案例并预约。</small>
         <a-input v-if="shareUrlForManualCopy" :value="shareUrlForManualCopy" readonly aria-label="分享链接" />
       </div>
     </a-modal>
@@ -1617,6 +1701,12 @@ onBeforeUnmount(() => {
 .upload-progress { display: flex; flex-direction: column; gap: 6px; }
 .upload-progress small { color: var(--color-text-secondary); }
 .share-form { display: flex; flex-direction: column; gap: 14px; }.share-form p, .share-form small { margin: 0; color: var(--color-text-secondary); }.share-form small { font-size: 12px; }
+.share-contact-field { display: flex; flex-direction: column; gap: 10px; color: var(--color-text-secondary); }
+.share-contact-field :deep(.ant-input) { font-size: 18px; font-weight: 600; color: var(--color-text); }
+.share-contact-phone { display: flex; align-items: center; gap: 12px; }
+.share-contact-phone .ant-btn { color: var(--main-color); background: var(--main-50); }
+.share-form .share-contact-status { color: var(--color-error-700); font-size: 13px; }
+.share-form .share-contact-status.valid { color: var(--color-success-700); }
 .large-preview { display: block; max-width: 100%; max-height: 72vh; margin: 0 auto; object-fit: contain; }
 .category-manager-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 16px; }.category-manager-head p { margin: 0; color: var(--color-text-secondary); }
 .category-list { display: flex; flex-direction: column; max-height: 520px; overflow: auto; border: 1px solid var(--gray-150); border-radius: 10px; }

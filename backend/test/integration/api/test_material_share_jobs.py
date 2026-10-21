@@ -29,6 +29,7 @@ from yuxi.storage.postgres.models_content import (
     ContentMaterialShare,
     ContentMaterialShareItem,
     ContentMaterialShareJob,
+    ContentEmployee,
     ContentCaseVisitLead,
     ContentCaseVisitSubmission,
 )
@@ -57,6 +58,7 @@ async def env(monkeypatch):
             ContentMaterialShare,
             ContentMaterialShareItem,
             ContentMaterialShareJob,
+            ContentEmployee,
             ContentCaseVisitLead,
             ContentCaseVisitSubmission,
         )
@@ -206,6 +208,31 @@ async def test_concurrent_duplicate_and_conflicting_order_or_owner(env):
         assert failure.value.status_code == 409
     await asyncio.gather(jobs.process_material_share({}, token), jobs.process_material_share({}, token))
     async with env.sessions() as db:
+        assert await db.scalar(select(func.count()).select_from(ContentMaterialShare)) == 1
+
+
+async def test_custom_contact_is_frozen_before_worker_and_conflicting_retry_rejected(env):
+    token = "f" * 64
+    payload = {
+        "item_ids": ["i1"], "request_token": token,
+        "contact_name": "对外联系人", "contact_phone": "13800000003",
+        "sharer_uid": "forged-user",
+    }
+    for _ in range(2):
+        response = await env.client.post("/api/mp/share/cases", json=payload)
+        assert response.status_code == 201, response.text
+    for changed in [{"contact_phone": "13900000004"}, {"contact_name": "另一联系人"}]:
+        response = await env.client.post("/api/mp/share/cases", json={**payload, **changed})
+        assert response.status_code == 409, response.text
+    env.employee.name = "员工资料后来修改"
+    await jobs.process_material_share({}, token)
+    public = (await env.client.get(f"/api/material-library/shares/{token}")).json()["share"]
+    assert (public["sharer_name"], public["sharer_phone"]) == ("对外联系人", "13800000003")
+    assert env.employee.login_account == "19900000001"
+    async with env.sessions() as db:
+        stored = await db.scalar(select(ContentMaterialShare).where(ContentMaterialShare.token == token))
+        assert stored.sharer_uid == "sender" and stored.sharer_employee_id == "employee"
+        assert await db.scalar(select(func.count()).select_from(ContentMaterialShareJob)) == 1
         assert await db.scalar(select(func.count()).select_from(ContentMaterialShare)) == 1
 
 

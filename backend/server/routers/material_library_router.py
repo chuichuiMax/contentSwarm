@@ -342,9 +342,11 @@ async def public_booking_code(token: str, db: AsyncSession = Depends(get_db)):
 
 
 @material_library.get("/shares/{token}/open-mp")
-async def public_booking_open(token: str, request: Request, db: AsyncSession = Depends(get_db)):
+async def public_booking_open(
+    token: str, request: Request, booking: bool = Query(True), db: AsyncSession = Depends(get_db)
+):
     try:
-        url = await wechat_entry_asset(db, token, "link")
+        url = await wechat_entry_asset(db, token, "link", booking=booking)
     except HTTPException as exc:
         message = exc.detail["error"]["message"] if isinstance(exc.detail, dict) else str(exc.detail)
         booking_url = f"{request_public_base_url(request)}/api/material-library/shares/{token}/booking"

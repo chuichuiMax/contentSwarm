@@ -93,13 +93,14 @@ async def submit_booking(
     db: AsyncSession,
     token: str,
     session_id: str,
-    nickname: str,
+    nickname: str | None,
     phone_code: str,
-    avatar: bytes,
+    avatar: bytes | None,
 ) -> dict:
-    nickname = nickname.strip()
-    if not nickname or len(nickname) > 32:
-        raise booking_error(422, "BOOKING_NICKNAME_REQUIRED", "请填写不超过 32 字的昵称")
+    if nickname is not None:
+        nickname = nickname.strip()
+        if not nickname or len(nickname) > 32:
+            raise booking_error(422, "BOOKING_NICKNAME_REQUIRED", "请填写不超过 32 字的昵称")
     redis = await get_redis_client()
     key = f"mp:visit:{session_id}"
     raw = await redis.get(key)
@@ -112,7 +113,7 @@ async def submit_booking(
     share = await CaseVisitRepository(db).share(token)
     if share is None:
         raise booking_error(404, "MATERIAL_SHARE_NOT_FOUND", "案例分享不存在")
-    avatar_data = await asyncio.to_thread(encode_booking_avatar, avatar)
+    avatar_data = await asyncio.to_thread(encode_booking_avatar, avatar) if avatar is not None else None
     # 同一会话串行消费微信的一次性授权码，保存失败后仍可重试。
     async with redis.lock(f"{key}:submit", timeout=45, blocking_timeout=2):
         session = json.loads(await redis.get(key) or "null")
@@ -161,9 +162,10 @@ def mp_lead_data(row, *, detail: bool = False) -> dict:
     title = "-".join(str(value) for value in (row.building_name, row.design_style, area) if value) or row.title
     result = {
         "id": row.id,
-        "nickname": row.nickname,
+        # 只提供展示文案，数据库仍保留空昵称；旧版客资页依赖此字段为字符串。
+        "nickname": row.nickname or "预约客户",
         "phone_masked": f"{row.phone[:3]}****{row.phone[-4:]}" if len(row.phone) >= 7 else "****",
-        "avatar_url": f"/api/mp/customer-leads/{row.id}/avatar",
+        "avatar_url": f"/api/mp/customer-leads/{row.id}/avatar" if row.has_avatar else None,
         "acquired_at": format_utc_datetime(row.acquired_at),
         "revision": row.booking_revision,
         "unread": row.read_revision < row.booking_revision,
@@ -238,9 +240,9 @@ async def list_leads(db: AsyncSession, user: User, page: int, page_size: int, pu
         "items": [
             {
                 "id": row.id,
-                "nickname": row.nickname,
+                "nickname": row.nickname or "预约客户",
                 "phone": row.phone,
-                "avatar_url": f"/api/customer-leads/{row.id}/avatar",
+                "avatar_url": f"/api/customer-leads/{row.id}/avatar" if row.has_avatar else None,
                 "source_title": row.title,
                 "source_url": f"{public_base_url}/share/case/{row.token}",
                 "acquired_at": format_utc_datetime(row.acquired_at),

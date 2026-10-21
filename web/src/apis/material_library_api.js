@@ -35,8 +35,11 @@ export const materialLibraryApi = {
   syncRemote: () => apiPost('/api/material-library/remote-sync', {}),
   getRemoteSyncStatus: (jobId = '') =>
     apiGet(`/api/material-library/remote-sync/status${encodeQuery({ job_id: jobId })}`),
-  createShare: (itemIds, employeeId = '') =>
-    apiPost(`/api/material-library/shares${encodeQuery({ employee_id: employeeId })}`, { item_ids: itemIds }),
+  createShare: (itemIds, employeeId = '', contact = {}) =>
+    apiPost(`/api/material-library/shares${encodeQuery({ employee_id: employeeId })}`, {
+      item_ids: itemIds,
+      ...contact
+    }),
   importImages: async (files, category, designStyle, onProgress, employeeId = '') => {
     const selected = Array.from(files || [])
     const oversized = selected.find((file) => file.size > IMAGE_FILE_LIMIT_BYTES)

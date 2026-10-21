@@ -283,6 +283,23 @@ class MaterialItemUpdate(BaseModel):
 
 class MaterialShareCreate(BaseModel):
     item_ids: list[str] = Field(min_length=1, max_length=1000)
+    contact_name: str | None = Field(default=None, max_length=80)
+    contact_phone: str | None = Field(default=None, max_length=11)
+
+    @field_validator("contact_name", "contact_phone", mode="before")
+    @classmethod
+    def strip_contact(cls, value):
+        return value.strip() if isinstance(value, str) else value
+
+    @model_validator(mode="after")
+    def validate_contact(self):
+        if self.contact_name is None and self.contact_phone is None:
+            return self  # Older clients use the authenticated employee's contact.
+        if not self.contact_name:
+            raise ValueError("请填写联系人")
+        if not self.contact_phone or not re.fullmatch(r"1[3-9]\d{9}", self.contact_phone, flags=re.ASCII):
+            raise ValueError("请填写正确的11位手机号码")
+        return self
 
     @field_validator("item_ids")
     @classmethod
@@ -1266,8 +1283,12 @@ async def prepare_material_share_snapshot(
         building_name=category.building_name,
         area=category.area,
         design_style=category.design_style,
-        sharer_name=sharer_employee.name if sharer_employee else None,
-        sharer_phone=sharer_employee.login_account if sharer_employee else None,
+        sharer_name=payload.contact_name if payload.contact_name is not None else (
+            sharer_employee.name if sharer_employee else None
+        ),
+        sharer_phone=payload.contact_phone if payload.contact_phone is not None else (
+            sharer_employee.login_account if sharer_employee else None
+        ),
         sharer_uid=str((actor_user or user).uid),
         sharer_employee_id=sharer_employee.id if sharer_employee else None,
         sharer_department_id=(actor_user or user).department_id,
@@ -1380,6 +1401,9 @@ async def store_material_share_snapshot(
         "share": {
             "id": share.token,
             "url": _share_public_url(_share_case_path(share.token), public_base_url),
+            "mini_program_url": _share_public_url(
+                f"/api/material-library/shares/{share.token}/open-mp?booking=false", public_base_url
+            ),
             "cover_url": _share_image_path(share.token, 1) if snapshots else None,
             "card_cover_url": (
                 _share_public_url(_share_card_cover_path(share.token), public_base_url) if snapshots else None
@@ -1531,7 +1555,7 @@ def render_public_material_share_page(
             ".booking-bar{position:fixed;z-index:3;bottom:0;left:0;right:0;background:#fff;"
             "padding:12px 20px calc(12px + env(safe-area-inset-bottom));box-shadow:0 -2px 16px #0001}"
             ".booking-bar a{display:block;max-width:680px;margin:auto;padding:12px;text-align:center;"
-            "border-radius:8px;background:#267345;color:white;text-decoration:none;font-weight:600}",
+            "border-radius:8px;background:#a41e2c;color:white;text-decoration:none;font-weight:600}",
             ".share-hero{background:#eef0f0}",
             ".share-hero img{display:block;width:100%;height:auto;margin:0}",
             (
@@ -1560,7 +1584,7 @@ def render_public_material_share_page(
                 f"<header><h1>{title}</h1></header><main>{hero}{details}"
                 f'<section class="case-section"><h2>实景案例</h2>'
                 f'<div class="case-images">{images}</div></section></main>'
-                f'<footer class="booking-bar"><a href="{booking_url}">免费预约参观工地</a></footer></body></html>'
+                f'<footer class="booking-bar"><a href="{booking_url}">预约免费参观工地</a></footer></body></html>'
             ),
         ]
     )

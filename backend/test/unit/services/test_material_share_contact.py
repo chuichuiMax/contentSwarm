@@ -6,8 +6,11 @@ from unittest.mock import AsyncMock
 
 import pytest
 from PIL import Image
+from pydantic import ValidationError
+from fastapi import HTTPException
 
 from yuxi.services import material_library_service as service
+from yuxi.services.material_share_jobs import MaterialShareRequest, check_same_request
 from yuxi.storage.postgres.models_content import ContentEmployee, ContentMaterialShare
 
 
@@ -82,7 +85,8 @@ def test_partial_sharer_contact_displays_only_the_available_field(name, phone):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("pc_actor", [False, True], ids=["mini-program-employee", "pc-sharing-actor"])
-async def test_same_case_shares_snapshot_each_sharers_contact(monkeypatch, pc_actor):
+@pytest.mark.parametrize("custom_contact", [False, True], ids=["employee-default", "custom-contact"])
+async def test_same_case_shares_snapshot_each_sharers_contact(monkeypatch, pc_actor, custom_contact):
     owner = SimpleNamespace(uid="material-owner", id=1, role="superadmin", department_id=1)
     actor = SimpleNamespace(uid="sharing-actor", id=2, role="superadmin", department_id=2)
     category = SimpleNamespace(
@@ -136,7 +140,9 @@ async def test_same_case_shares_snapshot_each_sharers_contact(monkeypatch, pc_ac
         await service.create_material_share(
             db,
             owner,
-            service.MaterialShareCreate(item_ids=["case-image"]),
+            service.MaterialShareCreate(item_ids=["case-image"], **(
+                {"contact_name": " 联系人乙 ", "contact_phone": " 13800000003 "} if custom_contact else {}
+            )),
             actor_user=actor if pc_actor else None,
             sharer_employee=None if pc_actor else employee,
             source_platform="pc" if pc_actor else "mp",
@@ -147,10 +153,12 @@ async def test_same_case_shares_snapshot_each_sharers_contact(monkeypatch, pc_ac
     employees[0].name = "修改后的姓名"
     employees[0].login_account = "19900000003"
 
-    assert [(share.sharer_name, share.sharer_phone) for share in snapshots] == [
+    assert [(share.sharer_name, share.sharer_phone) for share in snapshots] == ([
+        ("联系人乙", "13800000003"), ("联系人乙", "13800000003"),
+    ] if custom_contact else [
         ("测试分享人甲", "19900000001"),
         ("测试分享人乙", "19900000002"),
-    ]
+    ])
     assert snapshots[0].token != snapshots[1].token
     assert all(share.owner_uid == owner.uid for share in snapshots)
     assert all(share.source_platform == ("pc" if pc_actor else "mp") for share in snapshots)
@@ -160,3 +168,35 @@ async def test_same_case_shares_snapshot_each_sharers_contact(monkeypatch, pc_ac
         resolver.assert_awaited_with(db, actor)
     else:
         resolver.assert_not_awaited()
+
+
+@pytest.mark.parametrize("contact", [
+    {"contact_name": " ", "contact_phone": "13800000003"},
+    {"contact_name": "联系人"},
+    {"contact_phone": "13800000003"},
+    {"contact_name": "联系人", "contact_phone": ""},
+    {"contact_name": "联系人", "contact_phone": "12800000003"},
+    {"contact_name": "联系人", "contact_phone": "1380000000"},
+    {"contact_name": "联系人", "contact_phone": "138000000030"},
+    {"contact_name": "联系人", "contact_phone": "１３８０００００００３"},
+    {"contact_name": "人" * 81, "contact_phone": "13800000003"},
+])
+def test_invalid_or_partial_share_contact_rejected(contact):
+    with pytest.raises(ValidationError):
+        service.MaterialShareCreate(item_ids=["image"], **contact)
+
+
+def test_share_contact_retry_must_match_frozen_contact():
+    user = SimpleNamespace(uid="employee-a")
+    job = SimpleNamespace(requester_uid=user.uid, item_ids=["image"], share_json={
+        "sharer_name": "联系人乙", "sharer_phone": "13800000003",
+    })
+    original = MaterialShareRequest(item_ids=["image"], contact_name=" 联系人乙 ", contact_phone="13800000003")
+    check_same_request(job, user, original)
+    # Omitted contact remains compatible with old clients and old queued jobs.
+    check_same_request(job, user, MaterialShareRequest(item_ids=["image"]))
+    for change in [{"contact_name": "另一联系人"}, {"contact_phone": "13900000004"}]:
+        changed = original.model_copy(update=change)
+        with pytest.raises(HTTPException) as error:
+            check_same_request(job, user, changed)
+        assert error.value.status_code == 409

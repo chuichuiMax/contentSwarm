@@ -20,7 +20,9 @@ class CaseVisitRepository:
         statement = statement.on_conflict_do_update(
             constraint="uq_case_visit_visitor_share",
             set_={
-                **{key: statement.excluded[key] for key in ("nickname", "phone", "avatar_data", "acquired_at")},
+                **{key: statement.excluded[key] for key in ("phone", "acquired_at")},
+                "nickname": func.coalesce(statement.excluded.nickname, ContentCaseVisitLead.nickname),
+                "avatar_data": func.coalesce(statement.excluded.avatar_data, ContentCaseVisitLead.avatar_data),
                 "booking_revision": ContentCaseVisitLead.booking_revision + 1,
                 "follow_status": "pending",
                 "followed_at": None,
@@ -73,6 +75,7 @@ class CaseVisitRepository:
         return select(
             lead.id,
             lead.nickname,
+            lead.avatar_data.is_not(None).label("has_avatar"),
             lead.phone,
             lead.acquired_at,
             lead.booking_revision,
@@ -115,6 +118,7 @@ class CaseVisitRepository:
             select(
                 ContentCaseVisitLead.id,
                 ContentCaseVisitLead.nickname,
+                ContentCaseVisitLead.avatar_data.is_not(None).label("has_avatar"),
                 ContentCaseVisitLead.phone,
                 ContentCaseVisitLead.acquired_at,
                 ContentMaterialShare.token,

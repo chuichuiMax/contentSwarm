@@ -45,6 +45,7 @@ async function load() {
     total.value = response.total
     // 头像通过鉴权请求读取，不把完整客资或凭证放进公开图片地址。
     await Promise.all(items.value.map(async (row) => {
+      if (!row.avatar_url) return
       try {
         const response = await customerLeadApi.avatar(row.id)
         const blob = await response.blob()
@@ -72,7 +73,7 @@ function changePage(value) {
 
 function remove(row) {
   Modal.confirm({
-    title: '确认删除这条客资？', content: `将删除「${row.nickname}」的本次预约信息，案例和其他预约不受影响。`,
+    title: '确认删除这条客资？', content: `将删除「${row.nickname || '预约客户'}」的本次预约信息，案例和其他预约不受影响。`,
     okText: '删除', cancelText: '取消', okType: 'danger',
     async onOk() {
       try {
@@ -116,8 +117,9 @@ onBeforeUnmount(() => { version += 1; releaseAvatars(items.value) })
           <template v-if="column.key === 'index'">{{ (page - 1) * pageSize + index + 1 }}</template>
           <template v-else-if="column.key === 'avatar'">
             <img v-if="record.avatarSrc" class="customer-avatar" :src="record.avatarSrc" alt="客户头像" />
-            <span v-else class="avatar-placeholder">{{ record.avatarError ? '加载失败' : '加载中' }}</span>
+            <span v-else class="avatar-placeholder">{{ !record.avatar_url ? '客' : (record.avatarError ? '加载失败' : '加载中') }}</span>
           </template>
+          <template v-else-if="column.key === 'nickname'">{{ record.nickname || '预约客户' }}</template>
           <template v-else-if="column.key === 'source'">
             <a :href="record.source_url" target="_blank" rel="noopener noreferrer" :title="record.source_title">
               {{ record.source_title }}

@@ -32,9 +32,8 @@ function createPage(visitorApi = {}, contentApi = {}) {
 
 test('booking is a bottom sheet using native components without a new route', () => {
   assert.match(source, /class="booking-mask"/)
-  assert.match(source, /open-type="chooseAvatar"/)
-  assert.match(source, /type="nickname"/)
-  assert.match(source, /open-type="getPhoneNumber"/)
+  assert.doesNotMatch(source, /chooseAvatar|type="nickname"|<checkbox/)
+  assert.match(source, /open-type="getPhoneNumber\|agreePrivacyAuthorization"/)
   assert.doesNotMatch(source, /navigateTo.*booking/)
 })
 
@@ -82,21 +81,15 @@ test('session preparation is independent of employee login and ignores a closed 
   assert.equal(state.instance.bookingSession, '')
 })
 
-test('all three fields plus consent are required and denied phone preserves the form', async () => {
+test('phone-only booking is ready without profile fields and denial cannot submit', async () => {
   let submitted = 0
   const { instance, modal } = createPage({ submitBooking: async () => { submitted++ } })
   instance.bookingSession = 'session'
-  instance.bookingNickname = '客户甲'
-  instance.bookingAvatar = 'wxfile://avatar'
-  instance.bookingConsent = false
-  assert.equal(instance.bookingReady, false)
-  instance.bookingConsent = true
   assert.equal(instance.bookingReady, true)
   await instance.submitBooking({ detail: { errMsg: 'getPhoneNumber:fail user deny' } })
   assert.equal(submitted, 0)
   assert.equal(modal.length, 0)
-  assert.equal(instance.bookingNickname, '客户甲')
-  assert.equal(instance.bookingAvatar, 'wxfile://avatar')
+  assert.equal(instance.bookingSession, 'session')
 })
 
 test('duplicate native callbacks submit once and success waits for server persistence', async () => {
@@ -106,15 +99,17 @@ test('duplicate native callbacks submit once and success waits for server persis
     calls.push(args)
     return new Promise((resolve) => { complete = resolve })
   } })
-  Object.assign(instance, { bookingVisible: true, bookingSession: 'session', bookingNickname: ' 客户甲 ', bookingAvatar: 'wxfile://avatar', bookingConsent: true })
+  Object.assign(instance, { bookingVisible: true, bookingSession: 'session' })
   const event = { detail: { code: 'native-phone-code', errMsg: 'getPhoneNumber:ok' } }
   const pending = instance.submitBooking(event)
   await instance.submitBooking(event)
   assert.equal(calls.length, 1)
   assert.equal(modal.length, 0)
   assert.equal(calls[0][0], 'snapshot-token')
-  assert.equal(calls[0][2].nickname, '客户甲')
-  assert.equal(calls[0][2].phone_code, 'native-phone-code')
+  assert.equal(calls[0].length, 2)
+  assert.deepEqual(Object.keys(calls[0][1]).sort(), ['consent', 'phone_code', 'session_id'])
+  assert.equal(calls[0][1].phone_code, 'native-phone-code')
+  assert.equal(calls[0][1].consent, 'true')
   complete({ success: true })
   await pending
   assert.equal(instance.bookingVisible, false)
@@ -123,7 +118,7 @@ test('duplicate native callbacks submit once and success waits for server persis
 
 test('save failure retains the sheet and allows retry without changing employee token', async () => {
   const { instance, modal } = createPage({ submitBooking: async () => { throw new Error('保存失败') } })
-  Object.assign(instance, { bookingVisible: true, bookingSession: 'session', bookingNickname: '客户甲', bookingAvatar: 'wxfile://avatar', bookingConsent: true })
+  Object.assign(instance, { bookingVisible: true, bookingSession: 'session' })
   await instance.submitBooking({ detail: { code: 'phone-code' } })
   assert.equal(instance.bookingVisible, true)
   assert.equal(instance.bookingError, '保存失败')
@@ -152,21 +147,35 @@ test('native avatar return preserves the case while cancellation without hide ex
   assert.equal(context.isCaseSystemReturn(page.route), false)
 })
 
-test('nickname review must pass before the native phone button is enabled', () => {
+test('case URL Link displays the case without opening or preparing booking', async () => {
+  let opened = 0, prepared = 0
+  const state = createPage({ resolveEntry: async () => ({ share_id: 'original' }),
+    createSession: async () => { prepared++ } },
+  { getShare: async () => ({ share: { status: 'completed', images: [] } }) })
+  state.instance.openBooking = () => { opened++ }
+  state.page.onLoad.call(state.instance, { entryCode: 'c'.repeat(24), booking: '0' })
+  await new Promise(setImmediate)
+  assert.equal(opened, 0)
+  assert.equal(prepared, 0)
+  assert.equal(state.instance.shareId, 'original')
+})
+
+test('native phone button stays disabled while preparing or submitting', () => {
   const { instance } = createPage()
-  Object.assign(instance, { bookingSession: 'session', bookingAvatar: 'wxfile://avatar', bookingConsent: true })
-  instance.updateBookingNickname({ detail: { value: '客户甲' } })
   assert.equal(instance.bookingReady, false)
-  instance.reviewBookingNickname({ detail: { pass: false } })
+  instance.bookingSession = 'session'
+  instance.bookingSessionLoading = true
   assert.equal(instance.bookingReady, false)
-  instance.reviewBookingNickname({ detail: { pass: true } })
+  instance.bookingSessionLoading = false
   assert.equal(instance.bookingReady, true)
+  instance.bookingSubmitting = true
+  assert.equal(instance.bookingReady, false)
 })
 
 test('a late successful save after page unload cannot open a modal on another case', async () => {
   let complete
   const { instance, page, modal } = createPage({ submitBooking: () => new Promise((resolve) => { complete = resolve }) })
-  Object.assign(instance, { bookingVisible: true, bookingSession: 'session', bookingNickname: '客户甲', bookingAvatar: 'wxfile://avatar', bookingConsent: true })
+  Object.assign(instance, { bookingVisible: true, bookingSession: 'session' })
   const pending = instance.submitBooking({ detail: { code: 'phone-code' } })
   page.onUnload.call(instance)
   complete({ success: true })
@@ -174,7 +183,7 @@ test('a late successful save after page unload cannot open a modal on another ca
   assert.equal(modal.length, 0)
 })
 
-test('visitor upload failure does not clear an employee token or redirect to login', async () => {
+test('phone-only visitor request sends no employee credentials and failure cannot redirect to login', async () => {
   const requests = []
   const changes = []
   const requestCode = readFileSync(resolve(root, 'utils/request.js'), 'utf8')
@@ -184,13 +193,19 @@ test('visitor upload failure does not clear an employee token or redirect to log
     getCurrentPages: () => [{ route: 'pages/materials/shared-case' }],
     uni: {
       getStorageSync: () => 'existing-employee-token', removeStorageSync: () => changes.push('clear'),
-      reLaunch: () => changes.push('navigate'), uploadFile: (options) => requests.push(options)
+      reLaunch: () => changes.push('navigate'), request: (options) => requests.push(options)
     }
   })
   vm.runInContext(requestCode, context)
-  const pending = context.uploadFile({ url: '/booking', filePath: 'wxfile://avatar', requiresAuth: false })
+  const apiCode = readFileSync(resolve(root, 'apis/mp.js'), 'utf8')
+  const visitorApi = apiCode.slice(apiCode.indexOf('export const mpVisitorApi ='), apiCode.indexOf('export const mpLeadApi ='))
+    .replace('export const mpVisitorApi', 'globalThis.visitorApi')
+  vm.runInContext(visitorApi, context)
+  const pending = context.visitorApi.submitBooking('case-a', { session_id: 'session', phone_code: 'code', consent: 'true' })
   assert.equal(requests[0].header.Authorization, undefined)
-  requests[0].success({ statusCode: 401, data: JSON.stringify({ detail: { error: { message: '会话已过期' } } }) })
+  assert.equal(requests[0].header['Content-Type'], 'application/x-www-form-urlencoded')
+  assert.equal(requests[0].method, 'POST')
+  requests[0].success({ statusCode: 401, data: { detail: { error: { message: '会话已过期' } } } })
   await assert.rejects(pending)
   assert.deepEqual(changes, [])
 })

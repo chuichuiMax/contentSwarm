@@ -85,6 +85,16 @@ async def test_booking_uses_server_identity_phone_and_share_attribution(booking)
 
 
 @pytest.mark.asyncio
+async def test_phone_only_booking_does_not_fabricate_profile_fields(booking):
+    result = await service.submit_booking(booking.db, "share-a", "session-a", None, "code-a", None)
+    assert result == {"success": True, "id": "lead-a"}
+    values = booking.repo.upsert.call_args.args[0]
+    assert values["nickname"] is None and values["avatar_data"] is None
+    assert values["openid"] == "verified-openid" and values["phone"] == "19900000001"
+    assert values["share_id"] == "snapshot-a" and values["sharer_uid"] == "employee-a"
+
+
+@pytest.mark.asyncio
 async def test_parallel_callbacks_consume_phone_code_once(booking):
     await asyncio.gather(
         *[

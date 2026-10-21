@@ -452,6 +452,8 @@ class PostgresManager(metaclass=SingletonMeta):
             "ALTER TABLE content_case_visit_leads "
             "ADD COLUMN IF NOT EXISTS follow_status VARCHAR(16) NOT NULL DEFAULT 'pending'",
             "ALTER TABLE content_case_visit_leads ADD COLUMN IF NOT EXISTS followed_at TIMESTAMP",
+            "ALTER TABLE content_case_visit_leads ALTER COLUMN nickname DROP NOT NULL",
+            "ALTER TABLE content_case_visit_leads ALTER COLUMN avatar_data DROP NOT NULL",
             """UPDATE content_material_shares AS s SET source_platform = 'mp'
                FROM content_material_share_jobs AS j
                WHERE s.token = j.token AND s.sharer_uid = j.requester_uid AND s.source_platform IS NULL""",

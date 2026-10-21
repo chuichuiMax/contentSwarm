@@ -72,7 +72,11 @@ async def test_case_cta_qrcode_mobile_open_and_explicit_failure(share_env, monke
                 errors = []
                 page.on("pageerror", lambda error: errors.append(str(error)))
                 await page.goto(f"{origin}/share/case/{token}")
-                await page.get_by_role("link", name="免费预约参观工地").click()
+                booking_button = page.get_by_role("link", name="预约免费参观工地", exact=True)
+                await expect(booking_button).to_have_css("background-color", "rgb(164, 30, 44)")
+                await expect(booking_button).to_have_css("color", "rgb(255, 255, 255)")
+                await page.screenshot(path=str(tmp_path / "pc-case-booking-button.png"), full_page=True)
+                await booking_button.click()
                 await expect(page).to_have_url(f"{origin}/api/material-library/shares/{token}/booking")
                 await expect(page.locator("#entry-code")).to_have_js_property("naturalWidth", 430)
                 await expect(page.locator("#code-error")).to_be_hidden()

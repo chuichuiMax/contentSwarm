@@ -68,7 +68,7 @@ def entry_environment() -> str:
     return value
 
 
-async def wechat_entry_asset(db, token: str, kind: str):
+async def wechat_entry_asset(db, token: str, kind: str, *, booking: bool = True):
     share = await booking_share(db, token)
     appid, secret = _wechat_credentials()
     if not appid or not secret:
@@ -76,6 +76,8 @@ async def wechat_entry_asset(db, token: str, kind: str):
     env = entry_environment()
     code = await ensure_entry_code(db, share)
     key = f"mp:case-entry:{appid}:{env}:{code}:{kind}"
+    if not booking:
+        key += ":case"
     redis = await get_redis_client()
     try:
         async with redis.lock(key + ":lock", timeout=45, blocking_timeout=2):
@@ -96,7 +98,7 @@ async def wechat_entry_asset(db, token: str, kind: str):
                 endpoint = "https://api.weixin.qq.com/wxa/generate_urllink"
                 payload = {
                     "path": CASE_PAGE,
-                    "query": urlencode({"entryCode": code, "booking": "1"}),
+                    "query": urlencode({"entryCode": code, "booking": "1" if booking else "0"}),
                     "env_version": env,
                     "is_expire": True,
                     "expire_type": 1,

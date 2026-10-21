@@ -89,6 +89,22 @@ async def test_url_link_query_env_and_expiry_cache(entry, httpx_mock, monkeypatc
 
 
 @pytest.mark.asyncio
+async def test_case_link_stays_separate_from_booking_and_renews_after_cache_expiry(entry, httpx_mock):
+    httpx_mock.add_response(json={"url_link": "https://wxmpurl.cn/case-first"})
+    httpx_mock.add_response(json={"url_link": "https://wxmpurl.cn/booking"})
+    httpx_mock.add_response(json={"url_link": "https://wxmpurl.cn/case-renewed"})
+    assert await service.wechat_entry_asset(entry.db, entry.share.token, "link", booking=False) == "https://wxmpurl.cn/case-first"
+    assert await service.wechat_entry_asset(entry.db, entry.share.token, "link") == "https://wxmpurl.cn/booking"
+    assert await service.wechat_entry_asset(entry.db, entry.share.token, "link", booking=False) == "https://wxmpurl.cn/case-first"
+    first, booking = [json.loads(request.content) for request in httpx_mock.get_requests()]
+    assert first["query"] == "entryCode=" + "c" * 24 + "&booking=0"
+    assert booking["query"].endswith("booking=1")
+    entry.redis.values.pop(next(key for key in entry.redis.values if key.endswith(":case")))
+    assert await service.wechat_entry_asset(entry.db, entry.share.token, "link", booking=False) == "https://wxmpurl.cn/case-renewed"
+    assert len(httpx_mock.get_requests()) == 3
+
+
+@pytest.mark.asyncio
 async def test_invalid_token_refresh_once_and_failed_generation_is_retryable(entry, httpx_mock):
     httpx_mock.add_response(json={"errcode": 40001, "errmsg": "expired"})
     httpx_mock.add_response(json={"errcode": 45009, "errmsg": "quota"})
