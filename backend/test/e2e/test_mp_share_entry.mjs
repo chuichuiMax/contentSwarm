@@ -56,13 +56,19 @@ for (const compiled of bundle ? [false, true] : [false]) {
     await instance.show({ scene: 1038, query: { entryCode: 'a'.repeat(24), booking: '1' } })
     assert.deepEqual(instance.jumps, [])
   })
-  for (const [scene, query] of [[1047, { scene: 'c'.repeat(24) }], [1065, { entryCode: 'd'.repeat(24), booking: '1' }]]) {
+  for (const [scene, query] of [[1047, { scene: 'c'.repeat(24) }], [1065, { entryCode: 'd'.repeat(24), booking: '1' }],
+    [1167, { entryCode: 'd'.repeat(24), booking: '0' }], [1194, { entryCode: 'd'.repeat(24), booking: '0' }]]) {
     test(`${label}: QR and web booking scene ${scene} bypass employee auth and keep native routing`, async () => {
       const instance = app(compiled, [], async () => { throw Error('must remain anonymous') })
       await instance.show({ scene, path: 'pages/materials/shared-case', query })
       assert.deepEqual(instance.jumps, [])
     })
   }
+  test(`${label}: browsing URL Link preserves booking=0 when native routing needs a relaunch`, async () => {
+    const instance = app(compiled, [], async () => { throw Error('public case must stay anonymous') })
+    await instance.show({ scene: 1167, query: { entryCode: 'a'.repeat(24), booking: '0' } })
+    assert.deepEqual(instance.jumps, ['/pages/materials/shared-case?entryCode=' + 'a'.repeat(24) + '&booking=0'])
+  })
   for (const query of ['scene=' + 'c'.repeat(24), 'entryCode=' + 'd'.repeat(24) + '&booking=1']) {
     test(`${label}: development preview string query bypasses employee auth`, async () => {
       const instance = app(compiled, [], async () => { throw Error('preview case must remain anonymous') })

@@ -16,6 +16,7 @@ from yuxi.services.personal_materials import folder_counts, list_folder
 from yuxi.services.mp_service import (
     AuthCancelPayload,
     AuthConfirmPayload,
+    EmployeeCodePayload,
     MeUpdatePayload,
     MpCompileBriefPayload,
     MpContext,
@@ -49,6 +50,8 @@ from yuxi.services.mp_service import (
     list_mp_viral_assets,
     list_mp_works,
     login_by_sms,
+    login_by_employee_code,
+    lookup_employee_by_code,
     login_by_wechat_code,
     logout,
     read_cover_file,
@@ -71,6 +74,16 @@ from yuxi.services.mp_service import (
 )
 
 mp = APIRouter(prefix="/mp", tags=["mp"])
+
+
+@mp.post("/auth/employee/lookup")
+async def mp_employee_lookup(payload: EmployeeCodePayload, db: AsyncSession = Depends(get_db)):
+    return await lookup_employee_by_code(db, payload)
+
+
+@mp.post("/auth/employee/login")
+async def mp_employee_login(payload: EmployeeCodePayload, db: AsyncSession = Depends(get_db)):
+    return await login_by_employee_code(db, payload)
 
 
 @mp.post("/auth/sms/send")

@@ -392,11 +392,14 @@ async def test_http_booking_receipt_survives_retry_and_new_session_rebooks(visit
     image = io.BytesIO()
     Image.new("RGB", (24, 24), "red").save(image, "PNG")
 
-    async def book(session, token="token-a"):
+    async def book(session, token="token-a", *, profile=True):
+        data = {"session_id": session, "phone_code": "verified-code", "consent": "true"}
+        if profile:
+            data["nickname"] = "预约客户"
         response = await visit_api.client.post(
             f"/api/mp/share/cases/{token}/appointments",
-            data={"session_id": session, "nickname": "预约客户", "phone_code": "verified-code", "consent": "true"},
-            files={"avatar": ("avatar.png", image.getvalue(), "image/png")},
+            data=data,
+            files={"avatar": ("avatar.png", image.getvalue(), "image/png")} if profile else None,
         )
         assert response.status_code == 200, response.text
         return response.json()["id"]
@@ -412,7 +415,25 @@ async def test_http_booking_receipt_survives_retry_and_new_session_rebooks(visit
     saved = (await visit_api.client.get(base, headers=headers)).json()
     assert saved["revision"] == 1 and saved["unread"] is False and saved["follow_status"] == "followed"
     assert saved["source_platform"] == "mp"
-    assert await book("two") == ids[0]
+    assert await book("two", profile=False) == ids[0]
     saved = (await visit_api.client.get(base, headers=headers)).json()
     assert saved["revision"] == 2 and saved["unread"] is True and saved["follow_status"] == "pending"
-    assert await book("three", "token-b") != ids[0]
+    assert saved["nickname"] == "预约客户" and saved["avatar_url"]
+    assert (await visit_api.client.get(saved["avatar_url"], headers=headers)).status_code == 200
+    new_id = await book("three", "token-b", profile=False)
+    assert new_id != ids[0]
+    new_lead = (await visit_api.client.get(f"/api/mp/customer-leads/{new_id}", headers=headers)).json()
+    assert new_lead["nickname"] == "预约客户" and new_lead["avatar_url"] is None
+    assert new_lead["phone"] == "19912345678" and new_lead["unread"]
+    pc_list = (await visit_api.client.get("/api/customer-leads", headers=visit_api.tokens[1])).json()
+    pc_lead = next(item for item in pc_list["items"] if item["id"] == new_id)
+    assert pc_lead["nickname"] == "预约客户" and pc_lead["avatar_url"] is None
+    async with visit_api.sessions() as db:
+        stored = await db.get(ContentCaseVisitLead, new_id)
+        assert stored.nickname is None and stored.avatar_data is None
+    refused = await visit_api.client.post(
+        "/api/mp/share/cases/token-b/appointments",
+        data={"session_id": "three", "phone_code": "new-code", "consent": "false"},
+    )
+    assert refused.status_code == 422
+    assert phone.await_count == 3

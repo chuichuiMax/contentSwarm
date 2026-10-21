@@ -13,7 +13,7 @@ from typing import Any, Literal
 
 import httpx
 from fastapi import HTTPException, UploadFile
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -255,6 +255,12 @@ REGIONS: tuple[str, ...] = tuple(city for city, _ in REGION_TREE)
 ServiceEntry = Literal["装修家居", "好评笔记"]
 
 
+class EmployeeCodePayload(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    employee_code: str = Field(min_length=1, max_length=64)
+
+
 class SmsSendPayload(BaseModel):
     phone: str = Field(min_length=11, max_length=20)
 
@@ -352,11 +358,38 @@ async def require_app_employee(db: AsyncSession, phone: str) -> ContentEmployee:
     employee = await EmployeeRepository(db).get_by_login_account(phone)
     if employee is None:
         raise _mp_error(404, "EMPLOYEE_NOT_FOUND", "未找到对应员工账号")
+    return _require_employee_app_access(employee)
+
+
+def _require_employee_app_access(employee: ContentEmployee) -> ContentEmployee:
     if not employee.enabled:
         raise _mp_error(403, "EMPLOYEE_DISABLED", "员工已停用")
     if "app" not in (employee.login_port or []):
         raise _mp_error(403, "EMPLOYEE_APP_FORBIDDEN", "该员工未开通小程序登录")
     return employee
+
+
+async def require_app_employee_by_code(db: AsyncSession, employee_code: str) -> ContentEmployee:
+    employee = await EmployeeRepository(db).get_by_code(employee_code)
+    if employee is None:
+        raise _mp_error(404, "EMPLOYEE_NOT_FOUND", "未找到对应员工号")
+    return _require_employee_app_access(employee)
+
+
+async def lookup_employee_by_code(db: AsyncSession, payload: EmployeeCodePayload) -> dict[str, Any]:
+    employee = await require_app_employee_by_code(db, payload.employee_code)
+    return {
+        "employee": {
+            "employee_code": employee.employee_code,
+            "name": employee.name,
+            "login_account": employee.login_account,
+        }
+    }
+
+
+async def login_by_employee_code(db: AsyncSession, payload: EmployeeCodePayload) -> dict[str, Any]:
+    employee = await require_app_employee_by_code(db, payload.employee_code)
+    return await _issue_token(db, employee)
 
 
 def map_nrlx_to_ct_code(type_code: str | None, name: str | None) -> str:

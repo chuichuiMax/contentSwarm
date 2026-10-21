@@ -25,12 +25,18 @@ async def test_report_full_phone_source_new_tab_confirm_delete_and_error_state()
             "id": f"lead-{index}",
             "nickname": f"测试客户{index}",
             "phone": f"1990000000{index}",
+            "avatar_url": f"/api/customer-leads/lead-{index}/avatar",
             "source_title": f"原始案例{index}",
             "source_url": f"{origin}/share/case/token-{index}",
             "acquired_at": "2026-10-15T06:11:00Z",
         }
         for index in (1, 2)
     ]
+    rows.append({
+        **rows[0], "id": "lead-phone-only", "nickname": None,
+        "phone": "19900000003", "avatar_url": None, "acquired_at": "2026-10-16T06:11:00Z",
+        "source_title": "手机号预约案例",
+    })
 
     async def respond(route):
         path = urlparse(route.request.url).path
@@ -91,6 +97,8 @@ async def test_report_full_phone_source_new_tab_confirm_delete_and_error_state()
                     f"body={(await page.locator('body').inner_text())[:1500]}, traffic={traffic[-15:]}"
                 )
             await expect(page.get_by_text("19900000001", exact=True)).to_be_visible()
+            await expect(page.get_by_text("预约客户", exact=True)).to_be_visible()
+            await expect(page.get_by_text("19900000003", exact=True)).to_be_visible()
             await expect(page.get_by_text("2026/10/15 14:11", exact=True)).to_have_count(2)
             await expect(page.get_by_alt_text("客户头像")).to_have_count(2)
             await expect(page.get_by_alt_text("客户头像").first).to_have_js_property("naturalWidth", 32)

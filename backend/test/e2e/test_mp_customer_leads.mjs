@@ -34,6 +34,26 @@ function pageState(name, api, nextTick = async () => {}, contentApi = {}) {
   return { page, instance, events, routes, nativeCalls, listeners, sourceCalls }
 }
 
+test('phone-only customers use placeholders without requesting a missing avatar', async () => {
+  let avatarRequests = 0
+  const customer = { ...lead(), nickname: null, avatar_url: null }
+  const api = { avatar: async () => { avatarRequests++ }, read: async () => {},
+    get: async () => customer, list: async () => ({ items: [customer], total: 1 }) }
+  const detail = pageState('lead-detail', api)
+  detail.instance._visible = true
+  await detail.instance.load()
+  const list = pageState('leads', api)
+  await list.instance.load(true)
+  await tick()
+  assert.equal(avatarRequests, 0)
+  assert.equal(detail.instance.lead.nickname, null)
+  assert.equal(list.instance.items[0].nickname, null)
+  for (const file of ['leads', 'lead-detail']) {
+    const template = readFileSync(resolve(root, `pages/mine/${file}.vue`), 'utf8').split('<script>')[0]
+    assert.match(template, /nickname \|\| '预约客户'/)
+  }
+})
+
 test('detail marks only the successfully displayed revision read; dialing and source preserve identity', async () => {
   let render
   const reads = [], follows = []

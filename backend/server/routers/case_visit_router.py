@@ -88,15 +88,15 @@ async def visitor_session(payload: VisitorSessionCreate, db: AsyncSession = Depe
 async def appointment(
     token: str,
     session_id: str = Form(min_length=1, max_length=64),
-    nickname: str = Form(min_length=1, max_length=32),
+    nickname: str | None = Form(None, min_length=1, max_length=32),
     phone_code: str = Form(min_length=1, max_length=256),
     consent: bool = Form(),
-    avatar: UploadFile = File(),
+    avatar: UploadFile | None = File(None),
     db: AsyncSession = Depends(get_db),
 ):
     if not consent:
         raise booking_error(422, "BOOKING_CONSENT_REQUIRED", "请先同意预约信息使用说明")
-    data = await avatar.read(MAX_AVATAR_BYTES + 1)
+    data = await avatar.read(MAX_AVATAR_BYTES + 1) if avatar else None
     try:
         return await submit_booking(db, token, session_id, nickname, phone_code, data)
     except LockError:

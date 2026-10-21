@@ -69,8 +69,12 @@ class MaterialShareRequest(MaterialShareCreate):
     request_token: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
 
 
-def check_same_request(job, user, item_ids):
-    if job.requester_uid != str(user.uid) or job.item_ids != item_ids:
+def check_same_request(job, user, payload):
+    contact_changed = payload.contact_name is not None and (
+        job.share_json.get("sharer_name") != payload.contact_name
+        or job.share_json.get("sharer_phone") != payload.contact_phone
+    )
+    if job.requester_uid != str(user.uid) or job.item_ids != payload.item_ids or contact_changed:
         raise HTTPException(
             409,
             detail={
@@ -87,11 +91,12 @@ async def enqueue_share(token: str) -> None:
 async def accept_material_share(db, user, payload: MaterialShareRequest, employee):
     existing = await db.get(ContentMaterialShareJob, payload.request_token)
     if existing is not None:
-        check_same_request(existing, user, payload.item_ids)
+        check_same_request(existing, user, payload)
         return await read_material_share_state(db, existing.token)
 
     failure = None
-    share_data, sources = {}, []
+    share_data = {"sharer_name": payload.contact_name, "sharer_phone": payload.contact_phone}
+    sources = []
     try:
         # The delete endpoint takes these same locks before deleting storage objects.
         await db.execute(
@@ -138,7 +143,7 @@ async def accept_material_share(db, user, payload: MaterialShareRequest, employe
     )
     await db.commit()
     job = await db.get(ContentMaterialShareJob, payload.request_token, populate_existing=True)
-    check_same_request(job, user, payload.item_ids)
+    check_same_request(job, user, payload)
     if failure and inserted:
         raise failure
     if job.status == "pending":

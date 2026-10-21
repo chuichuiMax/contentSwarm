@@ -30,7 +30,12 @@ setup_logging()
 
 RATE_LIMIT_MAX_ATTEMPTS = 10
 RATE_LIMIT_WINDOW_SECONDS = 60
-RATE_LIMIT_ENDPOINTS = {("/api/auth/token", "POST"), ("/api/mp/auth/sms/send", "POST")}
+RATE_LIMIT_ENDPOINTS = {
+    ("/api/auth/token", "POST"),
+    ("/api/mp/auth/sms/send", "POST"),
+    ("/api/mp/auth/employee/lookup", "POST"),
+    ("/api/mp/auth/employee/login", "POST"),
+}
 
 # In-memory login attempt tracker to reduce brute-force exposure per worker
 _login_attempts: defaultdict[str, deque[float]] = defaultdict(deque)
