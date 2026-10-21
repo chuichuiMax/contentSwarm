@@ -21,9 +21,11 @@ from yuxi.services.material_library_service import (
     _make_share_card_cover,
     _make_share_display_webp,
     _normalize_image,
+    can_view_batch_script_gallery,
     create_material_share,
     create_material_category,
     ensure_initial_enterprise_galleries,
+    is_enterprise_batch_script_gallery,
     render_public_material_share_page,
     serialize_public_material_share,
     serialize_item,
@@ -94,7 +96,7 @@ async def test_employee_rough_listing_uses_actor_permissions_and_target_ownershi
     repo = SimpleNamespace(
         list_items=AsyncMock(return_value=([], 0)),
         uploader_names=AsyncMock(return_value={}),
-        list_selected_image_item_ids=AsyncMock(return_value=set()),
+        list_gallery_used_image_item_ids=AsyncMock(return_value=set()),
     )
 
     async def permission_grants(db, user):
@@ -1078,3 +1080,13 @@ async def test_employee_generated_thumbnail_read_does_not_use_rough_only_filter(
     assert name == "gen"
     repo.get_private_rough_item_for_owner.assert_not_awaited()
     repo.get_item_for_user.assert_awaited_once_with("mli_generated", "mp_employee")
+
+
+def test_batch_script_gallery_visibility():
+    batch = SimpleNamespace(name="毛坯批量生图图库")
+    other = SimpleNamespace(name="案例图库")
+    assert is_enterprise_batch_script_gallery(batch)
+    assert not is_enterprise_batch_script_gallery(other)
+    assert can_view_batch_script_gallery(SimpleNamespace(role="superadmin"), batch)
+    assert not can_view_batch_script_gallery(SimpleNamespace(role="admin"), batch)
+    assert can_view_batch_script_gallery(SimpleNamespace(role="admin"), other)

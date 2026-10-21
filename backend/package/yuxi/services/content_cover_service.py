@@ -1981,19 +1981,30 @@ async def create_cover_generate_job(db: AsyncSession, user: User, payload: Cover
             "不得生成其他文字、数字、字母、水印或 Logo。"
         )
     elif image2_copy:
-        copy_lines = []
-        if title:
-            copy_lines.append(f"标题：{title}")
-        if payload.subtitle.strip():
-            copy_lines.append(f"副标题：{payload.subtitle.strip()}")
-        copy_clause = "\n".join(copy_lines)
-        output_guidance = (
-            "以参考原图作为完整背景，只添加文字及必要的局部明暗调整；保留空间结构、家具、材质、"
-            "灯光、色彩、拍摄视角和画面比例，不重新生成室内场景。输出单张完整、不透明的 1080×1440 封面图。"
-            "画面中只允许出现以下文案，必须逐字准确、完整、清晰可读，不得改写、遗漏、增加或改变顺序：\n"
-            f"{copy_clause}\n"
-            "不得添加虚构 Logo、水印或额外装饰文字。"
-        )
+        from yuxi.content_cover.ai_cover_prompt import ai_cover_uses_embedded_copy
+
+        ai_cover_variant = str((payload.parameters or {}).get("ai_cover_prompt_variant") or "")
+        if ai_cover_uses_embedded_copy(ai_cover_variant):
+            output_guidance = (
+                "以参考原图作为完整背景，只添加文字及必要的局部明暗调整；保留空间结构、家具、材质、"
+                "灯光、色彩、拍摄视角和画面比例，不重新生成室内场景。"
+                "严格按下方提示词中的字体风格、字形结构与文案逐字绘制，不得改写、遗漏、增加或改变顺序。"
+                "输出单张完整、不透明的 1080×1440 封面图；不得添加虚构 Logo、水印或额外装饰文字。"
+            )
+        else:
+            copy_lines = []
+            if title:
+                copy_lines.append(f"标题：{title}")
+            if payload.subtitle.strip():
+                copy_lines.append(f"副标题：{payload.subtitle.strip()}")
+            copy_clause = "\n".join(copy_lines)
+            output_guidance = (
+                "以参考原图作为完整背景，只添加文字及必要的局部明暗调整；保留空间结构、家具、材质、"
+                "灯光、色彩、拍摄视角和画面比例，不重新生成室内场景。输出单张完整、不透明的 1080×1440 封面图。"
+                "画面中只允许出现以下文案，必须逐字准确、完整、清晰可读，不得改写、遗漏、增加或改变顺序：\n"
+                f"{copy_clause}\n"
+                "不得添加虚构 Logo、水印或额外装饰文字。"
+            )
     else:
         output_guidance = (
             "输出完整的封面视觉底图，左上区域预留干净、低细节的标题安全区。"

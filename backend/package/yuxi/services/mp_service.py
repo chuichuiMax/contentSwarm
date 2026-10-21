@@ -47,7 +47,9 @@ from yuxi.repositories.content_repository import ContentRepository
 from yuxi.repositories.cover_repository import CoverRepository
 from yuxi.repositories.employee_repository import EmployeeRepository
 from yuxi.repositories.material_library_repository import MaterialLibraryRepository
-from yuxi.services.agent_run_service import stream_agent_run_events
+from yuxi.repositories.agent_run_repository import TERMINAL_RUN_STATUSES
+from yuxi.services.agent_run_service import _compact_run_event_envelope, stream_agent_run_events
+from yuxi.services.run_queue_service import normalize_after_seq
 from yuxi.services.business_variable_service import list_business_variables
 from yuxi.services.content_cover_service import get_cover_asset_file, serialize_asset
 from yuxi.services.content_service import (
@@ -512,14 +514,16 @@ def build_mp_brief_payload(
 
 
 def _mp_direct_run_response(direct: dict[str, Any]) -> dict[str, Any]:
+    run_id = direct["run_id"]
     return {
-        "run_id": direct["run_id"],
+        "run_id": run_id,
         "task_id": direct["task_id"],
         "status": direct["status"],
         "request_id": direct["request_id"],
         "error_message": None,
         "interrupt": None,
-        "stream_url": f"/api/mp/content/runs/{direct['run_id']}/events",
+        "stream_url": f"/api/mp/content/runs/{run_id}/events",
+        "poll_url": f"/api/mp/content/runs/{run_id}/events-poll",
     }
 
 
@@ -535,14 +539,16 @@ def _extract_interrupt(events: list[dict[str, Any]]) -> dict[str, Any] | None:
 
 def _compact_run(run_result: dict[str, Any], interrupt: dict[str, Any] | None) -> dict[str, Any]:
     run = run_result["run"]
+    run_id = run["id"]
     return {
-        "run_id": run["id"],
+        "run_id": run_id,
         "task_id": run["thread_id"],
         "status": run["status"],
         "request_id": run["request_id"],
         "error_message": run.get("error_message"),
         "interrupt": interrupt,
-        "stream_url": f"/api/mp/content/runs/{run['id']}/events",
+        "stream_url": f"/api/mp/content/runs/{run_id}/events",
+        "poll_url": f"/api/mp/content/runs/{run_id}/events-poll",
     }
 
 
@@ -1003,7 +1009,15 @@ async def _lock_decoration_visual_material(
         raise _mp_error(422, "MP_COVER_REQUIRED", "请选择图库图片或上传封面图")
     if item is None or item.material_type != "image" or item.status != "enabled":
         raise _mp_error(422, "MP_COVER_LIBRARY_ITEM_MISSING", "封面图不存在、已停用或不在当前账号图库中")
-    if await repo.item_is_selected_by_task(item.id, owner_uid):
+    from yuxi.services.material_library_service import _image_item_gallery_usage_scope
+
+    owner_uids, enterprise_scope, tenant_id = await _image_item_gallery_usage_scope(db, repo, user, item)
+    if await repo.item_is_selected_by_task(
+        item.id,
+        owner_uids,
+        tenant_id=tenant_id,
+        enterprise_scope=enterprise_scope,
+    ):
         raise _mp_error(409, "MP_COVER_IN_USE", "该图库图片已被其他内容任务使用")
     return (
         ContentVisualMaterialSelection(
@@ -1619,6 +1633,8 @@ async def get_run(db: AsyncSession, ctx: MpContext, run_id: str) -> dict[str, An
     task_id = str(result["run"]["thread_id"])
     task = await db.get(ContentTask, task_id)
     visible = _visible_mp_run(result, task_status=None if task is None else task.status)
+    if visible.get("status") in {"pending", "running", "cancel_requested"}:
+        return _compact_run({"run": visible}, None)
     if visible.get("status") == "completed":
         return _compact_run({"run": visible}, None)
     events = await list_run_stream_events(str(visible["id"]), limit=500)
@@ -1664,8 +1680,59 @@ async def get_run(db: AsyncSession, ctx: MpContext, run_id: str) -> dict[str, An
 
 
 async def stream_run_events(run_id: str, after_seq: str, ctx: MpContext):
-    async for chunk in stream_agent_run_events(run_id=run_id, after_seq=after_seq, current_uid=str(ctx.user.uid)):
+    async for chunk in stream_agent_run_events(
+        run_id=run_id, after_seq=after_seq, current_uid=str(ctx.user.uid), verbose=False
+    ):
         yield chunk
+
+
+async def poll_mp_run_events(
+    db: AsyncSession,
+    ctx: MpContext,
+    run_id: str,
+    *,
+    after_seq: str = "0-0",
+) -> dict[str, Any]:
+    """单次 JSON 拉取运行事件，供小程序短超时轮询，避免 SSE 长连接触发 60s 限制。"""
+    result = await get_content_run(db, ctx.user, run_id)
+    task = await db.get(ContentTask, str(result["run"]["thread_id"]))
+    visible = _visible_mp_run(result, task_status=None if task is None else task.status)
+    active_run_id = str(visible["id"])
+    last_seq = normalize_after_seq(after_seq)
+    raw_events = await list_run_stream_events(active_run_id, after_seq=last_seq, limit=80)
+    events: list[dict[str, Any]] = []
+    terminal = visible.get("status") in TERMINAL_RUN_STATUSES
+    for item in raw_events:
+        seq = str(item.get("seq") or "0-0")
+        last_seq = seq
+        event_type = str(item.get("event_type") or "message")
+        envelope = item.get("payload") or {}
+        if isinstance(envelope, dict):
+            compact = _compact_run_event_envelope(
+                {
+                    "run_id": active_run_id,
+                    "thread_id": visible.get("thread_id"),
+                    "event": event_type,
+                    "payload": envelope,
+                }
+            )
+            if compact is None:
+                continue
+            events.append({"seq": seq, "event": event_type, **compact})
+        if event_type == "end":
+            terminal = True
+    if terminal and visible.get("status") not in TERMINAL_RUN_STATUSES:
+        terminal = False
+    return {
+        "run_id": active_run_id,
+        "task_id": visible.get("thread_id"),
+        "status": visible.get("status"),
+        "after_seq": last_seq,
+        "events": events,
+        "done": terminal,
+        "stream_url": f"/api/mp/content/runs/{active_run_id}/events",
+        "poll_url": f"/api/mp/content/runs/{active_run_id}/events-poll",
+    }
 
 
 async def resume_run(db: AsyncSession, ctx: MpContext, run_id: str, payload: MpRunResumePayload) -> dict[str, Any]:

@@ -17,9 +17,18 @@ from PIL import Image, ImageDraw
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from yuxi.content.schemas import XiaohongshuDistributionCreate
-from yuxi.content_cover.ai_cover_prompt import AI_COVER_PROMPT
+from yuxi.content_cover.ai_cover_prompt import (
+    AI_COVER_PROMPT,
+    ai_cover_eligible_variants,
+    AiCoverSiteHeaderError,
+    build_site_header_lines,
+    format_ai_cover_copy_text,
+    resolve_ai_cover_variant,
+    select_ai_cover_prompt,
+)
 from yuxi.content_cover.image2_client import Image2Client, Image2Config, Image2Error, image2_is_configured
 from yuxi.content_cover.renderer import (
+    apply_site_header_overlay,
     apply_template_title,
     finalize_template_transfer,
     render_cover,
@@ -663,6 +672,169 @@ def test_ai_cover_prompt_reserves_top_and_bottom_exclusion_zones():
     assert "禁止使用贴顶、贴底或出血式文字" in AI_COVER_PROMPT
 
 
+def test_format_ai_cover_copy_text_joins_title_and_subtitle():
+    assert format_ai_cover_copy_text(title="六都国际120㎡婚房装修", subtitle="全屋定制化装修") == (
+        "六都国际120㎡婚房装修，全屋定制化装修"
+    )
+    assert format_ai_cover_copy_text(title="仅标题", subtitle="") == "仅标题"
+
+
+def test_select_ai_cover_prompt_handwritten_injects_two_lines(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(
+        "yuxi.content_cover.ai_cover_prompt.random.choice",
+        lambda _: "p1",
+    )
+    selection = select_ai_cover_prompt(title="标题一", subtitle="标题二")
+    assert selection.variant == "p1"
+    assert "手写风" in selection.prompt
+    assert "标题一" in selection.prompt
+    assert "标题二" in selection.prompt
+    assert selection.render_copy_with_image2 is True
+
+
+def test_select_ai_cover_prompt_editorial(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(
+        "yuxi.content_cover.ai_cover_prompt.random.choice",
+        lambda _: "editorial",
+    )
+    selection = select_ai_cover_prompt(title="A", subtitle="B")
+    assert selection.variant == "editorial"
+    assert selection.prompt == AI_COVER_PROMPT
+
+
+def test_build_site_header_lines_from_form_values():
+    line1, line2 = build_site_header_lines(
+        title="fallback",
+        subtitle="副标题",
+        form_values={"楼盘信息": "中建钰山湖", "外框面积": "245", "设计风格": "意式轻奢"},
+    )
+    assert line1 == "中建钰山湖"
+    assert line2 == "245㎡意式轻奢实景"
+
+
+def test_build_site_header_lines_strips_admin_prefix():
+    line1, line2 = build_site_header_lines(
+        title="",
+        subtitle="",
+        form_values={
+            "工地地址": "湖南省长沙市岳麓区中建钰山湖3栋",
+            "外框面积": "120㎡",
+            "设计风格": "现代",
+        },
+    )
+    assert line1 == "中建钰山湖"
+    assert line2 == "120㎡现代实景"
+
+
+def test_build_site_header_lines_raises_when_fields_missing():
+    with pytest.raises(AiCoverSiteHeaderError, match="外框面积"):
+        build_site_header_lines(title="标题", subtitle="副", form_values={"楼盘信息": "某盘"})
+
+
+def test_ai_cover_eligible_variants_excludes_p12_for_non_case_share():
+    pool = ai_cover_eligible_variants(content_type_code="CT02", content_type_name="装修报价清单")
+    assert "p12" not in pool
+    assert len(pool) == 9
+
+
+def test_resolve_ai_cover_variant_slot_two_maps_to_p1():
+    pool = ai_cover_eligible_variants(content_type_code="CT02")
+    variant = resolve_ai_cover_variant(pool=pool, prompt_random=False, featured_template_index=2)
+    assert variant == "p1"
+
+
+def test_resolve_ai_cover_variant_slot_three_maps_to_p2():
+    pool = ai_cover_eligible_variants(content_type_code="CT02")
+    variant = resolve_ai_cover_variant(pool=pool, prompt_random=False, featured_template_index=3)
+    assert variant == "p2"
+
+
+def test_select_ai_cover_prompt_fixed_slot_two(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(
+        "yuxi.content_cover.ai_cover_prompt.random.choice",
+        lambda _: "editorial",
+    )
+    selection = select_ai_cover_prompt(
+        title="标题",
+        subtitle="副标题",
+        prompt_random=False,
+        featured_template_index=2,
+    )
+    assert selection.variant == "p1"
+    assert "手写风" in selection.prompt
+
+
+def test_select_ai_cover_prompt_fixed_slot_three(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(
+        "yuxi.content_cover.ai_cover_prompt.random.choice",
+        lambda _: "editorial",
+    )
+    selection = select_ai_cover_prompt(
+        title="鸿扬家装30周年庆，优惠享不停",
+        subtitle="进店有礼，不容错过",
+        prompt_random=False,
+        featured_template_index=3,
+    )
+    assert selection.variant == "p2"
+    assert "3D 立体白色文字" in selection.prompt
+    assert "进店有礼，不容错过" in selection.prompt
+
+
+def test_resolve_ai_cover_variant_slot_four_maps_to_p3():
+    pool = ai_cover_eligible_variants(content_type_code="CT02")
+    variant = resolve_ai_cover_variant(pool=pool, prompt_random=False, featured_template_index=4)
+    assert variant == "p3"
+
+
+def test_select_ai_cover_prompt_fixed_slot_four(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(
+        "yuxi.content_cover.ai_cover_prompt.random.choice",
+        lambda _: "editorial",
+    )
+    selection = select_ai_cover_prompt(
+        title="110㎡旧房改造，费用怎么算？",
+        subtitle="，老房子想翻新，第一步别急着问费用",
+        prompt_random=False,
+        featured_template_index=4,
+    )
+    assert selection.variant == "p3"
+    assert "行草题韵" in selection.prompt
+    assert "110㎡旧房改造，费用怎么算？" in selection.prompt
+
+
+def test_ai_cover_eligible_variants_includes_p12_for_case_share():
+    pool = ai_cover_eligible_variants(content_type_code="CT01")
+    assert "p12" in pool
+    pool_by_name = ai_cover_eligible_variants(content_type_name="装修案例分享")
+    assert "p12" in pool_by_name
+
+
+def test_select_ai_cover_prompt_p12_uses_site_header_prompt(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(
+        "yuxi.content_cover.ai_cover_prompt.random.choice",
+        lambda _: "p12",
+    )
+    selection = select_ai_cover_prompt(
+        title="营销标题",
+        subtitle="副标题",
+        form_values={"楼盘信息": "六都国际", "外框面积": "120㎡", "设计风格": "现代"},
+        content_type_code="CT01",
+    )
+    assert selection.variant == "p12"
+    assert selection.render_copy_with_image2 is True
+    assert "现代特粗无衬线黑体" in selection.prompt
+    assert "明黄色" in selection.prompt
+    assert "第一行：六都国际" in selection.prompt
+    assert "第二行：120㎡现代实景" in selection.prompt
+    assert "营销标题" not in selection.prompt
+
+
+def test_apply_site_header_overlay_keeps_image_size():
+    image = Image.new("RGB", (1080, 1440), color=(120, 120, 120))
+    result = apply_site_header_overlay(image, "中建钰山湖", "245㎡意式轻奢实景")
+    assert result.size == (1080, 1440)
+
+
 @pytest.mark.asyncio
 async def test_image2_copy_mode_sends_exact_copy_and_keeps_numbers(monkeypatch: pytest.MonkeyPatch):
     captured = {}
@@ -717,6 +889,57 @@ async def test_image2_copy_mode_sends_exact_copy_and_keeps_numbers(monkeypatch: 
     assert "标题贴顶" in request["negative_prompt"]
     assert "标签贴底" in request["negative_prompt"]
     assert captured["content_prompt_kwargs"]["include_content_context"] is False
+
+
+@pytest.mark.asyncio
+async def test_image2_copy_style_variant_uses_prompt_embedded_copy(monkeypatch: pytest.MonkeyPatch):
+    captured = {}
+
+    class FakeRepository:
+        def __init__(self, _db):
+            pass
+
+        async def get_assets_for_user(self, *_args, **_kwargs):
+            return [SimpleNamespace(role="library_image")]
+
+    async def fake_resolve_image2_config(*_args, **_kwargs):
+        return SimpleNamespace(model="gpt-image-2")
+
+    style_prompt = "字体风格：动漫体。「主标题  副标题」"
+
+    async def fake_content_prompt(*_args, **_kwargs):
+        return style_prompt, None, ""
+
+    async def fake_create_job(_db, _user, **kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(), False
+
+    service_globals = create_cover_generate_job.__globals__
+    monkeypatch.setitem(service_globals, "ContentCoverRepository", FakeRepository)
+    monkeypatch.setitem(service_globals, "resolve_image2_config", fake_resolve_image2_config)
+    monkeypatch.setitem(service_globals, "_content_prompt", fake_content_prompt)
+    monkeypatch.setitem(service_globals, "_create_job", fake_create_job)
+    monkeypatch.setitem(service_globals, "serialize_job", lambda _job: {})
+
+    await create_cover_generate_job(
+        object(),
+        SimpleNamespace(uid="alice"),
+        CoverGenerateCreate(
+            mode="image_to_image",
+            source_asset_ids=["source-1"],
+            title="主标题",
+            subtitle="副标题",
+            render_copy_with_image2=True,
+            prompt=style_prompt,
+            parameters={"ai_cover_prompt_variant": "p8"},
+            idempotency_key="request-style",
+        ),
+    )
+
+    request = captured["request"]
+    assert "标题：主标题" not in request["prompt"]
+    assert "动漫体" in request["prompt"]
+    assert "严格按下方提示词中的字体风格" in request["prompt"]
 
 
 @pytest.mark.asyncio

@@ -16,7 +16,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.repositories.employee_repository import EmployeeRepository
 from yuxi.repositories.material_library_repository import MaterialLibraryRepository
-from yuxi.services.role_service import SYSTEM_ROLES, require_role, resolve_stored_user_role
+from yuxi.services.role_service import (
+    SYSTEM_ROLES,
+    invalidate_role_member_count_cache,
+    require_role,
+    resolve_stored_user_role,
+)
 from yuxi.storage.postgres.models_business import Department, User
 from yuxi.storage.postgres.models_content import ContentEmployee
 from yuxi.utils.auth_utils import AuthUtils
@@ -428,7 +433,7 @@ async def export_traffic_stats(
     listing = await list_traffic_stats(db, keyword=keyword, branch=branch, department=department)
     workbook = Workbook()
     sheet = workbook.active
-    sheet.title = "流量统计"
+    sheet.title = "数据概览"
     sheet.append(
         [
             "序号",
@@ -498,6 +503,7 @@ async def create_employee(db: AsyncSession, user: User, payload: EmployeeCreate)
         await ensure_platform_user(db, employee)
     except IntegrityError as exc:
         raise _employee_error(409, "EMPLOYEE_DUPLICATE", "员工编码或登录账号已存在") from exc
+    await invalidate_role_member_count_cache()
     return {"employee": employee.to_dict()}
 
 
@@ -531,6 +537,7 @@ async def update_employee(db: AsyncSession, employee_pk: str, payload: EmployeeU
         await ensure_platform_user(db, employee)
     except IntegrityError as exc:
         raise _employee_error(409, "EMPLOYEE_DUPLICATE", "员工编码或登录账号已存在") from exc
+    await invalidate_role_member_count_cache()
     return {"employee": employee.to_dict()}
 
 
@@ -541,4 +548,5 @@ async def delete_employee(db: AsyncSession, employee_pk: str) -> dict[str, Any]:
         raise _employee_error(404, "EMPLOYEE_NOT_FOUND", "员工不存在")
     await _soft_delete_employee_user(db, employee)
     await repo.delete(employee)
+    await invalidate_role_member_count_cache()
     return {"success": True, "id": employee_pk}

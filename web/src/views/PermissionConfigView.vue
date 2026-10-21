@@ -62,7 +62,10 @@ const formatCreatedAt = (value) => {
 const loadRoles = async () => {
   loading.value = true
   try {
-    const response = await roleApi.listRoles({ keyword: keyword.value })
+    const response = await roleApi.listRoles({
+      keyword: keyword.value,
+      include_member_counts: true
+    })
     roles.value = response.roles || []
   } catch (error) {
     message.error(error.message || '加载角色失败')

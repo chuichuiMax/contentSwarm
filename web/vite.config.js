@@ -90,7 +90,15 @@ export default defineConfig(({ mode }) => {
         ignored: ['**/node_modules/**', '**/dist/**'],
       },
       host: '0.0.0.0',
-      allowedHosts: ['ai.hi-run.net'],
+      // 经 Nginx 反代访问时允许公网 Host，HMR WebSocket 与页面同端口（见 VITE_HMR_*）
+      allowedHosts: mode === 'development' ? true : ['ai.hi-run.net'],
+      hmr: env.VITE_HMR_HOST
+        ? {
+            host: env.VITE_HMR_HOST,
+            clientPort: env.VITE_HMR_CLIENT_PORT ? Number(env.VITE_HMR_CLIENT_PORT) : undefined,
+            protocol: env.VITE_HMR_PROTOCOL || 'ws',
+          }
+        : true,
     }
   }
 })

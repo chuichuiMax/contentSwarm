@@ -58,6 +58,9 @@ class ContentVisualMaterialSelection(BaseModel):
         default=None,
         pattern=r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
     )
+    ai_cover_prompt_random: bool | None = None
+    ai_cover_prompt_variant: str | None = Field(default=None, max_length=32)
+    featured_cover_template_index: int | None = Field(default=None, ge=1, le=32)
 
 
 class ContentBriefPayload(BaseModel):

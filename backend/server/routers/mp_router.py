@@ -39,6 +39,7 @@ from yuxi.services.mp_service import (
     get_me,
     get_pricing,
     get_run,
+    poll_mp_run_events,
     get_task,
     list_contents,
     list_cover_templates,
@@ -427,6 +428,16 @@ async def mp_run_events(
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+@mp.get("/content/runs/{run_id}/events-poll")
+async def mp_run_events_poll(
+    run_id: str,
+    after_seq: str = Query(default="0-0"),
+    ctx: MpContext = Depends(get_mp_context),
+    db: AsyncSession = Depends(get_db),
+):
+    return await poll_mp_run_events(db, ctx, run_id, after_seq=after_seq)
 
 
 @mp.post("/content/runs/{run_id}/resume")

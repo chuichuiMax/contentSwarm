@@ -12,7 +12,7 @@ from sqlalchemy import select
 
 from yuxi.agents.toolkits.registry import tool
 from yuxi.content.execution_trace import build_execution_preview
-from yuxi.content_cover.ai_cover_prompt import AI_COVER_PROMPT
+from yuxi.content_cover.ai_cover_prompt import ai_cover_prompt_controls, select_ai_cover_prompt
 from yuxi.content_cover.handwritten_quote_prompt import (
     HANDWRITTEN_QUOTE_NEGATIVE_PROMPT,
     build_handwritten_quote_prompt,
@@ -676,6 +676,19 @@ async def create_content_cover_job(
                 raise ValueError("AI 封面创作需要一张图库背景图")
             if len(text) < 2 or any(not str(value).strip() for value in text[:2]):
                 raise ValueError("AI 封面需要封面 Agent 提供标题和副标题")
+            brief = getattr(task, "brief_json", None) or {}
+            form_values = dict(brief.get("form_values") or {})
+            content_type_code = getattr(task, "content_type_code", "") or ""
+            content_type_name = str(brief.get("typeName") or "")
+            prompt_controls = ai_cover_prompt_controls(visual_material)
+            ai_selection = select_ai_cover_prompt(
+                title=text[0],
+                subtitle=text[1],
+                form_values=form_values,
+                content_type_code=content_type_code,
+                content_type_name=content_type_name,
+                **prompt_controls,
+            )
             result = await create_cover_generate_job(
                 db,
                 user,
@@ -685,13 +698,15 @@ async def create_content_cover_job(
                     source_asset_ids=[locked_image_asset_id],
                     title=text[0],
                     subtitle=text[1],
-                    render_copy_with_image2=True,
-                    prompt=AI_COVER_PROMPT,
+                    render_copy_with_image2=ai_selection.render_copy_with_image2,
+                    prompt=ai_selection.prompt,
                     size="1080x1440",
                     n=1,
                     parameters={
                         "quality": "high",
                         "output_format": "png",
+                        "ai_cover_prompt_variant": ai_selection.variant,
+                        **ai_selection.extra_parameters,
                         "visual_plan_hash": plan_hash,
                         "workflow_resume": workflow_resume,
                     },

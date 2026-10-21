@@ -261,8 +261,6 @@ def build_trusted_quote_snapshot(
     requirement = payload.requirementType
     if not is_quote_content_type_name(requirement.typeName):
         return None
-    if len(requirement.prices) != 1 or requirement.titlePrice is None:
-        raise _dj_error(422, "DANGJIA_QUOTE_METADATA_INVALID", "报价类型元数据不完整")
     if len(requirement.prices) != 1:
         raise _dj_error(422, "DANGJIA_QUOTE_METADATA_INVALID", "施工报价元数据不完整")
     price = requirement.prices[0]

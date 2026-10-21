@@ -13,15 +13,83 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.repositories.case_visit_repository import CaseVisitRepository
-from yuxi.services.mp_service import MpContext, _wechat_credentials, _wechat_phone_by_code
+from yuxi.services.mp_service import (
+    MpContext,
+    _mp_error,
+    _wechat_credentials,
+    _wechat_phone_by_code,
+    authenticate_mp_request,
+)
 from yuxi.services.role_service import effective_permission_grants
 from yuxi.services.run_queue_service import get_redis_client
+from yuxi.utils.auth_utils import AuthUtils
 from yuxi.storage.postgres.models_business import User
 from yuxi.storage.postgres.models_content import ContentCaseVisitLead
 from yuxi.utils.datetime_utils import format_utc_datetime, utc_now_naive
 
 VISITOR_SESSION_TTL = 600
+MP_LEAD_UNREAD_CACHE_TTL = 30
 MAX_AVATAR_BYTES = 2 * 1024 * 1024
+
+
+def mp_lead_unread_cache_key(owner_uid: str) -> str:
+    return f"mp:customer-leads:unread:{owner_uid}"
+
+
+async def invalidate_mp_lead_unread_cache(owner_uid: str | None) -> None:
+    if not owner_uid:
+        return
+    redis = await get_redis_client()
+    await redis.delete(mp_lead_unread_cache_key(owner_uid))
+
+
+async def set_mp_lead_unread_cache(owner_uid: str, unread_count: int) -> None:
+    redis = await get_redis_client()
+    await redis.setex(mp_lead_unread_cache_key(owner_uid), MP_LEAD_UNREAD_CACHE_TTL, str(unread_count))
+
+
+async def get_mp_lead_unread_count(db: AsyncSession, owner_uid: str) -> int:
+    redis = await get_redis_client()
+    key = mp_lead_unread_cache_key(owner_uid)
+    cached = await redis.get(key)
+    if cached is not None:
+        return int(cached)
+    count = await CaseVisitRepository(db).unread_count(owner_uid)
+    await redis.setex(key, MP_LEAD_UNREAD_CACHE_TTL, str(count))
+    return count
+
+
+def _mp_bearer_token(authorization: str | None, access_token: str | None) -> str:
+    if authorization and authorization.startswith("Bearer "):
+        return authorization.split("Bearer ", 1)[1].strip()
+    if access_token:
+        return access_token.strip()
+    return ""
+
+
+async def mp_lead_summary(
+    db: AsyncSession,
+    authorization: str | None,
+    access_token: str | None = None,
+) -> dict:
+    """未读客资汇总。Redis 命中时只校验 JWT，避免高峰占满 DB 连接池导致轮询超时。"""
+    token = _mp_bearer_token(authorization, access_token)
+    if token:
+        try:
+            payload = AuthUtils.verify_access_token(token)
+        except ValueError as exc:
+            raise _mp_error(401, "MP_UNAUTHORIZED", str(exc)) from exc
+        if payload.get("typ") != "mp":
+            raise _mp_error(401, "MP_UNAUTHORIZED", "无效的小程序凭证")
+        owner_uid = payload.get("uid")
+        if owner_uid:
+            redis = await get_redis_client()
+            cached = await redis.get(mp_lead_unread_cache_key(str(owner_uid)))
+            if cached is not None:
+                return {"unread_count": int(cached)}
+    ctx = await authenticate_mp_request(db, authorization, access_token=access_token)
+    unread_count = await get_mp_lead_unread_count(db, str(ctx.user.uid))
+    return {"unread_count": unread_count}
 
 
 def booking_error(status: int, code: str, message: str) -> HTTPException:
@@ -146,6 +214,7 @@ async def submit_booking(
         )
         repo.record_submission(session_id, lead_id)
         await db.commit()
+        await invalidate_mp_lead_unread_cache(share.sharer_uid)
     return {"success": True, "id": lead_id}
 
 
@@ -215,7 +284,10 @@ async def change_mp_lead(db: AsyncSession, ctx: MpContext, lead_id: str, revisio
             raise booking_error(404, "CUSTOMER_LEAD_NOT_FOUND", "客资不存在或无权访问")
         raise booking_error(409, "LEAD_UPDATED", "业主有新的预约，请刷新后查看")
     await db.commit()
-    return {"success": True, "unread_count": await repo.unread_count(str(ctx.user.uid))}
+    owner_uid = str(ctx.user.uid)
+    unread_count = await repo.unread_count(owner_uid)
+    await set_mp_lead_unread_cache(owner_uid, unread_count)
+    return {"success": True, "unread_count": unread_count}
 
 
 async def lead_scope(db: AsyncSession, user: User, action: str) -> list:

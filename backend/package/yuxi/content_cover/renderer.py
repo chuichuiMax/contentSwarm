@@ -163,6 +163,112 @@ def apply_title_overlay(image: Image.Image, title: str) -> Image.Image:
     return Image.alpha_composite(canvas, overlay)
 
 
+def _draw_centered_stroked_line(
+    draw: ImageDraw.ImageDraw,
+    text: str,
+    *,
+    y: int,
+    image_width: int,
+    font: ImageFont.ImageFont,
+    fill: tuple[int, int, int, int],
+    stroke_fill: tuple[int, int, int, int],
+    stroke_width: int,
+    shadow_offset: tuple[int, int],
+    char_spacing: int,
+) -> int:
+    text = text.strip()
+    if not text:
+        return y
+    total_width = 0
+    glyphs: list[tuple[str, int]] = []
+    for index, character in enumerate(text):
+        char_width = _text_width(draw, character, font)
+        glyphs.append((character, char_width))
+        total_width += char_width
+        if index < len(text) - 1:
+            total_width += char_spacing
+    left = max(0, (image_width - total_width) // 2)
+    shadow_dx, shadow_dy = shadow_offset
+    cursor_x = left
+    max_bottom = y
+    for index, (character, char_width) in enumerate(glyphs):
+        draw.text(
+            (cursor_x + shadow_dx, y + shadow_dy),
+            character,
+            font=font,
+            fill=(0, 0, 0, 160),
+        )
+        draw.text(
+            (cursor_x, y),
+            character,
+            font=font,
+            fill=fill,
+            stroke_width=stroke_width,
+            stroke_fill=stroke_fill,
+        )
+        bbox = draw.textbbox((cursor_x, y), character, font=font, stroke_width=stroke_width)
+        max_bottom = max(max_bottom, bbox[3])
+        cursor_x += char_width
+        if index < len(glyphs) - 1:
+            cursor_x += char_spacing
+    return max(1, max_bottom - y)
+
+
+def apply_site_header_overlay(image: Image.Image, line1: str, line2: str) -> Image.Image:
+    """AI 封面提示词十二：顶部双行黄/白粗黑体，黑色描边与轻投影。"""
+    line1 = line1.strip()
+    line2 = line2.strip()
+    canvas = image.convert("RGBA")
+    if not line1 and not line2:
+        return canvas
+    width, height = canvas.size
+    overlay = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
+    draw = ImageDraw.Draw(overlay)
+    top_margin = max(48, round(height * 0.06))
+    line_gap = 15
+    char_spacing = 15
+    stroke_width = max(3, round(width * 0.004))
+    shadow_offset = (max(2, stroke_width // 2), max(2, stroke_width // 2))
+    stroke_fill = (0, 0, 0, 255)
+    primary_fill = (255, 210, 0, 255)
+    secondary_fill = (255, 255, 255, 255)
+
+    primary_size = max(52, min(78, width // 14))
+    secondary_size = max(36, min(56, int(primary_size * 0.72)))
+    primary_font = _font(primary_size, bold=True)
+    secondary_font = _font(secondary_size, bold=True)
+
+    cursor_y = top_margin
+    if line1:
+        line_height = _draw_centered_stroked_line(
+            draw,
+            line1,
+            y=cursor_y,
+            image_width=width,
+            font=primary_font,
+            fill=primary_fill,
+            stroke_fill=stroke_fill,
+            stroke_width=stroke_width,
+            shadow_offset=shadow_offset,
+            char_spacing=char_spacing,
+        )
+        cursor_y += line_height + line_gap
+    if line2:
+        _draw_centered_stroked_line(
+            draw,
+            line2,
+            y=cursor_y,
+            image_width=width,
+            font=secondary_font,
+            fill=secondary_fill,
+            stroke_fill=stroke_fill,
+            stroke_width=stroke_width,
+            shadow_offset=shadow_offset,
+            char_spacing=char_spacing,
+        )
+    return Image.alpha_composite(canvas, overlay)
+
+
 def _extract_template_text_blocks(image: Image.Image) -> list[dict[str, Any]]:
     """Read text boxes lazily so normal cover generation does not load OCR models."""
     global _TEMPLATE_OCR

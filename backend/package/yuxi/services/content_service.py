@@ -1634,14 +1634,32 @@ async def save_content_brief(
             "CONTENT_COVER_TEMPLATE_CONFLICT",
             "内置封面与精选封面只能选择其一",
         )
-    if requested_cover_mode == "ai" and (
-        requested_poster_template_id or requested_hycanvas_template_id or requested_featured_cover_template_id
-    ):
+    requested_ai_cover_prompt_random = (
+        selection.ai_cover_prompt_random if selection and selection.ai_cover_prompt_random is not None else True
+    )
+    if requested_cover_mode == "ai" and (requested_poster_template_id or requested_hycanvas_template_id):
         raise _content_error(
             422,
             "CONTENT_AI_COVER_TEMPLATE_CONFLICT",
             "AI 封面只使用图库原图，不能选择或叠加封面模板",
         )
+    if (
+        requested_cover_mode == "ai"
+        and requested_featured_cover_template_id
+        and requested_ai_cover_prompt_random
+    ):
+        raise _content_error(
+            422,
+            "CONTENT_AI_COVER_TEMPLATE_CONFLICT",
+            "AI 封面随机模式下不能选择封面模板；请开启「指定提示词」后再选模板",
+        )
+    if requested_cover_mode == "ai" and requested_ai_cover_prompt_random is False:
+        if not requested_featured_cover_template_id and not (selection and selection.ai_cover_prompt_variant):
+            raise _content_error(
+                422,
+                "CONTENT_AI_COVER_PROMPT_REQUIRED",
+                "AI 封面指定模式下请选择封面模板或提示词",
+            )
     hycanvas_template = None
     if compile_now and requested_hycanvas_template_id:
         from yuxi.services.hycanvas_service import HyCanvasClient
@@ -1700,6 +1718,11 @@ async def save_content_brief(
         or current_visual_material.get("cover_mode") != requested_cover_mode
         or current_visual_material.get("hycanvas_template_id") != requested_hycanvas_template_id
         or current_visual_material.get("featured_cover_template_id") != requested_featured_cover_template_id
+        or current_visual_material.get("ai_cover_prompt_random") != requested_ai_cover_prompt_random
+        or current_visual_material.get("ai_cover_prompt_variant")
+        != (selection.ai_cover_prompt_variant if selection else None)
+        or current_visual_material.get("featured_cover_template_index")
+        != (selection.featured_cover_template_index if selection else None)
         or current_visual_material.get("photo_composition") != requested_composition
     ):
         raise _content_error(
@@ -1855,6 +1878,9 @@ async def save_content_brief(
             "is_handwritten_quote_template": visual_snapshot.get("is_handwritten_quote_template", False),
             "featured_cover_template_id": requested_featured_cover_template_id,
             "featured_cover_template_title": visual_snapshot.get("featured_cover_template_title"),
+            "featured_cover_template_index": selection.featured_cover_template_index if selection else None,
+            "ai_cover_prompt_random": requested_ai_cover_prompt_random,
+            "ai_cover_prompt_variant": selection.ai_cover_prompt_variant if selection else None,
             "photo_composition": requested_composition,
         }
         if visual_snapshot
@@ -1909,10 +1935,21 @@ async def _enqueue_content_run(
     node_id: str | None = None,
 ) -> dict[str, Any]:
     if task.selected_image_item_id:
-        occupying = await MaterialLibraryRepository(db, include_shared=True).item_is_selected_by_task(
+        material_repo = MaterialLibraryRepository(db, include_shared=True)
+        image_item = await material_repo.get_item_for_user(task.selected_image_item_id, str(user.uid))
+        from yuxi.services.material_library_service import _image_item_gallery_usage_scope
+
+        owner_uids, enterprise_scope, tenant_id = (
+            await _image_item_gallery_usage_scope(db, material_repo, user, image_item)
+            if image_item is not None
+            else ({str(user.uid)}, False, None)
+        )
+        occupying = await material_repo.item_is_selected_by_task(
             task.selected_image_item_id,
-            str(user.uid),
+            owner_uids,
             exclude_task_id=task.id,
+            tenant_id=tenant_id,
+            enterprise_scope=enterprise_scope,
         )
         if occupying:
             raise _content_error(409, "CONTENT_COVER_IN_USE", "该图库图片已被其他内容任务使用")

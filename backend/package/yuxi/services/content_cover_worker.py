@@ -23,6 +23,7 @@ from yuxi.content_cover.poster_billboard import (
 )
 from yuxi.content_cover.renderer import (
     CoverRenderError,
+    apply_site_header_overlay,
     apply_title_overlay,
     finalize_template_transfer,
     render_cover,
@@ -151,11 +152,24 @@ def _output_title_overlay(job: ContentCoverJob) -> str:
     return str(request.get("title") or "").strip()
 
 
+def _site_header_overlay(job: ContentCoverJob) -> dict[str, str] | None:
+    request = job.request_json or {}
+    payload = (request.get("parameters") or {}).get("ai_cover_site_header")
+    if not isinstance(payload, dict):
+        return None
+    line1 = str(payload.get("line1") or "").strip()
+    line2 = str(payload.get("line2") or "").strip()
+    if not line1 and not line2:
+        return None
+    return {"line1": line1, "line2": line2}
+
+
 def _normalize_output(
     data: bytes,
     *,
     target_size: tuple[int, int] | None = None,
     title: str = "",
+    site_header: dict[str, str] | None = None,
 ) -> tuple[bytes, int, int]:
     if len(data) > MAX_OUTPUT_BYTES:
         raise Image2Error("IMAGE2_IMAGE_TOO_LARGE", "image2 返回的图片超过 30 MB")
@@ -173,7 +187,13 @@ def _normalize_output(
             image.load()
             if target_size and image.size != target_size:
                 image = ImageOps.fit(image, target_size, Image.Resampling.LANCZOS, centering=(0.5, 0.5))
-            if title.strip():
+            if site_header:
+                image = apply_site_header_overlay(
+                    image,
+                    site_header.get("line1", ""),
+                    site_header.get("line2", ""),
+                )
+            elif title.strip():
                 image = apply_title_overlay(image, title)
             image = image.convert("RGB")
             width, height = image.size
@@ -217,6 +237,7 @@ async def _store_outputs(job: ContentCoverJob, outputs: list[bytes]) -> list[str
                     raw,
                     target_size=target_size,
                     title=_output_title_overlay(job),
+                    site_header=_site_header_overlay(job),
                 )
                 asset_id = f"cca_{uuid.uuid4().hex}"
                 object_name = f"content-covers/{job.owner_uid}/{job.id}/output-{index + 1}.png"

@@ -41,6 +41,7 @@ const emptyListText = computed(() => (serviceEntry.value ? `暂无${serviceEntry
 const emptyGalleryText = computed(() => (serviceEntry.value ? `暂无${serviceEntry.value}` : '暂无已生成内容'))
 const page = ref(1)
 const pageSize = ref(20)
+let historyLoadSeq = 0
 const status = ref(undefined)
 const selectedTaskIds = ref([])
 const deleting = ref(false)
@@ -146,6 +147,7 @@ const setServiceEntry = async (entry) => {
 }
 
 const load = async () => {
+  const seq = ++historyLoadSeq
   try {
     await store.loadHistory({
       page: page.value,
@@ -155,9 +157,18 @@ const load = async () => {
       service_entry: serviceEntry.value || undefined,
       employee_id: employeeId.value || undefined
     })
+    if (seq !== historyLoadSeq) return
+    if (typeof store.historyTotal === 'number' && store.historyTotal > 0) {
+      const maxPage = Math.max(1, Math.ceil(store.historyTotal / pageSize.value))
+      if (page.value > maxPage) {
+        page.value = maxPage
+        if (seq === historyLoadSeq) return load()
+      }
+    }
     if (viewMode.value === 'list' && !store.history.some(task => task.id === activeTaskId.value)) selectTask(store.history[0]?.id)
     void loadCardCovers()
   } catch (error) {
+    if (seq !== historyLoadSeq) return
     message.error(error.message || '加载生产历史失败')
   }
 }
@@ -221,22 +232,19 @@ const removeSelected = () => {
   })
 }
 
-const handlePageChange = (nextPage, nextPageSize) => {
-  page.value = nextPage
-  pageSize.value = nextPageSize
-  void load()
-}
-
 const handleSelectionChange = (keys) => {
   selectedTaskIds.value = keys
 }
 
 watch(
-  () => [route.query.entry, route.query.employee_id],
-  () => {
+  () => [route.query.entry ?? '', route.query.employee_id ?? ''],
+  (current, previous) => {
     const entry = typeof route.query.entry === 'string' ? route.query.entry : ''
     serviceEntry.value = serviceEntries.some((item) => item.value === entry) ? entry : ''
-    page.value = 1
+    if (previous && (current[0] !== previous[0] || current[1] !== previous[1])) {
+      page.value = 1
+      selectedTaskIds.value = []
+    }
     void load()
   }
 )
@@ -264,7 +272,11 @@ onBeforeUnmount(() => {
       </div>
       <a-button type="primary" @click="router.push('/content/new')"><FilePlus2 :size="16" />新建内容</a-button>
     </header>
-    <p v-if="employeeId" class="employee-filter">正在查看 {{ employeeName || '该员工' }} 的生成历史。<button type="button" @click="router.push('/traffic')">返回流量统计</button></p>
+    <p v-if="employeeId" class="employee-filter">
+      正在查看 {{ employeeName || '该员工' }} 的生成历史，其它员工的内容不会出现在本列表。
+      <button type="button" @click="router.replace({ path: '/content/history', query: { ...route.query, employee_id: undefined, employee_name: undefined } })">查看全部</button>
+      <button type="button" @click="router.push('/traffic')">返回数据概览</button>
+    </p>
     <div v-if="viewMode === 'list'" class="history-workspace">
       <aside class="history-card" aria-label="历史文章列表">
         <div class="history-toolbar">
@@ -295,7 +307,7 @@ onBeforeUnmount(() => {
             <a-empty v-if="!store.history.length && !store.loading.history" :description="emptyListText" />
           </div>
         </a-spin>
-        <a-pagination :current="page" :page-size="pageSize" :total="store.historyTotal" simple @change="handlePageChange" />
+        <a-pagination v-model:current="page" v-model:page-size="pageSize" :total="store.historyTotal" simple @change="load" />
       </aside>
       <ContentResultView v-if="activeTaskId" :key="activeTaskId" :task-id="activeTaskId" class="history-result" />
       <div v-else class="history-empty"><a-empty description="暂无文章，生成内容后可在这里查看" /></div>
@@ -321,7 +333,7 @@ onBeforeUnmount(() => {
         </div>
         <a-empty v-if="!store.history.length && !store.loading.history" :description="emptyGalleryText" />
       </a-spin>
-      <a-pagination :current="page" :page-size="pageSize" :total="store.historyTotal" show-less-items @change="handlePageChange" />
+      <a-pagination v-model:current="page" v-model:page-size="pageSize" :total="store.historyTotal" show-less-items @change="load" />
     </section>
 
     <a-modal v-model:open="detailOpen" class="history-detail-modal" title="生成结果详情" :width="920" centered destroy-on-close>

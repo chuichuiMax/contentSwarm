@@ -55,7 +55,7 @@ const load = async () => {
     departments.value = response.departments || []
     employees.value = response.employees || []
   } catch (error) {
-    message.error(error.message || '加载流量统计失败')
+    message.error(error.message || '加载数据概览失败')
   } finally {
     loading.value = false
   }
@@ -92,7 +92,7 @@ const exportStats = async () => {
     const url = URL.createObjectURL(await response.blob())
     const link = document.createElement('a')
     link.href = url
-    link.download = '流量统计.xlsx'
+    link.download = '数据概览.xlsx'
     link.click()
     URL.revokeObjectURL(url)
   } catch (error) {

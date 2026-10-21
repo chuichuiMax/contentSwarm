@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import re
+import time
 
 from sqlalchemy import select
 
 from yuxi.content.control.visual_template_fields import resolve_hycanvas_template_fields
 from yuxi.content.generation import DEFAULT_DIRECT_GENERATION_PROMPT, generate_direct_content
 from yuxi.utils.line_breaks import normalize_escaped_newlines
-from yuxi.content_cover.ai_cover_prompt import AI_COVER_PROMPT
+from yuxi.content_cover.ai_cover_prompt import ai_cover_prompt_controls, select_ai_cover_prompt
 from yuxi.content_cover.handwritten_quote_prompt import (
     HANDWRITTEN_QUOTE_NEGATIVE_PROMPT,
     build_handwritten_quote_prompt,
@@ -67,15 +68,34 @@ async def process_direct_content_run(ctx, run_id: str):
         knowledge_context = ""
         if payload.get("skip_cover"):
             knowledge_context = await load_knowledge_base_text(str(run.uid), "好评笔记知识库")
-        output = await generate_direct_content(
-            model_spec=payload.get("model_spec"),
-            creative_style=payload.get("creative_style") or {},
-            viral_source=payload.get("viral_source") or {},
-            user_request=str(payload.get("user_request") or ""),
-            generation_prompt=str(payload.get("generation_prompt", DEFAULT_DIRECT_GENERATION_PROMPT)),
-            forbidden_lexicon=forbidden_snapshot["alternatives"],
-            knowledge_context=knowledge_context,
+        generation = asyncio.create_task(
+            generate_direct_content(
+                model_spec=payload.get("model_spec"),
+                creative_style=payload.get("creative_style") or {},
+                viral_source=payload.get("viral_source") or {},
+                user_request=str(payload.get("user_request") or ""),
+                generation_prompt=str(payload.get("generation_prompt", DEFAULT_DIRECT_GENERATION_PROMPT)),
+                forbidden_lexicon=forbidden_snapshot["alternatives"],
+                knowledge_context=knowledge_context,
+            )
         )
+        generation_started_at = time.monotonic()
+        while not generation.done():
+            if await has_cancel_signal(run_id):
+                raise asyncio.CancelledError
+            await append_run_stream_event(
+                run_id,
+                "content.direct.progress",
+                {
+                    "phase": "generating",
+                    "elapsed_seconds": int(time.monotonic() - generation_started_at),
+                },
+                thread_id=run.thread_id,
+            )
+            done, _ = await asyncio.wait({generation}, timeout=8)
+            if done:
+                break
+        output = await generation
         for field in ("title", "body", "topics"):
             value = getattr(output, field)
             await append_run_stream_event(
@@ -322,6 +342,21 @@ async def _create_direct_cover_job(run, output) -> dict:
         elif visual_material.get("cover_mode") == "ai":
             if not image_asset_id:
                 raise ValueError("AI 封面需要一张图库背景图")
+            form_values = dict(content_brief.get("form_values") or {})
+            task_row = await ContentRepository(db).get_task_for_user(run.thread_id, user)
+            content_type_code = task_row.content_type_code if task_row else ""
+            content_type_name = str(
+                content_brief.get("typeName") or content_brief.get("content_type_name") or ""
+            )
+            prompt_controls = ai_cover_prompt_controls(visual_material)
+            ai_selection = select_ai_cover_prompt(
+                title=title,
+                subtitle=subtitle,
+                form_values=form_values,
+                content_type_code=content_type_code,
+                content_type_name=content_type_name,
+                **prompt_controls,
+            )
             result = await create_cover_generate_job(
                 db,
                 user,
@@ -331,11 +366,16 @@ async def _create_direct_cover_job(run, output) -> dict:
                     source_asset_ids=[image_asset_id],
                     title=title,
                     subtitle=subtitle,
-                    render_copy_with_image2=True,
-                    prompt=AI_COVER_PROMPT,
+                    render_copy_with_image2=ai_selection.render_copy_with_image2,
+                    prompt=ai_selection.prompt,
                     size="1080x1440",
                     n=1,
-                    parameters={"quality": "high", "output_format": "png"},
+                    parameters={
+                        "quality": "high",
+                        "output_format": "png",
+                        "ai_cover_prompt_variant": ai_selection.variant,
+                        **ai_selection.extra_parameters,
+                    },
                     idempotency_key=idempotency_key,
                 ),
             )
@@ -350,6 +390,50 @@ async def _create_direct_cover_job(run, output) -> dict:
         thread_id=run.thread_id,
     )
     return job
+
+
+async def _finalize_direct_cover(run, job_id: str) -> None:
+    async with pg_manager.get_async_session_context() as db:
+        job = await ContentCoverRepository(db).get_job(job_id)
+        if job is None:
+            raise RuntimeError("封面任务不存在")
+        if job.status in {"failed", "cancelled"}:
+            raise RuntimeError(job.error_message or job.error_code or "封面生成失败")
+        if job.status != "succeeded":
+            return
+        asset_ids = list((job.result_json or {}).get("asset_ids") or [])
+        if not asset_ids:
+            raise RuntimeError("封面任务完成但没有返回图片")
+        user = (await db.execute(select(User).where(User.uid == run.uid, User.is_deleted == 0))).scalar_one()
+        await set_current_cover(db, user, job.id, asset_id=asset_ids[0])
+        content_repo = ContentRepository(db)
+        task = await content_repo.get_task(run.thread_id, for_update=True)
+        task.status = "generated"
+        task.current_stage = "generation"
+        task.error_json = None
+        artifact = await content_repo.get_artifact_for_task(run.thread_id)
+        await content_repo.track(
+            "content_direct_run_completed",
+            uid=run.uid,
+            task_id=run.thread_id,
+            run_id=run.id,
+            properties={
+                "artifact_id": artifact.id,
+                "cover_asset_id": asset_ids[0],
+                "review_status": "not_run",
+            },
+        )
+        await db.commit()
+    await append_run_stream_event(
+        run.id,
+        "content.cover.completed",
+        {
+            "task_id": run.thread_id,
+            "cover_job_id": job_id,
+            "cover_asset_id": asset_ids[0],
+        },
+        thread_id=run.thread_id,
+    )
 
 
 async def _wait_for_direct_cover(run, job_id: str) -> None:
@@ -379,41 +463,14 @@ async def _wait_for_direct_cover(run, job_id: str) -> None:
             if job.status in {"failed", "cancelled"}:
                 raise RuntimeError(job.error_message or job.error_code or "封面生成失败")
             if job.status == "succeeded":
-                asset_ids = list((job.result_json or {}).get("asset_ids") or [])
-                if not asset_ids:
-                    raise RuntimeError("封面任务完成但没有返回图片")
-                user = (await db.execute(select(User).where(User.uid == run.uid, User.is_deleted == 0))).scalar_one()
-                await set_current_cover(db, user, job.id, asset_id=asset_ids[0])
-                content_repo = ContentRepository(db)
-                task = await content_repo.get_task(run.thread_id, for_update=True)
-                task.status = "generated"
-                task.current_stage = "generation"
-                task.error_json = None
-                artifact = await content_repo.get_artifact_for_task(run.thread_id)
-                await content_repo.track(
-                    "content_direct_run_completed",
-                    uid=run.uid,
-                    task_id=run.thread_id,
-                    run_id=run.id,
-                    properties={
-                        "artifact_id": artifact.id,
-                        "cover_asset_id": asset_ids[0],
-                        "review_status": "not_run",
-                    },
-                )
-                await db.commit()
-                await append_run_stream_event(
-                    run.id,
-                    "content.cover.completed",
-                    {
-                        "task_id": run.thread_id,
-                        "cover_job_id": job.id,
-                        "cover_asset_id": asset_ids[0],
-                    },
-                    thread_id=run.thread_id,
-                )
+                await _finalize_direct_cover(run, job_id)
                 return
         if asyncio.get_running_loop().time() >= deadline:
+            await _finalize_direct_cover(run, job_id)
+            async with pg_manager.get_async_session_context() as db:
+                job = await ContentCoverRepository(db).get_job(job_id)
+                if job is not None and job.status == "succeeded":
+                    return
             raise TimeoutError("封面生成等待超时")
         await asyncio.sleep(DIRECT_COVER_POLL_SECONDS)
 

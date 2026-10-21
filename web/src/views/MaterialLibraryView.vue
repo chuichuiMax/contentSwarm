@@ -1282,7 +1282,7 @@ onBeforeUnmount(() => {
         <a-progress :percent="remoteSyncJob.progress || 0" :show-info="false" size="small" />
       </div>
       <div v-if="materialType === 'image'" class="context-head">
-        <button v-if="activeGallery" type="button" class="back-button" @click="leaveGallery"><ArrowLeft :size="16" />{{ isEmployeeGeneratedMode ? '返回流量统计' : (isEmployeeRoughMode ? '返回员工管理' : (parentGallery ? `返回${parentGallery.name}` : '返回图库')) }}</button>
+        <button v-if="activeGallery" type="button" class="back-button" @click="leaveGallery"><ArrowLeft :size="16" />{{ isEmployeeGeneratedMode ? '返回数据概览' : (isEmployeeRoughMode ? '返回员工管理' : (parentGallery ? `返回${parentGallery.name}` : '返回图库')) }}</button>
         <div>
           <a-radio-group v-if="isGalleryRoot && !isEmployeeGalleryMode" v-model:value="materialScope" button-style="solid" @change="activeGallery = ''; page = 1">
             <a-radio-button value="private">我的素材</a-radio-button>

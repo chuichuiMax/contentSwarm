@@ -78,3 +78,49 @@ async def test_content_history_filters_review_notes_and_decoration(test_client, 
         for task_id in (review_id, decoration_id):
             deleted = await test_client.delete(f"/api/content/tasks/{task_id}", headers=admin_headers)
             assert deleted.status_code == 200, deleted.text
+
+
+async def test_content_history_pagination_returns_distinct_pages(test_client, admin_headers):
+    suffix = uuid.uuid4().hex[:8]
+    task_ids: list[str] = []
+    try:
+        for index in range(3):
+            task_id = await _create_task(test_client, admin_headers, f"pytest_page_{suffix}_{index}")
+            await _save_entry(test_client, admin_headers, task_id, "装修家居")
+            task_ids.append(task_id)
+
+        first = await test_client.get(
+            "/api/content/tasks",
+            headers=admin_headers,
+            params={
+                "service_entry": "装修家居",
+                "generated_only": False,
+                "page": 1,
+                "page_size": 2,
+            },
+        )
+        assert first.status_code == 200, first.text
+        first_body = first.json()
+        assert first_body["page"] == 1
+        assert len(first_body["items"]) == 2
+
+        second = await test_client.get(
+            "/api/content/tasks",
+            headers=admin_headers,
+            params={
+                "service_entry": "装修家居",
+                "generated_only": False,
+                "page": 2,
+                "page_size": 2,
+            },
+        )
+        assert second.status_code == 200, second.text
+        second_body = second.json()
+        assert second_body["page"] == 2
+        assert len(second_body["items"]) == 1
+        assert {item["id"] for item in first_body["items"]}.isdisjoint({item["id"] for item in second_body["items"]})
+        assert second_body["total"] >= first_body["total"]
+    finally:
+        for task_id in task_ids:
+            deleted = await test_client.delete(f"/api/content/tasks/{task_id}", headers=admin_headers)
+            assert deleted.status_code == 200, deleted.text

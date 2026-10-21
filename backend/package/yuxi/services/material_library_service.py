@@ -30,7 +30,7 @@ from yuxi.image_design.save_targets import (
     resolve_writable_save_target,
 )
 from yuxi.image_design.schemas import ImageDesignSaveTarget
-from yuxi.services.employee_service import resolve_employee_for_user
+from yuxi.services.employee_service import _platform_uid, resolve_employee_for_user
 from yuxi.services.material_folder_permissions import (
     grant_allows_folder_upload,
     grant_allows_folder_view,
@@ -365,6 +365,50 @@ def _tenant_id(user: User) -> str | None:
     return str(user.department_id) if user.department_id is not None else None
 
 
+async def _gallery_usage_owner_uids(db: AsyncSession, user: User) -> set[str]:
+    owner_uids = {str(user.uid)}
+    employee = await resolve_employee_for_user(db, user)
+    if employee is not None:
+        owner_uids.add(_platform_uid(employee))
+    phone = (getattr(user, "phone_number", None) or "").strip()
+    if phone:
+        rows = await db.execute(select(User.uid).where(User.phone_number == phone, User.is_deleted == 0))
+        owner_uids.update(str(uid) for uid in rows.scalars().all() if uid)
+    return owner_uids
+
+
+async def _gallery_usage_scope(
+    db: AsyncSession,
+    user: User,
+    *,
+    scope: Literal["private", "enterprise"] | None,
+    category: ContentMaterialCategory | None = None,
+) -> tuple[set[str], bool, str | None]:
+    owner_uids = await _gallery_usage_owner_uids(db, user)
+    tenant_id = _tenant_id(user)
+    enterprise_scope = tenant_id is not None and (
+        scope == "enterprise" or (category is not None and category.visibility == "enterprise")
+    )
+    return owner_uids, enterprise_scope, tenant_id
+
+
+async def _image_item_gallery_usage_scope(
+    db: AsyncSession,
+    repo: MaterialLibraryRepository,
+    user: User,
+    item: ContentMaterialLibraryItem,
+) -> tuple[set[str], bool, str | None]:
+    owner_uids = await _gallery_usage_owner_uids(db, user)
+    category = await repo.get_category(
+        item.category_owner_uid or item.owner_uid,
+        item.material_type,
+        item.category,
+    )
+    tenant_id = _tenant_id(user)
+    enterprise_scope = bool(category and category.visibility == "enterprise" and tenant_id)
+    return owner_uids, enterprise_scope, tenant_id if enterprise_scope else None
+
+
 def _is_admin(user: User) -> bool:
     return user.role in {"admin", "superadmin"}
 
@@ -400,6 +444,19 @@ def is_enterprise_rough_root(category: ContentMaterialCategory | None) -> bool:
             or category.name in {"毛坯房图库", "毛胚房图库"}
         )
     )
+
+
+ENTERPRISE_BATCH_SCRIPT_GALLERY_NAME = "毛坯批量生图图库"
+
+
+def is_enterprise_batch_script_gallery(category: ContentMaterialCategory | None) -> bool:
+    return bool(category and category.name == ENTERPRISE_BATCH_SCRIPT_GALLERY_NAME)
+
+
+def can_view_batch_script_gallery(user, category: ContentMaterialCategory | None) -> bool:
+    if not is_enterprise_batch_script_gallery(category):
+        return True
+    return getattr(user, "role", None) == "superadmin"
 
 
 async def _material_folder_grants(db: AsyncSession, user: User) -> tuple[bool, list[str]]:
@@ -1704,6 +1761,8 @@ async def list_material_items(
         if category
         else None
     )
+    if resolved_category is not None and not can_view_batch_script_gallery(user, resolved_category):
+        raise _error(404, "MATERIAL_GALLERY_NOT_FOUND", "图库不存在")
     if restricted and resolved_category is not None:
         case_parent = None
         if include_case_for_designer:
@@ -1715,6 +1774,11 @@ async def list_material_items(
             include_case_for_designer=include_case_for_designer,
         ):
             _reject_outside_rough_upload(resolved_category)
+    gallery_usage_scope = (
+        await _gallery_usage_scope(db, user, scope=scope, category=resolved_category)
+        if material_type == "image"
+        else None
+    )
     if (
         resolved_category is not None
         and personal_folder_key(resolved_category) in {"generated", "works"}
@@ -1735,8 +1799,12 @@ async def list_material_items(
             sort=sort,
             status=status,
         )
-        selected_ids = await MaterialLibraryRepository(db).list_selected_image_item_ids(
-            _owner_uid(user), exclude_task_id=exclude_task_id
+        owner_uids, enterprise_scope, tenant_id = gallery_usage_scope or ({_owner_uid(user)}, False, None)
+        selected_ids = await MaterialLibraryRepository(db).list_gallery_used_image_item_ids(
+            owner_uids,
+            exclude_task_id=exclude_task_id,
+            tenant_id=tenant_id,
+            enterprise_scope=enterprise_scope,
         )
         uploader_names = await MaterialLibraryRepository(db).uploader_names(
             [item["uploaded_by"] for item in result["items"] if item.get("uploaded_by")]
@@ -1763,7 +1831,8 @@ async def list_material_items(
             material_type,
             resolved_category.id,
         )
-        category_ids = [resolved_category.id, *(child.id for child in children)]
+        visible_children = [child for child in children if can_view_batch_script_gallery(user, child)]
+        category_ids = [resolved_category.id, *(child.id for child in visible_children)]
     rows, total = await repo.list_items(
         _owner_uid(user),
         material_type=material_type,
@@ -1792,7 +1861,13 @@ async def list_material_items(
         )
         posters_by_asset = {poster.asset_id: poster for poster in posters}
     elif material_type == "image":
-        used_image_ids = await repo.list_selected_image_item_ids(_owner_uid(user), exclude_task_id=exclude_task_id)
+        owner_uids, enterprise_scope, tenant_id = gallery_usage_scope or ({_owner_uid(user)}, False, None)
+        used_image_ids = await repo.list_gallery_used_image_item_ids(
+            owner_uids,
+            exclude_task_id=exclude_task_id,
+            tenant_id=tenant_id,
+            enterprise_scope=enterprise_scope,
+        )
     upload_failures: list[dict[str, str]] = []
     pending_upload_count = 0
     if material_type == "image" and (category_ids or resolved_category is not None):
@@ -2439,6 +2514,7 @@ async def list_image_galleries(
     categories = [
         category
         for category in listed_categories
+        if can_view_batch_script_gallery(user, category)
         if not restricted
         or _folder_view_allowed(
             folder_grants,
@@ -2546,6 +2622,14 @@ async def _get_material_item_for_read(
 
         if await can_read_fixed_item(db, user, item_id):
             item = await db.get(ContentMaterialLibraryItem, item_id)
+    if item is not None:
+        category = await repo.get_category(
+            item.category_owner_uid or item.owner_uid,
+            item.material_type,
+            item.category,
+        )
+        if category and not can_view_batch_script_gallery(user, category):
+            return None
     return item
 
 

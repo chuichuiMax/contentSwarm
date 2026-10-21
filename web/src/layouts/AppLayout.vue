@@ -173,14 +173,6 @@ const mainList = computed(() => {
     permissionAny: ['workspace.view_list']
   })
 
-  items.push({
-    name: '客资报表',
-    path: '/customer-leads',
-    icon: ClipboardList,
-    activeIcon: ClipboardList,
-    permissionAny: ['customer_lead.view_list']
-  })
-
   if (userStore.isAdmin) {
     items.push({
       name: infoStore.kbMenuLabel,
@@ -225,6 +217,30 @@ const mainList = computed(() => {
       activeIcon: IdCard
     })
   }
+
+  const dataStatsChildren = []
+  if (userStore.isAdmin) {
+    dataStatsChildren.push({
+      name: '数据概览',
+      path: '/traffic',
+      icon: ChartColumn,
+      activeIcon: ChartColumn
+    })
+  }
+  dataStatsChildren.push({
+    name: '客资列表',
+    path: '/customer-leads',
+    icon: ClipboardList,
+    activeIcon: ClipboardList,
+    permissionAny: ['customer_lead.view_list']
+  })
+  items.push({
+    name: '数据统计',
+    icon: ChartColumn,
+    activeIcon: ChartColumn,
+    activePaths: ['/traffic', '/customer-leads'],
+    children: dataStatsChildren
+  })
 
   items.push({
     name: '配置管理',
@@ -298,12 +314,6 @@ const mainList = computed(() => {
       icon: BarChart3,
       activeIcon: BarChart3
     })
-    items.push({
-      name: '流量统计',
-      path: '/traffic',
-      icon: ChartColumn,
-      activeIcon: ChartColumn
-    })
   }
 
   const allowed = (item) => {
@@ -319,7 +329,7 @@ const mainList = computed(() => {
   })
 })
 
-const expandedGroups = ref({ 配置管理: true })
+const expandedGroups = ref({ 数据统计: false, 配置管理: false })
 
 const isNavItemActive = (item) => {
   const activePaths = item.activePaths || (item.path ? [item.path] : [])

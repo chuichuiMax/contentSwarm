@@ -13,7 +13,7 @@ from yuxi.content.control.visual_template_fields import (
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from yuxi.content.control.workflow.agent_node import AgentNodeHandler, AgentNodeResultMapper
 from yuxi.content.control.workflow.external_wait import ExternalWaitNodeHandler
-from yuxi.content_cover.ai_cover_prompt import AI_COVER_PROMPT
+from yuxi.content_cover.ai_cover_prompt import AI_COVER_PROMPT, AiCoverJobSelection
 from yuxi.repositories.content_cover_repository import ContentCoverRepository
 from yuxi.storage.postgres.models_content import ContentCoverAsset, ContentCoverJob, ContentNodeRun, ContentTask
 
@@ -623,6 +623,15 @@ async def test_cover_tool_routes_ai_mode_to_single_image_image2_copy(monkeypatch
     monkeypatch.setattr(content_tools.ContentRepository, "get_task_for_user", fake_get_task_for_user)
     monkeypatch.setattr(content_tools, "create_cover_generate_job", fake_generate)
     monkeypatch.setattr(content_tools, "_emit_content_tool_event", fake_event)
+    monkeypatch.setattr(
+        content_tools,
+        "select_ai_cover_prompt",
+        lambda *, title, subtitle, form_values=None, **kwargs: AiCoverJobSelection(
+            prompt=AI_COVER_PROMPT,
+            variant="editorial",
+            render_copy_with_image2=True,
+        ),
+    )
 
     result = await content_tools.create_content_cover_job.coroutine(
         task_id="task-1",
@@ -646,6 +655,7 @@ async def test_cover_tool_routes_ai_mode_to_single_image_image2_copy(monkeypatch
     assert payload.parameters == {
         "quality": "high",
         "output_format": "png",
+        "ai_cover_prompt_variant": "editorial",
         "visual_plan_hash": "a" * 64,
         "workflow_resume": {
             "parent_run_id": "run-parent",

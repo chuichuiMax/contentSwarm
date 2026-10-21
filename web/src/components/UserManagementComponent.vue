@@ -446,7 +446,7 @@ const fetchDepartments = async () => {
 
 const fetchRoles = async () => {
   try {
-    const response = await roleApi.listRoles()
+    const response = await roleApi.listRoles({ include_member_counts: false })
     catalogRoleRecords.value = Array.isArray(response?.roles) ? response.roles : []
   } catch (error) {
     console.error('获取角色列表失败:', error)

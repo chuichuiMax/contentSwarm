@@ -45,7 +45,22 @@ IMAGE_OCCUPANCY_ACTIVE_STATUSES = frozenset(
     }
 )
 IMAGE_OCCUPANCY_RELEASED_STATUSES = frozenset({"failed", "cancelled"})
+# 小程序/PC 图库「已使用」标记：占用中任务 + 已失败但仍引用图片的任务。
+GALLERY_USED_DISPLAY_STATUSES = frozenset({*IMAGE_OCCUPANCY_ACTIVE_STATUSES, "failed", "brief_ready"})
 ROUGH_CATEGORY_NAMES = frozenset({"毛坯房图库", "毛胚房图库"})
+
+
+def _task_usage_scope_filters(
+    owner_uids: set[str],
+    *,
+    tenant_id: str | None = None,
+    enterprise_scope: bool = False,
+) -> list[Any]:
+    if enterprise_scope and tenant_id:
+        return [ContentTask.tenant_id == tenant_id]
+    if len(owner_uids) == 1:
+        return [ContentTask.created_by == next(iter(owner_uids))]
+    return [ContentTask.created_by.in_(owner_uids)]
 
 
 class MaterialLibraryRepository:
@@ -598,10 +613,17 @@ class MaterialLibraryRepository:
         return share, items
 
     async def item_is_selected_by_task(
-        self, item_id: str, owner_uid: str, *, exclude_task_id: str | None = None
+        self,
+        item_id: str,
+        owner_uid: str | set[str],
+        *,
+        exclude_task_id: str | None = None,
+        tenant_id: str | None = None,
+        enterprise_scope: bool = False,
     ) -> bool:
+        owner_uids = {owner_uid} if isinstance(owner_uid, str) else set(owner_uid)
         filters = [
-            ContentTask.created_by == owner_uid,
+            *_task_usage_scope_filters(owner_uids, tenant_id=tenant_id, enterprise_scope=enterprise_scope),
             ContentTask.selected_image_item_id == item_id,
             ContentTask.deleted_at.is_(None),
             ContentTask.status.in_(IMAGE_OCCUPANCY_ACTIVE_STATUSES),
@@ -621,6 +643,40 @@ class MaterialLibraryRepository:
             filters.append(ContentTask.id != exclude_task_id)
         rows = await self.db.execute(select(ContentTask.selected_image_item_id).where(*filters))
         return {item_id for item_id in rows.scalars().all() if item_id}
+
+    async def list_gallery_used_image_item_ids(
+        self,
+        owner_uid: str | set[str],
+        *,
+        exclude_task_id: str | None = None,
+        tenant_id: str | None = None,
+        enterprise_scope: bool = False,
+    ) -> set[str]:
+        owner_uids = {owner_uid} if isinstance(owner_uid, str) else set(owner_uid)
+        filters = [
+            *_task_usage_scope_filters(owner_uids, tenant_id=tenant_id, enterprise_scope=enterprise_scope),
+            ContentTask.deleted_at.is_(None),
+            ContentTask.status.in_(GALLERY_USED_DISPLAY_STATUSES),
+        ]
+        if exclude_task_id:
+            filters.append(ContentTask.id != exclude_task_id)
+        ids: set[str] = set()
+        selected_rows = await self.db.execute(
+            select(ContentTask.selected_image_item_id).where(
+                *filters,
+                ContentTask.selected_image_item_id.is_not(None),
+            )
+        )
+        ids.update(item_id for item_id in selected_rows.scalars().all() if item_id)
+        brief_image_item = ContentTask.brief_json["visual_material"]["image_item_id"].as_string()
+        brief_rows = await self.db.execute(select(brief_image_item).where(*filters, brief_image_item.isnot(None)))
+        ids.update(item_id for item_id in brief_rows.scalars().all() if item_id)
+        runtime_image_item = ContentTask.runtime_config_snapshot_json["visual_material"]["image_item_id"].as_string()
+        runtime_rows = await self.db.execute(
+            select(runtime_image_item).where(*filters, runtime_image_item.isnot(None))
+        )
+        ids.update(item_id for item_id in runtime_rows.scalars().all() if item_id)
+        return ids
 
     async def list_items(
         self,

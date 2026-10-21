@@ -23,7 +23,7 @@ roles = APIRouter(prefix="/roles", tags=["roles"])
 async def list_content_roles(
     keyword: str | None = Query(default=None),
     enabled: bool | None = Query(default=None),
-    include_member_counts: bool = Query(default=True),
+    include_member_counts: bool = Query(default=False),
     current_user: User = Depends(get_required_user),
     db: AsyncSession = Depends(get_db),
 ):

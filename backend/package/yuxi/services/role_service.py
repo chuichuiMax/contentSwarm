@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import uuid
 from typing import Any
 
@@ -11,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from yuxi.repositories.employee_repository import EmployeeRepository
 from yuxi.repositories.role_repository import RoleRepository
 from yuxi.repositories.user_repository import UserRepository
+from yuxi.services.run_queue_service import get_redis_client
 from yuxi.services.role_permissions import (
     IMAGE_DESIGN_PAGE_PERMISSION,
     ROUGH_UPLOAD_PERMISSION,
@@ -41,6 +43,29 @@ SYSTEM_ROLES: tuple[tuple[str, str], ...] = (
 )
 SYSTEM_ROLE_CODES = {code for code, _ in SYSTEM_ROLES}
 SYSTEM_ROLE_NAMES = {name for _, name in SYSTEM_ROLES}
+ROLE_MEMBER_COUNT_CACHE_KEY = "roles:member_counts:v1"
+ROLE_MEMBER_COUNT_CACHE_TTL = 60
+
+
+async def invalidate_role_member_count_cache() -> None:
+    redis = await get_redis_client()
+    await redis.delete(ROLE_MEMBER_COUNT_CACHE_KEY)
+
+
+async def _role_member_count_maps(db: AsyncSession) -> tuple[dict[str, int], dict[str, int]]:
+    redis = await get_redis_client()
+    cached = await redis.get(ROLE_MEMBER_COUNT_CACHE_KEY)
+    if cached:
+        payload = json.loads(cached)
+        return payload.get("employees") or {}, payload.get("users") or {}
+    employee_counts = await EmployeeRepository(db).count_by_role()
+    user_counts = await UserRepository().count_by_role_with_db(db)
+    await redis.setex(
+        ROLE_MEMBER_COUNT_CACHE_KEY,
+        ROLE_MEMBER_COUNT_CACHE_TTL,
+        json.dumps({"employees": employee_counts, "users": user_counts}),
+    )
+    return employee_counts, user_counts
 
 
 class RoleCreate(BaseModel):
@@ -232,8 +257,7 @@ async def list_roles(
             ],
             "total": len(items),
         }
-    employee_counts = await EmployeeRepository(db).count_by_role()
-    user_counts = await UserRepository().count_by_role_with_db(db)
+    employee_counts, user_counts = await _role_member_count_maps(db)
     return {
         "roles": [_with_member_count(item, employee_counts, user_counts) for item in items],
         "total": len(items),
@@ -315,8 +339,8 @@ async def update_role(db: AsyncSession, role_pk: str, payload: RoleUpdate) -> di
     if role.name != old_name:
         await EmployeeRepository(db).rename_role(old_name, role.name)
         await UserRepository().rename_role_with_db(db, old_name, role.name)
-    employee_counts = await EmployeeRepository(db).count_by_role()
-    user_counts = await UserRepository().count_by_role_with_db(db)
+        await invalidate_role_member_count_cache()
+    employee_counts, user_counts = await _role_member_count_maps(db)
     return {"role": _with_member_count(role, employee_counts, user_counts)}
 
 

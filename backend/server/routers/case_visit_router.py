@@ -1,6 +1,6 @@
 from datetime import date
 
-from fastapi import APIRouter, Depends, File, Form, Query, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Header, Query, Request, UploadFile
 from fastapi.responses import Response
 from redis.exceptions import LockError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,6 +23,7 @@ from yuxi.services.case_visit_service import (
     list_mp_leads,
     get_mp_lead,
     change_mp_lead,
+    mp_lead_summary,
 )
 from yuxi.storage.postgres.models_business import User
 
@@ -30,8 +31,12 @@ case_visits = APIRouter(tags=["case-visits"])
 
 
 @case_visits.get("/mp/customer-leads/summary")
-async def mp_lead_summary(ctx: MpContext = Depends(get_mp_context), db: AsyncSession = Depends(get_db)):
-    return {"unread_count": await CaseVisitRepository(db).unread_count(str(ctx.user.uid))}
+async def mp_customer_lead_summary(
+    authorization: str | None = Header(None),
+    access_token: str | None = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+):
+    return await mp_lead_summary(db, authorization, access_token=access_token)
 
 
 @case_visits.get("/mp/customer-leads")
