@@ -52,4 +52,5 @@ def run_worker(command: list[str], paths: list[str]) -> int:
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
-    sys.exit(run_worker(["arq", "server.worker_main.WorkerSettings"], ["/app/server", "/app/package"]))
+    arq_cmd = [sys.executable, "-m", "arq", "server.worker_main.WorkerSettings"]
+    sys.exit(run_worker(arq_cmd, ["/app/server", "/app/package"]))

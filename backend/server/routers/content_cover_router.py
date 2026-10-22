@@ -3,7 +3,7 @@ from __future__ import annotations
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Form, Header, Query, UploadFile, status
-from fastapi.responses import FileResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, RedirectResponse, Response, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from server.utils.auth_middleware import get_db, get_required_user
@@ -58,6 +58,11 @@ from yuxi.services.content_cover_service import (
     update_cover_editor_project,
     update_poster_template,
 )
+from yuxi.services.ai_cover_prompt_catalog_service import (
+    list_ai_cover_prompt_catalog,
+    resolve_ai_cover_preview_bytes,
+)
+from yuxi.content_cover.ai_cover_prompt_catalog import spec_for_variant
 from yuxi.services.hycanvas_service import HyCanvasClient
 from yuxi.services.material_library_service import get_material_file
 from yuxi.storage.postgres.models_business import User
@@ -69,6 +74,40 @@ content_covers = APIRouter(prefix="/content/covers", tags=["content-covers"])
 async def hycanvas_templates(current_user: User = Depends(get_required_user)):
     del current_user
     return await HyCanvasClient.from_env().list_xiaohongshu_templates()
+
+
+@content_covers.get("/ai-cover-prompts")
+async def ai_cover_prompts(
+    current_user: User = Depends(get_required_user),
+    content_type_code: str = Query(default=""),
+    content_type_name: str = Query(default=""),
+):
+    del current_user
+    return await list_ai_cover_prompt_catalog(
+        content_type_code=content_type_code,
+        content_type_name=content_type_name,
+    )
+
+
+@content_covers.get("/ai-cover-prompts/{variant}/preview.png")
+async def ai_cover_prompt_preview(
+    variant: str,
+    content_type_code: str = Query(default=""),
+    content_type_name: str = Query(default=""),
+):
+    """封面参考图预览：供 img 标签加载，不要求 Bearer（与 apiGet 不同）。"""
+    resolved = await resolve_ai_cover_preview_bytes(
+        variant,
+        content_type_code=content_type_code,
+        content_type_name=content_type_name,
+    )
+    if resolved:
+        content, media_type = resolved
+        return Response(content=content, media_type=media_type)
+    spec = spec_for_variant(variant, content_type_code=content_type_code, content_type_name=content_type_name)
+    if spec and spec.fallback_preview_path:
+        return RedirectResponse(spec.fallback_preview_path, status_code=307)
+    return Response(status_code=404)
 
 
 @content_covers.get("/hycanvas/templates/{template_id}/render.png")

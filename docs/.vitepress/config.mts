@@ -71,6 +71,7 @@ export default defineConfig({
           { text: '版本变更记录', link: '/develop-guides/changelog' },
           { text: '界面设计规范', link: '/develop-guides/design' },
           { text: '测试规范', link: '/develop-guides/testing-guidelines' },
+          { text: '素材库对外 API', link: '/develop-guides/material-library-integration-api' },
         ]
       }
     ],

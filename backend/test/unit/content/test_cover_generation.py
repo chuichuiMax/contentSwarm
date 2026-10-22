@@ -731,10 +731,86 @@ def test_build_site_header_lines_raises_when_fields_missing():
         build_site_header_lines(title="标题", subtitle="副", form_values={"楼盘信息": "某盘"})
 
 
+def test_build_site_header_lines_merges_business_variables():
+    from yuxi.content_cover.ai_cover_prompt import normalize_cover_form_values
+
+    merged = normalize_cover_form_values(
+        {
+            "user_request": "x",
+            "business_variables": {
+                "楼盘信息": "六都国际",
+                "外框面积": "110",
+                "设计风格": "雅致现代",
+            },
+        }
+    )
+    line1, line2 = build_site_header_lines(title="营销标题", subtitle="副", form_values=merged)
+    assert line1 == "六都国际"
+    assert line2 == "110㎡雅致现代实景"
+
+
 def test_ai_cover_eligible_variants_excludes_p12_for_non_case_share():
     pool = ai_cover_eligible_variants(content_type_code="CT02", content_type_name="装修报价清单")
     assert "p12" not in pool
-    assert len(pool) == 9
+    assert "p14" in pool
+    assert len(pool) == 15
+
+
+def test_select_ai_cover_prompt_p15_three_lines(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(
+        "yuxi.content_cover.ai_cover_prompt.random.choice",
+        lambda _: "editorial",
+    )
+    selection = select_ai_cover_prompt(
+        title="鸿扬家装",
+        subtitle="好看好住的家，30 年湖湘老牌，所见即所得",
+        prompt_random=False,
+        prompt_variant="p15",
+    )
+    assert selection.variant == "p15"
+    assert "现代无衬线粗黑体" in selection.prompt
+    assert "鸿扬家装" in selection.prompt
+    assert "好看好住的家" in selection.prompt
+    assert "30 年湖湘老牌，所见即所得" in selection.prompt
+
+
+def test_select_ai_cover_prompt_p16_wraps_editorial_prompt(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(
+        "yuxi.content_cover.ai_cover_prompt.random.choice",
+        lambda _: "editorial",
+    )
+    selection = select_ai_cover_prompt(
+        title="封面主标题",
+        subtitle="封面副标题说明",
+        prompt_random=False,
+        prompt_variant="p16",
+    )
+    assert selection.variant == "p16"
+    assert "保留原图主体身份" in selection.prompt
+    assert "封面主标题" in selection.prompt
+    assert "【排版设计】" in selection.prompt
+
+
+def test_select_ai_cover_prompt_p14_comic_variety_style(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(
+        "yuxi.content_cover.ai_cover_prompt.random.choice",
+        lambda _: "editorial",
+    )
+    selection = select_ai_cover_prompt(
+        title="六都国际120㎡婚房装修",
+        subtitle="全屋定制化装修",
+        prompt_random=False,
+        prompt_variant="p14",
+    )
+    assert selection.variant == "p14"
+    assert "漫画综艺体" in selection.prompt
+    assert "六都国际120㎡婚房装修，全屋定制化装修" in selection.prompt
+
+
+def test_resolve_ai_cover_variant_slot_one_maps_to_p12_for_case_share():
+    pool = ai_cover_eligible_variants(content_type_code="CT01")
+    variant = resolve_ai_cover_variant(pool=pool, prompt_random=False, featured_template_index=1)
+    assert variant == "p12"
 
 
 def test_resolve_ai_cover_variant_slot_two_maps_to_p1():
@@ -784,6 +860,28 @@ def test_resolve_ai_cover_variant_slot_four_maps_to_p3():
     pool = ai_cover_eligible_variants(content_type_code="CT02")
     variant = resolve_ai_cover_variant(pool=pool, prompt_random=False, featured_template_index=4)
     assert variant == "p3"
+
+
+def test_resolve_ai_cover_variant_slot_five_maps_to_p4():
+    pool = ai_cover_eligible_variants(content_type_code="CT02")
+    variant = resolve_ai_cover_variant(pool=pool, prompt_random=False, featured_template_index=5)
+    assert variant == "p4"
+
+
+def test_select_ai_cover_prompt_p4_injects_title_lines(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(
+        "yuxi.content_cover.ai_cover_prompt.random.choice",
+        lambda _: "editorial",
+    )
+    selection = select_ai_cover_prompt(
+        title="110㎡旧房改造，费用怎么算？",
+        subtitle="，老房子想翻新，第一步别急着问费用😊",
+        prompt_random=False,
+        prompt_variant="p4",
+    )
+    assert selection.variant == "p4"
+    assert "速食风格" in selection.prompt
+    assert "110㎡旧房改造，费用怎么算？" in selection.prompt
 
 
 def test_select_ai_cover_prompt_fixed_slot_four(monkeypatch: pytest.MonkeyPatch):

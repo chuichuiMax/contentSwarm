@@ -9,7 +9,11 @@ from sqlalchemy import select
 from yuxi.content.control.visual_template_fields import resolve_hycanvas_template_fields
 from yuxi.content.generation import DEFAULT_DIRECT_GENERATION_PROMPT, generate_direct_content
 from yuxi.utils.line_breaks import normalize_escaped_newlines
-from yuxi.content_cover.ai_cover_prompt import ai_cover_prompt_controls, select_ai_cover_prompt
+from yuxi.content_cover.ai_cover_prompt import (
+    ai_cover_prompt_controls,
+    normalize_cover_form_values,
+    select_ai_cover_prompt,
+)
 from yuxi.content_cover.handwritten_quote_prompt import (
     HANDWRITTEN_QUOTE_NEGATIVE_PROMPT,
     build_handwritten_quote_prompt,
@@ -342,7 +346,12 @@ async def _create_direct_cover_job(run, output) -> dict:
         elif visual_material.get("cover_mode") == "ai":
             if not image_asset_id:
                 raise ValueError("AI 封面需要一张图库背景图")
-            form_values = dict(content_brief.get("form_values") or {})
+            form_values = normalize_cover_form_values(
+                {
+                    **(content_brief.get("business_variables") or {}),
+                    **(content_brief.get("form_values") or {}),
+                }
+            )
             task_row = await ContentRepository(db).get_task_for_user(run.thread_id, user)
             content_type_code = task_row.content_type_code if task_row else ""
             content_type_name = str(

@@ -1,5 +1,7 @@
 # 未发布
 
+- 新增 `/api/integrations/material-library/*` 对外只读接口：支持 Bearer JWT 或 `yxkey_` API Key；列表/详情返回 `direct_*` 预签名直链（可配 `MATERIAL_INTEGRATION_PRESIGN_DAYS`）及 `api_*` 回源地址；`/file`、`/thumbnail` 优先 302 到 OSS。接口说明见 [素材库对外 API](./material-library-integration-api.md)。
+
 - 小程序/PC 图库「已使用」对齐：合并同一员工 PC 账号、`mp_` 平台账号与同手机号账号的任务引用；企业共享图库按租户汇总占用；并标记 `failed`/`brief_ready` 及简报/运行快照中的 `image_item_id`。
 
 - 企业共享「毛坯批量生图图库」（运维批量脚本产出）仅超级管理员可见与访问，其它角色不展示该二级图库及其中图片。
@@ -10,9 +12,20 @@
 
 - 修复生成历史翻页仍显示第一页：分页改用 `v-model:current` / `v-model:page-size`，忽略过期的列表请求，并在分类/员工筛选变化时才重置页码。
 
-- 单 AI 封面生图在原有 `AI_COVER_PROMPT` 与多套风格提示词（手写、3D 促销、钢笔行草、书法、动漫、大笔触手写、宋体广告、杂志排版等）之间随机选用，文案按标题/副标题或业务变量注入；提示词十二（装修案例顶栏双行）按新版规范由 image2 排版黄/白特粗黑体，正文须含工地/面积/风格，缺字段拒绝生成。
+- 单 AI 封面生图在原有 `AI_COVER_PROMPT` 与多套风格提示词（手写、3D 促销、钢笔行草、书法、动漫、大笔触手写、宋体广告、杂志排版等）之间随机选用，文案按标题/副标题或业务变量注入；提示词十二（装修案例顶栏双行）更新为新版黄/白/黑特粗黑体排版规范，并从 brief 合并 `business_variables` 读取楼盘/外框面积/设计风格。
 - 提示词十二仅「装修案例分享 / CT01」进入随机池，其它内容类型不会选中。
-- AI 封面支持「随机 / 指定」提示词：关闭随机后可选精选封面模板映射提示词（第 2 张 → p1，第 3 张 → p2，第 4 张 → p3）；简报字段 `ai_cover_prompt_random`、`featured_cover_template_index`。
+- AI 封面预览 `…/preview.png` 免 Bearer（供 img 加载）；后端经 OSS SDK 签名拉取 `hongyang02/image/AI-cover/AI封面/`，并匹配 `提示词N` 与 `pN` 文件名；OSS SDK 未安装时不再 500，而是继续尝试其它拉取方式。
+- 创作台 AI 封面：列表首项「智能随机适配」（OSS 预览 `智能随机适配.png`），选中后随机选用可用提示词；移除「AI 随机生成」开关。
+- 创作台封面方式默认「AI 封面」；仅当简报已保存 `cover_mode=builtin` 时恢复内置封面。
+- 新增 AI 封面提示词十四（p15，杂志粗黑三行，标题+副标题拆三行）、提示词十五（p16，原图智能排版 + 完整 `AI_COVER_PROMPT`）；OSS 预览按「提示词十四/十五」文件名。
+- 新增 AI 封面提示词八（p14，漫画综艺体）；原提示词八/九/十顺延为九/十/十一（大笔触手写、现代宋体广告、杂志宋体），OSS 预览仍按「提示词N」文件名匹配。
+- 创作台 AI 封面指定模式：卡片展示「提示词 N」名称，选中后在下方只读展示完整提示词正文（示例标题/副标题或案例字段填充）。
+- `api-dev` / `worker-dev` 启动时补装 `alibabacloud-oss-v2`（旧镜像或未 `uv sync` 时缺包会导致 AI 封面预览 500、直出封面工作流 `No module named 'alibabacloud_oss_v2'`）；worker 与 api 统一 `uv run` 启动，子进程 `arq` 使用同一解释器；测试机 `.env` 中 `AI_COVER_OSS_SUBDIR` 须为 UTF-8「AI封面」。
+- AI 封面指定列表从 OSS `image/AI-cover/` 读取预览图（「提示词一」…「提示词十三」/`pN` 映射至变体；六→p7、十/十一→p11 等），`GET /api/content/covers/ai-cover-prompts` 返回同源预览地址 `…/preview.png`；列表按变体去重（p11 只展示一张）；非案例分享不含 p12（11 项），案例分享 12 项。
+- AI 封面指定模式改为固定「提示词参考图」列表（`web/public/ai-cover-prompts` + `aiCoverPromptCatalog.js`），不再依赖 HyCanvas 精选专区；简报传 `ai_cover_prompt_variant` 与槽位 index。
+- 测试机宿主机 Nginx 8080 反代模板：`docker/nginx/contentswarm-host-dev-proxy.conf`（公网入口 → web-dev:5173，修复 /login 404）。
+- AI 封面新增提示词四（p4 速食 POP）、五（p5 科技风）、十三（p13 秀丽体），文案由封面 Agent 标题/副标题注入；指定列表与随机池同步纳入。
+- AI 封面支持「随机 / 指定」提示词：指定模式走 `aiCoverPromptCatalog`（p12/p1–p5/p13）；简报字段 `ai_cover_prompt_random`、`ai_cover_prompt_variant`、`featured_cover_template_index`。
 - 装修家居 AI 封面生图提示词（`AI_COVER_PROMPT`）补充【最终输出要求】与【必须避免】。
 
 - 侧边栏在「配置管理」上方新增「数据统计」分组，收入「数据概览」和「客资列表」，默认收起。

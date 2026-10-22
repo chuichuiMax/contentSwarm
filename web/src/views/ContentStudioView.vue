@@ -60,6 +60,11 @@ import {
   isEnterpriseCaseGallery,
   materialGalleryListLabel
 } from '@/utils/caseGallery'
+import {
+  AI_COVER_SMART_RANDOM_VARIANT,
+  findAiCoverPromptOption,
+  isAiCoverSmartRandomVariant
+} from '@/constants/aiCoverPromptCatalog'
 import { formatDateTime } from '@/utils/time'
 import { copyTextToClipboard } from '@/utils/clipboard'
 import {
@@ -205,11 +210,15 @@ const hycanvasPreviewQueue = []
 const hycanvasPreviewQueued = new Set()
 let hycanvasPreviewRunning = false
 const selectedHyCanvasTemplateId = ref('')
-const selectedAiCoverTemplateId = ref('')
-const aiCoverPromptRandom = ref(true)
+const selectedAiCoverPromptVariant = ref(AI_COVER_SMART_RANDOM_VARIANT)
+const aiCoverPromptCatalogList = ref([])
+const aiCoverPromptCatalogLoading = ref(false)
 const coverTemplateTab = ref('ai')
-
-const AI_COVER_TEMPLATE_SLOT_LABELS = { 2: '提示词一', 3: '提示词二', 4: '提示词三' }
+const aiCoverPromptIsRandom = computed(
+  () =>
+    coverTemplateTab.value === 'ai' &&
+    isAiCoverSmartRandomVariant(selectedAiCoverPromptVariant.value)
+)
 const hycanvasFields = reactive({})
 const hycanvasCreating = ref(false)
 const hycanvasDesign = ref(null)
@@ -311,6 +320,49 @@ const builtinCoverTemplates = computed(() =>
 const featuredCoverTemplates = computed(() =>
   hycanvasTemplates.value.filter((item) => item.zone === 'featured')
 )
+const selectedAiCoverPromptOption = computed(() =>
+  findAiCoverPromptOption(selectedAiCoverPromptVariant.value, aiCoverPromptCatalogList.value)
+)
+
+const loadAiCoverPromptCatalog = async () => {
+  if (aiCoverPromptCatalogLoading.value) return
+  aiCoverPromptCatalogLoading.value = true
+  try {
+    const response = await contentApi.listAiCoverPrompts({
+      content_type_code: studioContentTypeCode.value || currentContentType.value || '',
+      content_type_name:
+        selectedStudioContentType.value?.name || formValues.mp_content_type_name || ''
+    })
+    const previewQuery = new URLSearchParams({
+      content_type_code: studioContentTypeCode.value || currentContentType.value || '',
+      content_type_name:
+        selectedStudioContentType.value?.name || formValues.mp_content_type_name || ''
+    }).toString()
+    aiCoverPromptCatalogList.value = (response.prompts || []).map((item) => ({
+      variant: item.variant,
+      slotIndex: item.slot_index,
+      label: item.label,
+      title: item.title,
+      description: item.description,
+      promptBody: item.prompt_body || '',
+      selectable: item.selectable !== false,
+      previewUrl: previewQuery ? `${item.preview_url}?${previewQuery}` : item.preview_url
+    }))
+    if (
+      selectedAiCoverPromptVariant.value &&
+      !isAiCoverSmartRandomVariant(selectedAiCoverPromptVariant.value) &&
+      !aiCoverPromptCatalogList.value.some(
+        (item) => item.variant === selectedAiCoverPromptVariant.value
+      )
+    ) {
+      selectedAiCoverPromptVariant.value = AI_COVER_SMART_RANDOM_VARIANT
+    }
+  } catch {
+    aiCoverPromptCatalogList.value = []
+  } finally {
+    aiCoverPromptCatalogLoading.value = false
+  }
+}
 const featuredTemplateSelected = computed(() => selectedHyCanvasTemplate.value?.zone === 'featured')
 const hasViralReference = computed(() => hasSelectedViralReference(store.artifact))
 const usesDeterministicPlan = computed(() =>
@@ -520,10 +572,7 @@ const loadHyCanvasTemplates = async () => {
       ])
     )
     const savedVisual = store.task?.brief?.visual_material || {}
-    coverTemplateTab.value =
-      !store.task || savedVisual.cover_mode === 'ai' || savedVisual.featured_cover_template_id
-        ? 'ai'
-        : 'builtin'
+    coverTemplateTab.value = savedVisual.cover_mode === 'builtin' ? 'builtin' : 'ai'
     selectedHyCanvasTemplateId.value =
       coverTemplateTab.value === 'builtin'
         ? savedVisual.hycanvas_template_id ||
@@ -1391,11 +1440,17 @@ const initializeVisualSelection = () => {
   selectedImageItemId.value = store.task?.selected_image_item_id || saved.image_item_id || ''
   selectedPosterTemplateId.value =
     store.task?.selected_poster_template_id || saved.poster_template_id || ''
-  coverTemplateTab.value =
-    !store.task || saved.cover_mode === 'ai' || saved.featured_cover_template_id ? 'ai' : 'builtin'
-  aiCoverPromptRandom.value = saved.ai_cover_prompt_random !== false
-  selectedAiCoverTemplateId.value =
-    coverTemplateTab.value === 'ai' ? saved.featured_cover_template_id || '' : ''
+  coverTemplateTab.value = saved.cover_mode === 'builtin' ? 'builtin' : 'ai'
+  if (coverTemplateTab.value === 'ai') {
+    const savedVariant = saved.ai_cover_prompt_variant || ''
+    if (saved.ai_cover_prompt_random === false && savedVariant) {
+      selectedAiCoverPromptVariant.value = savedVariant
+    } else {
+      selectedAiCoverPromptVariant.value = AI_COVER_SMART_RANDOM_VARIANT
+    }
+  } else {
+    selectedAiCoverPromptVariant.value = AI_COVER_SMART_RANDOM_VARIANT
+  }
   selectedHyCanvasTemplateId.value =
     coverTemplateTab.value === 'builtin' ? saved.hycanvas_template_id || '' : ''
   photoComposition.value =
@@ -1727,7 +1782,8 @@ const loadVisualMaterials = async () => {
     const [galleryResponse, layoutResponse] = await Promise.all([
       materialLibraryApi.listGalleries(selectedIndustrySlug.value),
       contentApi.getPhotoLayouts(),
-      loadHyCanvasTemplates()
+      loadHyCanvasTemplates(),
+      loadAiCoverPromptCatalog(),
     ])
     materialGalleries.value = galleryResponse.galleries || []
     photoLayouts.value = layoutResponse.layouts || []
@@ -2191,13 +2247,15 @@ watch(
 
 watch(selectedHyCanvasTemplateId, initializeHyCanvasFields)
 watch(coverTemplateTab, (mode) => {
-  if (mode === 'ai') return
+  if (mode === 'ai') {
+    if (!selectedAiCoverPromptVariant.value) {
+      selectedAiCoverPromptVariant.value = AI_COVER_SMART_RANDOM_VARIANT
+    }
+    return
+  }
   selectedHyCanvasTemplateId.value = ''
-  selectedAiCoverTemplateId.value = ''
+  selectedAiCoverPromptVariant.value = AI_COVER_SMART_RANDOM_VARIANT
   photoComposition.value = null
-})
-watch(aiCoverPromptRandom, (random) => {
-  if (random) selectedAiCoverTemplateId.value = ''
 })
 watch(directionOptions, (options) => {
   if (!options.some((item) => item.code === creation.content_type_code))
@@ -2243,6 +2301,12 @@ watch(
     if (artifactId) void loadHyCanvasTemplates()
   },
   { immediate: true }
+)
+watch(
+  [studioContentTypeCode, () => selectedStudioContentType.value?.name, coverTemplateTab],
+  () => {
+    if (coverTemplateTab.value === 'ai') void loadAiCoverPromptCatalog()
+  }
 )
 
 onMounted(async () => {
@@ -2435,18 +2499,15 @@ const buildBrief = () => ({
           poster_template_id: null,
           hycanvas_template_id:
             coverTemplateTab.value === 'builtin' ? selectedHyCanvasTemplateId.value || null : null,
-          featured_cover_template_id:
-            coverTemplateTab.value === 'ai' && !aiCoverPromptRandom.value
-              ? selectedAiCoverTemplateId.value || null
+          featured_cover_template_id: null,
+          ai_cover_prompt_random: coverTemplateTab.value === 'ai' ? aiCoverPromptIsRandom.value : null,
+          ai_cover_prompt_variant:
+            coverTemplateTab.value === 'ai' && !aiCoverPromptIsRandom.value
+              ? selectedAiCoverPromptVariant.value || null
               : null,
-          ai_cover_prompt_random: coverTemplateTab.value === 'ai' ? aiCoverPromptRandom.value : null,
           featured_cover_template_index:
-            coverTemplateTab.value === 'ai' &&
-            !aiCoverPromptRandom.value &&
-            selectedAiCoverTemplateId.value
-              ? featuredCoverTemplates.value.findIndex(
-                  (item) => item.id === selectedAiCoverTemplateId.value
-                ) + 1
+            coverTemplateTab.value === 'ai' && !aiCoverPromptIsRandom.value
+              ? selectedAiCoverPromptOption.value?.slotIndex ?? null
               : null,
           photo_composition:
             coverTemplateTab.value === 'builtin' && !selectedHandwrittenQuoteTemplate.value
@@ -2483,8 +2544,7 @@ watch(
   [
     selectedImageItemId,
     selectedHyCanvasTemplateId,
-    selectedAiCoverTemplateId,
-    aiCoverPromptRandom,
+    selectedAiCoverPromptVariant,
     photoComposition,
     coverTemplateTab
   ],
@@ -2495,8 +2555,7 @@ watch(
   [
     selectedImageItemId,
     selectedHyCanvasTemplateId,
-    selectedAiCoverTemplateId,
-    aiCoverPromptRandom,
+    selectedAiCoverPromptVariant,
     photoComposition,
     coverTemplateTab,
     selectedCreativeStyle,
@@ -2596,6 +2655,10 @@ const submitContentOnlyCreation = async () => {
   }
   if (coverTemplateTab.value === 'builtin' && !selectedHyCanvasTemplateId.value) {
     message.warning('请选择一个内置封面模板')
+    return
+  }
+  if (coverTemplateTab.value === 'ai' && !selectedAiCoverPromptVariant.value) {
+    message.warning('请选择一个 AI 封面提示词')
     return
   }
   creationSubmitting.value = true
@@ -3443,54 +3506,54 @@ const returnToContentCreation = async () => {
                   <template v-if="coverTemplateTab === 'ai'">
                     <div class="material-selector-title ai-cover-prompt-header">
                       <div><LayoutTemplate :size="18" /><strong>选择封面模板</strong></div>
-                      <label class="ai-cover-random-toggle">
-                        <span>AI随机生成</span>
-                        <a-switch v-model:checked="aiCoverPromptRandom" size="small" />
-                      </label>
                     </div>
-                    <div v-if="aiCoverPromptRandom" class="ai-cover-mode-note">
-                      <span><WandSparkles :size="20" /></span>
-                      <div>
-                        <strong>随机选用 AI 封面提示词</strong>
-                        <small>
-                          只使用上方封面原图，不叠加模板文字；由封面 Agent 提供标题与副标题后随机匹配提示词风格。
-                        </small>
+                    <a-spin :spinning="aiCoverPromptCatalogLoading">
+                      <div class="poster-choice-grid ai-cover-prompt-grid">
+                        <button
+                          v-for="item in aiCoverPromptCatalogList"
+                          :key="`${item.variant}-${item.label}`"
+                          type="button"
+                          class="poster-choice"
+                          :class="{
+                            selected: selectedAiCoverPromptVariant === item.variant,
+                            disabled: !item.selectable
+                          }"
+                          :disabled="!item.selectable"
+                          :aria-pressed="selectedAiCoverPromptVariant === item.variant"
+                          @click="item.selectable && (selectedAiCoverPromptVariant = item.variant)"
+                        >
+                          <span class="poster-preview">
+                            <img :src="item.previewUrl" :alt="item.title" loading="lazy" />
+                          </span>
+                          <strong v-if="item.label" class="ai-cover-prompt-label">{{ item.label }}</strong>
+                          <small v-if="item.title">{{ item.title }}</small>
+                          <CheckCircle2
+                            v-if="selectedAiCoverPromptVariant === item.variant"
+                            class="choice-check"
+                            :size="20"
+                          />
+                        </button>
+                      </div>
+                      <a-empty
+                        v-if="!aiCoverPromptCatalogLoading && !aiCoverPromptCatalogList.length"
+                        description="未读取到 AI 封面提示词预览，请检查 OSS image/AI-cover/ 命名"
+                      />
+                    </a-spin>
+                    <div
+                      v-if="!aiCoverPromptIsRandom && selectedAiCoverPromptOption"
+                      class="ai-cover-prompt-detail"
+                    >
+                      <p v-if="selectedAiCoverPromptOption.description" class="ai-cover-prompt-hint">
+                        {{ selectedAiCoverPromptOption.description }}
+                      </p>
+                      <div v-if="selectedAiCoverPromptOption.promptBody" class="ai-cover-prompt-body-wrap">
+                        <div class="ai-cover-prompt-body-head">
+                          <span>{{ selectedAiCoverPromptOption.label || '提示词' }}</span>
+                          <small>正文（示例标题/副标题或案例字段填充，仅供预览）</small>
+                        </div>
+                        <pre class="ai-cover-prompt-body">{{ selectedAiCoverPromptOption.promptBody }}</pre>
                       </div>
                     </div>
-                    <div v-else class="poster-choice-grid">
-                      <button
-                        v-for="(item, index) in featuredCoverTemplates"
-                        :key="item.id"
-                        :ref="(element) => observeHyCanvasPreview(element, item.id)"
-                        type="button"
-                        class="poster-choice"
-                        :class="{ selected: selectedAiCoverTemplateId === item.id }"
-                        :aria-pressed="selectedAiCoverTemplateId === item.id"
-                        @click="selectedAiCoverTemplateId = item.id"
-                      >
-                        <span class="poster-preview">
-                          <img
-                            v-if="hycanvasTemplateUrls[item.id]"
-                            :src="hycanvasTemplateUrls[item.id]"
-                            :alt="item.title"
-                          />
-                          <LayoutTemplate v-else :size="24" />
-                        </span>
-                        <strong>{{ item.title }}</strong>
-                        <small v-if="AI_COVER_TEMPLATE_SLOT_LABELS[index + 1]">
-                          {{ AI_COVER_TEMPLATE_SLOT_LABELS[index + 1] }}
-                        </small>
-                        <CheckCircle2
-                          v-if="selectedAiCoverTemplateId === item.id"
-                          class="choice-check"
-                          :size="20"
-                        />
-                      </button>
-                    </div>
-                    <a-empty
-                      v-if="!aiCoverPromptRandom && !featuredCoverTemplates.length"
-                      description="暂无精选封面模板，请先在 HyCanvas 上传"
-                    />
                   </template>
                 </div>
               </a-spin>
@@ -5429,34 +5492,56 @@ const returnToContentCreation = async () => {
 .ai-cover-prompt-header {
   margin-top: 4px;
 }
-.ai-cover-random-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
+.ai-cover-prompt-hint {
+  margin: 10px 0 0;
   color: var(--color-text-secondary);
   font-size: 13px;
+  line-height: 1.5;
 }
-.ai-cover-mode-note {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 14px;
-  border: 1px solid var(--main-100);
-  border-radius: 8px;
-  background: var(--main-10);
+.ai-cover-prompt-detail {
+  margin-top: 12px;
 }
-.ai-cover-mode-note > span {
-  display: inline-flex;
-  color: var(--main-700);
-}
-.ai-cover-mode-note strong,
-.ai-cover-mode-note small {
+.ai-cover-prompt-label {
   display: block;
+  margin-top: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text);
 }
-.ai-cover-mode-note small {
-  margin-top: 3px;
+.ai-cover-prompt-body-wrap {
+  margin-top: 10px;
+  border: 1px solid var(--gray-150);
+  border-radius: 8px;
+  background: var(--gray-50);
+  overflow: hidden;
+}
+.ai-cover-prompt-body-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--gray-150);
+  font-size: 13px;
+  font-weight: 600;
+}
+.ai-cover-prompt-body-head small {
+  font-weight: 400;
   color: var(--color-text-secondary);
-  line-height: 1.6;
+}
+.ai-cover-prompt-body {
+  max-height: 280px;
+  margin: 0;
+  padding: 12px;
+  overflow: auto;
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--color-text);
+}
+.ai-cover-prompt-grid .poster-preview img {
+  object-fit: cover;
 }
 .material-selector-title {
   display: flex;

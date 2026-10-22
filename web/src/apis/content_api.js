@@ -46,6 +46,8 @@ export const contentApi = {
   getOcrImage: (resultId) => apiGet(`/api/content/ocr-results/${resultId}/image`, {}, true, 'blob'),
   getCoverBootstrap: () => apiGet('/api/content/covers/bootstrap'),
   listHyCanvasTemplates: () => apiGet('/api/content/covers/hycanvas/templates'),
+  listAiCoverPrompts: (params) =>
+    apiGet(`/api/content/covers/ai-cover-prompts${encodeQuery(params)}`),
   getHyCanvasTemplatePreview: (templateId) =>
     apiGet(
       `/api/content/covers/hycanvas/templates/${encodeURIComponent(templateId)}/render.png`,

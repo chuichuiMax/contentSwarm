@@ -47,15 +47,16 @@ COPY backend/package /app/package
 
 # 使用 pyproject.toml 中配置的官方 PyPI 索引。
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --group test --no-dev --frozen
+    uv sync --group test --no-dev --frozen \
+    && python -c "import alibabacloud_oss_v2"
 
 # Browser runtime is built into the versioned API image and is launched only by
 # Xiaohongshu jobs running in the existing worker process.
 RUN /usr/local/bin/patchright install --with-deps chromium \
     && rm -rf /var/lib/apt/lists/*
 
-# 激活虚拟环境并添加到PATH
-ENV PATH="/app/.venv/bin:$PATH"
+# 依赖安装在 UV_PROJECT_ENVIRONMENT=/usr/local，与 api-base 运行时一致
+ENV PATH="/usr/local/bin:$PATH"
 
 # 复制 server 代码
 COPY backend/server /app/server

@@ -12,7 +12,11 @@ from sqlalchemy import select
 
 from yuxi.agents.toolkits.registry import tool
 from yuxi.content.execution_trace import build_execution_preview
-from yuxi.content_cover.ai_cover_prompt import ai_cover_prompt_controls, select_ai_cover_prompt
+from yuxi.content_cover.ai_cover_prompt import (
+    ai_cover_prompt_controls,
+    normalize_cover_form_values,
+    select_ai_cover_prompt,
+)
 from yuxi.content_cover.handwritten_quote_prompt import (
     HANDWRITTEN_QUOTE_NEGATIVE_PROMPT,
     build_handwritten_quote_prompt,
@@ -677,7 +681,12 @@ async def create_content_cover_job(
             if len(text) < 2 or any(not str(value).strip() for value in text[:2]):
                 raise ValueError("AI 封面需要封面 Agent 提供标题和副标题")
             brief = getattr(task, "brief_json", None) or {}
-            form_values = dict(brief.get("form_values") or {})
+            form_values = normalize_cover_form_values(
+                {
+                    **(brief.get("business_variables") or {}),
+                    **(brief.get("form_values") or {}),
+                }
+            )
             content_type_code = getattr(task, "content_type_code", "") or ""
             content_type_name = str(brief.get("typeName") or "")
             prompt_controls = ai_cover_prompt_controls(visual_material)

@@ -119,6 +119,16 @@ async def material_thumbnail_presigned_url(asset: Any, *, days: int = 1) -> str 
     return await asyncio.to_thread(storage.get_presigned_url, asset.bucket_name, thumbnail_name, days)
 
 
+async def material_file_presigned_url(asset: Any, *, days: int = 1) -> str | None:
+    """原图已入库 MinIO 时返回预签名 URL，供外部应用直连下载。"""
+    if ingest_status_of(asset) != INGEST_COMPLETED:
+        return None
+    storage = get_minio_client()
+    if await storage.astat_file(asset.bucket_name, asset.object_name) is None:
+        return None
+    return await asyncio.to_thread(storage.get_presigned_url, asset.bucket_name, asset.object_name, days)
+
+
 async def persist_material_thumbnail(asset: Any) -> bytes:
     storage = get_minio_client()
     thumbnail_name = material_thumb_object_name(asset.object_name)
