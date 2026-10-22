@@ -6,6 +6,7 @@ import vm from 'node:vm'
 import { pathToFileURL } from 'node:url'
 
 const root = process.env.MP_SOURCE_DIR || '/review'
+const bundleRoot = process.env.MP_WEIXIN_BUNDLE_DIR
 const source = readFileSync(resolve(root, 'pages/materials/shared-case.vue'), 'utf8')
 const { caseShareViewData } = await import(pathToFileURL(resolve(root, 'utils/case-share-view.mjs')))
 const { caseEntryOptions } = await import(pathToFileURL(resolve(root, 'utils/share-entry.mjs')))
@@ -13,27 +14,51 @@ const { caseEntryOptions } = await import(pathToFileURL(resolve(root, 'utils/sha
 function createPage(visitorApi = {}, contentApi = {}) {
   const modal = []
   const actions = []
+  const privacy = []
   const script = source.match(/<script>([\s\S]*?)<\/script>/)[1].replace(/^import .*$/gm, '').replace('export default', 'const page =')
-  const page = vm.runInNewContext(`${script}\npage`, {
+  const context = {
     mpVisitorApi: visitorApi,
     mpContentApi: contentApi,
     CaseShareContent: {}, caseShareViewData, caseEntryOptions, saveLastShareId() {}, publicMediaUrl: value => value,
     errorMessage: (error) => error.message || error.errMsg || 'error',
     beginCaseComponentAction: (method) => actions.push(method), finishCaseComponentAction() {},
     clearCaseSystemAction() {}, markCaseSystemReturn() {},
+    wx: { openPrivacyContract: (options) => privacy.push(options) },
     uni: { login: ({ success }) => success({ code: 'verified-code' }), showModal: (data) => modal.push(data), setNavigationBarTitle() {}, showToast() {} },
     Date, clearTimeout
-  })
+  }
+  let page
+  if (bundleRoot) {
+    context.wx.createPage = (component) => { page = component }
+    context.require = (id) => ({
+      '../../common/vendor.js': {
+        index: context.uni, wx$1: context.wx,
+        _export_sfc: (component, entries) => Object.assign(component, Object.fromEntries(entries)),
+        e: (...parts) => Object.assign({}, ...parts), o: (handler) => handler, t: String, p: (value) => value
+      },
+      '../../utils/share-entry.js': context,
+      '../../apis/mp.js': { mpVisitorApi: visitorApi, mpContentApi: contentApi },
+      '../../utils/request.js': context,
+      '../../utils/materials-logic.js': {},
+      '../../utils/case-share-view.js': { caseShareViewData }
+    })[id]
+    vm.runInNewContext(readFileSync(resolve(bundleRoot, 'pages/materials/shared-case.js'), 'utf8'), context)
+  } else {
+    page = vm.runInNewContext(`${script}\npage`, context)
+  }
   const instance = { ...page.data(), shareId: 'snapshot-token', $nextTick: async () => {} }
   for (const [key, method] of Object.entries(page.methods)) instance[key] = method.bind(instance)
   Object.defineProperty(instance, 'bookingReady', { get: () => page.computed.bookingReady.call(instance) })
-  return { instance, page, modal, actions }
+  return { instance, page, modal, actions, privacy }
 }
 
 test('booking is a bottom sheet using native components without a new route', () => {
   assert.match(source, /class="booking-mask"/)
-  assert.doesNotMatch(source, /chooseAvatar|type="nickname"|<checkbox/)
-  assert.match(source, /open-type="getPhoneNumber\|agreePrivacyAuthorization"/)
+  assert.doesNotMatch(source, /chooseAvatar|type="nickname"/)
+  assert.match(source, /role="checkbox"[^>]*:aria-checked="bookingConsent/)
+  assert.match(source, /:open-type="bookingReady \? 'getPhoneNumber\|agreePrivacyAuthorization' : ''"/)
+  assert.match(source, /:disabled="!bookingReady"/)
+  assert.match(source, /class="booking-privacy" @click\.stop="openBookingPrivacy"/)
   assert.doesNotMatch(source, /navigateTo.*booking/)
 })
 
@@ -81,10 +106,10 @@ test('session preparation is independent of employee login and ignores a closed 
   assert.equal(state.instance.bookingSession, '')
 })
 
-test('phone-only booking is ready without profile fields and denial cannot submit', async () => {
+test('phone-only booking requires explicit consent and denial cannot submit', async () => {
   let submitted = 0
   const { instance, modal } = createPage({ submitBooking: async () => { submitted++ } })
-  instance.bookingSession = 'session'
+  Object.assign(instance, { bookingVisible: true, bookingSession: 'session', bookingConsent: true })
   assert.equal(instance.bookingReady, true)
   await instance.submitBooking({ detail: { errMsg: 'getPhoneNumber:fail user deny' } })
   assert.equal(submitted, 0)
@@ -99,7 +124,7 @@ test('duplicate native callbacks submit once and success waits for server persis
     calls.push(args)
     return new Promise((resolve) => { complete = resolve })
   } })
-  Object.assign(instance, { bookingVisible: true, bookingSession: 'session' })
+  Object.assign(instance, { bookingVisible: true, bookingSession: 'session', bookingConsent: true })
   const event = { detail: { code: 'native-phone-code', errMsg: 'getPhoneNumber:ok' } }
   const pending = instance.submitBooking(event)
   await instance.submitBooking(event)
@@ -113,17 +138,19 @@ test('duplicate native callbacks submit once and success waits for server persis
   complete({ success: true })
   await pending
   assert.equal(instance.bookingVisible, false)
+  assert.equal(instance.bookingConsent, false)
   assert.equal(modal[0].title, '预约申请已提交')
 })
 
 test('save failure retains the sheet and allows retry without changing employee token', async () => {
   const { instance, modal } = createPage({ submitBooking: async () => { throw new Error('保存失败') } })
-  Object.assign(instance, { bookingVisible: true, bookingSession: 'session' })
+  Object.assign(instance, { bookingVisible: true, bookingSession: 'session', bookingConsent: true })
   await instance.submitBooking({ detail: { code: 'phone-code' } })
   assert.equal(instance.bookingVisible, true)
   assert.equal(instance.bookingError, '保存失败')
   assert.equal(instance.bookingSubmitting, false)
   assert.equal(instance.bookingReady, true)
+  assert.equal(instance.bookingConsent, true)
   assert.equal(modal.length, 0)
 })
 
@@ -163,7 +190,7 @@ test('case URL Link displays the case without opening or preparing booking', asy
 test('native phone button stays disabled while preparing or submitting', () => {
   const { instance } = createPage()
   assert.equal(instance.bookingReady, false)
-  instance.bookingSession = 'session'
+  Object.assign(instance, { bookingVisible: true, bookingSession: 'session', bookingConsent: true })
   instance.bookingSessionLoading = true
   assert.equal(instance.bookingReady, false)
   instance.bookingSessionLoading = false
@@ -175,12 +202,91 @@ test('native phone button stays disabled while preparing or submitting', () => {
 test('a late successful save after page unload cannot open a modal on another case', async () => {
   let complete
   const { instance, page, modal } = createPage({ submitBooking: () => new Promise((resolve) => { complete = resolve }) })
-  Object.assign(instance, { bookingVisible: true, bookingSession: 'session' })
+  Object.assign(instance, { bookingVisible: true, bookingSession: 'session', bookingConsent: true })
   const pending = instance.submitBooking({ detail: { code: 'phone-code' } })
   page.onUnload.call(instance)
   complete({ success: true })
   await pending
   assert.equal(modal.length, 0)
+})
+
+test('unchecked consent blocks both the native action and callbacks carrying a phone code', async () => {
+  let submitted = 0
+  const { instance, actions, modal } = createPage({ submitBooking: async () => { submitted++ } })
+  Object.assign(instance, { bookingVisible: true, bookingSession: 'session' })
+  assert.equal(instance.bookingConsent, false)
+  assert.equal(instance.bookingReady, false)
+  instance.beginBookingPhone()
+  await instance.submitBooking({ detail: { code: 'phone-code' } })
+  assert.equal(actions.length, 0)
+  assert.equal(submitted, 0)
+  assert.equal(modal.length, 0)
+  instance.toggleBookingConsent()
+  assert.equal(instance.bookingReady, true)
+  instance.beginBookingPhone()
+  assert.deepEqual(actions, ['getPhoneNumber'])
+  instance.toggleBookingConsent()
+  assert.equal(instance.bookingReady, false)
+  await instance.submitBooking({ detail: { code: 'late-phone-code' } })
+  assert.equal(submitted, 0)
+})
+
+test('closing and reopening requires new consent and a closed sheet ignores phone callbacks', async () => {
+  let submitted = 0
+  const { instance } = createPage({ submitBooking: async () => { submitted++ } })
+  Object.assign(instance, { bookingSession: 'session', bookingSessionExpiresAt: Date.now() + 60000 })
+  instance.openBooking()
+  assert.equal(instance.bookingConsent, false)
+  instance.toggleBookingConsent()
+  instance.closeBooking()
+  assert.equal(instance.bookingConsent, false)
+  // A late native callback must also be ignored if an old consent value is present.
+  instance.bookingConsent = true
+  await instance.submitBooking({ detail: { code: 'late-phone-code' } })
+  assert.equal(submitted, 0)
+  instance.openBooking()
+  assert.equal(instance.bookingConsent, false)
+  assert.equal(instance.bookingReady, false)
+})
+
+test('opening the privacy contract and native page return do not change consent', () => {
+  const { instance, page, privacy } = createPage()
+  Object.assign(instance, { bookingVisible: true, bookingSession: 'session' })
+  instance.openBookingPrivacy()
+  assert.equal(privacy.length, 1)
+  assert.equal(instance.bookingConsent, false)
+  instance.toggleBookingConsent()
+  instance.openBookingPrivacy()
+  page.onShow.call(instance)
+  assert.equal(instance.bookingConsent, true)
+  assert.equal(instance.bookingReady, true)
+})
+
+test('submitting freezes the consent choice until the request finishes', () => {
+  const { instance } = createPage()
+  Object.assign(instance, { bookingVisible: true, bookingConsent: true, bookingSubmitting: true })
+  instance.toggleBookingConsent()
+  instance.closeBooking()
+  assert.equal(instance.bookingConsent, true)
+  assert.equal(instance.bookingVisible, true)
+})
+
+if (bundleRoot) test('compiled native button only enables authorization after checking consent', () => {
+  const wxml = readFileSync(resolve(bundleRoot, 'pages/materials/shared-case.wxml'), 'utf8')
+  const button = wxml.match(/<button[^>]+open-type="\{\{\w+\}\}"[^>]*>/)[0]
+  const openTypeKey = button.match(/open-type="\{\{(\w+)\}\}"/)[1]
+  const disabledKey = button.match(/disabled="\{\{(\w+)\}\}"/)[1]
+  const { instance, page } = createPage()
+  Object.assign(instance, { loading: false, shareStatus: 'completed', bookingVisible: true, bookingSession: 'session' })
+  const render = () => page.render(instance, [], {}, {}, instance, instance)
+  assert.equal(render()[openTypeKey], '')
+  assert.equal(render()[disabledKey], true)
+  instance.toggleBookingConsent()
+  assert.equal(render()[openTypeKey], 'getPhoneNumber|agreePrivacyAuthorization')
+  assert.equal(render()[disabledKey], false)
+  instance.toggleBookingConsent()
+  assert.equal(render()[openTypeKey], '')
+  assert.equal(render()[disabledKey], true)
 })
 
 test('phone-only visitor request sends no employee credentials and failure cannot redirect to login', async () => {

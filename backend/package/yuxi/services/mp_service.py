@@ -866,55 +866,37 @@ def _decrypt_wechat_phone(session_key: str, encrypted_data: str, iv: str) -> str
 
 async def _resolve_wechat_phone(payload: WechatPhonePayload, session: dict[str, Any]) -> str:
     appid, secret = _wechat_credentials()
+    if not (appid and secret):
+        raise _mp_error(503, "WECHAT_NOT_CONFIGURED", "微信登录未配置")
     code = (payload.code or "").strip()
-    fallback_phone = (payload.phone or "").strip()
     if code:
-        if not (appid and secret):
-            if _is_production():
-                raise _mp_error(503, "WECHAT_NOT_CONFIGURED", "微信登录未配置")
-            if fallback_phone:
-                return _require_phone(fallback_phone)
-            raise _mp_error(422, "WECHAT_PHONE_REQUIRED", "未读取到微信手机号")
-        try:
-            return await _wechat_phone_by_code(appid, secret, code)
-        except HTTPException as exc:
-            if fallback_phone and not _is_production():
-                detail = exc.detail if isinstance(exc.detail, dict) else {}
-                error = detail.get("error") if isinstance(detail.get("error"), dict) else {}
-                if error.get("code") == "WECHAT_PHONE_INVALID":
-                    return _require_phone(fallback_phone)
-            raise
+        return await _wechat_phone_by_code(appid, secret, code)
     if payload.encrypted_data and payload.iv and session.get("session_key"):
         return _decrypt_wechat_phone(str(session["session_key"]), payload.encrypted_data, payload.iv)
-    if fallback_phone and not _is_production():
-        return _require_phone(fallback_phone)
-    if _is_production() and not (appid and secret):
-        raise _mp_error(503, "WECHAT_NOT_CONFIGURED", "微信登录未配置")
     raise _mp_error(422, "WECHAT_PHONE_REQUIRED", "请授权手机号")
 
 
 async def login_by_wechat_code(payload: WechatCodePayload) -> dict[str, Any]:
     appid, secret = _wechat_credentials()
-    session: dict[str, Any] = {"js_code": payload.code}
-    if appid and secret:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.get(
-                "https://api.weixin.qq.com/sns/jscode2session",
-                params={
-                    "appid": appid,
-                    "secret": secret,
-                    "js_code": payload.code,
-                    "grant_type": "authorization_code",
-                },
-            )
-        body = response.json()
-        if body.get("errcode"):
-            raise _mp_error(422, "WECHAT_CODE_INVALID", body.get("errmsg") or "微信登录失败")
-        session["openid"] = body.get("openid")
-        session["session_key"] = body.get("session_key")
-        session["unionid"] = body.get("unionid")
-    elif _is_production():
+    if not (appid and secret):
         raise _mp_error(503, "WECHAT_NOT_CONFIGURED", "微信登录未配置")
+    session: dict[str, Any] = {"js_code": payload.code}
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        response = await client.get(
+            "https://api.weixin.qq.com/sns/jscode2session",
+            params={
+                "appid": appid,
+                "secret": secret,
+                "js_code": payload.code,
+                "grant_type": "authorization_code",
+            },
+        )
+    body = response.json()
+    if body.get("errcode") or not body.get("openid") or not body.get("session_key"):
+        raise _mp_error(422, "WECHAT_CODE_INVALID", body.get("errmsg") or "微信登录失败")
+    session["openid"] = body.get("openid")
+    session["session_key"] = body.get("session_key")
+    session["unionid"] = body.get("unionid")
     session_id = str(uuid.uuid4())
     redis = await get_redis_client()
     await redis.setex(f"mp:wx:{session_id}", WECHAT_SESSION_TTL_SECONDS, json.dumps(session, ensure_ascii=False))

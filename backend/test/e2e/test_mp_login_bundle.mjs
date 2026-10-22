@@ -15,6 +15,7 @@ function loadBundle(initialToken = '') {
   const requests = []
   const modals = []
   const jumps = []
+  const wechatLogins = []
   let token = initialToken
   let page
   const uni = {
@@ -24,7 +25,7 @@ function loadBundle(initialToken = '') {
     getStorageSync: () => token,
     setStorageSync: (key, value) => { token = value },
     removeStorageSync: () => { token = '' },
-    login: (options) => options.success({ code: 'test-js-code' }),
+    login: (options) => { wechatLogins.push(options); options.success({ code: 'test-js-code' }) },
     request: (options) => requests.push(options),
     showModal: (options) => modals.push(options),
     showToast: () => {},
@@ -49,7 +50,7 @@ function loadBundle(initialToken = '') {
   load('pages/login/login.js')
   const instance = page.data()
   for (const [name, method] of Object.entries(page.methods)) instance[name] = method.bind(instance)
-  return { access, instance, requests, modals, jumps, get token() { return token } }
+  return { access, instance, page, requests, modals, jumps, wechatLogins, get token() { return token } }
 }
 
 test('compiled employee login shares blur lookup, signs in and enters the workspace without another identity request', async () => {
@@ -91,4 +92,115 @@ test('compiled cold-start identity failure preserves the token and recovers afte
   bundle.requests[1].success({ statusCode: 200, data: { employee } })
   assert.equal(await check, true)
   assert.equal(bundle.token, 'saved-token')
+})
+
+const phoneEvent = { detail: { code: 'verified-phone-code', errMsg: 'getPhoneNumber:ok' } }
+function respond(request, data, statusCode = 200) {
+  request.success({ statusCode, data })
+}
+
+async function authorize(bundle) {
+  const pending = bundle.instance.onWechatLogin(phoneEvent)
+  await tick()
+  assert.match(bundle.requests[0].url, /\/api\/mp\/auth\/wechat\/code$/)
+  assert.equal(bundle.requests[0].data.code, 'test-js-code')
+  respond(bundle.requests[0], { session_id: 'wx-session' })
+  await tick()
+  assert.match(bundle.requests[1].url, /\/api\/mp\/auth\/wechat\/phone$/)
+  assert.equal(JSON.stringify(bundle.requests[1].data), JSON.stringify({ session_id: 'wx-session', code: 'verified-phone-code' }))
+  return { pending }
+}
+
+test('compiled one-click login uses verified phone and the same confirmed employee session', async () => {
+  const bundle = loadBundle()
+  bundle.instance.workId = 'a-different-employee'
+  const { pending } = await authorize(bundle)
+  respond(bundle.requests[1], { session_id: 'wx-session', name: '测试员工', phone_masked: '139****0001' })
+  await tick()
+  assert.match(bundle.requests[2].url, /\/api\/mp\/auth\/confirm$/)
+  assert.equal(JSON.stringify(bundle.requests[2].data), JSON.stringify({ session_id: 'wx-session' }))
+  respond(bundle.requests[2], { access_token: 'wechat-token', employee })
+  await pending
+  assert.equal(bundle.token, 'wechat-token')
+  assert.equal(await bundle.access.requireInternalAccess(), true)
+  assert.equal(bundle.requests.length, 3)
+  assert.deepEqual(bundle.jumps, ['/pages/generate/generate'])
+  assert.equal(bundle.instance.wechatLoading, false)
+})
+
+test('cancelled or unsuccessful phone authorization never starts login', async () => {
+  for (const errMsg of ['getPhoneNumber:fail user deny', 'getPhoneNumber:fail', 'getPhoneNumber:fail privacy permission is not authorized']) {
+    const bundle = loadBundle()
+    await bundle.instance.onWechatLogin({ detail: { errMsg } })
+    assert.equal(bundle.requests.length, 0)
+    assert.equal(bundle.wechatLogins.length, 0)
+    assert.equal(bundle.token, '')
+    assert.ok(bundle.instance.wechatError)
+    assert.equal(bundle.instance.employeeError, '')
+  }
+})
+
+test('one-click and employee-code requests are mutually exclusive and repeated callbacks are ignored', async () => {
+  const bundle = loadBundle()
+  const pending = bundle.instance.onWechatLogin(phoneEvent)
+  await bundle.instance.onWechatLogin(phoneEvent)
+  await bundle.instance.onLogin()
+  await tick()
+  assert.equal(bundle.wechatLogins.length, 1)
+  assert.equal(bundle.requests.length, 1)
+  respond(bundle.requests[0], { detail: { error: { message: '微信服务暂不可用' } } }, 503)
+  await pending
+  assert.equal(bundle.instance.wechatLoading, false)
+  bundle.instance.loginLoading = true
+  await bundle.instance.onWechatLogin(phoneEvent)
+  assert.equal(bundle.wechatLogins.length, 1)
+})
+
+test('unregistered, disabled and PC-only employees cannot establish a frontend session', async () => {
+  for (const [status, message] of [[404, '未找到对应员工账号'], [403, '员工已停用'], [403, '该员工未开通小程序登录']]) {
+    const bundle = loadBundle()
+    const { pending } = await authorize(bundle)
+    respond(bundle.requests[1], { detail: { error: { message } } }, status)
+    await pending
+    assert.equal(bundle.token, '')
+    assert.equal(bundle.instance.wechatError, message)
+    assert.equal(bundle.instance.employeeError, '')
+    assert.equal(bundle.instance.wechatLoading, false)
+    assert.deepEqual(bundle.jumps, [])
+  }
+})
+
+test('an authorization failure can be retried with a fresh WeChat login', async () => {
+  const bundle = loadBundle()
+  const first = bundle.instance.onWechatLogin(phoneEvent)
+  await tick()
+  bundle.requests[0].fail({ errMsg: 'request:fail timeout' })
+  await first
+  const second = bundle.instance.onWechatLogin(phoneEvent)
+  await tick()
+  assert.equal(bundle.wechatLogins.length, 2)
+  assert.equal(bundle.instance.wechatError, '')
+  respond(bundle.requests[1], { detail: '微信服务未配置' }, 503)
+  await second
+})
+
+test('late authorization responses after unload cannot save tokens or navigate', async () => {
+  for (const stage of [0, 1, 2]) {
+    const bundle = loadBundle()
+    const pending = bundle.instance.onWechatLogin(phoneEvent)
+    await tick()
+    if (stage > 0) {
+      respond(bundle.requests[0], { session_id: 'wx-session' })
+      await tick()
+    }
+    if (stage > 1) {
+      respond(bundle.requests[1], { session_id: 'wx-session' })
+      await tick()
+    }
+    bundle.page.onUnload.call(bundle.instance)
+    respond(bundle.requests[stage], stage === 2 ? { access_token: 'late-token', employee } : { session_id: 'wx-session' })
+    await pending
+    assert.equal(bundle.token, '')
+    assert.deepEqual(bundle.jumps, [])
+  }
 })
