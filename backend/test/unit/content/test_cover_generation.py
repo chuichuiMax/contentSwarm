@@ -20,7 +20,6 @@ from yuxi.content.schemas import XiaohongshuDistributionCreate
 from yuxi.content_cover.ai_cover_prompt import (
     AI_COVER_PROMPT,
     ai_cover_eligible_variants,
-    AiCoverSiteHeaderError,
     build_site_header_lines,
     format_ai_cover_copy_text,
     resolve_ai_cover_variant,
@@ -726,9 +725,14 @@ def test_build_site_header_lines_strips_admin_prefix():
     assert line2 == "120㎡现代实景"
 
 
-def test_build_site_header_lines_raises_when_fields_missing():
-    with pytest.raises(AiCoverSiteHeaderError, match="外框面积"):
-        build_site_header_lines(title="标题", subtitle="副", form_values={"楼盘信息": "某盘"})
+def test_build_site_header_lines_falls_back_to_title_when_fields_missing():
+    line1, line2 = build_site_header_lines(
+        title="标题",
+        subtitle="副标题",
+        form_values={"楼盘信息": "某盘"},
+    )
+    assert line1 == "某盘"
+    assert line2 == "副标题"
 
 
 def test_build_site_header_lines_merges_business_variables():

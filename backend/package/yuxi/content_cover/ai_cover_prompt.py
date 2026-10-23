@@ -293,7 +293,7 @@ _PROMPT_P12 = f"""{AI_COVER_BASE_INTRO}
 面积单位统一写成“㎡”，不重复添加单位；设计风格只保留名称，不加入评价、感受或介绍句。
 方括号内为待提取字段，最终图片不得出现括号、字段名、占位符或“+”号。
 不得将正文标题、文章开头、业主故事、营销文案或历史对话内容作为这两行文字。
-如果正文缺少楼盘名称、面积或设计风格，先指出缺少的字段，暂不生成图片，不得猜测或用其他句子替代。
+若正文字段不完整，优先使用已提供的「已定稿两行」排版，不得整段照搬正文其它段落。
 
 【正文字段原文（供对照提取，不得整段照搬上封面）】
 {{body_fields}}
@@ -330,7 +330,7 @@ _PROMPT_P12 = f"""{AI_COVER_BASE_INTRO}
 
 
 class AiCoverSiteHeaderError(ValueError):
-    """提示词十二：正文缺少楼盘、面积或设计风格。"""
+    """历史异常类型；提示词十二已不再因缺字段阻断生图。"""
 
 
 def format_ai_cover_copy_text(*, title: str, subtitle: str = "") -> str:
@@ -412,29 +412,35 @@ def build_site_header_lines(
     subtitle: str,
     form_values: dict[str, Any] | None = None,
 ) -> tuple[str, str]:
-    """提示词十二：从正文业务字段提取顶栏双行，缺字段则拒绝生成。"""
-    del title, subtitle
+    """提示词十二：优先从业务字段提取顶栏双行，缺项时回退封面标题/副标题。"""
+    title = title.strip()
+    subtitle = subtitle.strip()
     form_values = normalize_cover_form_values(form_values)
     site_raw = _cover_form_text(form_values, "工地地址", "楼盘信息", "楼盘名称", "project_site", "community_name")
     area_raw = _cover_form_text(form_values, "外框面积", "面积", "建筑面积")
     style = _cover_form_text(form_values, "设计风格", "项目风格")
-    missing: list[str] = []
-    if not site_raw:
-        missing.append("工地地址/楼盘名称")
-    if not area_raw:
-        missing.append("外框面积")
-    if not style:
-        missing.append("设计风格")
-    if missing:
-        raise AiCoverSiteHeaderError(f"AI 封面提示词十二缺少必填字段：{'、'.join(missing)}")
-    line1 = _normalize_site_community_name(site_raw)
+
+    line1 = _normalize_site_community_name(site_raw) if site_raw else ""
+    if not line1 and site_raw:
+        line1 = site_raw[:48]
     if not line1:
-        raise AiCoverSiteHeaderError("AI 封面提示词十二无法从工地地址提取楼盘或小区名称")
-    area = _normalize_frame_area_sqm(area_raw)
-    if not area:
-        raise AiCoverSiteHeaderError("AI 封面提示词十二外框面积无效")
-    line2 = f"{area}{style}实景"[:60]
-    return line1, line2
+        line1 = title or subtitle or "装修案例"
+
+    area = _normalize_frame_area_sqm(area_raw) if area_raw else ""
+    if area and style:
+        line2 = f"{area}{style}实景"
+    elif style:
+        line2 = f"{style}实景"
+    elif area:
+        line2 = f"{area}实景"
+    elif area_raw and style:
+        line2 = f"{area_raw}{style}实景"
+    elif area_raw:
+        line2 = f"{area_raw}实景"
+    else:
+        line2 = subtitle or (title if title != line1 else "") or "实景案例"
+
+    return line1[:48], line2[:60]
 
 
 def _build_p12_prompt(*, line1: str, line2: str, form_values: dict[str, Any] | None) -> str:

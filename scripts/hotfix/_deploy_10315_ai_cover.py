@@ -13,6 +13,7 @@ HOST = "172.16.103.15"
 BASE = "/srv/contentswarm"
 FILES = [
     "docker-compose.yml",
+    "backend/server/worker_dev.py",
     "web/src/views/ContentStudioView.vue",
     "backend/package/yuxi/content_cover/ai_cover_prompt.py",
     "backend/package/yuxi/content_cover/ai_cover_prompt_catalog.py",
@@ -43,7 +44,7 @@ def main() -> int:
         print(f"OK {rel}")
     sftp.close()
 
-    compose = f"cd {BASE} && docker compose --env-file .env up -d --no-deps api web"
+    compose = f"cd {BASE} && docker compose --env-file .env up -d --no-deps api web worker"
     _, stdout, stderr = client.exec_command(compose, timeout=300)
     out = stdout.read().decode()
     err = stderr.read().decode()
@@ -76,6 +77,23 @@ def main() -> int:
             timeout=180,
         )
         print(o2.read().decode().strip())
+
+    for svc in ("api-dev", "worker-dev"):
+        _, o, _ = client.exec_command(
+            f"docker exec {svc} uv pip install --system 'alibabacloud-oss-v2>=1.1.0' 2>/dev/null; "
+            f"docker exec {svc} python -c 'import alibabacloud_oss_v2; print(\"{svc} oss ok\")'",
+            timeout=180,
+        )
+        print(o.read().decode().strip())
+
+    p12_check = (
+        "docker exec api-dev python -c \""
+        "from yuxi.content_cover.ai_cover_prompt import build_site_header_lines; "
+        "a,b=build_site_header_lines(title='封面主标题', subtitle='副标题', form_values={}); "
+        "print('p12_fallback', a, b)\""
+    )
+    _, o, _ = client.exec_command(p12_check, timeout=60)
+    print(o.read().decode().strip())
 
     _, o, _ = client.exec_command(
         "curl -s -o /dev/null -w 'p14 %{http_code} %{size_download}\\n' "
