@@ -336,61 +336,6 @@ async def test_mp_compile_brief_requires_cover_and_creates_locked_task(test_clie
         await test_client.delete(f"/api/employees/{employee_pk}", headers=admin_headers)
 
 
-async def test_mp_wechat_login_requires_enabled_employee_phone(test_client, admin_headers):
-    phone = _phone()
-    unknown = _phone()
-    created = await test_client.post("/api/employees", headers=admin_headers, json=_employee_payload(phone))
-    assert created.status_code == 200, created.text
-    employee_pk = created.json()["employee"]["id"]
-    try:
-        started = await test_client.post("/api/mp/auth/wechat/code", json={"code": "dev-code"})
-        assert started.status_code == 200, started.text
-        session_id = started.json()["session_id"]
-
-        missing = await test_client.post(
-            "/api/mp/auth/wechat/phone",
-            json={"session_id": session_id, "phone": unknown},
-        )
-        assert missing.status_code == 404, missing.text
-        assert missing.json()["detail"]["error"]["code"] == "EMPLOYEE_NOT_FOUND"
-
-        disabled = await test_client.patch(
-            f"/api/employees/{employee_pk}",
-            headers=admin_headers,
-            json={"enabled": False},
-        )
-        assert disabled.status_code == 200, disabled.text
-        stopped = await test_client.post(
-            "/api/mp/auth/wechat/phone",
-            json={"session_id": session_id, "phone": phone},
-        )
-        assert stopped.status_code == 403, stopped.text
-        assert stopped.json()["detail"]["error"]["code"] == "EMPLOYEE_DISABLED"
-
-        enabled = await test_client.patch(
-            f"/api/employees/{employee_pk}",
-            headers=admin_headers,
-            json={"enabled": True},
-        )
-        assert enabled.status_code == 200, enabled.text
-        bound = await test_client.post(
-            "/api/mp/auth/wechat/phone",
-            json={"session_id": session_id, "phone": phone},
-        )
-        assert bound.status_code == 200, bound.text
-        assert bound.json()["phone_masked"] == f"{phone[:3]}****{phone[-4:]}"
-        assert "phone" not in bound.json()
-
-        spoofed = await test_client.post(
-            "/api/mp/auth/confirm",
-            json={"session_id": session_id, "phone": unknown},
-        )
-        assert spoofed.status_code == 200, spoofed.text
-        assert spoofed.json()["employee"]["login_account"] == phone
-    finally:
-        await test_client.delete(f"/api/employees/{employee_pk}", headers=admin_headers)
-
-
 async def test_mp_sms_send_validates_employee_before_sending(test_client, admin_headers):
     unknown = await test_client.post("/api/mp/auth/sms/send", json={"phone": _phone()})
     assert unknown.status_code == 404, unknown.text

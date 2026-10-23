@@ -35,6 +35,9 @@ RATE_LIMIT_ENDPOINTS = {
     ("/api/mp/auth/sms/send", "POST"),
     ("/api/mp/auth/employee/lookup", "POST"),
     ("/api/mp/auth/employee/login", "POST"),
+    ("/api/mp/auth/wechat/code", "POST"),
+    ("/api/mp/auth/wechat/phone", "POST"),
+    ("/api/mp/auth/confirm", "POST"),
 }
 
 # In-memory login attempt tracker to reduce brute-force exposure per worker
