@@ -11,11 +11,30 @@ import paramiko
 REPO = Path(__file__).resolve().parents[2]
 HOST = "172.16.103.15"
 BASE = "/srv/contentswarm"
+
+
+def _deploy_password() -> str:
+    direct = os.environ.get("DEPLOY_SSH_PASSWORD", "").strip()
+    if direct:
+        return direct
+    for candidate in (
+        REPO / ".deploy" / "10315.password",
+        REPO / ".deploy" / "password",
+        Path(__file__).resolve().parent / "10315.password",
+    ):
+        if candidate.is_file():
+            return candidate.read_text(encoding="utf-8").strip()
+    return ""
 FILES = [
     "docker-compose.yml",
     "backend/server/worker_dev.py",
     "web/src/views/ContentStudioView.vue",
     "backend/package/yuxi/content_cover/ai_cover_prompt.py",
+    "backend/package/yuxi/services/content_cover_service.py",
+    "backend/package/yuxi/content/service_entry_form.py",
+    "backend/package/yuxi/content/generation.py",
+    "backend/package/yuxi/content/mp_studio_direct.py",
+    "backend/package/yuxi/content/v3/fixtures/foreman_rule_catalog_v1.json",
     "backend/package/yuxi/content_cover/ai_cover_prompt_catalog.py",
     "backend/package/yuxi/services/ai_cover_prompt_catalog_service.py",
     "backend/server/routers/content_cover_router.py",
@@ -25,9 +44,12 @@ FILES = [
 
 
 def main() -> int:
-    pw = os.environ.get("DEPLOY_SSH_PASSWORD", "")
+    pw = _deploy_password()
     if not pw:
-        print("DEPLOY_SSH_PASSWORD not set", file=sys.stderr)
+        print(
+            "Set DEPLOY_SSH_PASSWORD or create .deploy/10315.password (gitignored)",
+            file=sys.stderr,
+        )
         return 1
 
     client = paramiko.SSHClient()

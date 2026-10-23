@@ -168,20 +168,22 @@
     },
     {
       "code": "FRT20",
-      "name": "风格/情绪钩子+案例卖点",
+      "name": "工地地址+副标题(面积风格实景)",
       "industry_scope": ["decoration"],
       "suitable_scenes": ["装修案例分享", "风格案例", "空间展示"],
-      "core_goal": "用风格或情绪钩子点明案例卖点，让读者一眼识别为案例分享而非报价或自荐。",
-      "reference_examples": ["中式审美一旦认真起来，真的没有对手", "想要质美双绝，复古又年轻的家？我们太懂！", "超美法式复古风！直接美出新高度！"],
+      "core_goal": "主标题写工地/楼盘地址，副标题为面积+设计风格+「实景」连续拼句，识别为案例分享。",
+      "reference_examples": ["主：中建钰山湖｜副：142㎡意式轻奢实景", "主：洋湖天序｜副：120㎡现代实景"],
       "source_content": {
         "slot_schema": [
-          {"code": "style_or_emotion", "label": "风格/情绪钩子", "variable_codes": ["scene"], "lexicon_codes": ["title.oral_emotion", "title.positioning"]},
-          {"code": "case_claim", "label": "案例卖点", "variable_codes": ["result", "advantages", "advantage"], "lexicon_codes": ["title.positive_result", "title.beneficial_result"]}
+          {"code": "site", "label": "工地/楼盘", "variable_codes": ["case_background", "product", "location"], "lexicon_codes": []},
+          {"code": "area", "label": "面积", "variable_codes": ["quantity"], "lexicon_codes": []},
+          {"code": "style", "label": "设计风格", "variable_codes": ["scene"], "lexicon_codes": []},
+          {"code": "scene_suffix", "label": "实景后缀", "variable_codes": ["result"], "lexicon_codes": []}
         ]
       },
-      "variable_schema": ["scene"],
+      "variable_schema": ["product", "quantity", "scene"],
       "compatible_methods": ["FRM02"],
-      "risk_rules": ["不得编造未提供的风格、面积或完工效果", "标题主卖点必须在正文项目信息或空间段兑现"]
+      "risk_rules": ["不得编造未提供的工地、面积或风格", "标题中的面积与风格必须在正文项目信息卡兑现", "标题末尾必须是「实景」"]
     },
     {
       "code": "FRT21",

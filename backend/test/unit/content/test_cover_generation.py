@@ -18,10 +18,14 @@ from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from yuxi.content.schemas import XiaohongshuDistributionCreate
 from yuxi.content_cover.ai_cover_prompt import (
+    AI_COVER_NO_GHOSTING,
+    AI_COVER_OUTPUT_REQUIREMENTS,
+    AI_COVER_PRESERVE_BRAND_WATERMARK,
     AI_COVER_PROMPT,
     ai_cover_eligible_variants,
     build_site_header_lines,
     format_ai_cover_copy_text,
+    format_case_share_title,
     resolve_ai_cover_variant,
     select_ai_cover_prompt,
 )
@@ -671,6 +675,23 @@ def test_ai_cover_prompt_reserves_top_and_bottom_exclusion_zones():
     assert "禁止使用贴顶、贴底或出血式文字" in AI_COVER_PROMPT
 
 
+def test_ai_cover_prompt_preserves_hirun_brand_watermark(monkeypatch: pytest.MonkeyPatch):
+    assert "鸿扬家装" in AI_COVER_PRESERVE_BRAND_WATERMARK
+    assert AI_COVER_PRESERVE_BRAND_WATERMARK in AI_COVER_PROMPT
+    assert AI_COVER_PRESERVE_BRAND_WATERMARK in AI_COVER_OUTPUT_REQUIREMENTS
+    monkeypatch.setattr("yuxi.content_cover.ai_cover_prompt.random.choice", lambda _: "p1")
+    selection = select_ai_cover_prompt(title="标题", subtitle="副标题")
+    assert AI_COVER_PRESERVE_BRAND_WATERMARK in selection.prompt
+
+
+def test_ai_cover_prompt_forbids_ghosting(monkeypatch: pytest.MonkeyPatch):
+    assert "重影" in AI_COVER_NO_GHOSTING
+    assert AI_COVER_NO_GHOSTING in AI_COVER_OUTPUT_REQUIREMENTS
+    monkeypatch.setattr("yuxi.content_cover.ai_cover_prompt.random.choice", lambda _: "p16")
+    selection = select_ai_cover_prompt(title="标题", subtitle="副标题")
+    assert AI_COVER_NO_GHOSTING in selection.prompt
+
+
 def test_format_ai_cover_copy_text_joins_title_and_subtitle():
     assert format_ai_cover_copy_text(title="六都国际120㎡婚房装修", subtitle="全屋定制化装修") == (
         "六都国际120㎡婚房装修，全屋定制化装修"
@@ -711,7 +732,7 @@ def test_build_site_header_lines_from_form_values():
     assert line2 == "245㎡意式轻奢实景"
 
 
-def test_build_site_header_lines_strips_admin_prefix():
+def test_build_site_header_lines_uses_site_address_as_title_line():
     line1, line2 = build_site_header_lines(
         title="",
         subtitle="",
@@ -721,8 +742,46 @@ def test_build_site_header_lines_strips_admin_prefix():
             "设计风格": "现代",
         },
     )
+    assert line1 == "湖南省长沙市岳麓区中建钰山湖3栋"
+    assert line2 == "120㎡现代实景"
+
+
+def test_build_site_header_lines_normalizes_community_from_property_only():
+    line1, line2 = build_site_header_lines(
+        title="",
+        subtitle="",
+        form_values={
+            "楼盘信息": "湖南省长沙市岳麓区中建钰山湖3栋",
+            "外框面积": "120㎡",
+            "设计风格": "现代",
+        },
+    )
     assert line1 == "中建钰山湖"
     assert line2 == "120㎡现代实景"
+
+
+def test_format_case_share_title_parts_site_and_subtitle():
+    from yuxi.content_cover.ai_cover_prompt import format_case_share_title_parts
+
+    site, sub = format_case_share_title_parts(
+        form_values={
+            "工地地址": "长沙市岳麓区中建钰山湖3栋",
+            "外框面积": "142",
+            "设计风格": "意式轻奢",
+        }
+    )
+    assert site == "长沙市岳麓区中建钰山湖3栋"
+    assert sub == "142㎡意式轻奢实景"
+
+    site2, sub2 = format_case_share_title_parts(
+        form_values={
+            "楼盘信息": "中建钰山湖",
+            "外框面积": "142",
+            "设计风格": "意式轻奢",
+        }
+    )
+    assert site2 == "中建钰山湖"
+    assert sub2 == "142㎡意式轻奢实景"
 
 
 def test_build_site_header_lines_falls_back_to_title_when_fields_missing():

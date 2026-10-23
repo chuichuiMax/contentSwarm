@@ -22,6 +22,7 @@ NATURAL_CLOSING_INSTRUCTION = (
     "用一两句口语收束即可，例如：最近有打算装修的朋友，有什么问题都可以一起聊一聊。"
 )
 DIRECT_TITLE_MAX_CHARS = 20
+CASE_SHARE_DIRECT_TITLE_MAX_CHARS = 30
 DIRECT_TOPIC_LIMIT = 10
 _TOPIC_REGION_KEYS = ("所在区域", "city", "location", "region", "serviceCity")
 SKILL_VERSIONS = {
@@ -52,6 +53,63 @@ _TITLE_SUFFIX_FRAGMENTS = (
     "施工",
     "装修",
 )
+
+
+def _direct_request_content_type(user_request: str) -> tuple[str, str]:
+    try:
+        data = json.loads(user_request)
+    except json.JSONDecodeError:
+        return "", ""
+    content_type = data.get("contentType") if isinstance(data, dict) else {}
+    if not isinstance(content_type, dict):
+        return "", ""
+    return str(content_type.get("contentTypeCode") or "").strip(), str(content_type.get("typeName") or "").strip()
+
+
+def _case_share_form_values(user_request: str) -> dict[str, Any]:
+    try:
+        data = json.loads(user_request)
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    form_values: dict[str, Any] = {}
+    business_variables = data.get("businessVariables")
+    facts = data.get("facts")
+    if isinstance(business_variables, dict):
+        form_values.update(business_variables)
+    if isinstance(facts, dict):
+        form_values.update(facts)
+    return form_values
+
+
+def _case_share_copy_from_request(user_request: str, *, fallback_title: str) -> tuple[str, str] | None:
+    from yuxi.content_cover.ai_cover_prompt import format_case_share_title_parts, is_case_share_content_type
+
+    code, name = _direct_request_content_type(user_request)
+    if not is_case_share_content_type(content_type_code=code, content_type_name=name):
+        return None
+    site_title, subtitle_line = format_case_share_title_parts(
+        title=fallback_title,
+        form_values=_case_share_form_values(user_request),
+    )
+    if not site_title and not subtitle_line:
+        return None
+    return site_title, subtitle_line
+
+
+def _ensure_case_share_body_lead(body: str, subtitle_line: str) -> str:
+    body = body.strip()
+    subtitle_line = subtitle_line.strip()
+    if not subtitle_line:
+        return body
+    chunks = [chunk.strip() for chunk in body.split("\n\n") if chunk.strip()]
+    if not chunks:
+        return subtitle_line
+    if chunks[0] == subtitle_line:
+        return body
+    tail = "\n\n".join(chunks[1:]) if len(chunks) > 1 else ""
+    return f"{subtitle_line}\n\n{tail}" if tail else subtitle_line
 
 
 def _extend_incomplete_title_suffix(head: str, full: str, *, max_overflow: int = 2) -> str:
@@ -172,6 +230,17 @@ def _direct_generation_prompt(
         f"{json.dumps(forbidden_lexicon, ensure_ascii=False)}\n"
         "存在候选表达时选择符合上下文的写法；候选为空时改写整句，避免出现问题词。"
     )
+    code, type_name = _direct_request_content_type(user_request)
+    from yuxi.content_cover.ai_cover_prompt import is_case_share_content_type
+
+    case_share_title_rule = ""
+    is_case_share = is_case_share_content_type(content_type_code=code, content_type_name=type_name)
+    if is_case_share:
+        case_share_title_rule = (
+            "内容类型为装修案例分享：title 只写工地地址（优先 businessVariables.工地地址，否则楼盘/小区名）；"
+            "body 的第一段必须单独一行，作为副标题，内容为「外框面积+设计风格+实景」连续拼写（如142㎡现代实景），"
+            f"不加标点；title 与副标题各不超过{CASE_SHARE_DIRECT_TITLE_MAX_CHARS}字；第二段起再写案例正文。\n\n"
+        )
     if knowledge_context:
         return (
             "请站在业主角度，用第一人称写一篇好评笔记。返回字段 title、body、topics；"
@@ -201,6 +270,7 @@ def _direct_generation_prompt(
     return (
         "请根据以下输入直接创作一篇内容。返回字段 title、body、topics；"
         "不要输出解释、审核意见或额外字段。\n\n"
+        f"{case_share_title_rule}"
         "参考爆款原文的开头切入、段落顺序、信息推进和口语节奏，结尾按自然转化来写，不要照搬原文里的引流收尾。"
         "在这些位置用用户提供的事实改写，不能逐句照抄。"
         "创作风格只决定表达手法，不得因此杜撰其他人的报价、节省金额、"
@@ -208,9 +278,15 @@ def _direct_generation_prompt(
         "用户输入的金额、单位、面积、数量及报价明细必须准确保留，不自行换算或补造。"
         "装修家居成品不得出现员工真实姓名、工号、登录账号或与工号相同的编号；"
         "persona 里若仍有岗位、门店、从业年限，只能用来把握口吻，不要把个人标识写进 title/body/topics。"
-        f"标题不超过{DIRECT_TITLE_MAX_CHARS}个字，汉字、数字、字母、标点、单位和 Emoji 都各计 1 个字，"
-        "并且必须是完整表达。"
-        "话题必须包含装修避坑；用户数据里能确定城市时，还要包含「城市名+装修公司推荐」，"
+        + (
+            ""
+            if is_case_share
+            else (
+                f"标题不超过{DIRECT_TITLE_MAX_CHARS}个字，汉字、数字、字母、标点、单位和 Emoji 都各计 1 个字，"
+                "并且必须是完整表达。"
+            )
+        )
+        + "话题必须包含装修避坑；用户数据里能确定城市时，还要包含「城市名+装修公司推荐」，"
         "例如长沙装修公司推荐、株洲装修公司推荐。不要带 # 号。"
         "正文分段使用真实换行，不要输出反斜杠和字母 n。"
         f"{NATURAL_CLOSING_INSTRUCTION}\n\n"
@@ -275,11 +351,26 @@ async def generate_direct_content(
     if not isinstance(arguments, dict):
         raise ValueError("模型没有返回内容生成工具调用")
     raw_output = ContentArtifactAIEditOutput.model_validate(arguments)
+    normalized_title = normalize_escaped_newlines(
+        replace_forbidden_words(raw_output.title, forbidden_replacements)
+    )
+    case_copy = _case_share_copy_from_request(user_request, fallback_title=normalized_title)
+    if case_copy:
+        site_title, subtitle_line = case_copy
+        final_title = limit_content_title(site_title, limit=CASE_SHARE_DIRECT_TITLE_MAX_CHARS)
+        normalized_body = normalize_escaped_newlines(
+            replace_forbidden_words(raw_output.body, forbidden_replacements)
+        )
+        final_body = _ensure_case_share_body_lead(
+            normalized_body,
+            limit_content_title(subtitle_line, limit=CASE_SHARE_DIRECT_TITLE_MAX_CHARS),
+        )
+    else:
+        final_title = limit_content_title(normalized_title, limit=DIRECT_TITLE_MAX_CHARS)
+        final_body = normalize_escaped_newlines(replace_forbidden_words(raw_output.body, forbidden_replacements))
     output = ContentArtifactAIEditOutput(
-        title=limit_content_title(
-            normalize_escaped_newlines(replace_forbidden_words(raw_output.title, forbidden_replacements))
-        ),
-        body=normalize_escaped_newlines(replace_forbidden_words(raw_output.body, forbidden_replacements)),
+        title=final_title,
+        body=final_body,
         topics=merge_pinned_topics(
             [
                 normalize_escaped_newlines(replace_forbidden_words(topic, forbidden_replacements))

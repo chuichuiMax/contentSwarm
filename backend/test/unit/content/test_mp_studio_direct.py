@@ -88,6 +88,34 @@ def test_build_content_request_payload_matches_studio_shape():
     assert "工号" not in persona_fact
 
 
+def test_build_content_request_payload_case_share_title_in_facts():
+    employee = SimpleNamespace(
+        name="张三",
+        employee_code="E001",
+        login_account="13900000000",
+        gender="male",
+        age=32,
+        role="项目经理",
+        current_branch="长沙店",
+        current_department="设计部",
+    )
+    user = SimpleNamespace(uid="u1", username="张三", phone_number="13900000000", role="项目经理", department_id=None)
+    payload = build_content_request_payload(
+        employee=employee,
+        user=user,
+        content_type_name="装修案例分享",
+        content_type_id="ct-id",
+        content_type_code="CT01",
+        business_variables={
+            "楼盘信息": "新芙蓉之都",
+            "外框面积": "122",
+            "设计风格": "复合写意",
+        },
+    )
+    assert payload["facts"]["result"] == "新芙蓉之都"
+    assert payload["facts"]["case_subtitle"] == "122㎡复合写意实景"
+
+
 @pytest.mark.asyncio
 async def test_build_mp_decoration_direct_defaults(monkeypatch):
     from yuxi.content import mp_studio_direct as module

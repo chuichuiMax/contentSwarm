@@ -303,6 +303,22 @@ def test_map_service_entry_form_values_quotation_list_brand_over_price():
     assert "禁止把鸿扬写成整装" in mapped["writing_instruction"]
 
 
+def test_map_service_entry_form_values_case_share_title_structure():
+    mapped = map_service_entry_form_values(
+        "装修家居",
+        {
+            "mp_content_type_name": "装修案例分享",
+            "工地地址": "长沙市岳麓区中建钰山湖3栋",
+            "外框面积": "142",
+            "设计风格": "意式轻奢",
+        },
+    )
+    assert "title 只写工地地址" in mapped["writing_instruction"]
+    assert "正文第一段" in mapped["writing_instruction"]
+    assert "中建钰山湖" in mapped["project_result"]
+    assert mapped["case_share_subtitle"] == "142㎡意式轻奢实景"
+
+
 def test_map_service_entry_form_values_craft_showcase_uses_project_stage_when_craft_blank():
     mapped = map_service_entry_form_values(
         "装修家居",

@@ -13,12 +13,21 @@ c = paramiko.SSHClient()
 c.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 c.connect("172.16.103.15", username="root", password=pw, timeout=30)
 sftp = c.open_sftp()
-sftp.put(str(REPO / rel), f"/srv/contentswarm/{rel}")
+remote = f"/srv/contentswarm/{rel}"
+sftp.put(str(REPO / rel), remote)
 sftp.close()
-_, o, _ = c.exec_command(
-    "docker exec api-dev uv pip install --system 'alibabacloud-oss-v2>=1.1.0'",
-    timeout=120,
+checks = (
+    "grep -q '缺少必填字段' /srv/contentswarm/backend/package/yuxi/content_cover/ai_cover_prompt.py "
+    "&& echo OLD_CODE || echo P12_FIX_OK",
+    "docker exec worker-dev python -c \""
+    "from yuxi.content_cover.ai_cover_prompt import build_site_header_lines; "
+    "print(build_site_header_lines(title='T', subtitle='S', form_values={}))\"",
 )
-print(o.read().decode())
+for cmd in checks:
+    _, o, e = c.exec_command(cmd, timeout=120)
+    print(o.read().decode("utf-8", "replace").strip())
+    err = e.read().decode("utf-8", "replace").strip()
+    if err:
+        print(err[:500])
 c.close()
 print("OK", rel)

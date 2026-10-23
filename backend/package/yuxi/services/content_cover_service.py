@@ -1975,21 +1975,32 @@ async def create_cover_generate_job(db: AsyncSession, user: User, payload: Cover
             "系统会在生成后按内容资产需要精确替换主标题，因此不要自行扩写新口号或新段落。"
         )
     elif prompt_text:
+        from yuxi.content_cover.ai_cover_prompt import AI_COVER_NO_GHOSTING, AI_COVER_PRESERVE_BRAND_WATERMARK
+
         output_guidance = (
             "输出单张完整、不透明的 1080×1440 图片。严格逐字绘制提示词中声明的全部文字，"
             "不得改写、遗漏、重复、增加或重新计算任何数字、单位和金额；除提示词明确声明的文字外，"
             "不得生成其他文字、数字、字母、水印或 Logo。"
+            f"{AI_COVER_PRESERVE_BRAND_WATERMARK}{AI_COVER_NO_GHOSTING}"
         )
     elif image2_copy:
-        from yuxi.content_cover.ai_cover_prompt import ai_cover_uses_embedded_copy
+        from yuxi.content_cover.ai_cover_prompt import (
+            AI_COVER_NO_GHOSTING,
+            AI_COVER_PRESERVE_BRAND_WATERMARK,
+            ai_cover_uses_embedded_copy,
+        )
 
         ai_cover_variant = str((payload.parameters or {}).get("ai_cover_prompt_variant") or "")
+        watermark_clause = (
+            f" {AI_COVER_PRESERVE_BRAND_WATERMARK} 封面文字不得遮挡原图品牌水印。{AI_COVER_NO_GHOSTING}"
+        )
         if ai_cover_uses_embedded_copy(ai_cover_variant):
             output_guidance = (
                 "以参考原图作为完整背景，只添加文字及必要的局部明暗调整；保留空间结构、家具、材质、"
                 "灯光、色彩、拍摄视角和画面比例，不重新生成室内场景。"
                 "严格按下方提示词中的字体风格、字形结构与文案逐字绘制，不得改写、遗漏、增加或改变顺序。"
                 "输出单张完整、不透明的 1080×1440 封面图；不得添加虚构 Logo、水印或额外装饰文字。"
+                f"{watermark_clause}"
             )
         else:
             copy_lines = []
@@ -2004,6 +2015,7 @@ async def create_cover_generate_job(db: AsyncSession, user: User, payload: Cover
                 "画面中只允许出现以下文案，必须逐字准确、完整、清晰可读，不得改写、遗漏、增加或改变顺序：\n"
                 f"{copy_clause}\n"
                 "不得添加虚构 Logo、水印或额外装饰文字。"
+                f"{watermark_clause}"
             )
     else:
         output_guidance = (
@@ -2014,7 +2026,9 @@ async def create_cover_generate_job(db: AsyncSession, user: User, payload: Cover
     prompt = f"{mode_guidance[payload.mode]}\n{output_guidance}\n\n{prompt}"
     default_negative_prompt = (
         "错别字、乱码、漏字、多余文案、文字贴边、文字出血、文字裁切、标题贴顶、标签贴底、"
-        "水印、平台 Logo、伪造品牌标识、低清晰度、主体变形、过度锐化、杂乱背景"
+        "伪造或新增水印、平台 Logo、伪造品牌标识、抹去或篡改 Hirun/鸿扬家装 原图水印、"
+        "重影、叠影、双重曝光、文字叠字、双重背景、画中画、"
+        "低清晰度、主体变形、过度锐化、杂乱背景"
         if image2_copy or prompt_text
         else "乱码文字、错误汉字、随机字母、数字、水印、平台 Logo、伪造品牌标识、低清晰度、主体变形、过度锐化、杂乱背景"
     )

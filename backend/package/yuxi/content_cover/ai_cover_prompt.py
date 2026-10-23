@@ -57,15 +57,35 @@ AI_COVER_TEMPLATE_SLOT_PROMPTS: dict[int, AiCoverPromptVariant] = {
     7: "p13",
 }
 
-AI_COVER_OUTPUT_REQUIREMENTS = """
+AI_COVER_PRESERVE_BRAND_WATERMARK = (
+    "若底图已带有 Hirun / 鸿扬家装 等品牌 Logo 水印（常见为白色「Hirun」与「鸿扬家装」字样及弧形线条），"
+    "必须完整保留其位置、形态、透明度与清晰度：不得擦除、覆盖、模糊、重绘、改色或替换成其他标识。"
+)
+
+AI_COVER_NO_GHOSTING = (
+    "画面须清晰单层：不得出现重影、叠影、双重曝光、文字重描或叠字，"
+    "不得让同一文案、家具或主体在画面上重复出现或半透明错位叠加，"
+    "不得在原图之上再生成一套偏移的室内场景或鬼影。"
+)
+
+AI_COVER_OUTPUT_REQUIREMENTS = f"""
 【最终输出要求】
 仅输出一张 1080×1440 像素、3:4 比例、完整不透明的 720p 小红书装修封面。
 不要生成多个方案，不要拼图，不要附加说明。
 
-【必须避免】
-错别字、乱码、漏字、额外文案、文字重复、标题贴边、文字裁切、重点信息不突出、字体比例失衡、颜色混乱、厚重遮罩、廉价营销感、过度锐化、空间结构改变、家具变形、虚构 Logo、水印和低清晰度。"""
+【品牌水印】
+{AI_COVER_PRESERVE_BRAND_WATERMARK}
 
-AI_COVER_BASE_INTRO = "请在我上传的装修实景图上添加文字，生成一张高端家装内容封面。"
+【画面清晰】
+{AI_COVER_NO_GHOSTING}
+
+【必须避免】
+错别字、乱码、漏字、额外文案、文字重复、标题贴边、文字裁切、重点信息不突出、字体比例失衡、颜色混乱、厚重遮罩、廉价营销感、过度锐化、空间结构改变、家具变形、虚构或新增 Logo/水印、篡改或抹去原图已有鸿扬品牌水印、重影与叠影，以及低清晰度。"""
+
+AI_COVER_BASE_INTRO = (
+    "请在我上传的装修实景图上添加文字，生成一张高端家装内容封面。"
+    f"{AI_COVER_PRESERVE_BRAND_WATERMARK}"
+)
 
 AI_COVER_IMAGE_ONLY_PROMPT = f"""{AI_COVER_BASE_INTRO}
 
@@ -110,7 +130,8 @@ image2 的生成画布会在输出阶段等比例居中适配为最终 3:4 封�
 【底图保护】
 仅添加文字及必要的局部明暗调整。
 保留原图的空间结构、家具、材质、灯光、色彩、拍摄视角和画面比例，不重新生成室内场景。
-不添加虚构 Logo、水印或额外装饰。
+{AI_COVER_PRESERVE_BRAND_WATERMARK}
+不添加虚构 Logo、水印或额外装饰；新增封面文字不得遮挡、覆盖或压在原图品牌水印之上。
 
 {AI_COVER_OUTPUT_REQUIREMENTS}"""
 
@@ -324,7 +345,8 @@ _PROMPT_P12 = f"""{AI_COVER_BASE_INTRO}
 不得让文字延伸出画布，不得通过裁切文字、删除文字、横向压缩或拉伸字体来适配宽度。
 两行分别居中，不为追求等宽而额外扩大字距。
 背景处理：
-使用本次指定图片作为底图，保留空间结构、家具比例、材质和自然光影。文字直接叠加，不添加厚重遮罩、额外图标、Logo或水印。
+使用本次指定图片作为底图，保留空间结构、家具比例、材质和自然光影。{AI_COVER_PRESERVE_BRAND_WATERMARK}
+文字直接叠加，不添加厚重遮罩、额外图标或虚构 Logo/水印；封面文字不得遮挡原图品牌水印。
 
 {AI_COVER_OUTPUT_REQUIREMENTS}"""
 
@@ -406,41 +428,106 @@ def _cover_form_text(form_values: dict[str, Any], *keys: str) -> str:
     return ""
 
 
+def _case_share_site_title(
+    form_values: dict[str, Any],
+    *,
+    fallback_title: str = "",
+    fallback_subtitle: str = "",
+) -> str:
+    """案例分享主标题：工地地址（无则楼盘/小区名）。"""
+    site_addr = _cover_form_text(form_values, "工地地址")
+    if site_addr:
+        return site_addr[:48]
+    site_raw = _cover_form_text(form_values, "楼盘信息", "楼盘名称", "project_site", "community_name")
+    if site_raw:
+        normalized = _normalize_site_community_name(site_raw)
+        return (normalized or site_raw)[:48]
+    return (fallback_title or fallback_subtitle or "装修案例")[:48]
+
+
+def _case_share_subtitle_line(
+    form_values: dict[str, Any],
+    *,
+    fallback_subtitle: str = "",
+    fallback_title: str = "",
+    site_title: str = "",
+) -> str:
+    """案例分享副标题：外框面积 + 设计风格 + 实景。"""
+    area_raw = _cover_form_text(form_values, "外框面积", "面积", "建筑面积")
+    style = _cover_form_text(form_values, "设计风格", "项目风格")
+    area = _normalize_frame_area_sqm(area_raw) if area_raw else ""
+    if area and style:
+        line = f"{area}{style}实景"
+    elif style:
+        line = f"{style}实景"
+    elif area:
+        line = f"{area}实景"
+    elif area_raw:
+        line = f"{area_raw}实景"
+    else:
+        line = fallback_subtitle or (fallback_title if fallback_title != site_title else "") or "实景案例"
+    return line[:60]
+
+
 def build_site_header_lines(
     *,
     title: str,
     subtitle: str,
     form_values: dict[str, Any] | None = None,
 ) -> tuple[str, str]:
-    """提示词十二：优先从业务字段提取顶栏双行，缺项时回退封面标题/副标题。"""
+    """提示词十二 / 案例封面：第一行工地地址，第二行面积+风格+实景。"""
     title = title.strip()
     subtitle = subtitle.strip()
     form_values = normalize_cover_form_values(form_values)
-    site_raw = _cover_form_text(form_values, "工地地址", "楼盘信息", "楼盘名称", "project_site", "community_name")
-    area_raw = _cover_form_text(form_values, "外框面积", "面积", "建筑面积")
-    style = _cover_form_text(form_values, "设计风格", "项目风格")
+    line1 = _case_share_site_title(form_values, fallback_title=title, fallback_subtitle=subtitle)
+    line2 = _case_share_subtitle_line(
+        form_values,
+        fallback_subtitle=subtitle,
+        fallback_title=title,
+        site_title=line1,
+    )
+    return line1, line2
 
-    line1 = _normalize_site_community_name(site_raw) if site_raw else ""
-    if not line1 and site_raw:
-        line1 = site_raw[:48]
-    if not line1:
-        line1 = title or subtitle or "装修案例"
 
-    area = _normalize_frame_area_sqm(area_raw) if area_raw else ""
-    if area and style:
-        line2 = f"{area}{style}实景"
-    elif style:
-        line2 = f"{style}实景"
-    elif area:
-        line2 = f"{area}实景"
-    elif area_raw and style:
-        line2 = f"{area_raw}{style}实景"
-    elif area_raw:
-        line2 = f"{area_raw}实景"
-    else:
-        line2 = subtitle or (title if title != line1 else "") or "实景案例"
+CASE_SHARE_TITLE_MAX_CHARS = 30
 
-    return line1[:48], line2[:60]
+
+def format_case_share_title_parts(
+    *,
+    title: str = "",
+    subtitle: str = "",
+    form_values: dict[str, Any] | None = None,
+) -> tuple[str, str]:
+    """装修案例分享：主标题（工地地址）+ 副标题（面积+风格+实景）。"""
+    return build_site_header_lines(title=title, subtitle=subtitle, form_values=form_values)
+
+
+def format_case_share_title(
+    *,
+    title: str = "",
+    subtitle: str = "",
+    form_values: dict[str, Any] | None = None,
+    max_chars: int = CASE_SHARE_TITLE_MAX_CHARS,
+) -> str:
+    """案例分享主标题（工地地址）。"""
+    site_title, _ = format_case_share_title_parts(title=title, subtitle=subtitle, form_values=form_values)
+    if not site_title:
+        return ""
+    return site_title[: max(1, int(max_chars))]
+
+
+def format_case_share_subtitle(
+    *,
+    title: str = "",
+    subtitle: str = "",
+    form_values: dict[str, Any] | None = None,
+    max_chars: int = CASE_SHARE_TITLE_MAX_CHARS,
+) -> str:
+    """案例分享副标题（面积+风格+实景）。"""
+    _, sub = format_case_share_title_parts(title=title, subtitle=subtitle, form_values=form_values)
+    if not sub:
+        return ""
+    return sub[: max(1, int(max_chars))]
 
 
 def _build_p12_prompt(*, line1: str, line2: str, form_values: dict[str, Any] | None) -> str:
@@ -664,6 +751,8 @@ __all__ = [
     "AiCoverSiteHeaderError",
     "AI_COVER_IMAGE_ONLY_PROMPT",
     "AI_COVER_OUTPUT_REQUIREMENTS",
+    "AI_COVER_NO_GHOSTING",
+    "AI_COVER_PRESERVE_BRAND_WATERMARK",
     "AI_COVER_PROMPT",
     "AI_COVER_CASE_SHARE_TYPE_CODES",
     "AI_COVER_CASE_SHARE_TYPE_NAMES",
@@ -679,6 +768,10 @@ __all__ = [
     "ai_cover_uses_embedded_copy",
     "is_case_share_content_type",
     "build_site_header_lines",
+    "format_case_share_title",
+    "format_case_share_subtitle",
+    "format_case_share_title_parts",
+    "CASE_SHARE_TITLE_MAX_CHARS",
     "cover_three_lines",
     "format_ai_cover_copy_text",
     "normalize_cover_form_values",

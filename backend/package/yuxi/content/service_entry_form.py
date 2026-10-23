@@ -48,6 +48,15 @@ DECORATION_WRITING_INSTRUCTION = (
     + DECORATION_NO_EMPLOYEE_IDENTITY
 )
 QUOTATION_LIST_TYPE_NAMES = frozenset({"装修报价清单", "报价清单"})
+CASE_SHARE_TYPE_NAMES = frozenset({"装修案例分享", "案例分享"})
+CASE_SHARE_WRITING_INSTRUCTION = (
+    "内容类型为装修案例分享：成品 title 只写工地地址（优先「工地地址」字段，否则楼盘/小区名）；"
+    "正文第一段单独一行作为副标题，内容为「外框面积 + 设计风格 + 实景」连续拼写（如142㎡现代实景），不加标点；"
+    "面积用简报锁定的具体㎡；第二段起写案例信息卡与空间风格要点，不得展开旧况→改造→完工的长案例故事；"
+    "卡点与数字须挂载 Evidence ID；费用称谓写「预算价」；成品规避平台封禁词库。"
+    + DECORATION_CTA_LAYOUT
+    + DECORATION_NO_EMPLOYEE_IDENTITY
+)
 QUOTATION_LIST_WRITING_INSTRUCTION = (
     "内容类型为装修报价清单：标题必须让人一眼看懂在说什么，句子通顺、语义完整，禁止词库堆砌或看不懂的标题；"
     "正例：142㎡旧房翻新，钱要花在哪？；反例：旧房翻新业主130-150㎡预算不踩坑。"
@@ -447,6 +456,7 @@ def map_service_entry_form_values(service_entry: str, form_values: dict[str, Any
         )
         is_quotation_list = content_type_name in QUOTATION_LIST_TYPE_NAMES
         is_craft_showcase = content_type_name in CRAFT_SHOWCASE_TYPE_NAMES
+        is_case_share = content_type_name in CASE_SHARE_TYPE_NAMES
         if is_quotation_list:
             pain = f"{community or '业主'}关心装修预算怎么花、怕隐形增项，更需要看清品牌与交付是否靠谱"
             advantage = "；".join(
@@ -473,6 +483,18 @@ def map_service_entry_form_values(service_entry: str, form_values: dict[str, Any
             if craft_text:
                 process = craft_text
             values["writing_instruction"] = CRAFT_SHOWCASE_WRITING_INSTRUCTION
+        elif is_case_share:
+            pain = f"{community or '业主'}关注{frame_area or '户型'}{style or '风格'}案例落地"
+            advantage = "；".join(
+                part
+                for part in (
+                    style,
+                    f"项目施工{CONSTRUCTION_BRAND}",
+                    f"{BRAND_NAME}{BRAND_POSITIONING}与透明服务",
+                )
+                if part
+            )
+            values["writing_instruction"] = CASE_SHARE_WRITING_INSTRUCTION
         else:
             pain = f"{community or '业主'}关注{frame_area or '户型'}装修落地"
             advantage = "；".join(
@@ -487,6 +509,13 @@ def map_service_entry_form_values(service_entry: str, form_values: dict[str, Any
             values["writing_instruction"] = DECORATION_WRITING_INSTRUCTION
         audience = [region] if region else ["装修业主"]
         result = " ".join(part for part in (community, frame_area, layout, style, f"施工{CONSTRUCTION_BRAND}") if part)
+        if is_case_share:
+            from yuxi.content_cover.ai_cover_prompt import format_case_share_title_parts
+
+            case_title, case_subtitle = format_case_share_title_parts(form_values=values)
+            if case_title:
+                result = case_title
+                values["case_share_subtitle"] = case_subtitle
         if region or community:
             values["location"] = region or community
         if community:

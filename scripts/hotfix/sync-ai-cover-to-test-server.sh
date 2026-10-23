@@ -8,6 +8,8 @@ BASE="${2:-/srv/contentswarm}"
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 
 FILES=(
+  docker-compose.yml
+  backend/server/worker_dev.py
   backend/package/yuxi/content_cover/ai_cover_prompt_catalog.py
   backend/package/yuxi/content_cover/ai_cover_prompt.py
   backend/package/yuxi/services/ai_cover_prompt_catalog_service.py
@@ -33,7 +35,7 @@ AI_COVER_OSS_REGION=cn-hangzhou
 AI_COVER_OSS_ENDPOINT=oss-cn-hangzhou.aliyuncs.com
 AI_COVER_OSS_PUBLIC_BASE_URL=https://hongyang02.oss-cn-hangzhou.aliyuncs.com
 EOF
-echo "然后: cd $BASE && docker compose --env-file .env up -d --no-deps --force-recreate api web"
+echo "然后: cd $BASE && docker compose --env-file .env up -d --no-deps api web worker"
 echo "若预览 500 且日志 ModuleNotFoundError: alibabacloud_oss_v2，在 api-dev 内执行:"
 echo "  docker exec api-dev uv pip install --system 'alibabacloud-oss-v2>=1.1.0'"
 echo "验证: curl -s -o /dev/null -w '%{http_code}' 'http://127.0.0.1:5050/api/content/covers/ai-cover-prompts/p7/preview.png?content_type_code=CT06'"

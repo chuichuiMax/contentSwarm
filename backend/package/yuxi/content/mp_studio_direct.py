@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.content.generation import DEFAULT_DIRECT_GENERATION_PROMPT
 from yuxi.content.service_entry_form import CONTENT_TYPE_NAME_TO_DIRECTION
+from yuxi.content_cover.ai_cover_prompt import format_case_share_title_parts
 from yuxi.services.content_viral_assets import list_viral_assets
 from yuxi.storage.postgres.models_business import User
 from yuxi.storage.postgres.models_content import ContentEmployee
@@ -235,12 +236,15 @@ def _build_facts(type_name: str, persona: dict[str, Any], business_variables: di
     price_items = [f"{key} {_text(business_variables.get(key))}" for key in _QUOTE_KEYS if _text(business_variables.get(key))]
     process: list[str] | None
     result = ""
+    case_subtitle: str | None = None
     if is_quote:
         process = _compact_list(f"{_BRAND_POSITIONING}交付", style)
         result = " ".join(part for part in (community, locked_area, style, f"施工{_CONSTRUCTION_BRAND}") if part)
     elif is_case:
         process = _compact_list(f"{_BRAND_POSITIONING}交付")
-        result = " ".join(part for part in (community, locked_area, style, f"施工{_CONSTRUCTION_BRAND}") if part)
+        case_title, case_subtitle = format_case_share_title_parts(form_values=business_variables)
+        result = case_title or " ".join(part for part in (community, locked_area, style) if part)
+        case_subtitle = case_subtitle or None
     elif is_knowledge:
         process = craft_parts or _compact_list(f"{_BRAND_POSITIONING}交付")
         result = (
@@ -275,6 +279,7 @@ def _build_facts(type_name: str, persona: dict[str, Any], business_variables: di
             "process": process,
             "craft_role": audience if is_knowledge else None,
             "result": _text(result) or None,
+            "case_subtitle": _text(case_subtitle) or None,
             "product": (
                 f"{_BRAND_NAME}{job or _BRAND_POSITIONING}服务"
                 if is_persona
