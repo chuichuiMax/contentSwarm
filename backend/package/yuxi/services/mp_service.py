@@ -306,6 +306,9 @@ class MpCompileBriefPayload(BaseModel):
     cover_mode: Literal["builtin", "ai"] | None = None
     hycanvas_template_id: str | None = None
     image_item_id: str | None = Field(default=None, max_length=64)
+    ai_cover_prompt_random: bool | None = None
+    ai_cover_prompt_variant: str | None = Field(default=None, max_length=32)
+    featured_cover_template_index: int | None = Field(default=None, ge=1, le=32)
 
 
 class MpRunCreatePayload(BaseModel):
@@ -1002,13 +1005,20 @@ async def _lock_decoration_visual_material(
     cover_asset_id: str | None = None,
     hycanvas_template_id: str | None = None,
     cover_mode: Literal["builtin", "ai"] | None = None,
+    ai_cover_prompt_random: bool | None = None,
+    ai_cover_prompt_variant: str | None = None,
+    featured_cover_template_index: int | None = None,
 ) -> tuple[ContentVisualMaterialSelection, str]:
     mode = cover_mode if cover_mode in {"builtin", "ai"} else "builtin"
     template_id = str(hycanvas_template_id or "").strip()
+    ai_random = True if ai_cover_prompt_random is None else bool(ai_cover_prompt_random)
+    ai_variant = str(ai_cover_prompt_variant or "").strip() or None
     if mode == "ai":
         if template_id:
-            raise _mp_error(422, "MP_AI_COVER_TEMPLATE_CONFLICT", "AI 封面只使用图库原图，不能选择封面模板")
+            raise _mp_error(422, "MP_AI_COVER_TEMPLATE_CONFLICT", "AI 封面只使用图库原图，不能选择 HyCanvas 模板")
         template_id = None
+        if not ai_random and not ai_variant:
+            raise _mp_error(422, "MP_AI_COVER_PROMPT_REQUIRED", "请选择 AI 封面模板")
     elif not _HYCANVAS_TEMPLATE_ID.fullmatch(template_id or ""):
         raise _mp_error(422, "MP_HYCANVAS_TEMPLATE_REQUIRED", "请选择小红书封面模板")
     repo = MaterialLibraryRepository(db, include_shared=True)
@@ -1039,6 +1049,9 @@ async def _lock_decoration_visual_material(
             cover_mode=mode,
             image_item_id=item.id,
             hycanvas_template_id=template_id,
+            ai_cover_prompt_random=ai_random if mode == "ai" else None,
+            ai_cover_prompt_variant=ai_variant if mode == "ai" and not ai_random else None,
+            featured_cover_template_index=featured_cover_template_index if mode == "ai" and not ai_random else None,
         ),
         item.asset_id,
     )
@@ -1509,6 +1522,9 @@ async def compile_brief(db: AsyncSession, ctx: MpContext, payload: MpCompileBrie
             cover_asset_id=payload.cover_asset_id,
             hycanvas_template_id=payload.hycanvas_template_id,
             cover_mode=payload.cover_mode,
+            ai_cover_prompt_random=payload.ai_cover_prompt_random,
+            ai_cover_prompt_variant=payload.ai_cover_prompt_variant,
+            featured_cover_template_index=payload.featured_cover_template_index,
         )
     else:
         _reject_review_notes_media(payload)

@@ -12,6 +12,7 @@ from yuxi.storage.postgres.models_business import User
 from yuxi.storage.postgres.models_content import (
     ContentCoverAsset,
     ContentCoverPosterTemplate,
+    ContentEmployee,
     ContentMaterialCategory,
     ContentMaterialLibraryItem,
     ContentMaterialShare,
@@ -164,56 +165,98 @@ class MaterialLibraryRepository:
         located = or_(self._generated_root_clause(ContentMaterialCategory), self._generated_root_clause(parent))
         return join, located
 
-    async def count_personal_generated_images_by_owner(self, owner_uids: list[str]) -> dict[str, int]:
+    async def count_personal_generated_images_by_owner(
+        self,
+        owner_uids: list[str],
+        *,
+        created_from: datetime | None = None,
+        created_before: datetime | None = None,
+    ) -> dict[str, int]:
         if not owner_uids:
             return {}
         names = ("AI生图图库", "AI生图图库（个人）", "生图图库")
+        filters = [
+            ContentMaterialLibraryItem.owner_uid.in_(owner_uids),
+            ContentMaterialLibraryItem.material_type == "image",
+            ContentMaterialLibraryItem.status == "enabled",
+            ContentMaterialLibraryItem.deleted_at.is_(None),
+            ContentCoverAsset.deleted_at.is_(None),
+            ContentMaterialCategory.visibility == "private",
+            ContentMaterialCategory.owner_uid == ContentMaterialLibraryItem.owner_uid,
+            or_(
+                ContentMaterialCategory.id == "mp-generated-private",
+                ContentMaterialCategory.name.in_(names),
+                and_(
+                    ContentMaterialCategory.id.in_(["private-root", "uncategorized"]),
+                    or_(
+                        ContentMaterialLibraryItem.metadata_json["source_folder"].as_string() == "generated",
+                        ContentMaterialLibraryItem.metadata_json["source"].as_string().in_(
+                            ["image_design", "content_production"]
+                        ),
+                    ),
+                ),
+            ),
+        ]
+        if created_from is not None:
+            filters.append(ContentCoverAsset.created_at >= created_from)
+        if created_before is not None:
+            filters.append(ContentCoverAsset.created_at < created_before)
         rows = await self.db.execute(
             select(ContentMaterialLibraryItem.owner_uid, func.count(ContentMaterialLibraryItem.id))
             .join(ContentCoverAsset, ContentCoverAsset.id == ContentMaterialLibraryItem.asset_id)
             .join(ContentMaterialCategory, self.category_join())
-            .where(
-                ContentMaterialLibraryItem.owner_uid.in_(owner_uids),
-                ContentMaterialLibraryItem.material_type == "image",
-                ContentMaterialLibraryItem.status == "enabled",
-                ContentMaterialLibraryItem.deleted_at.is_(None),
-                ContentCoverAsset.deleted_at.is_(None),
-                ContentMaterialCategory.visibility == "private",
-                ContentMaterialCategory.owner_uid == ContentMaterialLibraryItem.owner_uid,
-                or_(
-                    ContentMaterialCategory.id == "mp-generated-private",
-                    ContentMaterialCategory.name.in_(names),
-                    and_(
-                        ContentMaterialCategory.id.in_(["private-root", "uncategorized"]),
-                        or_(
-                            ContentMaterialLibraryItem.metadata_json["source_folder"].as_string() == "generated",
-                            ContentMaterialLibraryItem.metadata_json["source"].as_string().in_(
-                                ["image_design", "content_production"]
-                            ),
-                        ),
-                    ),
-                ),
-            )
+            .where(*filters)
             .group_by(ContentMaterialLibraryItem.owner_uid)
         )
         return {owner_uid: int(count) for owner_uid, count in rows.all()}
 
-    async def count_enterprise_generated_images_by_owner(self, owner_uids: list[str]) -> dict[str, int]:
+    async def count_enterprise_generated_images_by_owner(
+        self,
+        owner_uids: list[str],
+        *,
+        created_from: datetime | None = None,
+        created_before: datetime | None = None,
+    ) -> dict[str, int]:
         if not owner_uids:
             return {}
         join, located = self._enterprise_generated_join()
+        filters = [
+            ContentMaterialLibraryItem.owner_uid.in_(owner_uids),
+            ContentMaterialLibraryItem.material_type == "image",
+            ContentMaterialLibraryItem.status == "enabled",
+            ContentMaterialLibraryItem.deleted_at.is_(None),
+            ContentCoverAsset.deleted_at.is_(None),
+            located,
+        ]
+        if created_from is not None:
+            filters.append(ContentCoverAsset.created_at >= created_from)
+        if created_before is not None:
+            filters.append(ContentCoverAsset.created_at < created_before)
         rows = await self.db.execute(
             select(ContentMaterialLibraryItem.owner_uid, func.count(ContentMaterialLibraryItem.id))
             .select_from(join)
-            .where(
-                ContentMaterialLibraryItem.owner_uid.in_(owner_uids),
-                ContentMaterialLibraryItem.material_type == "image",
-                ContentMaterialLibraryItem.status == "enabled",
-                ContentMaterialLibraryItem.deleted_at.is_(None),
-                ContentCoverAsset.deleted_at.is_(None),
-                located,
-            )
+            .where(*filters)
             .group_by(ContentMaterialLibraryItem.owner_uid)
+        )
+        return {owner_uid: int(count) for owner_uid, count in rows.all()}
+
+    async def count_case_shares_by_owner(
+        self,
+        owner_uids: list[str],
+        *,
+        created_from: datetime | None = None,
+        created_before: datetime | None = None,
+    ) -> dict[str, int]:
+        if not owner_uids:
+            return {}
+        sharer_uid = func.coalesce(ContentMaterialShare.sharer_uid, ContentMaterialShare.owner_uid)
+        filters = [sharer_uid.in_(owner_uids)]
+        if created_from is not None:
+            filters.append(ContentMaterialShare.created_at >= created_from)
+        if created_before is not None:
+            filters.append(ContentMaterialShare.created_at < created_before)
+        rows = await self.db.execute(
+            select(sharer_uid, func.count(ContentMaterialShare.id)).where(*filters).group_by(sharer_uid)
         )
         return {owner_uid: int(count) for owner_uid, count in rows.all()}
 
@@ -678,6 +721,41 @@ class MaterialLibraryRepository:
         ids.update(item_id for item_id in runtime_rows.scalars().all() if item_id)
         return ids
 
+    async def _owner_uids_for_uploader_query(self, pattern: str) -> list[str]:
+        escaped = pattern.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        ilike_pattern = f"%{escaped}%"
+        uids: set[str] = set(
+            (
+                await self.db.execute(
+                    select(User.uid).where(
+                        or_(
+                            User.username.ilike(ilike_pattern, escape="\\"),
+                            User.phone_number.ilike(ilike_pattern, escape="\\"),
+                        )
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        employee_ids = (
+            (
+                await self.db.execute(
+                    select(ContentEmployee.id).where(
+                        or_(
+                            ContentEmployee.name.ilike(ilike_pattern, escape="\\"),
+                            ContentEmployee.employee_code.ilike(ilike_pattern, escape="\\"),
+                            ContentEmployee.login_account.ilike(ilike_pattern, escape="\\"),
+                        )
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        uids.update(f"mp_{employee_id.replace('-', '')[:17]}" for employee_id in employee_ids)
+        return list(uids)
+
     async def list_items(
         self,
         owner_uid: str,
@@ -738,12 +816,14 @@ class MaterialLibraryRepository:
             filters.append(ContentMaterialLibraryItem.status == status)
         if query_text:
             pattern = f"%{query_text.strip()}%"
-            filters.append(
-                or_(
-                    ContentMaterialLibraryItem.display_name.ilike(pattern),
-                    ContentMaterialCategory.name.ilike(pattern),
-                )
-            )
+            uploader_uids = await self._owner_uids_for_uploader_query(query_text)
+            search_clauses = [
+                ContentMaterialLibraryItem.display_name.ilike(pattern),
+                ContentMaterialCategory.name.ilike(pattern),
+            ]
+            if uploader_uids:
+                search_clauses.append(ContentMaterialLibraryItem.owner_uid.in_(uploader_uids))
+            filters.append(or_(*search_clauses))
         join = ContentMaterialLibraryItem.__table__.join(
             ContentCoverAsset, ContentCoverAsset.id == ContentMaterialLibraryItem.asset_id
         ).join(

@@ -141,12 +141,16 @@ async def _download_asset(asset: ContentCoverAsset) -> bytes:
 
 
 def _output_title_overlay(job: ContentCoverJob) -> str:
+    from yuxi.content_cover.ai_cover_prompt import ai_cover_suppresses_post_title_overlay
+
     request = job.request_json or {}
+    variant = str((request.get("parameters") or {}).get("ai_cover_prompt_variant") or "")
     if (
         job.mode in {"hycanvas", "poster_billboard", "editor_render"}
         or request.get("template_replicate")
         or request.get("render_copy_with_image2")
         or request.get("render_prompt_text")
+        or ai_cover_suppresses_post_title_overlay(variant)
     ):
         return ""
     return str(request.get("title") or "").strip()

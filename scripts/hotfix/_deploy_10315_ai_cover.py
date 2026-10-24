@@ -31,6 +31,7 @@ FILES = [
     "web/src/views/ContentStudioView.vue",
     "backend/package/yuxi/content_cover/ai_cover_prompt.py",
     "backend/package/yuxi/services/content_cover_service.py",
+    "backend/package/yuxi/services/content_cover_worker.py",
     "backend/package/yuxi/content/service_entry_form.py",
     "backend/package/yuxi/content/generation.py",
     "backend/package/yuxi/content/mp_studio_direct.py",
@@ -114,7 +115,24 @@ def main() -> int:
         "a,b=build_site_header_lines(title='封面主标题', subtitle='副标题', form_values={}); "
         "print('p12_fallback', a, b)\""
     )
+    p17_check = (
+        "docker exec api-dev python -c \""
+        "from yuxi.content_cover.ai_cover_prompt_catalog import variant_from_oss_basename, specs_for_content_type; "
+        "from yuxi.content_cover.ai_cover_prompt import AI_COVER_P17_PROMPT, ai_cover_suppresses_post_title_overlay; "
+        "v=[s.variant for s in specs_for_content_type(content_type_code='CT02')]; "
+        "print('p17', variant_from_oss_basename('提示词十六.png'), 'p17' in v, "
+        "'不需要显示文案' in AI_COVER_P17_PROMPT, ai_cover_suppresses_post_title_overlay('p17'))\""
+    )
     _, o, _ = client.exec_command(p12_check, timeout=60)
+    print(o.read().decode().strip())
+    _, o, _ = client.exec_command(p17_check, timeout=60)
+    print(o.read().decode().strip())
+
+    _, o, _ = client.exec_command(
+        "curl -s -o /dev/null -w 'p17 %{http_code} %{size_download}\\n' "
+        "'http://127.0.0.1:5050/api/content/covers/ai-cover-prompts/p17/preview.png?content_type_code=CT06'",
+        timeout=120,
+    )
     print(o.read().decode().strip())
 
     _, o, _ = client.exec_command(

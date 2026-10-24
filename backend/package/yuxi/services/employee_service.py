@@ -4,6 +4,7 @@ import hashlib
 import io
 import uuid
 from dataclasses import dataclass
+from datetime import UTC, date, datetime, time, timedelta
 from typing import Any, Literal
 
 from fastapi import HTTPException
@@ -25,7 +26,7 @@ from yuxi.services.role_service import (
 from yuxi.storage.postgres.models_business import Department, User
 from yuxi.storage.postgres.models_content import ContentEmployee
 from yuxi.utils.auth_utils import AuthUtils
-from yuxi.utils.datetime_utils import format_utc_datetime, utc_now_naive
+from yuxi.utils.datetime_utils import SHANGHAI_TZ, format_utc_datetime, utc_now_naive
 
 Gender = Literal["male", "female"]
 LoginPort = Literal["pc", "app"]
@@ -290,7 +291,7 @@ async def resolve_employee_material_owner(db: AsyncSession, employee_ref: str) -
     )
 
 
-async def list_employees(db: AsyncSession, keyword: str | None = None) -> dict[str, Any]:
+async def _employee_listing_items(db: AsyncSession, *, keyword: str | None = None) -> list[dict[str, Any]]:
     keyword = keyword.strip() if keyword else None
     employees = await EmployeeRepository(db).list_employees(keyword=keyword)
     # 员工开通的平台账号 uid 以 mp_ 开头，列表里已有对应员工行，避免重复加载。
@@ -322,8 +323,33 @@ async def list_employees(db: AsyncSession, keyword: str | None = None) -> dict[s
         for user in users
     )
     rows.sort(key=lambda item: item[0] or utc_now_naive(), reverse=True)
-    items = [row for _, row in rows]
-    return {"employees": items, "total": len(items)}
+    return [row for _, row in rows]
+
+
+async def list_employees(
+    db: AsyncSession,
+    keyword: str | None = None,
+    branch: str | None = None,
+    department: str | None = None,
+) -> dict[str, Any]:
+    all_items = await _employee_listing_items(db, keyword=None)
+    branches = sorted(
+        {(row.get("current_branch") or "").strip() for row in all_items if (row.get("current_branch") or "").strip()}
+    )
+    departments = sorted(
+        {
+            (row.get("current_department") or "").strip()
+            for row in all_items
+            if (row.get("current_department") or "").strip()
+        }
+    )
+    employees = filter_traffic_employees(all_items, keyword=keyword, branch=branch, department=department)
+    return {
+        "employees": employees,
+        "total": len(employees),
+        "branches": branches,
+        "departments": departments,
+    }
 
 
 async def export_employees(db: AsyncSession) -> bytes:
@@ -388,33 +414,68 @@ async def export_employees(db: AsyncSession) -> bytes:
     return output.getvalue()
 
 
+def _traffic_created_bounds(
+    date_from: date | None, date_to: date | None
+) -> tuple[datetime | None, datetime | None]:
+    if date_from and date_to and date_from > date_to:
+        raise _employee_error(422, "TRAFFIC_DATE_RANGE_INVALID", "开始日期不能晚于结束日期")
+    created_from = (
+        datetime.combine(date_from, time.min, SHANGHAI_TZ).astimezone(UTC).replace(tzinfo=None) if date_from else None
+    )
+    created_before = (
+        datetime.combine(date_to + timedelta(days=1), time.min, SHANGHAI_TZ).astimezone(UTC).replace(tzinfo=None)
+        if date_to
+        else None
+    )
+    return created_from, created_before
+
+
 def _traffic_summary(rows: list[dict[str, Any]]) -> dict[str, int]:
     return {
         "decoration": sum(row["decoration_count"] for row in rows),
         "review_notes": sum(row["review_notes_count"] for row in rows),
         "personal_generated": sum(row["personal_generated_count"] for row in rows),
         "enterprise_generated": sum(row["enterprise_generated_count"] for row in rows),
+        "case_shares": sum(row["case_share_count"] for row in rows),
     }
 
 
 async def list_traffic_stats(
-    db: AsyncSession, *, keyword: str | None = None, branch: str | None = None, department: str | None = None
+    db: AsyncSession,
+    *,
+    keyword: str | None = None,
+    branch: str | None = None,
+    department: str | None = None,
+    date_from: date | None = None,
+    date_to: date | None = None,
 ) -> dict[str, Any]:
     from yuxi.repositories.content_repository import ContentRepository
 
+    created_from, created_before = _traffic_created_bounds(date_from, date_to)
     listing = await list_employees(db)
     rows = listing["employees"]
     owner_uids = [traffic_owner_uid(row) for row in rows]
-    content_counts = await ContentRepository(db).count_generated_tasks_by_owner(owner_uids)
+    content_repo = ContentRepository(db)
+    content_counts = await content_repo.count_generated_tasks_by_owner(
+        owner_uids, created_from=created_from, created_before=created_before
+    )
     materials = MaterialLibraryRepository(db, include_shared=True)
-    personal_counts = await materials.count_personal_generated_images_by_owner(owner_uids)
-    enterprise_counts = await materials.count_enterprise_generated_images_by_owner(owner_uids)
+    personal_counts = await materials.count_personal_generated_images_by_owner(
+        owner_uids, created_from=created_from, created_before=created_before
+    )
+    enterprise_counts = await materials.count_enterprise_generated_images_by_owner(
+        owner_uids, created_from=created_from, created_before=created_before
+    )
+    case_share_counts = await materials.count_case_shares_by_owner(
+        owner_uids, created_from=created_from, created_before=created_before
+    )
     for row, owner_uid in zip(rows, owner_uids, strict=True):
         content = content_counts.get(owner_uid, {})
         row["decoration_count"] = content.get("装修家居", 0)
         row["review_notes_count"] = content.get("好评笔记", 0)
         row["personal_generated_count"] = personal_counts.get(owner_uid, 0)
         row["enterprise_generated_count"] = enterprise_counts.get(owner_uid, 0)
+        row["case_share_count"] = case_share_counts.get(owner_uid, 0)
     branches = sorted({row.get("current_branch") or "" for row in rows if row.get("current_branch")})
     departments = sorted({row.get("current_department") or "" for row in rows if row.get("current_department")})
     filtered = filter_traffic_employees(rows, keyword=keyword, branch=branch, department=department)
@@ -428,9 +489,17 @@ async def list_traffic_stats(
 
 
 async def export_traffic_stats(
-    db: AsyncSession, *, keyword: str | None = None, branch: str | None = None, department: str | None = None
+    db: AsyncSession,
+    *,
+    keyword: str | None = None,
+    branch: str | None = None,
+    department: str | None = None,
+    date_from: date | None = None,
+    date_to: date | None = None,
 ) -> bytes:
-    listing = await list_traffic_stats(db, keyword=keyword, branch=branch, department=department)
+    listing = await list_traffic_stats(
+        db, keyword=keyword, branch=branch, department=department, date_from=date_from, date_to=date_to
+    )
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = "数据概览"
@@ -444,6 +513,7 @@ async def export_traffic_stats(
             "好评笔记",
             "生图（个人素材）",
             "生图（企业共享）",
+            "案例分享",
             "所属门店",
             "所属部门",
         ]
@@ -459,6 +529,7 @@ async def export_traffic_stats(
                 employee["review_notes_count"],
                 employee["personal_generated_count"],
                 employee["enterprise_generated_count"],
+                employee["case_share_count"],
                 employee.get("current_branch") or "",
                 employee.get("current_department") or "",
             ]

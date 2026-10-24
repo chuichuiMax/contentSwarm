@@ -1,5 +1,15 @@
 # 未发布
 
+- 小程序装修家居 AI 封面支持选择模板：`GET /api/mp/content/ai-cover-prompts` 返回模板预览，编译简报写入所选提示词变体。
+
+- 数据概览新增「案例分享」汇总卡片与员工列表列，统计各员工发起的案例分享次数；工具栏增加「日期区间」，筛选后同步作用于内容生成、生图与案例分享统计及导出。
+
+- 图库素材列表关键词搜索同时匹配素材名称与上传者（用户账号名、手机号及员工姓名/工号/登录账号）。
+
+- 员工管理列表增加「所属门店」「所属部门」筛选，与数据概览一致；`GET /api/employees` 支持 `branch`、`department` 并返回可选分部/部门列表。
+
+- 生产 HTTPS 证书持久化：`certs/README.md`、部署脚本 `scripts/deploy-hi-run-ssl-certs.sh`、宿主机 `scripts/ensure-hi-run-ssl-certs.sh`（主目录 `/opt/contentSwarm/certs`，备份 `/var/lib/contentswarm/ssl-backup`，Nginx `ExecStartPre` 自愈）。
+
 - 新增 `/api/integrations/material-library/*` 对外只读接口：支持 Bearer JWT 或 `yxkey_` API Key；列表/详情返回 `direct_*` 预签名直链（可配 `MATERIAL_INTEGRATION_PRESIGN_DAYS`）及 `api_*` 回源地址；`/file`、`/thumbnail` 优先 302 到 OSS。接口说明见 [素材库对外 API](./material-library-integration-api.md)。
 
 - 小程序登录页保留工号登录并新增微信手机号授权「一键登录」，按授权手机号匹配已有员工，共用员工启用状态、小程序权限及登录凭证；取消授权或校验失败不登录。员工微信认证移除开发环境明文手机号回退并纳入登录限流。
@@ -17,6 +27,8 @@
 - 单 AI 封面生图在原有 `AI_COVER_PROMPT` 与多套风格提示词（手写、3D 促销、钢笔行草、书法、动漫、大笔触手写、宋体广告、杂志排版等）之间随机选用，文案按标题/副标题或业务变量注入；提示词十二（装修案例顶栏双行）更新为新版黄/白/黑特粗黑体排版规范，并从 brief 合并 `business_variables` 读取楼盘/外框面积/设计风格；缺字段时不再阻断生图，回退封面标题/副标题。
 - 全部 AI 封面提示词与 image2 输出说明统一要求：底图已有的 Hirun / 鸿扬家装 品牌水印须完整保留，不得擦除、重绘或遮挡；新增封面文字不得压在原水印上。
 - AI 封面禁止重影/叠影：提示词【画面清晰】与负向提示约束单层清晰画面，避免文字叠字、双重曝光或底图与生成场景错位叠加。
+- 新增 AI 封面提示词十六（p17，无文案和谐画面）：OSS「提示词十六」预览；仅优化构图光影，不生成封面文字且成图后不再叠加标题。
+- 生产环境 AI 封面 OSS 指向 `hongyang01` 桶 `image/AI-cover/AI封面/`（`AI_COVER_OSS_*` 与主 OSS 同为 `cn-beijing`）；运维脚本 `scripts/hotfix/_deploy_prod_ai_cover.py` 同步提示词代码与 env。
 - 装修案例分享（CT01）标题结构：主标题为工地地址，副标题（正文首段/封面第二行）为「面积 + 风格 + 实景」；直出模式生成后按简报归一化 title 与正文首段，FRT20 与 p12 封面双行一致。
 - 提示词十二仅「装修案例分享 / CT01」进入随机池，其它内容类型不会选中。
 - AI 封面预览 `…/preview.png` 免 Bearer（供 img 加载）；后端经 OSS SDK 签名拉取 `hongyang02/image/AI-cover/AI封面/`，并匹配 `提示词N` 与 `pN` 文件名；OSS SDK 未安装时不再 500，而是继续尝试其它拉取方式。

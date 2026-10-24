@@ -53,6 +53,17 @@ async def test_employee_crud_search_and_toggle(test_client, admin_headers):
         assert searched.status_code == 200, searched.text
         assert searched.json()["employees"][0]["id"] == employee_pk
 
+        by_branch = await test_client.get(
+            "/api/employees",
+            headers=admin_headers,
+            params={"branch": "郴州鸿扬"},
+        )
+        assert by_branch.status_code == 200, by_branch.text
+        body = by_branch.json()
+        assert employee_pk in [item["id"] for item in body["employees"]]
+        assert "郴州鸿扬" in body["branches"]
+        assert "工程交付部" in body["departments"]
+
         duplicate = await test_client.post(
             "/api/employees",
             headers=admin_headers,

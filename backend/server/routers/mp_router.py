@@ -12,6 +12,11 @@ from server.utils.auth_middleware import get_db, get_mp_context
 from server.utils.public_url import request_public_base_url
 from yuxi.services.material_library_service import create_material_share
 from yuxi.services.material_share_jobs import MaterialShareRequest, accept_material_share
+from yuxi.content_cover.ai_cover_prompt_catalog import spec_for_variant
+from yuxi.services.ai_cover_prompt_catalog_service import (
+    list_ai_cover_prompt_catalog,
+    resolve_ai_cover_preview_bytes,
+)
 from yuxi.services.personal_materials import folder_counts, list_folder
 from yuxi.services.mp_service import (
     AuthCancelPayload,
@@ -391,6 +396,50 @@ async def mp_cover_file(
         media_type=content_type,
         headers={"Content-Disposition": f'inline; filename="{file_name}"'},
     )
+
+
+@mp.get("/content/ai-cover-prompts")
+async def mp_ai_cover_prompts(
+    content_type_code: str = Query(default=""),
+    content_type_name: str = Query(default=""),
+    _ctx: MpContext = Depends(get_mp_context),
+):
+    data = await list_ai_cover_prompt_catalog(
+        content_type_code=content_type_code,
+        content_type_name=content_type_name,
+    )
+    prompts = []
+    for item in data.get("prompts") or []:
+        variant = str(item.get("variant") or "").strip()
+        if not variant:
+            continue
+        prompts.append(
+            {
+                **item,
+                "preview_url": f"/api/mp/content/ai-cover-prompts/{variant}/preview.png",
+            }
+        )
+    return {"prompts": prompts, "oss_prefix": data.get("oss_prefix")}
+
+
+@mp.get("/content/ai-cover-prompts/{variant}/preview.png")
+async def mp_ai_cover_prompt_preview(
+    variant: str,
+    content_type_code: str = Query(default=""),
+    content_type_name: str = Query(default=""),
+):
+    resolved = await resolve_ai_cover_preview_bytes(
+        variant,
+        content_type_code=content_type_code,
+        content_type_name=content_type_name,
+    )
+    if resolved:
+        content, media_type = resolved
+        return Response(content=content, media_type=media_type)
+    spec = spec_for_variant(variant, content_type_code=content_type_code, content_type_name=content_type_name)
+    if spec and spec.fallback_preview_path:
+        return RedirectResponse(spec.fallback_preview_path, status_code=307)
+    return Response(status_code=status.HTTP_404_NOT_FOUND)
 
 
 @mp.post("/content/compile-brief")

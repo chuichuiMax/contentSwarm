@@ -30,6 +30,7 @@ _VARIANT_FROM_STEM: dict[str, str] = {
     "智能随机适配": "smart-random",
     "提示词十四": "p15",
     "提示词十五": "p16",
+    "提示词十六": "p17",
     "p1": "p1",
     "p2": "p2",
     "p3": "p3",
@@ -45,6 +46,7 @@ _VARIANT_FROM_STEM: dict[str, str] = {
     "p14": "p14",
     "p15": "p15",
     "p16": "p16",
+    "p17": "p17",
     "smart-random": "smart-random",
 }
 
@@ -84,6 +86,7 @@ _OSS_CN_NUMERALS: dict[int, str] = {
     13: "十三",
     14: "十四",
     15: "十五",
+    16: "十六",
 }
 
 
@@ -146,6 +149,14 @@ AI_COVER_PROMPT_SPECS: tuple[AiCoverPromptSpec, ...] = (
         "智能排版封面",
         "保留原图 + 标题/副标题，沿用 AI_COVER 排版规则",
         "/ai-cover-prompts/p16.png",
+    ),
+    AiCoverPromptSpec(
+        "p17",
+        15,
+        "提示词十六",
+        "无文案和谐画面",
+        "不显示封面文案，仅优化构图光影与整体和谐感",
+        "/ai-cover-prompts/p17.png",
     ),
 )
 

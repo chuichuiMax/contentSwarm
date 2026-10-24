@@ -1912,6 +1912,7 @@ async def create_cover_generate_job(db: AsyncSession, user: User, payload: Cover
     title = payload.title.strip() or linked_title[:60]
     image2_copy = payload.render_copy_with_image2
     prompt_text = payload.render_prompt_text
+    ai_cover_variant = str((payload.parameters or {}).get("ai_cover_prompt_variant") or "").strip().lower()
     if style_reference:
         template_texts = {
             "title": title,
@@ -1990,7 +1991,6 @@ async def create_cover_generate_job(db: AsyncSession, user: User, payload: Cover
             ai_cover_uses_embedded_copy,
         )
 
-        ai_cover_variant = str((payload.parameters or {}).get("ai_cover_prompt_variant") or "")
         watermark_clause = (
             f" {AI_COVER_PRESERVE_BRAND_WATERMARK} 封面文字不得遮挡原图品牌水印。{AI_COVER_NO_GHOSTING}"
         )
@@ -2017,6 +2017,14 @@ async def create_cover_generate_job(db: AsyncSession, user: User, payload: Cover
                 "不得添加虚构 Logo、水印或额外装饰文字。"
                 f"{watermark_clause}"
             )
+    elif ai_cover_variant == "p17":
+        from yuxi.content_cover.ai_cover_prompt import AI_COVER_NO_GHOSTING, AI_COVER_PRESERVE_BRAND_WATERMARK
+
+        output_guidance = (
+            "以参考原图为完整背景，仅做构图与氛围优化，画面内不要出现任何文字、数字、字母或装饰文案。"
+            f"{AI_COVER_PRESERVE_BRAND_WATERMARK}{AI_COVER_NO_GHOSTING}"
+            "输出单张完整、不透明的 1080×1440 封面图；生成后不再叠加标题或副标题。"
+        )
     else:
         output_guidance = (
             "输出完整的封面视觉底图，左上区域预留干净、低细节的标题安全区。"
@@ -2029,7 +2037,7 @@ async def create_cover_generate_job(db: AsyncSession, user: User, payload: Cover
         "伪造或新增水印、平台 Logo、伪造品牌标识、抹去或篡改 Hirun/鸿扬家装 原图水印、"
         "重影、叠影、双重曝光、文字叠字、双重背景、画中画、"
         "低清晰度、主体变形、过度锐化、杂乱背景"
-        if image2_copy or prompt_text
+        if image2_copy or prompt_text or ai_cover_variant == "p17"
         else "乱码文字、错误汉字、随机字母、数字、水印、平台 Logo、伪造品牌标识、低清晰度、主体变形、过度锐化、杂乱背景"
     )
     if prompt_text:

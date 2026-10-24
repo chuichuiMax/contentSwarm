@@ -1035,6 +1035,103 @@ async def test_folder_keeps_existing_thumbnails_and_waits_for_new_originals():
 
 
 @pytest.mark.asyncio
+async def test_list_items_query_matches_uploader_username():
+    from sqlalchemy import delete
+
+    from yuxi.repositories.material_library_repository import MaterialLibraryRepository
+    from yuxi.storage.postgres.manager import pg_manager
+    from yuxi.storage.postgres.models_business import User
+
+    gallery_owner = "gallery-owner-uploader-search"
+    uploader_uid = "uploader-zhangsan-test"
+    category_id = "mlc_uploader_search"
+    async with pg_manager.get_async_session_context() as db:
+        try:
+            db.add(
+                User(
+                    uid=uploader_uid,
+                    username="张三上传测试",
+                    password_hash="unused",
+                    role="user",
+                )
+            )
+            db.add(
+                ContentMaterialCategory(
+                    owner_uid=gallery_owner,
+                    material_type="image",
+                    id=category_id,
+                    visibility="enterprise",
+                    name="上传者搜索图库",
+                    description="",
+                )
+            )
+            for suffix, item_owner in (("by-uploader", uploader_uid), ("by-other", gallery_owner)):
+                asset_id = f"cca_uploader_{suffix}"
+                db.add(
+                    ContentCoverAsset(
+                        id=asset_id,
+                        owner_uid=item_owner,
+                        role="library_image",
+                        original_file_name=f"{suffix}.webp",
+                        content_type="image/webp",
+                        file_size=10,
+                        image_width=10,
+                        image_height=10,
+                        sha256=f"{suffix}-hash",
+                        bucket_name="image",
+                        object_name=f"material-library/{item_owner}/{asset_id}/image.webp",
+                        metadata_json={"ingest_status": "completed"},
+                    )
+                )
+                db.add(
+                    ContentMaterialLibraryItem(
+                        id=f"mli_uploader_{suffix}",
+                        owner_uid=item_owner,
+                        category_owner_uid=gallery_owner,
+                        asset_id=asset_id,
+                        material_type="image",
+                        display_name=f"素材-{suffix}",
+                        category=category_id,
+                        status="enabled",
+                    )
+                )
+            await db.commit()
+            repo = MaterialLibraryRepository(db, include_shared=True)
+            rows, total = await repo.list_items(
+                gallery_owner,
+                material_type="image",
+                category=category_id,
+                category_owner_uid=gallery_owner,
+                status="enabled",
+                query_text="张三上传",
+                page=1,
+                page_size=20,
+            )
+            assert total == 1
+            assert len(rows) == 1
+            assert rows[0][0].display_name == "素材-by-uploader"
+        finally:
+            await db.execute(
+                delete(ContentMaterialLibraryItem).where(
+                    ContentMaterialLibraryItem.category == category_id,
+                )
+            )
+            await db.execute(
+                delete(ContentCoverAsset).where(
+                    ContentCoverAsset.id.in_(["cca_uploader_by-uploader", "cca_uploader_by-other"])
+                )
+            )
+            await db.execute(
+                delete(ContentMaterialCategory).where(
+                    ContentMaterialCategory.owner_uid == gallery_owner,
+                    ContentMaterialCategory.id == category_id,
+                )
+            )
+            await db.execute(delete(User).where(User.uid == uploader_uid))
+            await db.commit()
+
+
+@pytest.mark.asyncio
 async def test_employee_generated_thumbnail_read_does_not_use_rough_only_filter(monkeypatch):
     from yuxi.services.material_library_service import get_material_thumbnail
 

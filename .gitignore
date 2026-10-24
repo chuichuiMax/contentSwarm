@@ -84,4 +84,9 @@ docs/vibe
 
 /models
 
+# 宿主机 SSL（见 certs/README.md）
+certs/*.pem
+certs/*.key
+certs/*.crt
+
 .taskr/

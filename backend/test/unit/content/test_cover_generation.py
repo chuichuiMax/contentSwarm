@@ -20,9 +20,11 @@ from yuxi.content.schemas import XiaohongshuDistributionCreate
 from yuxi.content_cover.ai_cover_prompt import (
     AI_COVER_NO_GHOSTING,
     AI_COVER_OUTPUT_REQUIREMENTS,
+    AI_COVER_P17_PROMPT,
     AI_COVER_PRESERVE_BRAND_WATERMARK,
     AI_COVER_PROMPT,
     ai_cover_eligible_variants,
+    ai_cover_suppresses_post_title_overlay,
     build_site_header_lines,
     format_ai_cover_copy_text,
     format_case_share_title,
@@ -816,7 +818,8 @@ def test_ai_cover_eligible_variants_excludes_p12_for_non_case_share():
     pool = ai_cover_eligible_variants(content_type_code="CT02", content_type_name="装修报价清单")
     assert "p12" not in pool
     assert "p14" in pool
-    assert len(pool) == 15
+    assert len(pool) == 16
+    assert "p17" in pool
 
 
 def test_select_ai_cover_prompt_p15_three_lines(monkeypatch: pytest.MonkeyPatch):
@@ -835,6 +838,25 @@ def test_select_ai_cover_prompt_p15_three_lines(monkeypatch: pytest.MonkeyPatch)
     assert "鸿扬家装" in selection.prompt
     assert "好看好住的家" in selection.prompt
     assert "30 年湖湘老牌，所见即所得" in selection.prompt
+
+
+def test_select_ai_cover_prompt_p17_image_only_no_post_title(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(
+        "yuxi.content_cover.ai_cover_prompt.random.choice",
+        lambda _: "editorial",
+    )
+    selection = select_ai_cover_prompt(
+        title="不应出现在封面上",
+        subtitle="也不应出现",
+        prompt_random=False,
+        prompt_variant="p17",
+    )
+    assert selection.variant == "p17"
+    assert selection.render_copy_with_image2 is False
+    assert selection.prompt == AI_COVER_P17_PROMPT
+    assert "不需要显示文案" in selection.prompt
+    assert "不应出现在封面上" not in selection.prompt
+    assert ai_cover_suppresses_post_title_overlay("p17")
 
 
 def test_select_ai_cover_prompt_p16_wraps_editorial_prompt(monkeypatch: pytest.MonkeyPatch):

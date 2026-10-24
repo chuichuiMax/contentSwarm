@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
-import { FileText, Image, Images, Search, Star } from 'lucide-vue-next'
+import { FileText, Image, Images, Search, Share2, Star } from 'lucide-vue-next'
 
 import { employeeApi } from '@/apis/employee_api'
 import PageHeader from '@/components/shared/PageHeader.vue'
@@ -14,6 +14,7 @@ const keywordInput = ref('')
 const keyword = ref('')
 const branch = ref()
 const department = ref()
+const dateRange = ref([])
 const branches = ref([])
 const departments = ref([])
 const employees = ref([])
@@ -21,7 +22,8 @@ const summary = ref({
   decoration: 0,
   review_notes: 0,
   personal_generated: 0,
-  enterprise_generated: 0
+  enterprise_generated: 0,
+  case_shares: 0
 })
 const page = ref(1)
 const pageSize = ref(10)
@@ -30,8 +32,15 @@ const cards = computed(() => [
   { key: 'decoration', label: '装修家居', value: summary.value.decoration, unit: '篇', hint: '已生成的装修家居内容', icon: Star },
   { key: 'review_notes', label: '好评笔记', value: summary.value.review_notes, unit: '篇', hint: '已生成的好评笔记', icon: FileText },
   { key: 'personal_generated', label: '生图（个人素材）', value: summary.value.personal_generated, unit: '张', hint: '个人 AI 生图图库', icon: Image },
-  { key: 'enterprise_generated', label: '生图（企业共享）', value: summary.value.enterprise_generated, unit: '张', hint: '企业共享生图图库', icon: Images }
+  { key: 'enterprise_generated', label: '生图（企业共享）', value: summary.value.enterprise_generated, unit: '张', hint: '扩充公共图库', icon: Images },
+  { key: 'case_shares', label: '案例分享', value: summary.value.case_shares, unit: '次', hint: '案例分享的越多成交的越多', icon: Share2 }
 ])
+
+const dateParams = computed(() => (
+  dateRange.value?.length === 2
+    ? { date_from: dateRange.value[0], date_to: dateRange.value[1] }
+    : {}
+))
 
 const tablePagination = computed(() => ({
   current: page.value,
@@ -48,7 +57,8 @@ const load = async () => {
     const response = await employeeApi.listTrafficStats({
       keyword: keyword.value,
       branch: branch.value,
-      department: department.value
+      department: department.value,
+      ...dateParams.value
     })
     summary.value = response.summary || summary.value
     branches.value = response.branches || []
@@ -72,6 +82,12 @@ const reset = () => {
   keyword.value = ''
   branch.value = undefined
   department.value = undefined
+  dateRange.value = []
+  page.value = 1
+  void load()
+}
+
+const applyDateRange = () => {
   page.value = 1
   void load()
 }
@@ -87,7 +103,8 @@ const exportStats = async () => {
     const response = await employeeApi.exportTrafficStats({
       keyword: keyword.value,
       branch: branch.value,
-      department: department.value
+      department: department.value,
+      ...dateParams.value
     })
     const url = URL.createObjectURL(await response.blob())
     const link = document.createElement('a')
@@ -153,6 +170,16 @@ onMounted(load)
         <a-select v-model:value="department" allow-clear placeholder="请选择所属部门" @change="page = 1; load()">
           <a-select-option v-for="item in departments" :key="item" :value="item">{{ item }}</a-select-option>
         </a-select>
+        <span class="date-range-label">日期区间</span>
+        <a-range-picker
+          v-model:value="dateRange"
+          class="date-range-filter"
+          value-format="YYYY-MM-DD"
+          :placeholder="['开始日期', '结束日期']"
+          allow-clear
+          aria-label="日期区间"
+          @change="applyDateRange"
+        />
         <a-button @click="reset">重置</a-button>
         <a-button type="primary" :loading="exporting" @click="exportStats">导出</a-button>
       </div>
@@ -190,7 +217,9 @@ onMounted(load)
             <a-button type="link" @click="openGenerated(record, 'enterprise')">{{ record.enterprise_generated_count }}</a-button>
           </template>
         </a-table-column>
+        <a-table-column title="案例分享" key="case_share_count" align="center" data-index="case_share_count" />
         <a-table-column title="所属门店" data-index="current_branch" key="current_branch" />
+        <a-table-column title="所属部门" data-index="current_department" key="current_department" />
       </a-table>
     </section>
   </div>
@@ -199,7 +228,7 @@ onMounted(load)
 <style scoped lang="less">
 .traffic-page { min-height: 100%; padding: 8px 20px 24px; background: var(--gray-0); }
 .page-hint { margin: 8px 0 16px; color: var(--color-text-tertiary); }
-.summary-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; margin-bottom: 18px; }
+.summary-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 16px; margin-bottom: 18px; }
 .summary-card { display: flex; justify-content: space-between; gap: 12px; padding: 16px 18px; border: 1px solid var(--gray-150); border-radius: 8px; background: var(--gray-0); }
 .summary-card strong { color: var(--color-text); font-size: 14px; }
 .summary-card p { display: flex; align-items: baseline; gap: 4px; margin: 8px 0 4px; }
@@ -209,10 +238,14 @@ onMounted(load)
 .summary-icon[data-kind='review_notes'] { background: var(--color-warning-50); color: var(--color-warning-700); }
 .summary-icon[data-kind='personal_generated'] { background: var(--color-info-50); color: var(--color-info-700); }
 .summary-icon[data-kind='enterprise_generated'] { background: var(--gray-100); color: var(--color-success-700, var(--main-700)); }
+.summary-icon[data-kind='case_shares'] { background: var(--main-50); color: var(--main-700); }
 .traffic-panel { padding: 16px; border: 1px solid var(--gray-150); border-radius: 8px; }
-.traffic-toolbar { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 16px; }
+.traffic-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 16px; }
 .traffic-toolbar :deep(.ant-input-affix-wrapper) { width: 220px; }
 .traffic-toolbar :deep(.ant-select) { width: 180px; }
+.date-range-label { color: var(--color-text-secondary); font-size: 14px; white-space: nowrap; }
+.date-range-filter { width: 260px; }
+@media (max-width: 1300px) { .summary-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 @media (max-width: 1100px) { .summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 700px) { .summary-grid { grid-template-columns: minmax(0, 1fr); } }
 </style>

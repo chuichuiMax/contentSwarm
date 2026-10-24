@@ -8,9 +8,11 @@ from yuxi.services import employee_service
 
 @pytest.mark.asyncio
 async def test_export_preserves_all_rows_display_values_and_text(monkeypatch):
-    async def listing(db, keyword=None):
+    async def listing(db, keyword=None, branch=None, department=None):
         assert db == "db"
         assert keyword is None
+        assert branch is None
+        assert department is None
         return {
             "employees": [
                 {
@@ -89,7 +91,7 @@ def _employee(**overrides):
 
 @pytest.mark.asyncio
 async def test_export_groups_same_branch_and_sorts_rough_count_desc(monkeypatch):
-    async def listing(db, keyword=None):
+    async def listing(db, keyword=None, branch=None, department=None):
         return {
             "employees": [
                 _employee(employee_code="A", name="甲", current_branch="河西店", enterprise_rough_image_count=3),

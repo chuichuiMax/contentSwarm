@@ -1365,7 +1365,7 @@ onBeforeUnmount(() => {
       </div>
 
       <div class="toolbar">
-        <a-input v-model:value="queryInput" allow-clear :placeholder="isGalleryRoot ? '搜索图库名称' : '搜索素材名称'" @pressEnter="search" @clear="search">
+        <a-input v-model:value="queryInput" allow-clear :placeholder="isGalleryRoot ? '搜索图库名称' : '搜索素材名称、上传者'" @pressEnter="search" @clear="search">
           <template #prefix><Search :size="15" /></template>
         </a-input>
         <a-select v-if="isGalleryRoot && !designerEnterpriseScope" v-model:value="industryFilter" class="category-filter" placeholder="全部行业" allow-clear>

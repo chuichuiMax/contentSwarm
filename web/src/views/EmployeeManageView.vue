@@ -39,6 +39,10 @@ const exporting = ref(false)
 const togglingId = ref('')
 const keywordInput = ref('')
 const keyword = ref('')
+const branchFilter = ref()
+const departmentFilter = ref()
+const branchOptions = ref([])
+const departmentOptions = ref([])
 const roleFilter = ref()
 const page = ref(1)
 const pageSize = ref(20)
@@ -110,8 +114,14 @@ const loadRoles = async ({ force = false } = {}) => {
 const loadEmployees = async () => {
   loading.value = true
   try {
-    const response = await employeeApi.listEmployees({ keyword: keyword.value })
+    const response = await employeeApi.listEmployees({
+      keyword: keyword.value,
+      branch: branchFilter.value,
+      department: departmentFilter.value
+    })
     employees.value = response.employees || []
+    branchOptions.value = response.branches || []
+    departmentOptions.value = response.departments || []
   } catch (error) {
     message.error(error.message || '加载员工失败')
   } finally {
@@ -144,6 +154,16 @@ const exportEmployees = async () => {
 
 const handleRoleFilterChange = () => {
   page.value = 1
+}
+
+const handleBranchFilterChange = () => {
+  page.value = 1
+  void loadEmployees()
+}
+
+const handleDepartmentFilterChange = () => {
+  page.value = 1
+  void loadEmployees()
 }
 
 const handleTableChange = (pagination, _filters, _sorter) => {
@@ -275,8 +295,14 @@ onMounted(async () => {
   loading.value = true
   try {
     await Promise.all([loadRoles({ force: true }), (async () => {
-      const response = await employeeApi.listEmployees({ keyword: keyword.value })
+      const response = await employeeApi.listEmployees({
+        keyword: keyword.value,
+        branch: branchFilter.value,
+        department: departmentFilter.value
+      })
       employees.value = response.employees || []
+      branchOptions.value = response.branches || []
+      departmentOptions.value = response.departments || []
     })()])
   } catch (error) {
     message.error(error.message || '加载员工失败')
@@ -310,6 +336,28 @@ onMounted(async () => {
           >
             <template #prefix><Search :size="14" /></template>
           </a-input>
+          <a-select
+            v-model:value="branchFilter"
+            class="branch-filter"
+            placeholder="请选择所属门店"
+            allow-clear
+            @change="handleBranchFilterChange"
+          >
+            <a-select-option v-for="item in branchOptions" :key="item" :value="item">
+              {{ item }}
+            </a-select-option>
+          </a-select>
+          <a-select
+            v-model:value="departmentFilter"
+            class="department-filter"
+            placeholder="请选择所属部门"
+            allow-clear
+            @change="handleDepartmentFilterChange"
+          >
+            <a-select-option v-for="item in departmentOptions" :key="item" :value="item">
+              {{ item }}
+            </a-select-option>
+          </a-select>
           <a-select
             v-model:value="roleFilter"
             class="role-filter"
@@ -530,8 +578,10 @@ onMounted(async () => {
     width: 280px;
   }
 
+  .branch-filter,
+  .department-filter,
   .role-filter {
-    width: 160px;
+    width: 168px;
   }
 
   :deep(.ant-btn) {

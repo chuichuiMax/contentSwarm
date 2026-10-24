@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import case, delete, func, or_, select
@@ -788,19 +789,30 @@ class ContentRepository:
         ).scalars()
         return list(items), int(total)
 
-    async def count_generated_tasks_by_owner(self, owner_uids: list[str]) -> dict[str, dict[str, int]]:
+    async def count_generated_tasks_by_owner(
+        self,
+        owner_uids: list[str],
+        *,
+        created_from: datetime | None = None,
+        created_before: datetime | None = None,
+    ) -> dict[str, dict[str, int]]:
         counts = {uid: {"装修家居": 0, "好评笔记": 0} for uid in owner_uids}
         if not owner_uids:
             return counts
         entry = ContentTask.brief_json["form_values"]["mp_service_entry"].as_string()
         label = case((entry == "好评笔记", "好评笔记"), else_="装修家居")
+        filters = [
+            ContentTask.deleted_at.is_(None),
+            ContentTask.created_by.in_(owner_uids),
+            select(ContentArtifact.id).where(ContentArtifact.task_id == ContentTask.id).exists(),
+        ]
+        if created_from is not None:
+            filters.append(ContentTask.created_at >= created_from)
+        if created_before is not None:
+            filters.append(ContentTask.created_at < created_before)
         rows = await self.db.execute(
             select(ContentTask.created_by, label, func.count(ContentTask.id))
-            .where(
-                ContentTask.deleted_at.is_(None),
-                ContentTask.created_by.in_(owner_uids),
-                select(ContentArtifact.id).where(ContentArtifact.task_id == ContentTask.id).exists(),
-            )
+            .where(*filters)
             .group_by(ContentTask.created_by, label)
         )
         for owner_uid, service_entry, count in rows.all():

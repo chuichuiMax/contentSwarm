@@ -22,6 +22,7 @@ AiCoverPromptVariant = Literal[
     "p14",
     "p15",
     "p16",
+    "p17",
 ]
 
 AI_COVER_VARIANTS: tuple[AiCoverPromptVariant, ...] = (
@@ -41,6 +42,7 @@ AI_COVER_VARIANTS: tuple[AiCoverPromptVariant, ...] = (
     "p14",
     "p15",
     "p16",
+    "p17",
 )
 
 AI_COVER_CASE_SHARE_TYPE_CODES: frozenset[str] = frozenset({"CT01"})
@@ -93,6 +95,24 @@ AI_COVER_IMAGE_ONLY_PROMPT = f"""{AI_COVER_BASE_INTRO}
 不要生成任何汉字、字母、数字、Logo、水印或装饰文字。
 
 {AI_COVER_OUTPUT_REQUIREMENTS}"""
+
+AI_COVER_IMAGE_HARMONY_INTRO = (
+    "请在我上传的装修实景图上生成一张高端家装内容封面。"
+    f"{AI_COVER_PRESERVE_BRAND_WATERMARK}"
+)
+
+AI_COVER_P17_PROMPT = f"""{AI_COVER_IMAGE_HARMONY_INTRO}
+
+图片不需要显示文案，整体画面结构和谐。
+仅优化构图、光影、色彩与小红书封面氛围，使画面层次清晰、主体突出；保留原图空间结构、家具、材质、灯光、拍摄视角和画面比例，不重新生成室内场景。
+不要生成任何汉字、字母、数字、装饰文字；不添加虚构 Logo 或水印。{AI_COVER_NO_GHOSTING}
+
+【最终输出要求】
+仅输出一张 1080×1440 像素、3:4 比例、完整不透明的 720p 小红书装修封面。
+不要生成多个方案，不要拼图，不要附加说明。
+
+【必须避免】
+错别字、乱码、漏字、额外文案、文字重复、标题贴边、文字裁切、重点信息不突出、字体比例失衡、颜色混乱、厚重遮罩、廉价营销感、过度锐化、空间结构改变、家具变形、虚构 Logo、水印和低清晰度。"""
 
 AI_COVER_PROMPT = f"""{AI_COVER_BASE_INTRO}
 
@@ -542,7 +562,12 @@ def _build_p12_prompt(*, line1: str, line2: str, form_values: dict[str, Any] | N
 
 
 def ai_cover_uses_embedded_copy(variant: str) -> bool:
-    return variant != "editorial"
+    return variant not in {"editorial", "p17"}
+
+
+def ai_cover_suppresses_post_title_overlay(variant: str) -> bool:
+    """无文案纯画面变体：image2 成图后不再叠加标题。"""
+    return (variant or "").strip().lower() == "p17"
 
 
 def is_case_share_content_type(*, content_type_code: str = "", content_type_name: str = "") -> bool:
@@ -626,6 +651,8 @@ def ai_cover_prompt_body_for_catalog(variant: str) -> str:
             title=AI_COVER_CATALOG_SAMPLE_P15_TITLE,
             subtitle=AI_COVER_CATALOG_SAMPLE_P15_SUBTITLE,
         ).prompt
+    if normalized == "p17":
+        return AI_COVER_P17_PROMPT
     return job_selection_for_variant(
         normalized,  # type: ignore[arg-type]
         title=AI_COVER_CATALOG_SAMPLE_TITLE,
@@ -700,6 +727,12 @@ def job_selection_for_variant(
             variant="p16",
             render_copy_with_image2=True,
         )
+    if variant == "p17":
+        return AiCoverJobSelection(
+            prompt=AI_COVER_P17_PROMPT,
+            variant="p17",
+            render_copy_with_image2=False,
+        )
     return AiCoverJobSelection(
         prompt=_build_style_prompt(builders[variant], title=title, subtitle=subtitle),
         variant=variant,
@@ -750,6 +783,7 @@ def select_ai_cover_prompt(
 __all__ = [
     "AiCoverSiteHeaderError",
     "AI_COVER_IMAGE_ONLY_PROMPT",
+    "AI_COVER_P17_PROMPT",
     "AI_COVER_OUTPUT_REQUIREMENTS",
     "AI_COVER_NO_GHOSTING",
     "AI_COVER_PRESERVE_BRAND_WATERMARK",
@@ -765,6 +799,7 @@ __all__ = [
     "job_selection_for_variant",
     "resolve_ai_cover_variant",
     "ai_cover_prompt_controls",
+    "ai_cover_suppresses_post_title_overlay",
     "ai_cover_uses_embedded_copy",
     "is_case_share_content_type",
     "build_site_header_lines",

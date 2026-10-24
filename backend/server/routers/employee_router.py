@@ -1,3 +1,5 @@
+from datetime import date
+
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -31,10 +33,12 @@ async def get_my_content_employee(
 @employees.get("")
 async def list_content_employees(
     keyword: str | None = Query(default=None),
+    branch: str | None = Query(default=None),
+    department: str | None = Query(default=None),
     current_user: User = Depends(get_admin_user),
     db: AsyncSession = Depends(get_db),
 ):
-    return await list_employees(db, keyword)
+    return await list_employees(db, keyword, branch, department)
 
 
 @employees.post("")
@@ -51,11 +55,15 @@ async def content_traffic_stats(
     keyword: str | None = Query(default=None),
     branch: str | None = Query(default=None),
     department: str | None = Query(default=None),
+    date_from: date | None = Query(default=None),
+    date_to: date | None = Query(default=None),
     current_user: User = Depends(get_admin_user),
     db: AsyncSession = Depends(get_db),
 ):
     del current_user
-    return await list_traffic_stats(db, keyword=keyword, branch=branch, department=department)
+    return await list_traffic_stats(
+        db, keyword=keyword, branch=branch, department=department, date_from=date_from, date_to=date_to
+    )
 
 
 @employees.get("/traffic/export")
@@ -63,12 +71,16 @@ async def export_content_traffic_stats(
     keyword: str | None = Query(default=None),
     branch: str | None = Query(default=None),
     department: str | None = Query(default=None),
+    date_from: date | None = Query(default=None),
+    date_to: date | None = Query(default=None),
     current_user: User = Depends(get_admin_user),
     db: AsyncSession = Depends(get_db),
 ):
     del current_user
     return Response(
-        content=await export_traffic_stats(db, keyword=keyword, branch=branch, department=department),
+        content=await export_traffic_stats(
+            db, keyword=keyword, branch=branch, department=department, date_from=date_from, date_to=date_to
+        ),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": 'attachment; filename="traffic-stats.xlsx"'},
     )
