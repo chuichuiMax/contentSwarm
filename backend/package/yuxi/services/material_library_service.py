@@ -1583,7 +1583,7 @@ def render_public_material_share_page(
         [
             "<!doctype html>",
             '<html lang="zh-CN"><head><meta charset="utf-8">',
-            '<meta name="viewport" content="width=device-width, initial-scale=1">',
+            '<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">',
             f"<title>{title}</title>",
             f'<meta name="description" content="{description}">',
             '<meta property="og:type" content="website">',
@@ -1608,7 +1608,7 @@ def render_public_material_share_page(
                 "min-height:74px;padding:0 24px;background:#fff}"
             ),
             "h1{margin:0;font-size:21px;line-height:1.4;text-align:center}",
-            "main{max-width:720px;margin:auto;padding:0 0 108px}",
+            "main{max-width:720px;margin:auto;padding:0 0 calc(108px + env(safe-area-inset-bottom))}",
             ".booking-bar{position:fixed;z-index:3;bottom:0;left:0;right:0;background:#fff;"
             "padding:12px 20px calc(12px + env(safe-area-inset-bottom));box-shadow:0 -2px 16px #0001}"
             ".booking-bar a{display:block;max-width:680px;margin:auto;padding:12px;text-align:center;"

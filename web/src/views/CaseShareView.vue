@@ -92,7 +92,7 @@ onBeforeUnmount(() => {
 
 <style scoped lang="less">
 .case-share-page { --main-color: #a41e2c; min-height: 100vh; background: #f5f4f1; color: #27231f; }
-.case-share { max-width: 760px; margin: 0 auto; padding-bottom: 108px; }
+.case-share { max-width: 760px; margin: 0 auto; padding-bottom: calc(108px + env(safe-area-inset-bottom)); }
 .booking-bar { position: fixed; z-index: 3; bottom: 0; left: 0; right: 0; padding: 12px 20px calc(12px + env(safe-area-inset-bottom)); background: var(--gray-0); box-shadow: 0 -2px 16px #0001; }
 .booking-bar a { display: block; max-width: 680px; margin: auto; padding: 12px; border-radius: 8px; background: var(--main-color); color: var(--gray-0); text-align: center; text-decoration: none; font-weight: 600; }
 .case-image { display: block; width: 100%; height: auto; background: #e7e3dd; }

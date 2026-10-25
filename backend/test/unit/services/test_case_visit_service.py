@@ -25,6 +25,7 @@ class FakeRedis:
     def __init__(self, session=None):
         self.value = json.dumps(session) if session else None
         self.mutex = asyncio.Lock()
+        self.delete = AsyncMock()
 
     async def get(self, _key):
         return self.value
@@ -41,7 +42,9 @@ class FakeRedis:
 @pytest.fixture
 def booking(monkeypatch):
     redis = FakeRedis({"appid": "wx_test", "openid": "verified-openid", "share_token": "share-a"})
-    share = SimpleNamespace(id="snapshot-a", sharer_uid="employee-a", sharer_department_id=7)
+    share = SimpleNamespace(
+        id="snapshot-a", sharer_uid="employee-a", sharer_department_id=7, sharer_phone="19900000002"
+    )
     repo = SimpleNamespace(
         share=AsyncMock(return_value=share),
         upsert=AsyncMock(return_value="lead-a"),
@@ -73,7 +76,7 @@ def test_invalid_avatar_rejected(data):
 @pytest.mark.asyncio
 async def test_booking_uses_server_identity_phone_and_share_attribution(booking):
     result = await service.submit_booking(booking.db, "share-a", "session-a", " 客户甲 ", "code-a", avatar_bytes())
-    assert result == {"success": True, "id": "lead-a"}
+    assert result == {"success": True, "id": "lead-a", "same_contact_phone": False}
     values = booking.repo.upsert.call_args.args[0]
     assert values["openid"] == "verified-openid"
     assert values["phone"] == "19900000001"
@@ -87,7 +90,7 @@ async def test_booking_uses_server_identity_phone_and_share_attribution(booking)
 @pytest.mark.asyncio
 async def test_phone_only_booking_does_not_fabricate_profile_fields(booking):
     result = await service.submit_booking(booking.db, "share-a", "session-a", None, "code-a", None)
-    assert result == {"success": True, "id": "lead-a"}
+    assert result == {"success": True, "id": "lead-a", "same_contact_phone": False}
     values = booking.repo.upsert.call_args.args[0]
     assert values["nickname"] is None and values["avatar_data"] is None
     assert values["openid"] == "verified-openid" and values["phone"] == "19900000001"
@@ -109,18 +112,42 @@ async def test_parallel_callbacks_consume_phone_code_once(booking):
 async def test_committed_submission_retry_does_not_reset_lead(booking):
     booking.repo.submission.return_value = "already-saved"
     result = await service.submit_booking(booking.db, "share-a", "session-a", "客户", "code-a", avatar_bytes())
-    assert result == {"success": True, "id": "already-saved"}
+    assert result == {"success": True, "id": "already-saved", "same_contact_phone": False}
     booking.repo.upsert.assert_not_called()
     booking.phone.assert_not_called()
     booking.repo.record_submission.assert_not_called()
 
 
+@pytest.mark.parametrize(
+    "sharer_phone,expected",
+    [("19900000001", True), ("19900000002", False), (None, False), ("", False)],
+)
+@pytest.mark.asyncio
+async def test_contact_phone_notice_preserves_booking_and_retry_receipt(booking, sharer_phone, expected):
+    booking.repo.share.return_value.sharer_phone = sharer_phone
+    result = await service.submit_booking(booking.db, "share-a", "session-a", None, "code-a", None)
+    assert result == {"success": True, "id": "lead-a", "same_contact_phone": expected}
+    values = booking.repo.upsert.call_args.args[0]
+    assert values["phone"] == "19900000001" and values["sharer_uid"] == "employee-a"
+    booking.db.commit.assert_awaited_once()
+    booking.redis.delete.assert_awaited_once_with(service.mp_lead_unread_cache_key("employee-a"))
+    booking.repo.submission.return_value = "lead-a"
+    retried = await service.submit_booking(booking.db, "share-a", "session-a", None, "another-code", None)
+    assert retried == result
+    booking.phone.assert_awaited_once()
+    booking.repo.upsert.assert_awaited_once()
+    booking.repo.record_submission.assert_called_once_with("session-a", "lead-a")
+    booking.db.commit.assert_awaited_once()
+
+
 @pytest.mark.asyncio
 async def test_retry_after_database_failure_keeps_verified_phone(booking):
+    booking.repo.share.return_value.sharer_phone = "19900000001"
     booking.repo.upsert.side_effect = [RuntimeError("database unavailable"), "lead-a"]
     with pytest.raises(RuntimeError):
         await service.submit_booking(booking.db, "share-a", "session-a", "客户", "code-a", avatar_bytes())
-    await service.submit_booking(booking.db, "share-a", "session-a", "客户", "code-a", avatar_bytes())
+    result = await service.submit_booking(booking.db, "share-a", "session-a", "客户", "code-a", avatar_bytes())
+    assert result["same_contact_phone"] is True
     booking.phone.assert_awaited_once()
 
 
@@ -162,7 +189,8 @@ async def test_malformed_nickname_does_not_consume_phone_code(booking):
     "role,department,expected",
     [
         ("user", 7, "sharer_uid = 'employee-a'"),
-        ("admin", 7, "department_id = 7"),
+        ("admin", 7, "sharer_uid = 'employee-a'"),
+        ("admin", None, "sharer_uid = 'employee-a'"),
         ("superadmin", 7, None),
     ],
 )
@@ -181,17 +209,12 @@ async def test_scope_is_explicit_for_each_role(monkeypatch, role, department, ex
 
 
 @pytest.mark.asyncio
-async def test_missing_grant_and_unbound_admin_are_forbidden(monkeypatch):
+async def test_missing_grant_is_forbidden(monkeypatch):
     user = SimpleNamespace(role="user", uid="a", department_id=1)
     monkeypatch.setattr(service, "effective_permission_grants", AsyncMock(return_value=["chat.access"]))
     with pytest.raises(HTTPException) as error:
         await service.lead_scope(None, user, "delete")
     assert error.value.status_code == 403
-    user.role = "admin"
-    user.department_id = None
-    monkeypatch.setattr(service, "effective_permission_grants", AsyncMock(return_value=None))
-    with pytest.raises(HTTPException):
-        await service.lead_scope(None, user, "view_list")
 
 
 @pytest.mark.asyncio

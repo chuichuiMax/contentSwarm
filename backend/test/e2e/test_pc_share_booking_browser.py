@@ -2,6 +2,7 @@
 
 import asyncio
 import io
+import os
 import socket
 from unittest.mock import AsyncMock
 
@@ -31,7 +32,7 @@ async def test_case_cta_qrcode_mobile_open_and_explicit_failure(share_env, monke
         user.department_id = 7
         await db.commit()
     headers = {"Authorization": "Bearer " + AuthUtils.create_access_token({"sub": "1"})}
-    response = await env.client.post("/api/material-library/shares", headers=headers, json={"item_ids": ["i1"]})
+    response = await env.client.post("/api/material-library/shares", headers=headers, json={"item_ids": ["i1", "i2"]})
     assert response.status_code == 201, response.text
     token = response.json()["share"]["id"]
     async with env.sessions() as db:
@@ -71,7 +72,29 @@ async def test_case_cta_qrcode_mobile_open_and_explicit_failure(share_env, monke
                 page = await browser.new_page(viewport={"width": 1280, "height": 900})
                 errors = []
                 page.on("pageerror", lambda error: errors.append(str(error)))
-                await page.goto(f"{origin}/share/case/{token}")
+                for path in (f"/share/case/{token}", f"/api/material-library/shares/{token}/page"):
+                    await page.goto(f"{origin}{path}")
+                    for width, height in ((1280, 900), (375, 812), (375, 600), (812, 375)):
+                        await page.set_viewport_size({"width": width, "height": height})
+                        bar = page.locator(".booking-bar")
+                        await expect(bar.locator("a")).to_be_in_viewport(ratio=1)
+                        initial = await bar.bounding_box()
+                        assert initial["y"] + initial["height"] == pytest.approx(height, abs=1)
+                        for fraction in (0.5, 1):
+                            await page.evaluate(
+                                "fraction => scrollTo(0, document.documentElement.scrollHeight * fraction)", fraction
+                            )
+                            await expect(bar.locator("a")).to_be_in_viewport(ratio=1)
+                            current = await bar.bounding_box()
+                            assert current["y"] == pytest.approx(initial["y"], abs=1)
+                        await page.wait_for_function(
+                            "Array.from(document.querySelectorAll('.case-images img'))"
+                            ".every(img => img.naturalWidth > 0)"
+                        )
+                        last_image = await page.locator(".case-images img").last.bounding_box()
+                        assert last_image["y"] + last_image["height"] <= current["y"] + 1
+                        assert await page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+                await page.set_viewport_size({"width": 1280, "height": 900})
                 booking_button = page.get_by_role("link", name="预约免费参观工地", exact=True)
                 await expect(booking_button).to_have_css("background-color", "rgb(164, 30, 44)")
                 await expect(booking_button).to_have_css("color", "rgb(255, 255, 255)")
@@ -104,3 +127,79 @@ async def test_case_cta_qrcode_mobile_open_and_explicit_failure(share_env, monke
     finally:
         server.should_exit = True
         await serving
+
+
+async def test_vue_case_booking_bar_with_long_content(tmp_path):
+    """Load the built Vue app with the public route and deterministic long-case data."""
+    origin = os.getenv("WEB_TEST_BASE_URL", "http://web:5173").rstrip("/")
+    async with async_playwright() as playwright:
+        browser = await playwright.chromium.launch(headless=True, args=["--no-sandbox"])
+        try:
+            page = await browser.new_page(viewport={"width": 375, "height": 812})
+            errors = []
+            page.on("pageerror", lambda error: errors.append(str(error)))
+            page.on("console", lambda message: errors.append(message.text) if message.type == "error" else None)
+            page.on("requestfailed", lambda request: errors.append(f"{request.url}: {request.failure}"))
+            response = await page.request.get(f"{origin}/dist/index.html")
+            assert response.ok, "Build the web app before running its browser regression"
+            html = (await response.text()).replace(
+                "<head>", '<head><script>history.replaceState({}, "", "/share/case/layout-test")</script>', 1
+            )
+            html = html.replace('<script type="module" src="/@vite/client"></script>', "")
+
+            async def serve_asset(route):
+                url = route.request.url
+                if "/dist/assets/" not in url:
+                    url = url.replace("/assets/", "/dist/assets/", 1)
+                response = await route.fetch(url=url)
+                await route.fulfill(response=response)
+
+            await page.route(f"{origin}/assets/**", serve_asset)
+            await page.route(f"{origin}/dist/assets/**", serve_asset)
+            await page.route(
+                f"{origin}/__booking-layout", lambda route: route.fulfill(content_type="text/html", body=html)
+            )
+            await page.route(
+                f"{origin}/api/material-library/shares/layout-test",
+                lambda route: route.fulfill(
+                    json={
+                        "share": {
+                            "status": "completed",
+                            "gallery_name": "长案例布局验证",
+                            "images": [
+                                {"order": index, "url": "/__case-image.svg", "file_name": f"{index}.svg"}
+                                for index in range(3)
+                            ],
+                        }
+                    }
+                ),
+            )
+            await page.route(
+                f"{origin}/__case-image.svg",
+                lambda route: route.fulfill(
+                    content_type="image/svg+xml",
+                    body='<svg xmlns="http://www.w3.org/2000/svg" width="375" height="1000"/>',
+                ),
+            )
+            await page.goto(f"{origin}/__booking-layout")
+            button = page.get_by_role("link", name="预约免费参观工地", exact=True)
+            try:
+                await expect(button).to_be_visible(timeout=30000)
+            except AssertionError as error:
+                body = await page.locator("body").inner_text()
+                raise AssertionError(f"Vue share page failed: {errors}; body={body}") from error
+            await expect(page.locator(".case-image").last).to_have_js_property("naturalHeight", 1000)
+            for width, height in ((375, 812), (812, 375), (1280, 900)):
+                await page.set_viewport_size({"width": width, "height": height})
+                await expect(button).to_be_in_viewport(ratio=1)
+                bar = await page.locator(".booking-bar").bounding_box()
+                assert bar["y"] + bar["height"] == pytest.approx(height, abs=1)
+                await page.evaluate("scrollTo(0, document.documentElement.scrollHeight)")
+                await expect(button).to_be_in_viewport(ratio=1)
+                last_image = await page.locator(".case-image").last.bounding_box()
+                assert last_image["y"] + last_image["height"] <= bar["y"] + 1
+                assert await page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+            await page.screenshot(path=str(tmp_path / "vue-booking-bottom.png"))
+            await expect(button).to_have_attribute("href", "/api/material-library/shares/layout-test/booking")
+        finally:
+            await browser.close()

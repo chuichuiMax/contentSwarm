@@ -4,7 +4,12 @@ from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from yuxi.storage.postgres.models_content import ContentCaseVisitLead, ContentCaseVisitSubmission, ContentMaterialShare
+from yuxi.storage.postgres.models_content import (
+    ContentCaseVisitLead,
+    ContentCaseVisitSubmission,
+    ContentEmployee,
+    ContentMaterialShare,
+)
 from yuxi.utils.datetime_utils import utc_now_naive
 
 
@@ -112,25 +117,89 @@ class CaseVisitRepository:
         )
         return result.scalar_one_or_none() is not None
 
-    async def listing(self, predicates: list, page: int, page_size: int) -> tuple[list, int]:
-        total = await self.db.scalar(select(func.count()).select_from(ContentCaseVisitLead).where(*predicates))
-        rows = await self.db.execute(
+    def pc_query(self):
+        lead, share, employee = ContentCaseVisitLead, ContentMaterialShare, ContentEmployee
+        return (
             select(
-                ContentCaseVisitLead.id,
-                ContentCaseVisitLead.nickname,
-                ContentCaseVisitLead.avatar_data.is_not(None).label("has_avatar"),
-                ContentCaseVisitLead.phone,
-                ContentCaseVisitLead.acquired_at,
-                ContentMaterialShare.token,
-                ContentMaterialShare.title,
+                lead.id,
+                lead.phone,
+                lead.acquired_at,
+                share.token,
+                share.title,
+                share.source_platform,
+                employee.name.label("sharer_name"),
+                employee.employee_code,
+                employee.current_branch.label("branch"),
             )
-            .join(ContentMaterialShare, ContentCaseVisitLead.share_id == ContentMaterialShare.id)
-            .where(*predicates)
-            .order_by(ContentCaseVisitLead.acquired_at.desc(), ContentCaseVisitLead.id.desc())
-            .offset((page - 1) * page_size)
-            .limit(page_size)
+            .select_from(lead)
+            .outerjoin(share, lead.share_id == share.id)
+            .outerjoin(employee, share.sharer_employee_id == employee.id)
         )
+
+    async def listing(
+        self,
+        predicates: list,
+        page: int,
+        page_size: int | None,
+        *,
+        keyword: str = "",
+        branch: str | None = None,
+        source: str | None = None,
+        start=None,
+        end=None,
+    ) -> tuple[list, int]:
+        lead, share, employee = ContentCaseVisitLead, ContentMaterialShare, ContentEmployee
+        conditions = list(predicates)
+        if keyword:
+            conditions.append(
+                or_(
+                    lead.phone.contains(keyword, autoescape=True),
+                    employee.name.icontains(keyword, autoescape=True),
+                    employee.employee_code.icontains(keyword, autoescape=True),
+                    employee.current_branch.icontains(keyword, autoescape=True),
+                )
+            )
+        if branch:
+            conditions.append(employee.current_branch == branch)
+        if source:
+            conditions.append(share.source_platform == source)
+        if start is not None:
+            conditions.append(lead.acquired_at >= start)
+        if end is not None:
+            conditions.append(lead.acquired_at < end)
+        query = self.pc_query().where(*conditions)
+        total = await self.db.scalar(select(func.count()).select_from(query.subquery()))
+        query = query.order_by(lead.acquired_at.desc(), lead.id.desc())
+        if page_size is not None:
+            query = query.offset((page - 1) * page_size).limit(page_size)
+        rows = await self.db.execute(query)
         return rows.all(), total or 0
+
+    async def summary(self, predicates: list, start, end) -> dict:
+        lead = ContentCaseVisitLead
+        total, today = (
+            await self.db.execute(
+                select(
+                    func.count(),
+                    func.count().filter(lead.created_at >= start, lead.created_at < end),
+                )
+                .select_from(lead)
+                .where(*predicates)
+            )
+        ).one()
+        branches = await self.db.scalars(
+            self.pc_query()
+            .with_only_columns(ContentEmployee.current_branch)
+            .where(*predicates, ContentEmployee.current_branch != "")
+            .distinct()
+            .order_by(ContentEmployee.current_branch)
+        )
+        return {"total": total, "today": today, "branches": list(branches.all())}
+
+    async def phone(self, lead_id: str, predicates: list) -> str | None:
+        return await self.db.scalar(
+            select(ContentCaseVisitLead.phone).where(ContentCaseVisitLead.id == lead_id, *predicates)
+        )
 
     async def avatar(self, lead_id: str, predicates: list) -> bytes | None:
         return await self.db.scalar(

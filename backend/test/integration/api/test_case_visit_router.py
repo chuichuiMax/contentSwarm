@@ -5,7 +5,7 @@ import io
 import os
 import socket
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from contextlib import asynccontextmanager
 import json
 from types import SimpleNamespace
@@ -16,6 +16,8 @@ import pytest_asyncio
 import uvicorn
 from fastapi import FastAPI
 from PIL import Image
+from openpyxl import load_workbook
+from redis.asyncio import Redis
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
@@ -23,6 +25,7 @@ from server.routers.case_visit_router import case_visits
 from server.utils.auth_middleware import get_db
 from yuxi.repositories.case_visit_repository import CaseVisitRepository
 from yuxi.services import case_visit_service
+from yuxi.services.run_queue_service import REDIS_URL
 from unittest.mock import AsyncMock
 from yuxi.storage.postgres.models_business import Department, User
 from yuxi.storage.postgres.models_content import (
@@ -37,7 +40,7 @@ from yuxi.utils.datetime_utils import utc_now_naive
 
 
 @pytest_asyncio.fixture
-async def visit_api():
+async def visit_api(monkeypatch):
     schema = f"test_visit_{uuid.uuid4().hex}"
     database_url = os.environ["POSTGRES_URL"].replace("postgresql://", "postgresql+asyncpg://", 1)
     setup_engine = create_async_engine(database_url)
@@ -120,6 +123,13 @@ async def visit_api():
             )
         await db.commit()
 
+    # Redis 连接跟随测试事件循环，避免跨函数复用已关闭循环上的全局连接。
+    redis = Redis.from_url(REDIS_URL, decode_responses=True)
+    monkeypatch.setattr(case_visit_service, "get_redis_client", AsyncMock(return_value=redis))
+    # 每个独立数据库 schema 使用相同测试员工 ID，清除上一个测试遗留的未读缓存。
+    for index in range(1, 6):
+        await case_visit_service.invalidate_mp_lead_unread_cache(f"visitor-test-user-{index}")
+
     async def isolated_db():
         async with sessions() as db:
             yield db
@@ -146,6 +156,7 @@ async def visit_api():
         async with setup_engine.begin() as connection:
             await connection.execute(text(f'DROP SCHEMA "{schema}" CASCADE'))
         await setup_engine.dispose()
+        await redis.aclose()
 
 
 @pytest.mark.asyncio
@@ -155,7 +166,7 @@ async def test_real_http_scope_applies_to_listing_avatar_and_delete(visit_api):
     for user, expected in [
         (1, ["lead-1"]),
         (2, ["lead-2"]),
-        (3, ["lead-1", "lead-2"]),
+        (3, []),
         (4, ["lead-3"]),
         (5, ["lead-1", "lead-2", "lead-3", "lead-4"]),
     ]:
@@ -176,7 +187,8 @@ async def test_real_http_scope_applies_to_listing_avatar_and_delete(visit_api):
             },
         )
     ).json()
-    assert listing["items"][0]["phone"] == "19900000001"
+    assert listing["items"][0]["phone_masked"] == "199****0001"
+    assert "phone" not in listing["items"][0]
     assert listing["items"][0]["source_url"] == "https://cases.test/boyun/share/case/token-a"
     assert "openid" not in listing["items"][0]
     image = io.BytesIO()
@@ -198,6 +210,88 @@ async def test_real_http_scope_applies_to_listing_avatar_and_delete(visit_api):
     assert (await client.delete("/api/customer-leads/lead-1", headers=tokens[1])).status_code == 200
     assert (await client.get("/api/customer-leads/lead-1/avatar", headers=tokens[1])).status_code == 404
     assert (await client.get("/api/customer-leads", headers=tokens[5])).json()["total"] == 3
+
+
+@pytest.mark.asyncio
+async def test_pc_summary_phone_and_export_share_the_same_owner_scope(visit_api):
+    client, tokens = visit_api.client, visit_api.tokens
+    base = "/api/customer-leads"
+    for user, ids in [(1, [1]), (2, [2]), (3, []), (4, [3]), (5, [1, 2, 3, 4])]:
+        headers = tokens[user]
+        summary = await client.get(base + "/summary", headers=headers)
+        assert summary.status_code == 200, summary.text
+        assert summary.json()["total"] == len(ids)
+        exported = await client.get(base + "/export", headers=headers, params={"page_size": 1})
+        assert exported.status_code == 200, exported.text
+        assert exported.headers["cache-control"] == "private, no-store"
+        sheet = load_workbook(io.BytesIO(exported.content)).active
+        assert sheet.max_row == len(ids) + 1
+        assert sorted(row[1] for row in list(sheet.values)[1:]) == [f"199****000{i}" for i in ids]
+        for index in range(1, 5):
+            response = await client.get(f"{base}/lead-{index}/phone", headers=headers)
+            assert response.status_code == (200 if index in ids else 404)
+            if index in ids:
+                assert response.json() == {"phone": f"1990000000{index}"}
+                assert response.headers["cache-control"] == "private, no-store"
+    for path in ["/summary", "/export", "/lead-1/phone"]:
+        assert (await client.get(base + path)).status_code == 401
+        assert (await client.get(base + path, headers=visit_api.mp_tokens[1])).status_code == 401
+    # A caller-supplied owner or department must never expand access.
+    response = await client.get(base, headers=tokens[3], params={"sharer_uid": "visitor-test-user-1"})
+    assert response.json()["items"] == []
+    assert (await client.delete(base + "/lead-1", headers=tokens[3])).status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_pc_employee_filters_export_and_unfiltered_summary(visit_api):
+    base = "/api/customer-leads"
+    async with visit_api.sessions() as db:
+        employee = await db.get(ContentEmployee, "emp-1")
+        employee.name, employee.employee_code, employee.current_branch = "真实员工%甲", "00123", "长沙门店甲"
+        share = await db.get(ContentMaterialShare, "share-a")
+        share.sharer_employee_id, share.sharer_name, share.source_platform = "emp-1", "手填联系人", "pc"
+        lead = await db.get(ContentCaseVisitLead, "lead-1")
+        lead.created_at = utc_now_naive() - timedelta(days=2)
+        lead.acquired_at = datetime(2026, 10, 15, 16)
+        lead2 = await db.get(ContentCaseVisitLead, "lead-2")
+        lead2.acquired_at = datetime(2026, 10, 16, 16)
+        await db.commit()
+    client, headers = visit_api.client, visit_api.tokens[1]
+    summary = (await client.get(base + "/summary", headers=headers)).json()
+    assert summary == {"total": 1, "today": 0, "branches": ["长沙门店甲"]}
+    for keyword in ["19900000001", "真实员工", "00123", "长沙门店", "%"]:
+        response = await client.get(base, headers=headers, params={"keyword": keyword})
+        assert response.status_code == 200, response.text
+        row = response.json()["items"][0]
+        assert row["sharer_name"] == "真实员工%甲" and row["employee_code"] == "00123"
+        assert row["branch"] == "长沙门店甲" and "phone" not in row
+    assert (await client.get(base, headers=headers, params={"keyword": "手填联系人"})).json()["total"] == 0
+    for params in [
+        {"branch": "其他门店"},
+        {"source": "mp"},
+        {"keyword": "_"},
+        {"start_date": "2026-10-15", "end_date": "2026-10-15"},
+    ]:
+        assert (await client.get(base, headers=headers, params=params)).json()["total"] == 0
+        assert (await client.get(base + "/summary", headers=headers, params=params)).json() == summary
+    filters = {"branch": "长沙门店甲", "source": "pc", "start_date": "2026-10-16", "end_date": "2026-10-16"}
+    response = await client.get(base, headers=visit_api.tokens[5], params={**filters, "page_size": 1})
+    assert response.json()["total"] == 1
+    exported = await client.get(base + "/export", headers=visit_api.tokens[5], params=filters)
+    sheet = load_workbook(io.BytesIO(exported.content)).active
+    assert sheet.max_row == 2 and sheet["E2"].value == "00123" and sheet["E2"].data_type == "s"
+    assert sheet["B2"].value.startswith("199****")
+    invalid_dates = {"start_date": "2026-10-17", "end_date": "2026-10-16"}
+    assert (await client.get(base, headers=headers, params=invalid_dates)).status_code == 422
+    assert (await client.get(base + "/export", headers=headers, params={"source": "invalid"})).status_code == 422
+    async with visit_api.sessions() as db:
+        share = await db.get(ContentMaterialShare, "share-a")
+        share.sharer_employee_id = None
+        await db.commit()
+    # Missing historical employee metadata must not hide leads or change ownership.
+    row = (await client.get(base, headers=headers)).json()["items"][0]
+    assert row["id"] == "lead-1" and row["sharer_name"] is None and row["employee_code"] is None
+    assert (await client.get(base, headers=visit_api.tokens[5])).json()["total"] == 4
 
 
 @pytest.mark.asyncio
@@ -310,6 +404,8 @@ async def test_mp_read_follow_independent_and_old_revision_cannot_consume_new_bo
         )
         await db.commit()
         assert lead_id == "lead-1"
+    # 直接写库模拟预约时，同步执行预约服务提交后的缓存失效动作。
+    await case_visit_service.invalidate_mp_lead_unread_cache("visitor-test-user-1")
     for method, action in [("POST", "read"), ("POST", "follow")]:
         assert (
             await client.request(method, base + "/lead-1/" + action, headers=headers, json={"revision": 1})
@@ -367,6 +463,7 @@ async def test_http_booking_receipt_survives_retry_and_new_session_rebooks(visit
                 for name, token in [("one", "token-a"), ("two", "token-a"), ("three", "token-b")]
             }
             self.mutex = asyncio.Lock()
+            self.delete = AsyncMock()
 
         async def get(self, key):
             return self.data.get(key)
@@ -388,6 +485,7 @@ async def test_http_booking_receipt_survives_retry_and_new_session_rebooks(visit
             share = await db.get(ContentMaterialShare, share_id)
             share.sharer_uid = "visitor-test-user-1"
             share.source_platform = "mp"
+            share.sharer_phone = "19912345678" if share_id == "share-a" else "19900000002"
         await db.commit()
     image = io.BytesIO()
     Image.new("RGB", (24, 24), "red").save(image, "PNG")
@@ -402,6 +500,7 @@ async def test_http_booking_receipt_survives_retry_and_new_session_rebooks(visit
             files={"avatar": ("avatar.png", image.getvalue(), "image/png")} if profile else None,
         )
         assert response.status_code == 200, response.text
+        assert response.json()["same_contact_phone"] is (token == "token-a")
         return response.json()["id"]
 
     ids = await asyncio.gather(book("one"), book("one"))
@@ -427,7 +526,8 @@ async def test_http_booking_receipt_survives_retry_and_new_session_rebooks(visit
     assert new_lead["phone"] == "19912345678" and new_lead["unread"]
     pc_list = (await visit_api.client.get("/api/customer-leads", headers=visit_api.tokens[1])).json()
     pc_lead = next(item for item in pc_list["items"] if item["id"] == new_id)
-    assert pc_lead["nickname"] == "预约客户" and pc_lead["avatar_url"] is None
+    assert not {"nickname", "avatar_url", "phone"}.intersection(pc_lead)
+    assert pc_lead["phone_masked"] == "199****5678"
     async with visit_api.sessions() as db:
         stored = await db.get(ContentCaseVisitLead, new_id)
         assert stored.nickname is None and stored.avatar_data is None

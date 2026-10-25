@@ -26,6 +26,10 @@ class EntryRedis:
         self.values[key] = value
         self.ttls[key] = ttl
 
+    async def delete(self, key):
+        self.ttls.pop(key, None)
+        return int(self.values.pop(key, None) is not None)
+
     @asynccontextmanager
     async def lock(self, key, **kwargs):
         async with self.locks.setdefault(key, asyncio.Lock()):
@@ -93,14 +97,23 @@ async def test_case_link_stays_separate_from_booking_and_renews_after_cache_expi
     httpx_mock.add_response(json={"url_link": "https://wxmpurl.cn/case-first"})
     httpx_mock.add_response(json={"url_link": "https://wxmpurl.cn/booking"})
     httpx_mock.add_response(json={"url_link": "https://wxmpurl.cn/case-renewed"})
-    assert await service.wechat_entry_asset(entry.db, entry.share.token, "link", booking=False) == "https://wxmpurl.cn/case-first"
+    assert (
+        await service.wechat_entry_asset(entry.db, entry.share.token, "link", booking=False)
+        == "https://wxmpurl.cn/case-first"
+    )
     assert await service.wechat_entry_asset(entry.db, entry.share.token, "link") == "https://wxmpurl.cn/booking"
-    assert await service.wechat_entry_asset(entry.db, entry.share.token, "link", booking=False) == "https://wxmpurl.cn/case-first"
+    assert (
+        await service.wechat_entry_asset(entry.db, entry.share.token, "link", booking=False)
+        == "https://wxmpurl.cn/case-first"
+    )
     first, booking = [json.loads(request.content) for request in httpx_mock.get_requests()]
     assert first["query"] == "entryCode=" + "c" * 24 + "&booking=0"
     assert booking["query"].endswith("booking=1")
     entry.redis.values.pop(next(key for key in entry.redis.values if key.endswith(":case")))
-    assert await service.wechat_entry_asset(entry.db, entry.share.token, "link", booking=False) == "https://wxmpurl.cn/case-renewed"
+    assert (
+        await service.wechat_entry_asset(entry.db, entry.share.token, "link", booking=False)
+        == "https://wxmpurl.cn/case-renewed"
+    )
     assert len(httpx_mock.get_requests()) == 3
 
 
