@@ -29,7 +29,7 @@ import CaseGalleryStyleFilter from '@/components/material/CaseGalleryStyleFilter
 import PageHeader from '@/components/shared/PageHeader.vue'
 import PosterOcrReviewModal from '@/components/content/PosterOcrReviewModal.vue'
 import VisualWorkspaceHeader from '@/components/content/VisualWorkspaceHeader.vue'
-import { DECORATION_GALLERY_STYLES } from '@/data/decorationGalleryStyles'
+import { DECORATION_GALLERY_STYLES, OFFICIAL_CASE_GALLERY_STYLES } from '@/data/decorationGalleryStyles'
 import { isEnterpriseCaseGallery } from '@/utils/caseGallery'
 
 const route = useRoute()
@@ -1372,7 +1372,6 @@ onBeforeUnmount(() => {
           <a-select-option v-for="item in industries" :key="item.slug" :value="item.slug">{{ item.name }}</a-select-option>
           <a-select-option value="uncategorized">未分类行业</a-select-option>
         </a-select>
-        <CaseGalleryStyleFilter v-else-if="isCaseGalleryPage" v-model="designStyleFilter" />
         <a-select v-else-if="materialType === 'cover_template'" v-model:value="categoryFilter" class="category-filter" placeholder="全部分类" allow-clear @change="page = 1; loadItems()">
           <a-select-option v-for="item in categories" :key="item.code" :value="item.code">{{ item.name }}</a-select-option>
         </a-select>
@@ -1395,6 +1394,12 @@ onBeforeUnmount(() => {
         </a-result>
         <div v-for="group in galleryGroups" :key="group.slug" class="gallery-section">
           <h3>{{ group.name }}</h3>
+          <CaseGalleryStyleFilter
+            v-if="isCaseGalleryPage"
+            v-model="designStyleFilter"
+            variant="tabs"
+            :styles="OFFICIAL_CASE_GALLERY_STYLES"
+          />
           <div class="gallery-grid">
           <article v-for="gallery in group.galleries" :key="gallery.id" class="gallery-card">
             <button type="button" class="gallery-open" @click="enterGallery(gallery)">

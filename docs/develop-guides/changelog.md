@@ -1,5 +1,7 @@
 # 未发布
 
+- PC 素材库案例图库的设计风格筛选恢复为下划线 Tab（全部 + 风格名，点选即筛选）。Tab 只保留鸿扬官网案例库的 18 个风格，并去掉重复项；雅致灰调、意式轻奢、意式极简、中古风潮、宋氏美学、现代之源、复古写意不再出现在 Tab 中。新建二级图库和上传仍使用完整风格列表。
+
 - 小程序装修家居 AI 封面支持选择模板：`GET /api/mp/content/ai-cover-prompts` 返回模板预览，编译简报写入所选提示词变体。
 
 - 数据概览新增「案例分享」汇总卡片与员工列表列，统计各员工发起的案例分享次数；工具栏增加「日期区间」，筛选后同步作用于内容生成、生图与案例分享统计及导出。
@@ -9,6 +11,9 @@
 - 员工管理列表增加「所属门店」「所属部门」筛选，与数据概览一致；`GET /api/employees` 支持 `branch`、`department` 并返回可选分部/部门列表。
 
 - 生产 HTTPS 证书持久化：`certs/README.md`、部署脚本 `scripts/deploy-hi-run-ssl-certs.sh`、宿主机 `scripts/ensure-hi-run-ssl-certs.sh`（主目录 `/opt/contentSwarm/certs`，备份 `/var/lib/contentswarm/ssl-backup`，Nginx `ExecStartPre` 自愈）。
+
+- 测试机公网 8080 反代补充 HyCanvas：`/api/v1/`→8005、`/dashboard`/`/editor`/`/_next/`→3000；`HYCANVAS_PUBLIC_URL` 与 ContentSwarm 同端口，修复 `/hycanvas` iframe 因 8005 未公网放行而无响应。
+- 视觉创作 HyCanvas 中文：8080/Vite 反代 `/locales/` 加载 `zh-cn.json`；进入 `/hycanvas` 写入 `hc-locale=zh-CN`；集成用户 locale 同步为 zh-CN。
 
 - 新增 `/api/integrations/material-library/*` 对外只读接口：支持 Bearer JWT 或 `yxkey_` API Key；列表/详情返回 `direct_*` 预签名直链（可配 `MATERIAL_INTEGRATION_PRESIGN_DAYS`）及 `api_*` 回源地址；`/file`、`/thumbnail` 优先 302 到 OSS。接口说明见 [素材库对外 API](./material-library-integration-api.md)。
 

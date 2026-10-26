@@ -38,6 +38,7 @@ INSERT INTO users (
   now()
 ) ON CONFLICT (id) DO UPDATE SET
   name = EXCLUDED.name,
+  locale = EXCLUDED.locale,
   updated_at = now();
 
 INSERT INTO workspaces (id, kind, name, slug, owner_id, created_at, updated_at)

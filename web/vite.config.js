@@ -83,6 +83,10 @@ export default defineConfig(({ mode }) => {
         '^/public': {
           target: env.VITE_MINIO_URL || 'http://minio:9000',
           changeOrigin: true
+        },
+        '^/locales': {
+          target: env.VITE_HYCANVAS_FRONTEND_URL || 'http://hycanvas-app:3000',
+          changeOrigin: true
         }
       },
       watch: {

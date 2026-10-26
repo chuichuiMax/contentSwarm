@@ -156,7 +156,19 @@ const handleHyCanvasMessage = (event) => {
   router.push(`${target.pathname}${target.search}${target.hash}`)
 }
 
+const HYCANVAS_LOCALE_STORAGE_KEY = 'hc-locale'
+
+/** HyCanvas 与 ContentSwarm 同域 iframe；写入 locale 供集成工作台加载 zh-cn 文案包。 */
+function ensureHyCanvasChineseLocale() {
+  try {
+    window.localStorage.setItem(HYCANVAS_LOCALE_STORAGE_KEY, 'zh-CN')
+  } catch {
+    // ignore quota / private mode
+  }
+}
+
 onMounted(() => {
+  ensureHyCanvasChineseLocale()
   window.addEventListener('message', handleHyCanvasMessage)
   void loadHyCanvas()
 })

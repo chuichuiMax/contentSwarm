@@ -4,7 +4,8 @@ import { DECORATION_GALLERY_STYLES } from '@/data/decorationGalleryStyles'
 defineProps({
   modelValue: { type: String, default: '' },
   variant: { type: String, default: 'select' },
-  placeholder: { type: String, default: '全部风格' }
+  placeholder: { type: String, default: '全部风格' },
+  styles: { type: Array, default: () => DECORATION_GALLERY_STYLES }
 })
 
 const emit = defineEmits(['update:modelValue'])
@@ -23,7 +24,7 @@ function pick(style) {
     allow-clear
     @update:value="pick($event || '')"
   >
-    <a-select-option v-for="style in DECORATION_GALLERY_STYLES" :key="style" :value="style">
+    <a-select-option v-for="style in styles" :key="style" :value="style">
       {{ style }}
     </a-select-option>
   </a-select>
@@ -32,7 +33,7 @@ function pick(style) {
       全部
     </button>
     <button
-      v-for="style in DECORATION_GALLERY_STYLES"
+      v-for="style in styles"
       :key="style"
       type="button"
       role="tab"
