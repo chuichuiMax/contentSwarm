@@ -1,7 +1,7 @@
 from datetime import date
 
 from fastapi import APIRouter, Depends, File, Form, Header, Query, Request, UploadFile
-from fastapi.responses import Response
+from fastapi.responses import JSONResponse, Response
 from redis.exceptions import LockError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,6 +13,7 @@ from server.utils.public_url import request_public_base_url
 from yuxi.services.case_visit_service import (
     MAX_AVATAR_BYTES,
     LeadRevision,
+    LeadFilters,
     VisitorSessionCreate,
     booking_error,
     create_visitor_session,
@@ -24,6 +25,9 @@ from yuxi.services.case_visit_service import (
     get_mp_lead,
     change_mp_lead,
     mp_lead_summary,
+    pc_lead_summary,
+    read_lead_phone,
+    export_leads,
 )
 from yuxi.storage.postgres.models_business import User
 
@@ -108,10 +112,44 @@ async def customer_leads(
     request: Request,
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
+    filters: LeadFilters = Depends(),
     user: User = Depends(get_required_user),
     db: AsyncSession = Depends(get_db),
 ):
-    return await list_leads(db, user, page, page_size, request_public_base_url(request))
+    return JSONResponse(
+        await list_leads(db, user, page, page_size, request_public_base_url(request), filters),
+        headers={"Cache-Control": "private, no-store"},
+    )
+
+
+@case_visits.get("/customer-leads/summary")
+async def customer_lead_summary(user: User = Depends(get_required_user), db: AsyncSession = Depends(get_db)):
+    return JSONResponse(await pc_lead_summary(db, user), headers={"Cache-Control": "private, no-store"})
+
+
+@case_visits.get("/customer-leads/export")
+async def customer_lead_export(
+    filters: LeadFilters = Depends(),
+    user: User = Depends(get_required_user),
+    db: AsyncSession = Depends(get_db),
+):
+    return Response(
+        await export_leads(db, user, filters),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": 'attachment; filename="customer-leads.xlsx"',
+            "Cache-Control": "private, no-store",
+        },
+    )
+
+
+@case_visits.get("/customer-leads/{lead_id}/phone")
+async def customer_lead_phone(
+    lead_id: str,
+    user: User = Depends(get_required_user),
+    db: AsyncSession = Depends(get_db),
+):
+    return JSONResponse(await read_lead_phone(db, user, lead_id), headers={"Cache-Control": "private, no-store"})
 
 
 @case_visits.get("/customer-leads/{lead_id}/avatar")

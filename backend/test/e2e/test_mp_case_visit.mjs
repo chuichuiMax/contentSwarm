@@ -154,6 +154,35 @@ test('save failure retains the sheet and allows retry without changing employee 
   assert.equal(modal.length, 0)
 })
 
+for (const samePhone of [true, false, undefined]) {
+  test(`contact phone match ${samePhone} only changes the persisted booking success notice`, async () => {
+    let complete
+    let submitted = 0
+    const { instance, modal } = createPage({ submitBooking: () => {
+      submitted++
+      return new Promise(resolve => { complete = resolve })
+    } })
+    Object.assign(instance, { bookingVisible: true, bookingSession: 'session', bookingConsent: true })
+    const event = { detail: { code: 'phone-code' } }
+    const pending = instance.submitBooking(event)
+    await instance.submitBooking(event)
+    assert.equal(submitted, 1)
+    assert.equal(modal.length, 0)
+    complete({ success: true, id: 'lead-a', same_contact_phone: samePhone })
+    await pending
+    assert.equal(instance.bookingVisible, false)
+    assert.equal(instance.bookingConsent, false)
+    assert.equal(instance.bookingSession, '')
+    assert.equal(instance.bookingError, '')
+    assert.equal(modal.length, 1)
+    assert.equal(modal[0].title, '预约申请已提交')
+    assert.equal(modal[0].showCancel, false)
+    assert.equal(modal[0].content, samePhone
+      ? '分享人和授权人联系方式相同\n工作人员将联系您安排免费工地参观。'
+      : '工作人员将联系您安排免费工地参观。')
+  })
+}
+
 test('native avatar return preserves the case while cancellation without hide expires its marker', () => {
   const callbacks = []
   let page = { route: 'pages/materials/shared-case' }

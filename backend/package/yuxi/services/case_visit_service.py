@@ -5,9 +5,12 @@ import io
 import json
 import uuid
 from datetime import date, datetime, time, timedelta
+from typing import Literal
 
 import httpx
 from fastapi import HTTPException
+from openpyxl import Workbook
+from openpyxl.styles import Font
 from PIL import Image, ImageOps, UnidentifiedImageError
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,7 +28,7 @@ from yuxi.services.run_queue_service import get_redis_client
 from yuxi.utils.auth_utils import AuthUtils
 from yuxi.storage.postgres.models_business import User
 from yuxi.storage.postgres.models_content import ContentCaseVisitLead
-from yuxi.utils.datetime_utils import format_utc_datetime, utc_now_naive
+from yuxi.utils.datetime_utils import format_utc_datetime, shanghai_now, utc_now_naive
 
 VISITOR_SESSION_TTL = 600
 MP_LEAD_UNREAD_CACHE_TTL = 30
@@ -190,7 +193,11 @@ async def submit_booking(
         repo = CaseVisitRepository(db)
         submitted = await repo.submission(session_id)
         if submitted:
-            return {"success": True, "id": submitted}
+            return {
+                "success": True,
+                "id": submitted,
+                "same_contact_phone": bool(share.sharer_phone and share.sharer_phone == session.get("phone")),
+            }
         if not session.get("phone") or session.get("phone_code") != phone_code:
             try:
                 session["phone"] = await _wechat_phone_by_code(appid, secret, phone_code)
@@ -216,7 +223,11 @@ async def submit_booking(
         repo.record_submission(session_id, lead_id)
         await db.commit()
         await invalidate_mp_lead_unread_cache(share.sharer_uid)
-    return {"success": True, "id": lead_id}
+    return {
+        "success": True,
+        "id": lead_id,
+        "same_contact_phone": bool(share.sharer_phone and share.sharer_phone == session["phone"]),
+    }
 
 
 class LeadRevision(BaseModel):
@@ -298,33 +309,107 @@ async def lead_scope(db: AsyncSession, user: User, action: str) -> list:
         raise booking_error(403, "CUSTOMER_LEAD_FORBIDDEN", "没有客资操作权限")
     if user.role == "superadmin":
         return []
-    if user.role == "admin":
-        if user.department_id is None:
-            raise booking_error(403, "CUSTOMER_LEAD_FORBIDDEN", "当前管理员未绑定部门")
-        return [ContentCaseVisitLead.department_id == user.department_id]
     return [ContentCaseVisitLead.sharer_uid == str(user.uid)]
 
 
-async def list_leads(db: AsyncSession, user: User, page: int, page_size: int, public_base_url: str) -> dict:
-    predicates = await lead_scope(db, user, "view_list")
-    rows, total = await CaseVisitRepository(db).listing(predicates, page, page_size)
+class LeadFilters(BaseModel):
+    keyword: str = Field(default="", max_length=80)
+    branch: str | None = Field(default=None, max_length=80)
+    source: Literal["pc", "mp"] | None = None
+    start_date: date | None = None
+    end_date: date | None = None
+
+
+def pc_lead_filters(filters: LeadFilters) -> dict:
+    if filters.start_date and filters.end_date and filters.start_date > filters.end_date:
+        raise booking_error(422, "LEAD_DATE_RANGE_INVALID", "开始日期不能晚于结束日期")
     return {
-        "items": [
-            {
-                "id": row.id,
-                "nickname": row.nickname or "预约客户",
-                "phone": row.phone,
-                "avatar_url": f"/api/customer-leads/{row.id}/avatar" if row.has_avatar else None,
-                "source_title": row.title,
-                "source_url": f"{public_base_url}/share/case/{row.token}",
-                "acquired_at": format_utc_datetime(row.acquired_at),
-            }
-            for row in rows
-        ],
+        "keyword": filters.keyword.strip(),
+        "branch": filters.branch,
+        "source": filters.source,
+        "start": datetime.combine(filters.start_date, time.min) - timedelta(hours=8) if filters.start_date else None,
+        "end": datetime.combine(filters.end_date, time.min) + timedelta(days=1, hours=-8) if filters.end_date else None,
+    }
+
+
+def pc_lead_data(row, public_base_url: str) -> dict:
+    return {
+        "id": row.id,
+        "phone_masked": f"{row.phone[:3]}****{row.phone[-4:]}" if len(row.phone) >= 7 else "****",
+        "sharer_name": row.sharer_name,
+        "employee_code": row.employee_code,
+        "branch": row.branch,
+        "source_platform": row.source_platform,
+        "source_title": row.title,
+        "source_url": f"{public_base_url}/share/case/{row.token}" if row.token else None,
+        "acquired_at": format_utc_datetime(row.acquired_at),
+    }
+
+
+async def list_leads(
+    db: AsyncSession,
+    user: User,
+    page: int,
+    page_size: int,
+    public_base_url: str,
+    filters: LeadFilters,
+) -> dict:
+    predicates = await lead_scope(db, user, "view_list")
+    rows, total = await CaseVisitRepository(db).listing(predicates, page, page_size, **pc_lead_filters(filters))
+    return {
+        "items": [pc_lead_data(row, public_base_url) for row in rows],
         "total": total,
         "page": page,
         "page_size": page_size,
     }
+
+
+async def pc_lead_summary(db: AsyncSession, user: User) -> dict:
+    predicates = await lead_scope(db, user, "view_list")
+    start = datetime.combine(shanghai_now().date(), time.min) - timedelta(hours=8)
+    return await CaseVisitRepository(db).summary(predicates, start, start + timedelta(days=1))
+
+
+async def read_lead_phone(db: AsyncSession, user: User, lead_id: str) -> dict:
+    predicates = await lead_scope(db, user, "view_list")
+    phone = await CaseVisitRepository(db).phone(lead_id, predicates)
+    if phone is None:
+        raise booking_error(404, "CUSTOMER_LEAD_NOT_FOUND", "客资不存在或无权访问")
+    return {"phone": phone}
+
+
+async def export_leads(db: AsyncSession, user: User, filters: LeadFilters) -> bytes:
+    predicates = await lead_scope(db, user, "view_list")
+    rows, _ = await CaseVisitRepository(db).listing(predicates, 1, None, **pc_lead_filters(filters))
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "客资列表"
+    sheet.append(["序号", "客资电话", "来源", "分享人姓名", "工号", "所属门店", "获取时间"])
+    for index, row in enumerate(rows, 1):
+        item = pc_lead_data(row, "")
+        source = {"pc": "PC端-案例分享", "mp": "小程序-案例分享"}.get(row.source_platform, "案例分享")
+        sheet.append(
+            [
+                index,
+                item["phone_masked"],
+                source,
+                row.sharer_name or "",
+                row.employee_code or "",
+                row.branch or "",
+                (row.acquired_at + timedelta(hours=8)).strftime("%Y-%m-%d %H:%M"),
+            ]
+        )
+        for cell in sheet[index + 1]:
+            if isinstance(cell.value, str):
+                cell.data_type = "s"
+    for cell in sheet[1]:
+        cell.font = Font(bold=True)
+    for column, width in {"A": 8, "B": 20, "C": 24, "D": 20, "E": 18, "F": 24, "G": 24}.items():
+        sheet.column_dimensions[column].width = width
+    sheet.freeze_panes = "A2"
+    output = io.BytesIO()
+    workbook.save(output)
+    return output.getvalue()
 
 
 async def read_lead_avatar(db: AsyncSession, user: User, lead_id: str) -> bytes:
