@@ -187,14 +187,13 @@ class CaseVisitRepository:
                 .where(*predicates)
             )
         ).one()
-        branches = await self.db.scalars(
-            self.pc_query()
-            .with_only_columns(ContentEmployee.current_branch)
-            .where(*predicates, ContentEmployee.current_branch != "")
-            .distinct()
-            .order_by(ContentEmployee.current_branch)
-        )
-        return {"total": total, "today": today, "branches": list(branches.all())}
+        # 门店选项与员工管理一致；仅客资统计受当前账号的数据范围限制。
+        branches = await self.db.scalars(select(ContentEmployee.current_branch).distinct())
+        return {
+            "total": total,
+            "today": today,
+            "branches": sorted({value.strip() for value in branches if value.strip()}),
+        }
 
     async def phone(self, lead_id: str, predicates: list) -> str | None:
         return await self.db.scalar(

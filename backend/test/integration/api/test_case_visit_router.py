@@ -295,6 +295,43 @@ async def test_pc_employee_filters_export_and_unfiltered_summary(visit_api):
 
 
 @pytest.mark.asyncio
+async def test_pc_branch_options_include_all_employee_branches_without_expanding_lead_scope(visit_api):
+    async with visit_api.sessions() as db:
+        for index, branch in enumerate(["长沙门店", "长沙门店", " 岳阳门店 ", " \t ", ""], 1):
+            employee = await db.get(ContentEmployee, f"emp-{index}")
+            employee.current_branch = branch
+            if index == 3:
+                employee.enabled = False
+        share = await db.get(ContentMaterialShare, "share-a")
+        share.sharer_employee_id = "emp-1"
+        await db.commit()
+
+    client, base = visit_api.client, "/api/customer-leads"
+    expected_branches = sorted(["长沙门店", "岳阳门店"])
+    for user, total in [(1, 1), (2, 1), (3, 0), (4, 1), (5, 4)]:
+        headers = visit_api.tokens[user]
+        summary = await client.get(base + "/summary", headers=headers)
+        assert summary.status_code == 200, summary.text
+        assert summary.json()["branches"] == expected_branches
+        assert summary.json()["total"] == total
+        assert summary.json()["today"] == total
+
+        # The disabled employee has neither shares nor leads, but its branch remains selectable.
+        params = {"branch": "岳阳门店"}
+        response = await client.get(base, headers=headers, params=params)
+        assert response.status_code == 200, response.text
+        assert response.json()["items"] == [] and response.json()["total"] == 0
+        exported = await client.get(base + "/export", headers=headers, params=params)
+        assert exported.status_code == 200, exported.text
+        assert load_workbook(io.BytesIO(exported.content)).active.max_row == 1
+        assert (await client.get(base + "/summary", headers=headers, params=params)).json() == summary.json()
+
+    # Knowing another employee's branch must not grant access to that employee's leads.
+    response = await client.get(base, headers=visit_api.tokens[2], params={"branch": "长沙门店"})
+    assert response.json()["items"] == [] and response.json()["total"] == 0
+
+
+@pytest.mark.asyncio
 async def test_postgres_concurrent_upsert_deduplicates_per_share_and_allows_rebooking_after_delete(visit_api):
     async def save(share_id):
         async with visit_api.sessions() as db:

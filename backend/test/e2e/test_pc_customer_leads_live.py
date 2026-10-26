@@ -2,6 +2,7 @@
 
 import io
 import json
+import re
 import socket
 from urllib.parse import urlparse
 
@@ -19,6 +20,8 @@ async def test_pc_browser_search_download_and_admin_scope_with_real_api(visit_ap
     async with visit_api.sessions() as db:
         employee = await db.get(ContentEmployee, "emp-1")
         employee.name, employee.employee_code, employee.current_branch = "员工甲", "000123", "长沙门店"
+        employee_without_leads = await db.get(ContentEmployee, "emp-3")
+        employee_without_leads.current_branch, employee_without_leads.enabled = "岳阳门店", False
         share = await db.get(ContentMaterialShare, "share-a")
         share.sharer_employee_id, share.sharer_name, share.source_platform = "emp-1", "其他联系人", "pc"
         await db.commit()
@@ -72,6 +75,19 @@ async def test_pc_browser_search_download_and_admin_scope_with_real_api(visit_ap
             await expect(page.get_by_text("员工甲", exact=True)).to_be_visible()
             await expect(page.get_by_text("其他联系人", exact=True)).to_have_count(0)
             await expect(page.get_by_text("199****0002", exact=True)).to_have_count(0)
+            await page.locator(".filters .ant-select").first.click()
+            options = page.locator(".ant-select-item-option-content")
+            await expect(options.get_by_text("岳阳门店", exact=True)).to_be_visible()
+            await expect(options.get_by_text("长沙门店", exact=True)).to_be_visible()
+            await options.get_by_text("岳阳门店", exact=True).click()
+            await expect(page.get_by_text("暂无客资", exact=True)).to_be_visible()
+            await expect(page.locator(".summary-card strong").first).to_have_text("1")
+            await page.locator(".filters .ant-select").first.click()
+            await expect(options.get_by_text("岳阳门店", exact=True)).to_be_visible()
+            await expect(options.get_by_text("长沙门店", exact=True)).to_be_visible()
+            await page.keyboard.press("Escape")
+            await page.get_by_role("button", name=re.compile(r"重\s*置")).click()
+            await expect(page.get_by_text("199****0001", exact=True)).to_be_visible()
             await page.get_by_role("button", name="查看完整号码").click()
             await expect(page.get_by_text("19900000001", exact=True)).to_be_visible()
             await page.get_by_role("button", name="隐藏完整号码").click()
@@ -95,6 +111,10 @@ async def test_pc_browser_search_download_and_admin_scope_with_real_api(visit_ap
             await page.reload(wait_until="domcontentloaded")
             await expect(page.get_by_text("暂无客资", exact=True)).to_be_visible()
             await expect(page.locator(".summary-card strong").first).to_have_text("0")
+            await page.locator(".filters .ant-select").first.click()
+            await expect(options.get_by_text("岳阳门店", exact=True)).to_be_visible()
+            await expect(options.get_by_text("长沙门店", exact=True)).to_be_visible()
+            await page.keyboard.press("Escape")
             async with page.expect_download() as downloaded:
                 await page.get_by_role("button", name="导出", exact=True).click()
             downloaded_path = await (await downloaded.value).path()
