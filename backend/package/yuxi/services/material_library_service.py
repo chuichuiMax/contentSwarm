@@ -590,9 +590,11 @@ def _is_target_rough_category(category: ContentMaterialCategory, owner_uid: str)
 
 
 def _can_manage_item(user: User, item: ContentMaterialLibraryItem, category: ContentMaterialCategory) -> bool:
+    if item.owner_uid == str(user.uid):
+        return True
     if is_enterprise_rough_root(category):
-        return item.owner_uid == str(user.uid)
-    return item.owner_uid == str(user.uid) or (category.visibility == "enterprise" and _is_admin(user))
+        return _is_admin(user)
+    return category.visibility == "enterprise" and _is_admin(user)
 
 
 def _audit(db: AsyncSession, user: User, operation: str, **details):

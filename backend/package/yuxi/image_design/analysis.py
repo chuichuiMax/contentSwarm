@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import io
@@ -15,6 +16,8 @@ from yuxi.agents import load_chat_model, resolve_chat_model_spec
 from .schemas import ANALYSIS_SCHEMA_VERSION, DEFAULT_VISION_MODEL_SPEC, ImageAnalysisResult
 
 AnalysisRole = Literal["structure_source", "style_reference", "cross_space_style"]
+
+DEFAULT_VISION_INVOKE_TIMEOUT_SECONDS = 50.0
 
 ROLE_INSTRUCTIONS = {
     "structure_source": "重点识别空间类型、墙体、门窗、梁柱、层高、固定设施、空间比例、镜头、透视和必须保留项。",
@@ -122,7 +125,11 @@ async def run_visual_analysis(
             ]
         ),
     ]
-    response = await model.ainvoke(messages)
+    timeout = float(os.getenv("IMAGE_DESIGN_VISION_TIMEOUT_SECONDS", DEFAULT_VISION_INVOKE_TIMEOUT_SECONDS))
+    try:
+        response = await asyncio.wait_for(model.ainvoke(messages), timeout=timeout)
+    except TimeoutError as exc:
+        raise VisualModelUnavailableError("视觉模型响应超时，请稍后重试") from exc
     return parse_analysis_response(_response_text(response), role), resolved_model
 
 

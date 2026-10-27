@@ -6,7 +6,7 @@ from yuxi.image_design.prompt_compiler import (
     compile_prompt,
     validate_plan_coverage,
 )
-from yuxi.image_design.schemas import CrossSpaceRefinementCreate, RoomAdaptRefinementCreate
+from yuxi.image_design.schemas import CrossSpaceRefinementCreate, RoomAdaptRefinementCreate, StyleTransferRefinementCreate
 
 
 def test_room_adapt_declares_image_order_and_structure_priority() -> None:
@@ -32,6 +32,29 @@ def test_room_adapt_declares_image_order_and_structure_priority() -> None:
     assert validate_plan_coverage(plan) == {"missing": [], "unexpected": []}
     assert "必须保留：" not in prompt
     assert plan.preserve == ["落地窗", "承重柱"]
+
+
+def test_style_transfer_multi_image_passes_plan_coverage() -> None:
+    payload = StyleTransferRefinementCreate(
+        workflow="style_transfer",
+        source_material_id="mli_1",
+        supplemental_material_ids=["mli_2", "mli_3"],
+        style_label="现代轻奢",
+        user_prompt="暖色自然光",
+    )
+    plan = build_prompt_plan(
+        payload,
+        {
+            "mli_1": {"preserve": ["落地窗"], "structural_features": ["承重柱"]},
+            "mli_2": {"preserve": ["梁位"], "camera": ["广角"]},
+            "mli_3": {"materials": ["浅色木饰面"]},
+        },
+    )
+
+    assert len(plan.image_roles) == 3
+    assert validate_plan_coverage(plan) == {"missing": [], "unexpected": []}
+    prompt = compile_prompt(plan, "3:4")
+    assert "其余 2 张" in prompt
 
 
 def test_cross_space_compilation_is_deterministic_and_does_not_leak_style_transfer_fields() -> None:

@@ -4,7 +4,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from yuxi.image_design.schemas import ImageDesignSaveTarget as SaveTarget
+from yuxi.image_design.schemas import MP_MAX_INPUT_IMAGES, ImageDesignSaveTarget as SaveTarget
 
 __all__ = ["SaveTarget", "MpDrafts", "MpDraftsUpdate", "MpLibraryCreate"]
 
@@ -45,7 +45,7 @@ class MpPolishCreate(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     workflow: Literal["redesign", "adapt", "transfer"]
-    images: list[MpImageInput] = Field(min_length=1, max_length=2)
+    images: list[MpImageInput] = Field(min_length=1, max_length=MP_MAX_INPUT_IMAGES)
     description: str = Field(default="", max_length=3000)
     style: str | None = Field(default=None, max_length=80)
     target_space: str | None = Field(default=None, max_length=80)
@@ -59,14 +59,25 @@ class MpPolishCreate(BaseModel):
 
     @model_validator(mode="after")
     def validate_workflow_inputs(self):
-        expected = {"redesign": {"source"}, "adapt": {"reference", "rough"}, "transfer": {"reference"}}
         roles = [image.role for image in self.images]
-        if set(roles) != expected[self.workflow] or len(roles) != len(set(roles)):
-            raise ValueError("图片角色与工作流不匹配")
-        if self.workflow == "adapt" and len({image.library_item_id for image in self.images}) != 2:
-            raise ValueError("参考图和毛坯图不能是同一张图片")
-        if self.workflow == "transfer" and (not self.target_space or not self.layout_type):
-            raise ValueError("请选择目标空间和布局")
+        ids = [image.library_item_id for image in self.images]
+        if self.workflow == "redesign":
+            if not roles or any(role != "source" for role in roles):
+                raise ValueError("换装模式需上传原房实拍图")
+            if len(set(ids)) != len(ids):
+                raise ValueError("请勿重复选择同一张图片")
+        elif self.workflow == "adapt":
+            if set(roles) != {"reference", "rough"} or len(roles) != 2:
+                raise ValueError("适配模式需各选一张参考图和毛坯图")
+            if len(set(ids)) != 2:
+                raise ValueError("参考图和毛坯图不能是同一张图片")
+        elif self.workflow == "transfer":
+            if not roles or any(role != "reference" for role in roles):
+                raise ValueError("跨空间迁移需上传风格参考图")
+            if len(set(ids)) != len(ids):
+                raise ValueError("请勿重复选择同一张图片")
+            if not self.target_space or not self.layout_type:
+                raise ValueError("请选择目标空间和布局")
         return self
 
 

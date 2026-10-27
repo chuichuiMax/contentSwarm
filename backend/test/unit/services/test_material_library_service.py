@@ -852,7 +852,7 @@ def test_mp_explicit_enterprise_rough_category_is_recognized():
     assert not is_enterprise_rough_root(case_gallery)
 
 
-def test_enterprise_rough_items_are_only_manageable_by_uploader():
+def test_enterprise_rough_manage_rules_for_uploader_and_pc_admin():
     from yuxi.services.material_library_service import is_enterprise_rough_root
 
     gallery = ContentMaterialCategory(
@@ -869,12 +869,30 @@ def test_enterprise_rough_items_are_only_manageable_by_uploader():
     alice = SimpleNamespace(uid="alice", role="user")
     bob = SimpleNamespace(uid="bob", role="user")
     admin = SimpleNamespace(uid="admin-1", role="admin")
+    superadmin = SimpleNamespace(uid="admin-2", role="superadmin")
 
     assert _can_manage_item(alice, alice_item, gallery)
     assert not _can_manage_item(alice, bob_item, gallery)
     assert _can_manage_item(bob, bob_item, gallery)
-    assert not _can_manage_item(admin, alice_item, gallery)
-    assert not _can_manage_item(admin, bob_item, gallery)
+    assert _can_manage_item(admin, alice_item, gallery)
+    assert _can_manage_item(admin, bob_item, gallery)
+    assert _can_manage_item(superadmin, bob_item, gallery)
+
+
+def test_personal_upload_items_only_manageable_by_owner():
+    gallery = ContentMaterialCategory(
+        owner_uid="alice",
+        material_type="image",
+        id="mp-uploads-private",
+        visibility="private",
+        name="我的上传",
+    )
+    own_item = ContentMaterialLibraryItem(owner_uid="alice")
+    admin = SimpleNamespace(uid="admin-1", role="admin")
+    alice = SimpleNamespace(uid="alice", role="user")
+
+    assert _can_manage_item(alice, own_item, gallery)
+    assert not _can_manage_item(admin, own_item, gallery)
 
 
 def test_cover_template_item_exposes_linked_generation_status():

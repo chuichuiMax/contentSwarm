@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import os
@@ -54,7 +55,11 @@ from .schemas import (
 )
 from .workflow_profiles import public_profiles
 
-ANALYSIS_RUNNING_TTL = timedelta(minutes=5)
+# Only dedupe truly concurrent analysis; stale "running" (crashed request) must retry quickly.
+ANALYSIS_RUNNING_TTL = timedelta(seconds=45)
+# 微信小程序 request 默认约 60s；润色接口需在此窗口内返回（含多图识图）。
+ANALYSIS_WAIT_TIMEOUT = timedelta(seconds=28)
+ANALYSIS_POLL_INTERVAL_SECONDS = 0.4
 
 
 def _owner_uid(user: User) -> str:
@@ -233,6 +238,32 @@ async def get_bootstrap(db: AsyncSession, user: User) -> dict[str, Any]:
     }
 
 
+async def _await_running_analysis(db: AsyncSession, owner_uid: str, cache_key: str) -> ImageDesignAnalysis:
+    deadline = utc_now_naive() + ANALYSIS_WAIT_TIMEOUT
+    while utc_now_naive() < deadline:
+        row = await db.scalar(
+            select(ImageDesignAnalysis).where(
+                ImageDesignAnalysis.owner_uid == owner_uid,
+                ImageDesignAnalysis.cache_key == cache_key,
+            )
+        )
+        if row is None:
+            break
+        if row.status == "completed":
+            return row
+        if row.status == "failed":
+            raise _error(
+                row.error_code or "IMAGE_DESIGN_ANALYSIS_FAILED",
+                row.error_message or "图片视觉分析失败，请稍后重试",
+                503,
+                retryable=True,
+            )
+        if row.updated_at is None or row.updated_at <= utc_now_naive() - ANALYSIS_RUNNING_TTL:
+            break
+        await asyncio.sleep(ANALYSIS_POLL_INTERVAL_SECONDS)
+    raise _error("IMAGE_DESIGN_ANALYSIS_PENDING", "图片正在分析，请稍后重试", 409, retryable=True)
+
+
 async def create_analysis(
     db: AsyncSession,
     user: User,
@@ -271,6 +302,7 @@ async def create_analysis(
         and row.updated_at is not None
         and row.updated_at > now - ANALYSIS_RUNNING_TTL
     ):
+        row = await _await_running_analysis(db, owner_uid, cache_key)
         return {"analysis": row.to_dict(), "reused": True}
     if row is None:
         row = ImageDesignAnalysis(
@@ -301,6 +333,12 @@ async def create_analysis(
             )
         )
         if existing is not None:
+            if (
+                existing.status == "running"
+                and existing.updated_at is not None
+                and existing.updated_at > utc_now_naive() - ANALYSIS_RUNNING_TTL
+            ):
+                existing = await _await_running_analysis(db, owner_uid, cache_key)
             return {"analysis": existing.to_dict(), "reused": True}
         raise
     try:
@@ -343,14 +381,18 @@ async def get_analysis(db: AsyncSession, user: User, analysis_id: str) -> dict[s
 
 def _material_roles(payload: ImageDesignRefinementCreate) -> list[tuple[str, str]]:
     if isinstance(payload, StyleTransferRefinementCreate):
-        return [("structure_source", payload.source_material_id)]
+        roles = [("structure_source", payload.source_material_id)]
+        roles.extend(("structure_source", material_id) for material_id in payload.supplemental_material_ids)
+        return roles
     if isinstance(payload, RoomAdaptRefinementCreate):
         return [
             ("style_reference", payload.style_reference_material_id),
             ("structure_source", payload.raw_structure_material_id),
         ]
     if isinstance(payload, CrossSpaceRefinementCreate):
-        return [("cross_space_style", payload.style_reference_material_id)]
+        roles = [("cross_space_style", payload.style_reference_material_id)]
+        roles.extend(("cross_space_style", material_id) for material_id in payload.supplemental_style_material_ids)
+        return roles
     raise TypeError("unsupported image design workflow")
 
 
@@ -407,24 +449,36 @@ async def create_refinement(
         if parent is None or parent.workflow != payload.workflow or parent.status != "completed":
             raise _error("IMAGE_DESIGN_REFINEMENT_INVALID", "父级优化记录不存在或工作流不匹配", 409)
 
-    analyses: dict[str, dict[str, Any]] = {}
-    analysis_ids: list[str] = []
+    from yuxi.storage.postgres.manager import pg_manager
+
+    role_material_pairs = _material_roles(payload)
     materials: list[dict[str, str]] = []
-    for role, material_id in _material_roles(payload):
+    for role, material_id in role_material_pairs:
         _, asset = await _get_material_item_and_asset(db, owner_uid, material_id)
         sha256 = asset.sha256
         if not sha256:
             data, _content_type = await read_material_bytes_or_thumbnail(asset)
             sha256 = hashlib.sha256(data).hexdigest()
         materials.append({"role": role, "material_id": material_id, "asset_sha256": sha256})
-        response = await create_analysis(
-            db,
-            user,
-            ImageDesignAnalysisCreate(material_item_id=material_id, role=role),
-        )
+
+    async def _analyze_in_own_session(role: str, material_id: str) -> dict[str, Any]:
+        async with pg_manager.get_async_session_context() as analysis_db:
+            return await create_analysis(
+                analysis_db,
+                user,
+                ImageDesignAnalysisCreate(material_item_id=material_id, role=role),
+            )
+
+    analysis_responses = await asyncio.gather(
+        *[_analyze_in_own_session(role, material_id) for role, material_id in role_material_pairs]
+    )
+    analyses: dict[str, dict[str, Any]] = {}
+    analysis_ids: list[str] = []
+    for (role, material_id), response in zip(role_material_pairs, analysis_responses, strict=True):
         analysis = response["analysis"]
         if analysis["status"] != "completed":
             raise _error("IMAGE_DESIGN_ANALYSIS_PENDING", "图片正在分析，请稍后重试", 409, retryable=True)
+        analyses[material_id] = analysis["result"]
         analyses[role] = analysis["result"]
         analysis_ids.append(analysis["id"])
 

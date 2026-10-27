@@ -87,6 +87,36 @@ def test_transfer_missing_addons_defaults_to_empty_list():
     assert MpPolishCreate(**transfer_payload()).extra_element == []
 
 
+def test_redesign_accepts_multiple_source_images():
+    payload = MpPolishCreate(
+        workflow="redesign",
+        images=[
+            {"role": "source", "library_item_id": "src-1"},
+            {"role": "source", "library_item_id": "src-2"},
+            {"role": "source", "library_item_id": "src-3"},
+        ],
+        description="统一暖色",
+        style="现代简约",
+    )
+    converted = refinement_payload(payload)
+    assert converted.source_material_id == "src-1"
+    assert converted.supplemental_material_ids == ["src-2", "src-3"]
+
+
+def test_transfer_accepts_multiple_reference_images():
+    payload = MpPolishCreate(
+        **transfer_payload(
+            images=[
+                {"role": "reference", "library_item_id": "ref-1"},
+                {"role": "reference", "library_item_id": "ref-2"},
+            ]
+        )
+    )
+    converted = refinement_payload(payload)
+    assert converted.style_reference_material_id == "ref-1"
+    assert converted.supplemental_style_material_ids == ["ref-2"]
+
+
 @pytest.mark.parametrize("elements", ["壁炉居中", None, [42], [" "], ["壁炉居中"] * 13])
 def test_transfer_rejects_invalid_items_and_more_than_twelve(elements):
     with pytest.raises(ValidationError):

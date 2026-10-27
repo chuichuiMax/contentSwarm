@@ -117,7 +117,7 @@ test('gallery then upload survives native-picker return and submits the new imag
   await page.show()
   page.vm.pickerSlot = 'source'
   page.vm.pickerSourceRole = 'source'
-  page.vm.selectedFolderItem = { id: 'material-old' }
+  page.vm.selectedFolderItems = [{ id: 'material-old' }]
   await page.vm.confirmPicker()
   assert.equal(page.vm.slotImage('source').id, oldPhoto.id)
   page.vm.chooseUpload('source')
@@ -139,7 +139,7 @@ test('upload then gallery also replaces the current photo', async () => {
   await page.choice.success({ tempFilePaths: ['wxfile://new-photo'] })
   page.vm.pickerSlot = 'source'
   page.vm.pickerSourceRole = 'source'
-  page.vm.selectedFolderItem = { id: 'material-old' }
+  page.vm.selectedFolderItems = [{ id: 'material-old' }]
   await page.vm.confirmPicker()
   assert.equal(page.vm.slotImage('source').id, oldPhoto.id)
   assert.equal(page.calls.tasks, 0)

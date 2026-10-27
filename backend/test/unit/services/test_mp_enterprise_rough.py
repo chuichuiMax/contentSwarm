@@ -203,7 +203,7 @@ async def test_mp_rough_deletion_checks_uploader_for_every_role(monkeypatch, rol
 
 
 @pytest.mark.asyncio
-async def test_pc_admin_still_cannot_remove_foreign_rough_item(monkeypatch):
+async def test_pc_admin_can_remove_foreign_rough_item(monkeypatch):
     gallery = rough_gallery()
     item = ContentMaterialLibraryItem(
         id="photo",
@@ -217,8 +217,7 @@ async def test_pc_admin_still_cannot_remove_foreign_rough_item(monkeypatch):
     monkeypatch.setattr(materials, "MaterialLibraryRepository", lambda *a, **k: repo)
     monkeypatch.setattr(materials, "material_access_mode", AsyncMock(return_value="full"))
     db = SimpleNamespace(commit=AsyncMock(), add=Mock())
-    with pytest.raises(HTTPException) as failure:
-        await materials.delete_material_item(db, SimpleNamespace(uid="alice", role="admin", id=1), item.id)
-    assert failure.value.status_code == 403
-    assert item.deleted_at is None
-    db.commit.assert_not_awaited()
+    result = await materials.delete_material_item(db, SimpleNamespace(uid="alice", role="admin", id=1), item.id)
+    assert result["success"] is True and result["object_deleted"] is False
+    assert item.deleted_at is not None
+    db.commit.assert_awaited_once()

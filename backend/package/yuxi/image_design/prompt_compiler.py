@@ -37,6 +37,26 @@ def _analysis(analyses: dict[str, Any], role: str) -> dict[str, Any]:
     return value.model_dump(mode="json") if hasattr(value, "model_dump") else dict(value)
 
 
+def _material_analysis(analyses: dict[str, Any], material_id: str, *, fallback_role: str) -> dict[str, Any]:
+    if material_id in analyses:
+        value = analyses[material_id]
+        return value.model_dump(mode="json") if hasattr(value, "model_dump") else dict(value)
+    return _analysis(analyses, fallback_role)
+
+
+def _merge_list_fields(*items: dict[str, Any], keys: tuple[str, ...]) -> dict[str, Any]:
+    merged: dict[str, Any] = {}
+    for key in keys:
+        merged[key] = _unique(
+            [entry for item in items for entry in (item.get(key) or []) if isinstance(entry, str)]
+        )
+    for key, value in items[0].items() if items else {}:
+        if key in keys or key in merged:
+            continue
+        merged[key] = value
+    return merged
+
+
 def _unique(values: list[str]) -> list[str]:
     return list(dict.fromkeys(value.strip() for value in values if isinstance(value, str) and value.strip()))
 
@@ -120,10 +140,23 @@ def build_prompt_plan(payload: RefinementPayload, analyses: dict[str, Any]) -> P
     addon_profiles: list[dict[str, str]] = []
 
     if isinstance(payload, StyleTransferRefinementCreate):
-        structure = _analysis(analyses, "structure_source")
-        image_roles.append(
-            {"order": "1", "role": "structure_source", "material_id": payload.source_material_id, "label": "原房实拍图"}
+        source_ids = [payload.source_material_id, *payload.supplemental_material_ids]
+        structure_parts = [
+            _material_analysis(analyses, material_id, fallback_role="structure_source") for material_id in source_ids
+        ]
+        structure = _merge_list_fields(
+            *structure_parts,
+            keys=("preserve", "structural_features", "camera", "room_type", "materials", "palette"),
         )
+        for index, material_id in enumerate(source_ids, start=1):
+            image_roles.append(
+                {
+                    "order": str(index),
+                    "role": "structure_source",
+                    "material_id": material_id,
+                    "label": "原房实拍图" if index == 1 else f"原房实拍图（补充{index - 1}）",
+                }
+            )
         preserve = _unique(list(structure.get("preserve") or []) + list(structure.get("structural_features") or []))
         camera = _unique(list(structure.get("camera") or []))
         if payload.use_prompt_as_style:
@@ -136,8 +169,12 @@ def build_prompt_plan(payload: RefinementPayload, analyses: dict[str, Any]) -> P
             materials = list(selected["materials"])
             palette = list(selected["palette"])
     elif isinstance(payload, RoomAdaptRefinementCreate):
-        style = _analysis(analyses, "style_reference")
-        structure = _analysis(analyses, "structure_source")
+        style = _material_analysis(
+            analyses, payload.style_reference_material_id, fallback_role="style_reference"
+        )
+        structure = _material_analysis(
+            analyses, payload.raw_structure_material_id, fallback_role="structure_source"
+        )
         image_roles.extend(
             [
                 {
@@ -165,15 +202,23 @@ def build_prompt_plan(payload: RefinementPayload, analyses: dict[str, Any]) -> P
         lighting = _unique(list(style.get("lighting") or []))
         camera = _unique(list(structure.get("camera") or []))
     else:
-        style = _analysis(analyses, "cross_space_style")
-        image_roles.append(
-            {
-                "order": "1",
-                "role": "cross_space_style",
-                "material_id": payload.style_reference_material_id,
-                "label": "跨空间风格参考图",
-            }
+        reference_ids = [payload.style_reference_material_id, *payload.supplemental_style_material_ids]
+        style_parts = [
+            _material_analysis(analyses, material_id, fallback_role="cross_space_style") for material_id in reference_ids
+        ]
+        style = _merge_list_fields(
+            *style_parts,
+            keys=("transferable_features", "materials", "palette", "lighting", "exclusions"),
         )
+        for index, material_id in enumerate(reference_ids, start=1):
+            image_roles.append(
+                {
+                    "order": str(index),
+                    "role": "cross_space_style",
+                    "material_id": material_id,
+                    "label": "跨空间风格参考图" if index == 1 else f"风格参考图（补充{index - 1}）",
+                }
+            )
         style_profile = {
             "id": "visual_reference",
             "label": style.get("style") or "参考图可迁移风格",
@@ -223,10 +268,17 @@ def build_prompt_plan(payload: RefinementPayload, analyses: dict[str, Any]) -> P
 def validate_plan_coverage(plan: PromptPlan) -> dict[str, list[str]]:
     missing: list[str] = []
     unexpected: list[str] = []
-    expected_roles = [item[0] for item in WORKFLOW_PROFILES[plan.workflow]["roles"]]
-    actual_roles = [item.get("role") for item in plan.image_roles]
-    if actual_roles != expected_roles:
+    profile_roles = WORKFLOW_PROFILES[plan.workflow]["roles"]
+    allowed_roles = {role for role, _ in profile_roles}
+    if len(plan.image_roles) < len(profile_roles):
         missing.append("image_roles")
+    else:
+        for index, (expected_role, _) in enumerate(profile_roles):
+            if plan.image_roles[index].get("role") != expected_role:
+                missing.append("image_roles")
+                break
+        if any(item.get("role") not in allowed_roles for item in plan.image_roles):
+            missing.append("image_roles")
     if not plan.hard_constraints:
         missing.append("hard_constraints")
     if not plan.style_profile:
@@ -255,21 +307,32 @@ def validate_plan_coverage(plan: PromptPlan) -> dict[str, list[str]]:
     return {"missing": missing, "unexpected": unexpected}
 
 
-def _role_clause(workflow: str) -> str:
-    if workflow == "room_adapt":
+def _role_clause(plan: PromptPlan) -> str:
+    count = len(plan.image_roles)
+    if plan.workflow == "room_adapt":
         return (
             "第 1 张图仅作为设计风格参考；"
             "第 2 张毛坯实拍图是结构、门窗、空间比例、镜头与透视的唯一基准；"
             "发生冲突时以第 2 张图为准。"
         )
-    if workflow == "style_transfer":
-        return "第 1 张图是原房结构、门窗、空间比例、镜头与透视的唯一基准。"
-    return "第 1 张图只作为可迁移的风格、材质、配色与光照语言参考，不沿用其空间类型和家具布局。"
+    if plan.workflow == "style_transfer":
+        if count <= 1:
+            return "第 1 张图是原房结构、门窗、空间比例、镜头与透视的唯一基准。"
+        return (
+            "第 1 张图是原房结构、门窗、空间比例、镜头与透视的主基准；"
+            f"其余 {count - 1} 张同空间实拍仅用于补充材质、软装与细节理解，不得改变结构基准。"
+        )
+    if count <= 1:
+        return "第 1 张图只作为可迁移的风格、材质、配色与光照语言参考，不沿用其空间类型和家具布局。"
+    return (
+        "多张参考图只作为可迁移的风格、材质、配色与光照语言参考，不沿用其空间类型和家具布局；"
+        "输出空间类型、布局和附加元素完全服从当前选择。"
+    )
 
 
 def _compile_edited_prompt(plan: PromptPlan, aspect_ratio: str | None) -> str:
     body = re.sub(r"(?m)^画幅：.*(?:\n|$)", "", plan.edited_prompt or "").strip()
-    required = [_role_clause(plan.workflow), *plan.hard_constraints]
+    required = [_role_clause(plan), *plan.hard_constraints]
     style_label = str(plan.style_profile.get("label") or "").strip()
     if style_label:
         required.append(style_label)
@@ -291,7 +354,7 @@ def _compile_edited_prompt(plan: PromptPlan, aspect_ratio: str | None) -> str:
 def compile_prompt(plan: PromptPlan, aspect_ratio: str | None = None) -> str:
     if plan.edited_prompt:
         return _compile_edited_prompt(plan, aspect_ratio)
-    role_clause = _role_clause(plan.workflow)
+    role_clause = _role_clause(plan)
 
     style_label = str(plan.style_profile.get("label") or "参考图设计语言")
     style_traits = _unique(list(plan.style_profile.get("traits") or []))

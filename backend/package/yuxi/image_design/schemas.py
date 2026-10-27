@@ -67,11 +67,20 @@ class RefinementBase(StrictModel):
         return self
 
 
+MP_MAX_INPUT_IMAGES = 9
+
+
 class StyleTransferRefinementCreate(RefinementBase):
     workflow: Literal["style_transfer"]
     source_material_id: str = Field(min_length=1, max_length=80)
+    supplemental_material_ids: list[str] = Field(default_factory=list, max_length=MP_MAX_INPUT_IMAGES - 1)
     style_label: str | None = Field(default=None, max_length=80)
     use_prompt_as_style: bool = False
+
+    @field_validator("supplemental_material_ids")
+    @classmethod
+    def dedupe_supplemental(cls, value: list[str]) -> list[str]:
+        return list(dict.fromkeys(item.strip() for item in value if item and item.strip()))
 
     @model_validator(mode="after")
     def validate_style(self):
@@ -95,7 +104,13 @@ class RoomAdaptRefinementCreate(RefinementBase):
 class CrossSpaceRefinementCreate(RefinementBase):
     workflow: Literal["cross_space"]
     style_reference_material_id: str = Field(min_length=1, max_length=80)
+    supplemental_style_material_ids: list[str] = Field(default_factory=list, max_length=MP_MAX_INPUT_IMAGES - 1)
     target_space: str = Field(min_length=1, max_length=80)
+
+    @field_validator("supplemental_style_material_ids")
+    @classmethod
+    def dedupe_supplemental_style(cls, value: list[str]) -> list[str]:
+        return list(dict.fromkeys(item.strip() for item in value if item and item.strip()))
     layout: str = Field(min_length=1, max_length=80)
     addons: list[str] = Field(default_factory=list, max_length=12)
 

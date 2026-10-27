@@ -367,12 +367,16 @@ def map_quality(value: str) -> str:
 
 
 def refinement_payload(payload: MpPolishCreate):
-    materials = {image.role: image.library_item_id for image in payload.images}
+    by_role: dict[str, list[str]] = {}
+    for image in payload.images:
+        by_role.setdefault(image.role, []).append(image.library_item_id)
     common = {"user_prompt": payload.description or "按所选图片要求生成"}
     if payload.workflow == "redesign":
+        source_ids = by_role["source"]
         return StyleTransferRefinementCreate(
             workflow="style_transfer",
-            source_material_id=materials["source"],
+            source_material_id=source_ids[0],
+            supplemental_material_ids=source_ids[1:],
             style_label=payload.style or None,
             use_prompt_as_style=not bool(payload.style),
             **common,
@@ -380,8 +384,8 @@ def refinement_payload(payload: MpPolishCreate):
     if payload.workflow == "adapt":
         return RoomAdaptRefinementCreate(
             workflow="room_adapt",
-            style_reference_material_id=materials["reference"],
-            raw_structure_material_id=materials["rough"],
+            style_reference_material_id=by_role["reference"][0],
+            raw_structure_material_id=by_role["rough"][0],
             **common,
         )
     space = payload.target_space if payload.target_space in SPACE_LABELS else MP_SPACE_IDS.get(payload.target_space)
@@ -394,9 +398,11 @@ def refinement_payload(payload: MpPolishCreate):
     layout = layout_ids.get(payload.layout_type)
     if not space or not layout or any(element not in addon_ids for element in payload.extra_element):
         raise _error("IMAGE_DESIGN_TRANSFER_OPTION_INVALID", "请选择目标空间对应的布局和附加元素", 422)
+    reference_ids = by_role["reference"]
     return CrossSpaceRefinementCreate(
         workflow="cross_space",
-        style_reference_material_id=materials["reference"],
+        style_reference_material_id=reference_ids[0],
+        supplemental_style_material_ids=reference_ids[1:],
         target_space=space,
         layout=layout,
         addons=list(dict.fromkeys(addon_ids[element] for element in payload.extra_element)),
