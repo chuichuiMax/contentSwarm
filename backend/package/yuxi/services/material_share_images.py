@@ -90,3 +90,14 @@ async def write_share_image_cache(token: str, variant: str, data: bytes) -> None
         await redis.set(f"material-share:v1:{token}:{variant}", data, ex=SHARE_IMAGE_CACHE_TTL)
     except (RedisError, RuntimeError):
         logger.warning("Share image cache write failed", exc_info=True)
+
+
+async def delete_share_image_cache(token: str, display_orders: list[int]) -> None:
+    try:
+        redis = await get_binary_redis_client()
+        keys = [f"material-share:v1:{token}:cover"]
+        keys.extend(f"material-share:v1:{token}:display:{order}" for order in display_orders)
+        await redis.delete(*keys)
+    except (RedisError, RuntimeError):
+        # Public image endpoints check the committed share before consulting Redis.
+        logger.warning("Share deleted; image cache will expire", exc_info=True)

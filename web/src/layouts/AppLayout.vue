@@ -234,11 +234,18 @@ const mainList = computed(() => {
     activeIcon: ClipboardList,
     permissionAny: ['customer_lead.view_list']
   })
+  dataStatsChildren.push({
+    name: '案例分享',
+    path: '/case-shares',
+    icon: ClipboardList,
+    activeIcon: ClipboardList,
+    permissionAny: ['customer_lead.view_list']
+  })
   items.push({
     name: '数据统计',
     icon: ChartColumn,
     activeIcon: ChartColumn,
-    activePaths: ['/traffic', '/customer-leads'],
+    activePaths: ['/traffic', '/customer-leads', '/case-shares'],
     children: dataStatsChildren
   })
 

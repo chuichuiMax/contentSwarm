@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from fastapi import HTTPException
 
 from yuxi.services import material_share_jobs as jobs
 
@@ -36,3 +37,27 @@ async def test_inconsistent_completed_job_is_an_error_not_an_empty_case(monkeypa
     db = SimpleNamespace(get=AsyncMock(return_value=SimpleNamespace(status="completed")))
     with pytest.raises(RuntimeError, match="no committed snapshot"):
         await jobs.read_material_share_state(db, "a" * 64)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("concurrent_delete", [False, True])
+async def test_deleted_share_is_gone_including_deletion_between_reads(monkeypatch, concurrent_delete):
+    monkeypatch.setattr(
+        jobs,
+        "MaterialLibraryRepository",
+        lambda db: SimpleNamespace(
+            get_share_with_items=AsyncMock(return_value=(None, [])),
+        ),
+    )
+    states = (
+        [SimpleNamespace(status="completed"), SimpleNamespace(status="deleted")]
+        if concurrent_delete
+        else [
+            SimpleNamespace(status="deleted"),
+        ]
+    )
+    db = SimpleNamespace(get=AsyncMock(side_effect=states))
+    with pytest.raises(HTTPException) as error:
+        await jobs.read_material_share_state(db, "a" * 64)
+    assert error.value.status_code == 410
+    assert error.value.detail["error"]["code"] == "MATERIAL_SHARE_DELETED"

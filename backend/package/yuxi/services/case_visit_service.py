@@ -191,6 +191,11 @@ async def submit_booking(
         if session is None:
             raise booking_error(401, "VISITOR_SESSION_EXPIRED", "预约会话已过期，请重新预约")
         repo = CaseVisitRepository(db)
+        # Serialize booking writes with share deletion, including idempotent receipts.
+        # Re-read after taking the lock; the earlier share may already be deleted.
+        share = await repo.share(token, for_update=True)
+        if share is None:
+            raise booking_error(404, "MATERIAL_SHARE_NOT_FOUND", "案例分享不存在或已失效")
         submitted = await repo.submission(session_id)
         if submitted:
             return {

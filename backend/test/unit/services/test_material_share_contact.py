@@ -131,8 +131,12 @@ async def test_same_case_shares_snapshot_each_sharers_contact(monkeypatch, pc_ac
     monkeypatch.setattr(service, "_audit_material", lambda *_args, **_kwargs: None)
     db = SimpleNamespace(commit=AsyncMock(), rollback=AsyncMock())
     employees = [
-        ContentEmployee(name="测试分享人甲", login_account="19900000001"),
-        ContentEmployee(name="测试分享人乙", login_account="19900000002"),
+        ContentEmployee(
+            name="测试分享人甲", employee_code="0001", current_branch="原门店", login_account="19900000001"
+        ),
+        ContentEmployee(
+            name="测试分享人乙", employee_code="0002", current_branch="乙门店", login_account="19900000002"
+        ),
     ]
 
     for employee in employees:
@@ -140,9 +144,10 @@ async def test_same_case_shares_snapshot_each_sharers_contact(monkeypatch, pc_ac
         await service.create_material_share(
             db,
             owner,
-            service.MaterialShareCreate(item_ids=["case-image"], **(
-                {"contact_name": " 联系人乙 ", "contact_phone": " 13800000003 "} if custom_contact else {}
-            )),
+            service.MaterialShareCreate(
+                item_ids=["case-image"],
+                **({"contact_name": " 联系人乙 ", "contact_phone": " 13800000003 "} if custom_contact else {}),
+            ),
             actor_user=actor if pc_actor else None,
             sharer_employee=None if pc_actor else employee,
             source_platform="pc" if pc_actor else "mp",
@@ -152,6 +157,11 @@ async def test_same_case_shares_snapshot_each_sharers_contact(monkeypatch, pc_ac
     assert all(share.sharer_department_id == (2 if pc_actor else 1) for share in snapshots)
     employees[0].name = "修改后的姓名"
     employees[0].login_account = "19900000003"
+    employees[0].current_branch = "新门店"
+
+    assert [(share.sharer_employee_name, share.sharer_employee_code, share.sharer_branch) for share in snapshots] == [
+        ("测试分享人甲", "0001", "原门店"), ("测试分享人乙", "0002", "乙门店"),
+    ]
 
     assert [(share.sharer_name, share.sharer_phone) for share in snapshots] == ([
         ("联系人乙", "13800000003"), ("联系人乙", "13800000003"),

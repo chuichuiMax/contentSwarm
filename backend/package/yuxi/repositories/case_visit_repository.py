@@ -17,8 +17,11 @@ class CaseVisitRepository:
     def __init__(self, db: AsyncSession):
         self.db = db
 
-    async def share(self, token: str) -> ContentMaterialShare | None:
-        return await self.db.scalar(select(ContentMaterialShare).where(ContentMaterialShare.token == token))
+    async def share(self, token: str, *, for_update: bool = False) -> ContentMaterialShare | None:
+        query = select(ContentMaterialShare).where(ContentMaterialShare.token == token)
+        if for_update:
+            query = query.with_for_update().execution_options(populate_existing=True)
+        return await self.db.scalar(query)
 
     async def upsert(self, values: dict) -> str:
         statement = insert(ContentCaseVisitLead).values(**values)

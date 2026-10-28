@@ -1022,8 +1022,7 @@ async def test_second_level_decoration_gallery_share_keeps_ordered_snapshots_and
     card_cover = await test_client.get(f"/api/material-library/shares/{share['token']}/cover.jpg")
     assert card_cover.status_code == 200, card_cover.text
     assert card_cover.headers["content-type"] == "image/jpeg"
-    assert "public" in card_cover.headers["cache-control"]
-    assert "immutable" in card_cover.headers["cache-control"]
+    assert card_cover.headers["cache-control"] == "no-cache, must-revalidate"
     with Image.open(io.BytesIO(card_cover.content)) as image:
         assert image.size == (500, 400)
 
@@ -1062,8 +1061,7 @@ async def test_second_level_decoration_gallery_share_keeps_ordered_snapshots_and
     assert first_snapshot.status_code == 200, first_snapshot.text
     assert second_snapshot.headers["content-type"] == "image/webp"
     assert "inline" in second_snapshot.headers["content-disposition"]
-    assert "public" in second_snapshot.headers["cache-control"]
-    assert "immutable" in second_snapshot.headers["cache-control"]
+    assert second_snapshot.headers["cache-control"] == "no-cache, must-revalidate"
     with Image.open(io.BytesIO(second_snapshot.content)) as image:
         assert image.size == (1080, 1440)
     with Image.open(io.BytesIO(first_snapshot.content)) as image:
@@ -1072,8 +1070,7 @@ async def test_second_level_decoration_gallery_share_keeps_ordered_snapshots_and
     display_image = await test_client.get(f"/api/material-library/shares/{share['token']}/images/1.webp")
     assert display_image.status_code == 200, display_image.text
     assert display_image.headers["content-type"] == "image/webp"
-    assert "public" in display_image.headers["cache-control"]
-    assert "immutable" in display_image.headers["cache-control"]
+    assert display_image.headers["cache-control"] == "no-cache, must-revalidate"
     with Image.open(io.BytesIO(display_image.content)) as image:
         assert image.format == "WEBP"
         assert image.size == (1080, 1440)

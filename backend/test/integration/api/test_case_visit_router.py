@@ -148,7 +148,7 @@ async def visit_api(monkeypatch):
         await asyncio.sleep(0.01)
     try:
         async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}") as client:
-            yield SimpleNamespace(client=client, tokens=tokens, mp_tokens=mp_tokens, sessions=sessions)
+            yield SimpleNamespace(client=client, tokens=tokens, mp_tokens=mp_tokens, sessions=sessions, app=app)
     finally:
         server.should_exit = True
         await task

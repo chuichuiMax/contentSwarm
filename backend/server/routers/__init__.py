@@ -32,6 +32,7 @@ from server.routers.target_audience_router import content_target_audiences
 from server.routers.resident_population_router import content_resident_populations
 from server.routers.mp_router import mp
 from server.routers.case_visit_router import case_visits
+from server.routers.case_share_router import case_shares
 from server.routers.material_library_router import material_library, public_share_router as public_share_router
 from server.routers.material_integration_router import material_integration
 from server.routers.dangjia_router import dangjia
@@ -76,6 +77,7 @@ router.include_router(material_library)  # /api/material-library/* 素材库
 router.include_router(material_integration)  # /api/integrations/material-library/* 素材库对外只读
 router.include_router(mp)  # /api/mp/* 获客小程序
 router.include_router(case_visits)  # 访客预约与客资报表
+router.include_router(case_shares)  # PC 案例分享统计
 router.include_router(dangjia)  # /api/dangjia/* 当家外部内容接入
 
 if not _LITE_MODE:

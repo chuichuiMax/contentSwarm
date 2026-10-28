@@ -179,6 +179,18 @@ async def test_phone_failure_does_not_save_customer(booking):
 
 
 @pytest.mark.asyncio
+async def test_share_deleted_after_initial_read_cannot_book_or_replay_receipt(booking):
+    booking.repo.share.side_effect = [booking.repo.share.return_value, None]
+    with pytest.raises(HTTPException) as error:
+        await service.submit_booking(booking.db, "share-a", "session-a", None, "code-a", None)
+    assert error.value.status_code == 404
+    booking.repo.share.assert_awaited_with("share-a", for_update=True)
+    booking.repo.submission.assert_not_awaited()
+    booking.phone.assert_not_awaited()
+    booking.repo.upsert.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_malformed_nickname_does_not_consume_phone_code(booking):
     with pytest.raises(HTTPException):
         await service.submit_booking(booking.db, "share-a", "session-a", " ", "code", avatar_bytes())

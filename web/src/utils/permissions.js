@@ -36,6 +36,7 @@ const HOME_CANDIDATES = [
 
 const SCOPED_PATH_RULES = [
   { prefix: '/customer-leads', any: ['customer_lead.view_list'] },
+  { prefix: '/case-shares', any: ['customer_lead.view_list'] },
   { prefix: '/materials', any: [ROUGH_UPLOAD_PERMISSION] },
   { prefix: '/content/image-design', any: [IMAGE_DESIGN_PAGE_PERMISSION] },
   { prefix: '/hycanvas', any: [] },
