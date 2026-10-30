@@ -87,6 +87,11 @@ export default defineConfig(({ mode }) => {
         '^/locales': {
           target: env.VITE_HYCANVAS_FRONTEND_URL || 'http://hycanvas-app:3000',
           changeOrigin: true
+        },
+        '^/realtime': {
+          target: env.VITE_HYCANVAS_BACKEND_URL || 'http://hycanvas-app:8005',
+          changeOrigin: true,
+          ws: true
         }
       },
       watch: {

@@ -729,6 +729,13 @@ function pushRecentFont(family: string) {
 const cssStack = (e: { family: string; category: string; system?: boolean }) =>
   e.system ? "system-ui, sans-serif" : `'${e.family}', ${e.category === "serif" ? "serif" : e.category === "monospace" ? "monospace" : "sans-serif"}`;
 
+const WORKSPACE_FONT_TAG = "oc-font";
+
+function cssCustomFontFamily(family: string): string {
+  const safe = family.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+  return `'${safe}', sans-serif`;
+}
+
 // Curated heading + subheading font pairings (inserted as one two-paragraph box).
 const pairings = (): { name: string; head: string; headFont: string; sub: string; subFont: string }[] => [
   { name: tr("editor.bold_clean"), head: tr("editor.heading"), headFont: "Montserrat", sub: tr("editor.your_subheading_here"), subFont: "Open Sans" },
@@ -796,7 +803,27 @@ function FontListSentinel({ onMore }: { onMore: () => void }) {
   return <div ref={ref} aria-hidden className="h-2" />;
 }
 
-export function TextPanel() {
+function familyFromFontFilename(name: string): string {
+  return name.replace(/\.[^.]+$/, "").replace(/[_-]+/g, " ").trim() || "Custom font";
+}
+
+function uniqueFontFamily(base: string, taken: Set<string>): string {
+  let family = base;
+  let n = 2;
+  while (taken.has(family.toLowerCase())) {
+    family = `${base} (${n++})`;
+  }
+  taken.add(family.toLowerCase());
+  return family;
+}
+
+const MAX_FONT_UPLOAD_BYTES = 20 * 1024 * 1024;
+
+function isFontUploadFile(file: File): boolean {
+  return /\.(ttf|otf|woff2?)$/i.test(file.name) || file.type.startsWith("font/");
+}
+
+export function TextPanel({ workspaceId }: { workspaceId?: string | null }) {
   const toast = useToast();
   const addNode = useEditor((s) => s.addNode);
   const [query, setQuery] = useState("");
@@ -818,27 +845,131 @@ export function TextPanel() {
   if (fontQuerySeen !== debouncedQuery) { setFontQuerySeen(debouncedQuery); setFontLimit(FONT_PAGE); }
   const showMoreFonts = useCallback(() => setFontLimit((n) => n + FONT_PAGE), []);
   const fontFileRef = useRef<HTMLInputElement>(null);
+  const [fontUploading, setFontUploading] = useState(false);
+  const [workspaceFonts, setWorkspaceFonts] = useState<{ id: string; family: string; url: string }[]>([]);
+  const workspaceFamiliesRef = useRef(new Set<string>());
+  const workspaceFontLoadGen = useRef(0);
 
-  // Upload a custom font (FR-6): read the file, register it into document.fonts
-  // (so the canvas can draw it) and persist it for next session, then apply it.
-  async function onFontFile(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (fontFileRef.current) fontFileRef.current.value = "";
-    if (!file) return;
-    const family = file.name.replace(/\.[^.]+$/, "").replace(/[_-]+/g, " ").trim() || "Custom font";
-    const reader = new FileReader();
-    reader.onload = () => {
-      const dataUrl = String(reader.result);
-      void fonts.registerCustomFont(family, dataUrl).then((ok) => {
-        if (ok) {
-          // Embed the font in the design (data URL) so it loads cross-device when
-          // the design is opened elsewhere, not just in this browser's localStorage.
-          useEditor.getState().addDocFont({ id: `font-${crypto.randomUUID()}`, family, url: dataUrl });
-          applyFont(family); force(); toast.success(`Added font “${family}”.`);
-        } else toast.error(tr("editor.couldnt_load_that_font_file"));
+  const refreshWorkspaceFonts = useCallback(async () => {
+    if (!workspaceId) {
+      workspaceFamiliesRef.current = new Set();
+      setWorkspaceFonts([]);
+      return;
+    }
+    const gen = ++workspaceFontLoadGen.current;
+    const tagged = await oc.listAssets(workspaceId, { tag: WORKSPACE_FONT_TAG }).catch(() => [] as UploadedAsset[]);
+    const all = await oc.listAssets(workspaceId).catch(() => [] as UploadedAsset[]);
+    const byId = new Map<string, UploadedAsset>();
+    for (const a of [...tagged, ...all.filter((x) => x.kind === "font")]) byId.set(a.id, a);
+    const fontAssets = [...byId.values()];
+    if (gen !== workspaceFontLoadGen.current) return;
+    fontAssets.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    const taken = new Set<string>();
+    const entries: { id: string; family: string; url: string }[] = [];
+    for (const a of fontAssets) {
+      const base = familyFromFontFilename(a.filename ?? "font");
+      const family = uniqueFontFamily(base, taken);
+      entries.push({ id: a.id, family, url: resolveAssetUrl(a.url) });
+    }
+    if (gen !== workspaceFontLoadGen.current) return;
+    workspaceFamiliesRef.current = new Set(entries.map((e) => e.family.toLowerCase()));
+    setWorkspaceFonts(entries);
+  }, [workspaceId]);
+
+  useEffect(() => { void refreshWorkspaceFonts(); }, [refreshWorkspaceFonts]);
+
+  async function uploadWorkspaceFontFile(file: File, taken: Set<string>): Promise<"ok" | "upload_failed"> {
+    if (!workspaceId) return "upload_failed";
+    const baseFamily = familyFromFontFilename(file.name);
+    const family = uniqueFontFamily(baseFamily, taken);
+    try {
+      const dataUrl = await readAsDataUrl(file);
+      const asset = await uploadAssetWithProgress(workspaceId, {
+        filename: file.name,
+        dataBase64: dataUrl.split(",")[1] ?? "",
       });
-    };
-    reader.readAsDataURL(file);
+      try {
+        await oc.updateAsset(asset.id, { tags: [...new Set([...(asset.tags ?? []), WORKSPACE_FONT_TAG])] });
+      } catch { /* kind=font fallback */ }
+      const url = resolveAssetUrl(asset.url);
+      workspaceFamiliesRef.current.add(family.toLowerCase());
+      setWorkspaceFonts((cur) => [{ id: asset.id, family, url }, ...cur.filter((x) => x.id !== asset.id)]);
+      useEditor.getState().addDocFont({ id: asset.id, family, url });
+      return "ok";
+    } catch {
+      return "upload_failed";
+    }
+  }
+
+  async function uploadLocalFontFile(file: File, taken: Set<string>): Promise<"ok" | "load_failed"> {
+    const family = uniqueFontFamily(familyFromFontFilename(file.name), taken);
+    try {
+      const dataUrl = await readAsDataUrl(file);
+      const loaded = await fonts.registerCustomFont(family, dataUrl);
+      if (!loaded) return "load_failed";
+      useEditor.getState().addDocFont({ id: `font-${crypto.randomUUID()}`, family, url: dataUrl });
+      return "ok";
+    } catch {
+      return "load_failed";
+    }
+  }
+
+  // Upload one or many fonts (FR-6). Workspace copies go to FONT assets; otherwise localStorage.
+  async function uploadFontFiles(raw: FileList | File[]) {
+    const picked = [...raw];
+    if (!picked.length) return;
+    const fontFiles = picked.filter(isFontUploadFile);
+    if (!fontFiles.length) {
+      toast.error(tr("editor.only_font_files_can_be_uploaded"));
+      return;
+    }
+    if (fontFiles.length < picked.length) {
+      toast.error(tr("editor.skipped_non_font_files", { count: picked.length - fontFiles.length }));
+    }
+    setFontUploading(true);
+    let ok = 0;
+    let tooLarge = 0;
+    let loadFailed = 0;
+    let uploadFailed = 0;
+    const taken = new Set([...workspaceFamiliesRef.current, ...fonts.customFamilies().map((f) => f.toLowerCase())]);
+    try {
+      for (const file of fontFiles) {
+        if (file.size > MAX_FONT_UPLOAD_BYTES) {
+          tooLarge++;
+          continue;
+        }
+        if (workspaceId) {
+          const result = await uploadWorkspaceFontFile(file, taken);
+          if (result === "ok") ok++;
+          else uploadFailed++;
+        } else {
+          const result = await uploadLocalFontFile(file, taken);
+          if (result === "ok") ok++;
+          else loadFailed++;
+        }
+      }
+    } finally {
+      setFontUploading(false);
+    }
+    if (ok > 0) {
+      toast.success(
+        workspaceId ? tr("editor.workspace_fonts_added", { count: ok }) : tr("editor.local_fonts_added", { count: ok }),
+      );
+    }
+    if (tooLarge) toast.error(tr("editor.font_uploads_skipped_too_large", { count: tooLarge }));
+    if (loadFailed) toast.error(tr("editor.n_font_uploads_failed_load", { count: loadFailed }));
+    if (uploadFailed) toast.error(tr("editor.n_font_uploads_failed", { count: uploadFailed }));
+    if (!ok && !tooLarge && loadFailed + uploadFailed === fontFiles.length) {
+      toast.error(tr("editor.couldnt_upload_that_font"));
+    }
+    force();
+  }
+
+  function onFontFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = e.target.files;
+    if (fontFileRef.current) fontFileRef.current.value = "";
+    if (!files?.length) return;
+    void uploadFontFiles(files);
   }
 
   const addText = (text: string, fontSize: number, weight: number, family = "system") => {
@@ -872,6 +1003,16 @@ export function TextPanel() {
     else addText(tr("editor.your_text"), 32, 400, family); // addText toasts + frames the new box
   };
 
+  const applyWorkspaceFont = (entry: { family: string; url: string }) => {
+    void fonts.registerCustomFont(entry.family, entry.url, false).then((ok) => {
+      if (!ok) {
+        toast.error(tr("editor.couldnt_load_that_font_file"));
+        return;
+      }
+      applyFont(entry.family);
+    });
+  };
+
   const addPairing = (p: (ReturnType<typeof pairings>)[number]) => {
     fonts.ensure(p.headFont);
     fonts.ensure(p.subFont);
@@ -890,7 +1031,11 @@ export function TextPanel() {
 
   const results = searchFonts(debouncedQuery);
   const recents = recentFonts().map((f) => searchFonts(f).find((e) => e.family === f)).filter(Boolean) as FontCatalogEntry[];
-  const customFams = fonts.customFamilies().filter((f) => !debouncedQuery || f.toLowerCase().includes(debouncedQuery.toLowerCase()));
+  const wsKeys = workspaceFamiliesRef.current;
+  const workspaceFontList = workspaceFonts.filter((w) => !debouncedQuery || w.family.toLowerCase().includes(debouncedQuery.toLowerCase()));
+  const customFams = fonts.customFamilies().filter(
+    (f) => !wsKeys.has(f.toLowerCase()) && (!debouncedQuery || f.toLowerCase().includes(debouncedQuery.toLowerCase())),
+  );
 
   return (
     <PanelShell title={tr("editor.text")}>
@@ -923,10 +1068,27 @@ export function TextPanel() {
               </button>
             )}
           </div>
-          <input ref={fontFileRef} type="file" accept=".ttf,.otf,.woff,.woff2,font/*" hidden onChange={(e) => void onFontFile(e)} />
-          <button onClick={() => fontFileRef.current?.click()} className="flex items-center justify-center gap-1.5 rounded-lg border border-neutral-200 py-2 text-xs font-medium text-neutral-600 hover:border-brand-300 hover:text-brand-ink">
-            <Upload size={13} /> {tr("editor.upload_a_font")}
+          <input ref={fontFileRef} type="file" accept=".ttf,.otf,.woff,.woff2,font/*" multiple hidden onChange={onFontFile} />
+          <button
+            type="button"
+            disabled={fontUploading}
+            onClick={() => fontFileRef.current?.click()}
+            className="flex items-center justify-center gap-1.5 rounded-lg border border-neutral-200 py-2 text-xs font-medium text-neutral-600 hover:border-brand-300 hover:text-brand-ink disabled:opacity-50"
+          >
+            <Upload size={13} /> {fontUploading ? tr("editor.uploading") : tr("editor.upload_a_font")}
           </button>
+          <p className="px-0.5 text-[10px] text-neutral-400">{tr("editor.upload_fonts_hint")}</p>
+          {workspaceFontList.length > 0 && (
+            <div className="flex flex-col gap-1">
+              <span className="px-1 text-[10px] uppercase tracking-wide text-neutral-300">{tr("editor.workspace_fonts")}</span>
+              {workspaceFontList.map((w) => (
+                <button key={`ws-${w.id}`} type="button" onClick={() => applyWorkspaceFont(w)} style={{ fontFamily: cssCustomFontFamily(w.family) }} className="flex w-full items-center justify-between rounded-lg bg-neutral-50 px-3 py-2 text-start text-[15px] text-neutral-800 hover:bg-brand-50" title={`Use ${w.family}`}>
+                  <span className="truncate">{w.family}</span>
+                  <span className="ms-2 shrink-0 text-[10px] uppercase tracking-wide text-neutral-300">{tr("editor.shared")}</span>
+                </button>
+              ))}
+            </div>
+          )}
           {customFams.length > 0 && (
             <div className="flex flex-col gap-1">
               <span className="px-1 text-[10px] uppercase tracking-wide text-neutral-300">{tr("editor.your_fonts")}</span>
@@ -946,7 +1108,9 @@ export function TextPanel() {
           )}
           <div className="flex flex-col gap-1">
             {results.slice(0, fontLimit).map((e) => <FontRow key={e.family} entry={e} onPick={applyFont} />)}
-            {results.length === 0 && <p className="px-1 py-2 text-xs text-neutral-400">No fonts match “{debouncedQuery}”.</p>}
+            {results.length === 0 && workspaceFontList.length === 0 && customFams.length === 0 && (
+              <p className="px-1 py-2 text-xs text-neutral-400">No fonts match “{debouncedQuery}”.</p>
+            )}
             {fontLimit < results.length && <FontListSentinel onMore={showMoreFonts} />}
           </div>
         </CollapsibleSection>

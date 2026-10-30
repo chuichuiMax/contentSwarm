@@ -17,12 +17,15 @@ const props = defineProps({
   selectedItemId: { type: String, default: '' },
   selectedGalleryId: { type: String, default: '' },
   disabled: { type: Boolean, default: false },
+  multiple: { type: Boolean, default: false },
+  maxSelection: { type: Number, default: 9 },
+  excludedItemIds: { type: Array, default: () => [] },
   title: { type: String, default: '选择素材库底图' },
   description: { type: String, default: '选择一张图片作为完整封面的底图' },
   confirmText: { type: String, default: '使用这张底图' }
 })
 
-const emit = defineEmits(['update:open', 'select'])
+const emit = defineEmits(['update:open', 'select', 'select-batch'])
 
 const router = useRouter()
 const galleries = ref([])
@@ -37,6 +40,7 @@ const page = ref(1)
 const pageSize = 24
 const total = ref(0)
 const pendingItem = ref(null)
+const pendingItems = ref([])
 const styleDraft = ref('')
 const styleApplied = ref('')
 const addressDraft = ref('')
@@ -54,6 +58,34 @@ const showingCaseFolders = computed(() => {
 const visibleCaseFolders = computed(() =>
   filterCaseGalleryChildren(galleryChildren(activeRootId.value), styleApplied.value, addressApplied.value)
 )
+const selectionLimit = computed(() => Math.max(0, props.maxSelection - props.excludedItemIds.length))
+
+function isItemSelected(item) {
+  return props.multiple
+    ? pendingItems.value.some((entry) => entry.id === item.id)
+    : pendingItem.value?.id === item.id
+}
+
+function togglePendingItem(item) {
+  if (props.excludedItemIds.includes(item.id)) {
+    message.warning('该图片已在参考列表中')
+    return
+  }
+  if (!props.multiple) {
+    pendingItem.value = item
+    return
+  }
+  const index = pendingItems.value.findIndex((entry) => entry.id === item.id)
+  if (index >= 0) {
+    pendingItems.value.splice(index, 1)
+    return
+  }
+  if (pendingItems.value.length >= selectionLimit.value) {
+    message.warning(`最多还能选择 ${selectionLimit.value} 张`)
+    return
+  }
+  pendingItems.value.push(item)
+}
 
 function galleryChildren(parentId) {
   return galleries.value.filter((item) => item.parent_id === parentId)
@@ -149,6 +181,7 @@ async function chooseGallery(galleryId) {
   activeGalleryId.value = galleryId
   if (switchingRoot) resetCaseFolderQuery()
   pendingItem.value = null
+  pendingItems.value = []
   queryInput.value = ''
   query.value = ''
   page.value = 1
@@ -176,7 +209,14 @@ function close() {
 }
 
 function confirm() {
-  if (!pendingItem.value || props.disabled) return
+  if (props.disabled) return
+  if (props.multiple) {
+    if (!pendingItems.value.length) return
+    emit('select-batch', [...pendingItems.value])
+    close()
+    return
+  }
+  if (!pendingItem.value) return
   emit('select', pendingItem.value)
   close()
 }
@@ -189,6 +229,7 @@ async function manageMaterials() {
 watch(() => props.open, (open) => {
   if (!open) return
   pendingItem.value = null
+  pendingItems.value = []
   queryInput.value = ''
   query.value = ''
   page.value = 1
@@ -279,14 +320,15 @@ onBeforeUnmount(() => {
             :key="item.id"
             type="button"
             class="image-card"
-            :class="{ selected: pendingItem?.id === item.id }"
-            :aria-pressed="pendingItem?.id === item.id"
-            @click="pendingItem = item"
+            :class="{ selected: isItemSelected(item), disabled: excludedItemIds.includes(item.id) }"
+            :aria-pressed="isItemSelected(item)"
+            :disabled="excludedItemIds.includes(item.id)"
+            @click="togglePendingItem(item)"
           >
             <span class="image-preview">
               <img v-if="itemUrls[item.id]" :src="itemUrls[item.id]" :alt="item.name" />
               <ImageIcon v-else :size="24" />
-              <CheckCircle2 v-if="pendingItem?.id === item.id" class="selected-check" :size="21" />
+              <CheckCircle2 v-if="isItemSelected(item)" class="selected-check" :size="21" />
             </span>
             <strong :title="item.name">{{ item.visibility === 'enterprise' ? '企业共享 · ' : '' }}{{ item.name }}</strong>
             <small>{{ item.width }} × {{ item.height }}</small>
@@ -306,8 +348,13 @@ onBeforeUnmount(() => {
             <a-button size="small" :disabled="page >= totalPages || loadingItems" @click="changePage(page + 1)">下一页</a-button>
           </div>
           <div class="footer-actions">
+            <span v-if="multiple" class="selection-summary">已勾选 {{ pendingItems.length }} / {{ selectionLimit }} 张</span>
             <a-button @click="close">取消</a-button>
-            <a-button type="primary" :disabled="!pendingItem || disabled" @click="confirm">{{ props.confirmText }}</a-button>
+            <a-button
+              type="primary"
+              :disabled="disabled || (multiple ? !pendingItems.length : !pendingItem)"
+              @click="confirm"
+            >{{ props.confirmText }}</a-button>
           </div>
         </div>
         </template>
@@ -350,6 +397,8 @@ onBeforeUnmount(() => {
 .image-card { min-width: 0; padding: 7px; border: 1px solid var(--gray-150); border-radius: 8px; display: grid; gap: 5px; color: var(--color-text); background: var(--gray-0); text-align: left; cursor: pointer; }
 .image-card:hover { border-color: var(--main-300); }
 .image-card.selected { border-color: var(--main-500); box-shadow: 0 0 0 2px var(--main-50); }
+.image-card.disabled { opacity: .55; cursor: not-allowed; }
+.selection-summary { color: var(--color-text-secondary); font-size: 12px; margin-right: auto; }
 .image-preview { position: relative; aspect-ratio: 1 / 1; border-radius: 6px; display: grid; place-items: center; overflow: hidden; color: var(--gray-400); background: var(--gray-50); }
 .image-preview img { width: 100%; height: 100%; object-fit: cover; }
 .selected-check { position: absolute; top: 7px; right: 7px; color: var(--gray-0); filter: drop-shadow(0 1px 3px var(--dark-70)); }

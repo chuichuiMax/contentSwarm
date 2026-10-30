@@ -1,11 +1,26 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
-import { FileText, Image, Images, Search, Share2, Star } from 'lucide-vue-next'
+import { FileText, GripVertical, Image, Images, Search, Settings, Share2, Star } from 'lucide-vue-next'
 
 import { employeeApi } from '@/apis/employee_api'
 import PageHeader from '@/components/shared/PageHeader.vue'
+import {
+  TRAFFIC_COLUMN_DEFAULTS,
+  cloneColumnSettings,
+  moveColumnSetting,
+  normalizeColumnSettings
+} from '@/utils/trafficColumnSettings'
+
+const COLUMN_STORAGE_KEY = 'traffic-stats-column-settings'
+const COUNT_COLUMN_KEYS = new Set([
+  'decoration_count',
+  'review_notes_count',
+  'personal_generated_count',
+  'enterprise_generated_count',
+  'case_share_count'
+])
 
 const router = useRouter()
 const loading = ref(false)
@@ -25,8 +40,20 @@ const summary = ref({
   enterprise_generated: 0,
   case_shares: 0
 })
+function readStoredColumns() {
+  try {
+    return JSON.parse(localStorage.getItem(COLUMN_STORAGE_KEY) || 'null')
+  } catch {
+    return null
+  }
+}
+
 const page = ref(1)
 const pageSize = ref(10)
+const columnPanelOpen = ref(false)
+const columnSettings = ref(normalizeColumnSettings(readStoredColumns()))
+const columnDraft = ref(cloneColumnSettings(columnSettings.value))
+const dragIndex = ref(-1)
 
 const cards = computed(() => [
   { key: 'decoration', label: '装修家居', value: summary.value.decoration, unit: '篇', hint: '已生成的装修家居内容', icon: Star },
@@ -41,6 +68,35 @@ const dateParams = computed(() => (
     ? { date_from: dateRange.value[0], date_to: dateRange.value[1] }
     : {}
 ))
+
+const compareText = (left, right) => String(left || '').localeCompare(String(right || ''), 'zh')
+const columnSorters = {
+  index: (left, right) => employees.value.indexOf(left) - employees.value.indexOf(right),
+  name: (left, right) => compareText(left.name, right.name),
+  login_account: (left, right) => compareText(left.login_account, right.login_account),
+  employee_code: (left, right) => compareText(left.employee_code, right.employee_code),
+  decoration_count: (left, right) => left.decoration_count - right.decoration_count,
+  review_notes_count: (left, right) => left.review_notes_count - right.review_notes_count,
+  personal_generated_count: (left, right) => left.personal_generated_count - right.personal_generated_count,
+  enterprise_generated_count: (left, right) => left.enterprise_generated_count - right.enterprise_generated_count,
+  case_share_count: (left, right) => left.case_share_count - right.case_share_count,
+  current_branch: (left, right) => compareText(left.current_branch, right.current_branch),
+  current_department: (left, right) => compareText(left.current_department, right.current_department)
+}
+
+const tableColumns = computed(() =>
+  columnSettings.value
+    .filter((column) => column.visible)
+    .map((column) => ({
+      title: column.title,
+      key: column.key,
+      dataIndex: column.key === 'index' ? undefined : column.key,
+      width: column.width === 'auto' ? (column.fixed ? 120 : undefined) : Number(column.width),
+      align: COUNT_COLUMN_KEYS.has(column.key) ? 'center' : undefined,
+      fixed: column.fixed ? 'left' : undefined,
+      sorter: column.sortable ? columnSorters[column.key] : undefined
+    }))
+)
 
 const tablePagination = computed(() => ({
   current: page.value,
@@ -131,6 +187,32 @@ const openHistory = (employee, entry) => {
   })
 }
 
+const saveColumns = () => {
+  const next = normalizeColumnSettings(columnDraft.value)
+  if (!next.some((column) => column.visible)) {
+    message.warning('至少保留一列')
+    return
+  }
+  columnSettings.value = next
+  columnDraft.value = cloneColumnSettings(next)
+  localStorage.setItem(COLUMN_STORAGE_KEY, JSON.stringify(next))
+  columnPanelOpen.value = false
+  message.success('列设置已保存')
+}
+
+const resetColumns = () => {
+  columnDraft.value = cloneColumnSettings(TRAFFIC_COLUMN_DEFAULTS)
+}
+
+const onColumnDragStart = (index) => {
+  dragIndex.value = index
+}
+
+const onColumnDrop = (index) => {
+  columnDraft.value = moveColumnSetting(columnDraft.value, dragIndex.value, index)
+  dragIndex.value = -1
+}
+
 const openGenerated = (employee, scope) => {
   router.push({
     path: '/materials/images',
@@ -141,6 +223,10 @@ const openGenerated = (employee, scope) => {
     }
   })
 }
+
+watch(columnPanelOpen, (open) => {
+  if (open) columnDraft.value = cloneColumnSettings(columnSettings.value)
+})
 
 onMounted(load)
 </script>
@@ -184,6 +270,7 @@ onMounted(load)
         <a-button type="primary" :loading="exporting" @click="exportStats">导出</a-button>
       </div>
       <a-table
+        :columns="tableColumns"
         :data-source="employees"
         :loading="loading"
         :pagination="tablePagination"
@@ -191,36 +278,79 @@ onMounted(load)
         row-key="id"
         @change="handleTableChange"
       >
-        <a-table-column title="序号" key="index" :width="72">
-          <template #default="{ index }">{{ (page - 1) * pageSize + index + 1 }}</template>
-        </a-table-column>
-        <a-table-column title="姓名" data-index="name" key="name" />
-        <a-table-column title="手机号码" data-index="login_account" key="login_account" />
-        <a-table-column title="员工编码" data-index="employee_code" key="employee_code" />
-        <a-table-column title="装修家居" key="decoration_count" align="center">
-          <template #default="{ record }">
-            <a-button type="link" @click="openHistory(record, '装修家居')">{{ record.decoration_count }}</a-button>
-          </template>
-        </a-table-column>
-        <a-table-column title="好评笔记" key="review_notes_count" align="center">
-          <template #default="{ record }">
-            <a-button type="link" @click="openHistory(record, '好评笔记')">{{ record.review_notes_count }}</a-button>
-          </template>
-        </a-table-column>
-        <a-table-column title="生图（个人素材）" key="personal_generated_count" align="center">
-          <template #default="{ record }">
-            <a-button type="link" @click="openGenerated(record)">{{ record.personal_generated_count }}</a-button>
-          </template>
-        </a-table-column>
-        <a-table-column title="生图（企业共享）" key="enterprise_generated_count" align="center">
-          <template #default="{ record }">
-            <a-button type="link" @click="openGenerated(record, 'enterprise')">{{ record.enterprise_generated_count }}</a-button>
-          </template>
-        </a-table-column>
-        <a-table-column title="案例分享" key="case_share_count" align="center" data-index="case_share_count" />
-        <a-table-column title="所属门店" data-index="current_branch" key="current_branch" />
-        <a-table-column title="所属部门" data-index="current_department" key="current_department" />
+        <template #bodyCell="{ column, record, index }">
+          <template v-if="column.key === 'index'">{{ (page - 1) * pageSize + index + 1 }}</template>
+          <a-button v-else-if="column.key === 'decoration_count'" type="link" @click="openHistory(record, '装修家居')">
+            {{ record.decoration_count }}
+          </a-button>
+          <a-button v-else-if="column.key === 'review_notes_count'" type="link" @click="openHistory(record, '好评笔记')">
+            {{ record.review_notes_count }}
+          </a-button>
+          <a-button v-else-if="column.key === 'personal_generated_count'" type="link" @click="openGenerated(record)">
+            {{ record.personal_generated_count }}
+          </a-button>
+          <a-button
+            v-else-if="column.key === 'enterprise_generated_count'"
+            type="link"
+            @click="openGenerated(record, 'enterprise')"
+          >
+            {{ record.enterprise_generated_count }}
+          </a-button>
+          <template v-else>{{ record[column.dataIndex] }}</template>
+        </template>
       </a-table>
+      <div class="column-settings">
+        <section v-if="columnPanelOpen" class="column-settings-panel">
+          <header>
+            <strong>列设置</strong>
+            <button type="button" @click="columnPanelOpen = false">收起</button>
+          </header>
+          <div class="column-settings-head">
+            <span></span>
+            <span>显示</span>
+            <span>名称</span>
+            <span>宽度</span>
+            <span>排序</span>
+            <span>固定</span>
+          </div>
+          <ul>
+            <li
+              v-for="(column, index) in columnDraft"
+              :key="column.key"
+              @dragover.prevent
+              @drop="onColumnDrop(index)"
+            >
+              <button
+                type="button"
+                class="column-grip"
+                draggable="true"
+                aria-label="调整列顺序"
+                @dragstart="onColumnDragStart(index)"
+              >
+                <GripVertical :size="14" />
+              </button>
+              <a-switch v-model:checked="column.visible" size="small" :aria-label="`显示${column.title}`" />
+              <span class="column-name">{{ column.title }}</span>
+              <a-input v-model:value="column.width" size="small" aria-label="宽度" />
+              <a-switch v-model:checked="column.sortable" size="small" :aria-label="`排序${column.title}`" />
+              <a-switch v-model:checked="column.fixed" size="small" :aria-label="`固定${column.title}`" />
+            </li>
+          </ul>
+          <footer>
+            <a-button @click="resetColumns">重置</a-button>
+            <a-button type="primary" @click="saveColumns">保存</a-button>
+          </footer>
+        </section>
+        <button
+          type="button"
+          class="column-settings-toggle"
+          :aria-expanded="columnPanelOpen"
+          aria-label="列设置"
+          @click="columnPanelOpen = !columnPanelOpen"
+        >
+          <Settings :size="18" />
+        </button>
+      </div>
     </section>
   </div>
 </template>
@@ -240,6 +370,20 @@ onMounted(load)
 .summary-icon[data-kind='enterprise_generated'] { background: var(--gray-100); color: var(--color-success-700, var(--main-700)); }
 .summary-icon[data-kind='case_shares'] { background: var(--main-50); color: var(--main-700); }
 .traffic-panel { padding: 16px; border: 1px solid var(--gray-150); border-radius: 8px; }
+.column-settings { position: fixed; right: 28px; bottom: 24px; z-index: 20; display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
+.column-settings-toggle { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; border: 1px solid var(--gray-200); border-radius: 18px; background: var(--gray-0); color: var(--color-text-secondary); box-shadow: 0 4px 16px rgb(15 23 42 / 8%); }
+.column-settings-toggle[aria-expanded='true'] { color: var(--main-color); border-color: var(--main-color); }
+.column-settings-panel { width: min(460px, calc(100vw - 48px)); padding: 14px 14px 12px; border: 1px solid var(--gray-150); border-radius: 8px; background: var(--gray-0); box-shadow: 0 8px 24px rgb(15 23 42 / 12%); }
+.column-settings-panel header, .column-settings-panel footer { display: flex; align-items: center; justify-content: space-between; }
+.column-settings-panel header strong { color: var(--color-text); font-size: 14px; }
+.column-settings-panel header button { border: 0; background: transparent; color: var(--color-text-secondary); cursor: pointer; }
+.column-settings-panel ul { max-height: 320px; margin: 8px 0 12px; padding: 0; overflow: auto; list-style: none; }
+.column-settings-head, .column-settings-panel li { display: grid; grid-template-columns: 20px 36px minmax(72px, 1fr) 72px 36px 36px; align-items: center; gap: 8px; }
+.column-settings-head { margin-top: 12px; color: var(--color-text-tertiary); font-size: 12px; }
+.column-settings-panel li { min-height: 36px; }
+.column-grip { display: inline-flex; padding: 0; border: 0; background: transparent; color: var(--gray-400); cursor: grab; }
+.column-name { overflow: hidden; color: var(--color-text); font-size: 13px; white-space: nowrap; text-overflow: ellipsis; }
+.column-settings-panel footer { justify-content: flex-end; gap: 8px; }
 .traffic-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 16px; }
 .traffic-toolbar :deep(.ant-input-affix-wrapper) { width: 220px; }
 .traffic-toolbar :deep(.ant-select) { width: 180px; }

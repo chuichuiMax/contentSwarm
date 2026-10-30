@@ -309,8 +309,9 @@ export interface TemplateSummary {
   title: string;
   visibility: "personal" | "team" | "public";
   ownerId: string;
-  /** Present only when the current user owns the editable source design. */
+  /** Present when the current user can open the source design and update this template. */
   sourceDesignId?: string | null;
+  collectionId?: string | null;
   workspaceId: string | null;
   categories: string[];
   tags: string[];
@@ -353,7 +354,7 @@ export interface FillableFieldSummary {
   kind: "text" | "image" | "color";
   label: string;
   key?: string;
-  semanticRole?: "title" | "subtitle" | "project_name" | "project_name_en" | "project_area" | "designer" | "completion_year" | "brand_name" | "label" | "body_excerpt";
+  semanticRole?: "title" | "subtitle" | "project_name" | "project_name_en" | "project_area" | "designer" | "completion_year" | "brand_name" | "design_style" | "layout" | "service_region" | "target_audience" | "process_type" | "service_years" | "job_position" | "label" | "body_excerpt";
   hint?: string;
   constraints?: { maxChars?: number; aspect?: number; required?: boolean };
   /** Snapshot extracted from the template node when it is saved. The design

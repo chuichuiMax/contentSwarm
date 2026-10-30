@@ -12,7 +12,6 @@ from yuxi.utils.line_breaks import normalize_escaped_newlines
 from yuxi.content_cover.ai_cover_prompt import (
     ai_cover_prompt_controls,
     normalize_cover_form_values,
-    select_ai_cover_prompt,
 )
 from yuxi.content_cover.handwritten_quote_prompt import (
     HANDWRITTEN_QUOTE_NEGATIVE_PROMPT,
@@ -358,13 +357,16 @@ async def _create_direct_cover_job(run, output) -> dict:
                 content_brief.get("typeName") or content_brief.get("content_type_name") or ""
             )
             prompt_controls = ai_cover_prompt_controls(visual_material)
-            ai_selection = select_ai_cover_prompt(
+            from yuxi.services.ai_cover_template_service import cover_generation_selection
+
+            ai_selection = await cover_generation_selection(
+                db,
                 title=title,
                 subtitle=subtitle,
                 form_values=form_values,
                 content_type_code=content_type_code,
                 content_type_name=content_type_name,
-                **prompt_controls,
+                prompt_controls=prompt_controls,
             )
             result = await create_cover_generate_job(
                 db,

@@ -17,6 +17,11 @@ from yuxi.services.ai_cover_prompt_catalog_service import (
     list_ai_cover_prompt_catalog,
     resolve_ai_cover_preview_bytes,
 )
+from yuxi.services.ai_cover_template_service import (
+    apply_catalog_overrides,
+    list_custom_cover_prompts,
+    stored_cover_preview_bytes,
+)
 from yuxi.services.personal_materials import folder_counts, list_folder
 from yuxi.services.mp_service import (
     AuthCancelPayload,
@@ -403,11 +408,15 @@ async def mp_ai_cover_prompts(
     content_type_code: str = Query(default=""),
     content_type_name: str = Query(default=""),
     _ctx: MpContext = Depends(get_mp_context),
+    db: AsyncSession = Depends(get_db),
 ):
     data = await list_ai_cover_prompt_catalog(
         content_type_code=content_type_code,
         content_type_name=content_type_name,
     )
+    catalog = await apply_catalog_overrides(db, data.get("prompts") or [], content_type_name=content_type_name)
+    custom = await list_custom_cover_prompts(db, content_type_name=content_type_name)
+    data["prompts"] = [*catalog, *custom]
     prompts = []
     for item in data.get("prompts") or []:
         variant = str(item.get("variant") or "").strip()
@@ -427,7 +436,12 @@ async def mp_ai_cover_prompt_preview(
     variant: str,
     content_type_code: str = Query(default=""),
     content_type_name: str = Query(default=""),
+    db: AsyncSession = Depends(get_db),
 ):
+    custom = await stored_cover_preview_bytes(db, variant)
+    if custom:
+        content, media_type = custom
+        return Response(content=content, media_type=media_type)
     resolved = await resolve_ai_cover_preview_bytes(
         variant,
         content_type_code=content_type_code,

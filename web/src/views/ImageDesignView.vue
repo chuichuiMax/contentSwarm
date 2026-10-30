@@ -55,6 +55,7 @@ const lockedPromptLine = LOCKED_IMAGE_DESIGN_PROMPT_LINE
 const promptKeywords = ref([...DEFAULT_IMAGE_DESIGN_KEYWORDS])
 const customKeyword = ref('')
 const polling = new Map()
+const MAX_INPUT_IMAGES = 9
 
 const commonForm = reactive({
   prompt: DEFAULT_IMAGE_DESIGN_PROMPT,
@@ -64,7 +65,7 @@ const commonForm = reactive({
   refining: false
 })
 const styleTransferForm = reactive({
-  reference: null,
+  references: [],
   styleLabel: '现代轻奢',
   usePromptAsStyle: false
 })
@@ -73,7 +74,7 @@ const roomAdaptForm = reactive({
   rawStructure: null
 })
 const crossSpaceForm = reactive({
-  styleReference: null,
+  styleReferences: [],
   targetSpace: 'living_room',
   targetSpaceLabel: '客厅',
   spaceLayout: 'sofa_wall',
@@ -122,11 +123,13 @@ const spaceConfigs = {
   elder_room: { layouts: [['bed_side', '床靠墙留宽过道'], ['bed_center', '床居中'], ['bed_lounge', '床+休闲椅']], addons: [['grab_bar', '安全扶手'], ['reading_light', '床头阅读灯'], ['storage', '低位收纳柜']] },
   guest_room: { layouts: [['bed_center', '床居中对称'], ['bed_desk', '床铺+书桌'], ['sofa_bed', '沙发床组合']], addons: [['luggage', '行李收纳位'], ['wardrobe', '衣柜'], ['reading_chair', '阅读单椅']] }
 }
-const activeReference = computed(() => {
-  if (workflow.value === 'style_transfer') return styleTransferForm.reference
-  if (workflow.value === 'room_adapt') return roomAdaptForm.styleReference
-  return crossSpaceForm.styleReference
+const multiReferenceWorkflow = computed(() => workflow.value === 'style_transfer' || workflow.value === 'cross_space')
+const activeReferences = computed(() => {
+  if (workflow.value === 'style_transfer') return styleTransferForm.references
+  if (workflow.value === 'cross_space') return crossSpaceForm.styleReferences
+  return roomAdaptForm.styleReference ? [roomAdaptForm.styleReference] : []
 })
+const activeReference = computed(() => activeReferences.value[0] || null)
 const activeReferenceRole = computed(() => {
   if (workflow.value === 'style_transfer') return 'structure_source'
   if (workflow.value === 'room_adapt') return 'style_reference'
@@ -156,8 +159,12 @@ watch(
 
 const refineIssues = computed(() => {
   const issues = []
-  if (!activeReference.value) issues.push('请先选择参考图')
-  if (activeReference.value && materialAnalysis(activeReference.value, activeReferenceRole.value)?.status !== 'completed') issues.push('请等待参考图视觉分析完成')
+  if (!activeReferences.value.length) issues.push('请先选择参考图')
+  if (activeReferences.value.some((material) => materialAnalysis(material, activeReferenceRole.value)?.status === 'running')) {
+    issues.push('请等待全部参考图视觉分析完成')
+  } else if (activeReferences.value.some((material) => materialAnalysis(material, activeReferenceRole.value)?.status !== 'completed')) {
+    issues.push('请等待全部参考图视觉分析完成')
+  }
   if (workflow.value === 'room_adapt' && !roomAdaptForm.rawStructure) issues.push('请先选择毛坯实拍图')
   if (roomAdaptForm.rawStructure && workflow.value === 'room_adapt' && materialAnalysis(roomAdaptForm.rawStructure, 'structure_source')?.status !== 'completed') issues.push('请等待毛坯图视觉分析完成')
   if (!effectivePrompt.value.trim()) issues.push('请填写补充描述或保留关键词')
@@ -183,7 +190,16 @@ function invalidateRefinement() {
   refinedPromptDirty.value = false
 }
 
+function revokeReferenceUrls() {
+  for (const material of [...styleTransferForm.references, ...crossSpaceForm.styleReferences]) {
+    if (material?.url) URL.revokeObjectURL(material.url)
+  }
+  styleTransferForm.references = []
+  crossSpaceForm.styleReferences = []
+}
+
 function switchWorkflow(next) {
+  revokeReferenceUrls()
   workflow.value = next
   invalidateRefinement()
 }
@@ -248,18 +264,19 @@ function openPicker(role) {
   pickerOpen.value = true
 }
 
+async function loadMaterialPreview(item) {
+  const response = await materialLibraryApi.getItemFile(item.id)
+  const url = URL.createObjectURL(await response.blob())
+  return { id: item.id, name: item.name, url, width: item.width, height: item.height }
+}
+
 async function setMaterial(role, item) {
-  const previous = role === 'reference' ? activeReference.value : roomAdaptForm.rawStructure
+  const previous = role === 'reference' ? roomAdaptForm.styleReference : roomAdaptForm.rawStructure
   if (previous?.url) URL.revokeObjectURL(previous.url)
   try {
-    const response = await materialLibraryApi.getItemFile(item.id)
-    const url = URL.createObjectURL(await response.blob())
-    const value = { id: item.id, name: item.name, url, width: item.width, height: item.height }
-    if (role === 'reference') {
-      if (workflow.value === 'style_transfer') styleTransferForm.reference = value
-      else if (workflow.value === 'room_adapt') roomAdaptForm.styleReference = value
-      else crossSpaceForm.styleReference = value
-    } else roomAdaptForm.rawStructure = value
+    const value = await loadMaterialPreview(item)
+    if (role === 'reference') roomAdaptForm.styleReference = value
+    else roomAdaptForm.rawStructure = value
     invalidateRefinement()
     const analysisRole = role === 'reference' ? activeReferenceRole.value : 'structure_source'
     store.analyze(item.id, analysisRole).catch((error) => {
@@ -272,6 +289,68 @@ async function setMaterial(role, item) {
     message.error(error.message || '素材读取失败')
     return false
   }
+}
+
+async function addReferenceMaterial(item, { quiet = false } = {}) {
+  const list = workflow.value === 'style_transfer' ? styleTransferForm.references : crossSpaceForm.styleReferences
+  if (list.some((material) => material.id === item.id)) {
+    if (!quiet) message.warning('该图片已在列表中')
+    return false
+  }
+  if (list.length >= MAX_INPUT_IMAGES) {
+    if (!quiet) message.warning(`最多选择 ${MAX_INPUT_IMAGES} 张图片`)
+    return false
+  }
+  try {
+    const value = await loadMaterialPreview(item)
+    list.push(value)
+    invalidateRefinement()
+    store.analyze(item.id, activeReferenceRole.value).catch((error) => {
+      message.error(error.message || '图片视觉分析失败')
+    })
+    if (!quiet) pickerOpen.value = false
+    await refreshGallery()
+    return true
+  } catch (error) {
+    if (!quiet) message.error(error.message || '素材读取失败')
+    return false
+  }
+}
+
+async function handlePickerSelectBatch(items) {
+  let added = 0
+  for (const item of items) {
+    if (await addReferenceMaterial(item, { quiet: true })) added += 1
+  }
+  pickerOpen.value = false
+  if (added) message.success(`已添加 ${added} 张参考图，请完成 AI 深度优化后再生成`)
+  else message.warning('没有新增参考图')
+}
+
+function removeReferenceMaterial(material) {
+  const list = workflow.value === 'style_transfer' ? styleTransferForm.references : crossSpaceForm.styleReferences
+  const index = list.findIndex((item) => item.id === material.id)
+  if (index < 0) return
+  if (material.url) URL.revokeObjectURL(material.url)
+  list.splice(index, 1)
+  invalidateRefinement()
+}
+
+function handlePickerSelect(item) {
+  if (pickerRole.value === 'rawRoom') {
+    void setMaterial('rawRoom', item)
+    return
+  }
+  if (multiReferenceWorkflow.value) {
+    void addReferenceMaterial(item)
+    return
+  }
+  void setMaterial('reference', item)
+}
+
+function handleWorkspaceMaterialPick(item) {
+  if (multiReferenceWorkflow.value) void addReferenceMaterial(item)
+  else void setMaterial('reference', item)
 }
 
 async function retryAnalysis(material, role) {
@@ -363,7 +442,8 @@ async function loadShowcase() {
 async function useShowcase(item) {
   commonForm.prompt = item.style_text
   invalidateRefinement()
-  const selected = await setMaterial('reference', { id: item.image_material_id, name: item.title })
+  revokeReferenceUrls()
+  const selected = await addReferenceMaterial({ id: item.image_material_id, name: item.title })
   if (!selected) return
   activeTab.value = 'materials'
   message.success('已使用精选案例图片和提示词')
@@ -385,9 +465,11 @@ async function uploadToLibrary(event) {
 function buildRefinementPayload() {
   const base = { workflow: workflow.value, user_prompt: effectivePrompt.value }
   if (workflow.value === 'style_transfer') {
+    const ids = styleTransferForm.references.map((item) => item.id)
     return {
       ...base,
-      source_material_id: styleTransferForm.reference.id,
+      source_material_id: ids[0],
+      supplemental_material_ids: ids.slice(1),
       style_label: styleTransferForm.usePromptAsStyle ? null : styleTransferForm.styleLabel,
       use_prompt_as_style: styleTransferForm.usePromptAsStyle
     }
@@ -399,9 +481,11 @@ function buildRefinementPayload() {
       raw_structure_material_id: roomAdaptForm.rawStructure.id
     }
   }
+  const ids = crossSpaceForm.styleReferences.map((item) => item.id)
   return {
     ...base,
-    style_reference_material_id: crossSpaceForm.styleReference.id,
+    style_reference_material_id: ids[0],
+    supplemental_style_material_ids: ids.slice(1),
     target_space: crossSpaceForm.targetSpace,
     layout: crossSpaceForm.spaceLayout,
     addons: crossSpaceForm.spaceAddons
@@ -561,8 +645,9 @@ onBeforeUnmount(() => {
   Object.values(showcaseUrls.value).forEach((url) => URL.revokeObjectURL(url))
   Object.values(resultUrls.value).forEach((url) => URL.revokeObjectURL(url))
   closeResultDetail()
-  const selected = [styleTransferForm.reference, roomAdaptForm.styleReference, roomAdaptForm.rawStructure, crossSpaceForm.styleReference]
-  new Set(selected.map((item) => item?.url).filter(Boolean)).forEach((url) => URL.revokeObjectURL(url))
+  revokeReferenceUrls()
+  if (roomAdaptForm.styleReference?.url) URL.revokeObjectURL(roomAdaptForm.styleReference.url)
+  if (roomAdaptForm.rawStructure?.url) URL.revokeObjectURL(roomAdaptForm.rawStructure.url)
 })
 
 async function loadResultPreviews() {
@@ -602,17 +687,37 @@ async function loadResultPreviews() {
             <button :class="{ active: workflow === 'room_adapt' }" @click="switchWorkflow('room_adapt')">户型适配<Check v-if="workflow === 'room_adapt'" :size="15" /></button>
             <button :class="{ active: workflow === 'cross_space' }" @click="switchWorkflow('cross_space')">跨空间迁移<Check v-if="workflow === 'cross_space'" :size="15" /></button>
           </div>
-          <p class="workflow-hint">{{ workflow === 'style_transfer' ? '上传原房实拍图，选择风格并保留原房结构框架。' : workflow === 'room_adapt' ? '参考效果图改造毛坯房，保留户型框架。' : '将参考图的风格迁移到指定目标空间。' }}</p>
+          <p class="workflow-hint">{{ workflow === 'style_transfer' ? '上传原房实拍图（最多 9 张），选择风格并保留原房结构框架。' : workflow === 'room_adapt' ? '参考效果图改造毛坯房，保留户型框架。' : '选择风格参考图（最多 9 张）并迁移到指定目标空间。' }}</p>
         </section>
 
         <section class="card">
-          <div class="section-heading"><div><span class="accent-line" />{{ workflow === 'room_adapt' ? '参考效果图' : '参考图' }}</div><span class="required">*</span></div>
-          <button class="material-slot" :class="{ filled: activeReference }" @click="openPicker('reference')">
-            <img v-if="activeReference?.url" :src="activeReference.url" :alt="activeReference.name" />
-            <span v-else><ImagePlus :size="21" /><strong>从素材库选择{{ workflow === 'room_adapt' ? '参考效果图' : '参考图' }}</strong><small>直接使用已有素材，不重复上传</small></span>
-            <small v-if="activeReference" class="slot-name">{{ activeReference.name }} · {{ materialAnalysis(activeReference, activeReferenceRole)?.status === 'completed' ? '视觉分析完成' : materialAnalysis(activeReference, activeReferenceRole)?.status === 'running' ? '视觉分析中' : materialAnalysis(activeReference, activeReferenceRole)?.status === 'failed' ? '视觉分析失败' : '待分析' }}</small>
-          </button>
-          <button v-if="materialAnalysis(activeReference, activeReferenceRole)?.status === 'failed'" type="button" class="analysis-retry" @click="retryAnalysis(activeReference, activeReferenceRole)">重试视觉分析</button>
+          <div class="section-heading">
+            <div><span class="accent-line" />{{ workflow === 'room_adapt' ? '参考效果图' : '参考图' }}</div><span class="required">*</span>
+            <small v-if="multiReferenceWorkflow" class="reference-count">{{ activeReferences.length }}/{{ MAX_INPUT_IMAGES }} 张</small>
+          </div>
+          <div v-if="multiReferenceWorkflow" class="reference-grid">
+            <article v-for="(material, index) in activeReferences" :key="material.id" class="reference-card">
+              <img :src="material.url" :alt="material.name" />
+              <div class="reference-meta">
+                <strong>{{ index === 0 ? '主图' : `补充 ${index}` }} · {{ material.name }}</strong>
+                <small>{{ materialAnalysis(material, activeReferenceRole)?.status === 'completed' ? '视觉分析完成' : materialAnalysis(material, activeReferenceRole)?.status === 'running' ? '视觉分析中' : materialAnalysis(material, activeReferenceRole)?.status === 'failed' ? '视觉分析失败' : '待分析' }}</small>
+                <button v-if="materialAnalysis(material, activeReferenceRole)?.status === 'failed'" type="button" class="analysis-retry" @click="retryAnalysis(material, activeReferenceRole)">重试</button>
+              </div>
+              <button type="button" class="reference-remove" aria-label="移除图片" @click="removeReferenceMaterial(material)"><Trash2 :size="15" /></button>
+            </article>
+            <button v-if="activeReferences.length < MAX_INPUT_IMAGES" type="button" class="material-slot add-slot" @click="openPicker('reference')">
+              <span><ImagePlus :size="21" /><strong>添加{{ workflow === 'style_transfer' ? '原房实拍图' : '风格参考图' }}</strong><small>从素材库继续添加，首张为主图</small></span>
+            </button>
+          </div>
+          <template v-else>
+            <button class="material-slot" :class="{ filled: activeReference }" @click="openPicker('reference')">
+              <img v-if="activeReference?.url" :src="activeReference.url" :alt="activeReference.name" />
+              <span v-else><ImagePlus :size="21" /><strong>从素材库选择参考效果图</strong><small>直接使用已有素材，不重复上传</small></span>
+              <small v-if="activeReference" class="slot-name">{{ activeReference.name }} · {{ materialAnalysis(activeReference, activeReferenceRole)?.status === 'completed' ? '视觉分析完成' : materialAnalysis(activeReference, activeReferenceRole)?.status === 'running' ? '视觉分析中' : materialAnalysis(activeReference, activeReferenceRole)?.status === 'failed' ? '视觉分析失败' : '待分析' }}</small>
+            </button>
+            <button v-if="materialAnalysis(activeReference, activeReferenceRole)?.status === 'failed'" type="button" class="analysis-retry" @click="retryAnalysis(activeReference, activeReferenceRole)">重试视觉分析</button>
+          </template>
+          <p v-if="multiReferenceWorkflow && activeReferences.length > 1" class="reference-hint">已选多张参考图，将共同参与一次 AI 深度优化与 image2 多图参考生图；若需要多张不同成图，请提高下方「生成数量」。</p>
           <label class="upload-inline"><Upload :size="14" /> 上传到素材库 <input ref="uploadInput" type="file" accept="image/jpeg,image/png,image/webp" multiple @change="uploadToLibrary" /></label>
         </section>
 
@@ -701,13 +806,13 @@ async function loadResultPreviews() {
             <button title="刷新" @click="refreshGallery"><RefreshCw :size="15" /></button>
           </div>
           <div v-if="loadingGallery" class="empty-state"><LoaderCircle class="spin" :size="24" /></div>
-          <div v-else-if="galleryItems.length" class="material-grid"><button v-for="item in galleryItems" :key="item.id" class="material-card" @click="setMaterial('reference', item)"><img v-if="galleryUrls[item.id]" :src="galleryUrls[item.id]" :alt="item.name" /><span>{{ item.name }}</span><small>{{ item.width }}×{{ item.height }}</small></button></div>
+          <div v-else-if="galleryItems.length" class="material-grid"><button v-for="item in galleryItems" :key="item.id" class="material-card" @click="handleWorkspaceMaterialPick(item)"><img v-if="galleryUrls[item.id]" :src="galleryUrls[item.id]" :alt="item.name" /><span>{{ item.name }}</span><small>{{ item.width }}×{{ item.height }}</small></button></div>
           <div v-else class="empty-state"><ImagePlus :size="28" /><p>素材库暂无图片</p><button @click="uploadInput?.click()">导入图片</button></div>
         </div>
         <div v-else-if="activeTab === 'results'" class="workspace-content result-grid"><div v-if="!store.results.length" class="empty-state">暂无生成结果</div><article v-for="result in store.results" :key="result.id" class="result-card" @click="openResult(result)"><img v-if="resultUrls[result.id]" :src="resultUrls[result.id]" :alt="result.file_name" /><div><strong>{{ result.workflow === 'room_adapt' ? '户型适配' : result.workflow === 'cross_space' ? '跨空间迁移' : '原房换装' }}</strong><small>{{ result.width }}×{{ result.height }}</small></div><div class="result-actions"><button @click.stop="downloadResult(result)"><Download :size="14" /></button><button @click.stop="removeResult(result)"><Trash2 :size="14" /></button></div></article></div>
         <div v-else-if="activeTab === 'showcase'" class="workspace-content showcase-grid"><div v-if="!showcaseItems.length" class="empty-state">暂无精选案例</div><article v-for="item in showcaseItems" :key="item.id" class="showcase-card"><img v-if="showcaseUrls[item.id]" :src="showcaseUrls[item.id]" :alt="item.title" /><div class="showcase-copy"><strong>{{ item.title }}</strong><small>{{ item.category }}</small><p>{{ item.style_text }}</p><button @click="useShowcase(item)">使用案例</button></div></article></div>
         <div v-else-if="activeTab === 'jobs'" class="workspace-content job-list"><div v-if="!store.jobs.length" class="empty-state">暂无任务</div><article v-for="job in store.jobs" :key="job.id" class="job-card" :class="{ failed: job.status === 'failed' }"><div><strong>{{ job.workflow === 'room_adapt' ? '户型适配' : job.workflow === 'cross_space' ? '跨空间迁移' : '原房换装' }}</strong><small>{{ jobStatusLabels[job.status] || job.status }} · {{ job.progress }}%</small></div><div class="progress"><span :style="{ width: `${job.progress}%` }" /></div><p v-if="job.status === 'failed'" class="job-error">{{ job.error_message || '生成失败，请重新提交任务' }}</p></article></div>
-        <div v-else class="workspace-content"><div class="asset-heading"><strong>资产中心图库</strong><small>与现有素材库共享，点击图片可设为参考图</small></div><div v-if="galleryItems.length" class="material-grid"><button v-for="item in galleryItems" :key="item.id" class="material-card" @click="setMaterial('reference', item)"><img v-if="galleryUrls[item.id]" :src="galleryUrls[item.id]" :alt="item.name" /><span>{{ item.name }}</span><small>{{ item.width }}×{{ item.height }}</small></button></div><div v-else class="empty-state"><ImagePlus :size="28" /><p>当前图库暂无资产</p><button @click="activeTab = 'materials'">去素材库导入</button></div></div>
+        <div v-else class="workspace-content"><div class="asset-heading"><strong>资产中心图库</strong><small>与现有素材库共享，点击图片{{ multiReferenceWorkflow ? '可继续添加为参考图' : '可设为参考图' }}</small></div><div v-if="galleryItems.length" class="material-grid"><button v-for="item in galleryItems" :key="item.id" class="material-card" @click="handleWorkspaceMaterialPick(item)"><img v-if="galleryUrls[item.id]" :src="galleryUrls[item.id]" :alt="item.name" /><span>{{ item.name }}</span><small>{{ item.width }}×{{ item.height }}</small></button></div><div v-else class="empty-state"><ImagePlus :size="28" /><p>当前图库暂无资产</p><button @click="activeTab = 'materials'">去素材库导入</button></div></div>
       </aside>
     </div>
 
@@ -723,7 +828,18 @@ async function loadResultPreviews() {
       </section>
     </div>
 
-    <MaterialImagePickerModal v-model:open="pickerOpen" :selected-item-id="pickerRole === 'reference' ? activeReference?.id : roomAdaptForm.rawStructure?.id" title="从素材库选择图片" :description="pickerRole === 'reference' ? '选择参考图' : '选择毛坯实拍图'" :confirm-text="pickerRole === 'reference' ? '使用这张参考图' : '使用这张毛坯图'" @select="(item) => setMaterial(pickerRole, item)" />
+    <MaterialImagePickerModal
+      v-model:open="pickerOpen"
+      :selected-item-id="pickerRole === 'reference' ? activeReference?.id : roomAdaptForm.rawStructure?.id"
+      :multiple="multiReferenceWorkflow && pickerRole === 'reference'"
+      :max-selection="MAX_INPUT_IMAGES"
+      :excluded-item-ids="activeReferences.map((item) => item.id)"
+      title="从素材库选择图片"
+      :description="pickerRole === 'rawRoom' ? '选择毛坯实拍图' : (multiReferenceWorkflow ? `勾选参考图，已加入 ${activeReferences.length}/${MAX_INPUT_IMAGES} 张` : '选择参考效果图')"
+      :confirm-text="pickerRole === 'rawRoom' ? '使用这张毛坯图' : (multiReferenceWorkflow ? '确认添加所选图片' : '使用这张参考图')"
+      @select="handlePickerSelect"
+      @select-batch="handlePickerSelectBatch"
+    />
   </div>
 </template>
 
@@ -739,7 +855,15 @@ h1 { margin: 0; font-size: 28px; letter-spacing: -.04em; } .page-head p:last-chi
 .section-heading { display: flex; justify-content: space-between; align-items: center; margin-bottom: 13px; font-weight: 800; } .section-heading > div { display: flex; gap: 8px; align-items: center; } .accent-line { width: 3px; height: 17px; border-radius: 9px; background: var(--main-600); } .required { color: var(--color-error-600); }
 .workflow-tabs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 9px; } .workflow-tabs button, .choice-grid button, .option-row button { border: 1px solid var(--gray-200); border-radius: 11px; background: var(--gray-0); color: var(--gray-700); padding: 11px 10px; cursor: pointer; transition: .15s; } .workflow-tabs button { display: flex; justify-content: center; gap: 5px; font-weight: 700; } button:hover { border-color: var(--main-400); } button.active, button.selected { border-color: var(--main-500); color: var(--main-800); background: var(--main-30); box-shadow: 0 0 0 2px var(--main-100); }
 .workflow-hint { margin: 12px 0 0; padding: 11px 12px; border-radius: 10px; color: var(--main-800); background: var(--main-20); line-height: 1.65; font-size: 13px; }
-.material-slot { width: 100%; min-height: 180px; border: 1px dashed var(--main-300); border-radius: 12px; background: var(--gray-50); color: var(--main-700); cursor: pointer; overflow: hidden; display: grid; place-items: center; position: relative; } .material-slot > span { display: grid; justify-items: center; gap: 7px; } .material-slot strong { font-size: 14px; } .material-slot small { color: var(--gray-500); } .material-slot img { display: block; width: 100%; height: clamp(260px, 38vw, 520px); object-fit: contain; background: var(--gray-50); } .slot-name { position: absolute; left: 10px; right: 10px; bottom: 8px; padding: 4px 8px; border-radius: 6px; color: #fff !important; background: rgba(0,0,0,.58); text-align: left; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.reference-count { margin-left: auto; color: var(--gray-500); font-size: 12px; font-weight: 500; }
+.reference-hint { margin: 10px 0 0; padding: 10px 12px; border-radius: 8px; color: var(--main-800); background: var(--main-20); font-size: 12px; line-height: 1.6; }
+.reference-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; }
+.reference-card { position: relative; display: grid; gap: 6px; padding: 8px; border: 1px solid var(--gray-200); border-radius: 12px; background: var(--gray-50); }
+.reference-card img { width: 100%; height: 120px; object-fit: contain; border-radius: 8px; background: #fff; }
+.reference-meta { display: grid; gap: 4px; min-width: 0; font-size: 11px; color: var(--gray-600); }
+.reference-meta strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--gray-800); font-size: 12px; }
+.reference-remove { position: absolute; top: 6px; right: 6px; display: grid; place-items: center; width: 28px; height: 28px; border: 0; border-radius: 8px; color: var(--color-error-700); background: rgba(255,255,255,.92); cursor: pointer; box-shadow: 0 1px 4px rgba(0,0,0,.12); }
+.material-slot { width: 100%; min-height: 180px; border: 1px dashed var(--main-300); border-radius: 12px; background: var(--gray-50); color: var(--main-700); cursor: pointer; overflow: hidden; display: grid; place-items: center; position: relative; } .material-slot.add-slot { min-height: 140px; } .material-slot > span { display: grid; justify-items: center; gap: 7px; padding: 12px; text-align: center; } .material-slot strong { font-size: 14px; } .material-slot small { color: var(--gray-500); } .material-slot img { display: block; width: 100%; height: clamp(260px, 38vw, 520px); object-fit: contain; background: var(--gray-50); } .reference-card + .material-slot img, .reference-grid .material-slot img { height: 120px; } .slot-name { position: absolute; left: 10px; right: 10px; bottom: 8px; padding: 4px 8px; border-radius: 6px; color: #fff !important; background: rgba(0,0,0,.58); text-align: left; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .upload-inline { display: inline-flex; align-items: center; gap: 5px; margin-top: 10px; color: var(--main-700); font-size: 12px; cursor: pointer; } .upload-inline input { display: none; }
 .choice-grid { display: grid; gap: 8px; } .styles-grid { grid-template-columns: repeat(5, 1fr); } .space-grid { grid-template-columns: repeat(6, 1fr); } .layout-grid { grid-template-columns: repeat(4, 1fr); } .addon-grid { grid-template-columns: repeat(3, 1fr); } .choice-grid button { min-height: 42px; font-size: 12px; } .subheading { margin: 16px 0 9px; color: var(--gray-700); font-size: 12px; font-weight: 700; }
 .prompt-box { border: 1px solid var(--gray-200); border-radius: 10px; } .prompt-box:focus-within { border-color: var(--main-500); box-shadow: 0 0 0 2px var(--main-100); } .prompt-locked { margin: 0; padding: 12px 12px 0; color: var(--gray-800); font-size: inherit; font-weight: 400; line-height: 1.65; user-select: none; } .prompt-card textarea { width: 100%; min-height: 132px; box-sizing: border-box; padding: 0 12px 12px; border: 0; border-radius: 0; resize: vertical; font: inherit; line-height: 1.65; outline: none; background: transparent; } .prompt-card textarea:focus { border-color: transparent; box-shadow: none; } .prompt-keywords { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; } .prompt-keyword { display: inline-flex; align-items: center; gap: 4px; border: 1px solid var(--gray-200); border-radius: 999px; padding: 5px 10px; color: var(--gray-800); background: var(--gray-50); font-size: 12px; cursor: pointer; } .prompt-keyword:hover { border-color: var(--color-error-100); color: var(--color-error-700); } .keyword-composer { display: flex; gap: 8px; margin-top: 10px; } .keyword-composer input { flex: 1; min-width: 0; padding: 8px 10px; border: 1px solid var(--gray-200); border-radius: 8px; font: inherit; outline: none; } .keyword-composer input:focus { border-color: var(--main-500); box-shadow: 0 0 0 2px var(--main-100); } .keyword-composer button { border: 1px solid var(--main-300); border-radius: 8px; padding: 0 12px; color: var(--main-700); background: var(--main-20); font-weight: 700; cursor: pointer; } .prompt-footer { display: flex; justify-content: space-between; align-items: center; margin-top: 9px; color: var(--gray-500); font-size: 12px; } .clear-button { border: 0; background: transparent; color: var(--gray-500); cursor: pointer; } .refine-button { display: inline-flex; align-items: center; gap: 6px; border: 0; border-radius: 8px; padding: 8px 12px; color: #fff; background: var(--main-700); font-weight: 700; cursor: pointer; } .refine-button.blocked { opacity: .68; } .refine-button:disabled { opacity: .45; cursor: not-allowed; } .refine-model-row { display: flex; align-items: center; gap: 10px; margin-top: 10px; color: var(--gray-600); font-size: 12px; } .refine-model-row > :last-child { min-width: 220px; } .refine-note { display: flex; align-items: center; gap: 6px; margin: 10px 0 0; color: var(--color-error-700); font-size: 12px; } .refine-note span { flex: 1; } .refine-note button { border: 0; padding: 0; color: var(--main-700); background: transparent; cursor: pointer; } .refine-note.done { color: var(--color-success-700); }

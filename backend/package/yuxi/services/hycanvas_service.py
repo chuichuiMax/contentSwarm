@@ -85,6 +85,7 @@ def _normalize_cover_template(item: dict) -> dict | None:
         "fillable_fields": fillable_fields,
         "preview_urls": preview_urls,
         "is_handwritten_quote_template": bool(item.get("isHandwrittenQuoteTemplate")),
+        "category_name": str(item.get("categoryName") or item.get("category_name") or "").strip(),
     }
 
 
@@ -125,11 +126,35 @@ class HyCanvasClient:
             workspace_id=workspace_id,
         )
 
+    async def _template_category_names(self) -> dict[str, str]:
+        try:
+            catalog = await self._request("GET", "/api/v1/templates/catalog")
+        except HTTPException:
+            return {}
+        if not isinstance(catalog, dict):
+            return {}
+        names: dict[str, str] = {}
+        for category in catalog.get("categories") or []:
+            if not isinstance(category, dict):
+                continue
+            name = str(category.get("name") or "").strip()
+            for template in category.get("templates") or []:
+                if not isinstance(template, dict):
+                    continue
+                template_id = str(template.get("id") or "")
+                if template_id and name:
+                    names[template_id] = name
+        return names
+
     async def list_xiaohongshu_templates(self) -> dict:
         data = await self._request("GET", "/api/v1/templates")
+        category_names = await self._template_category_names()
         data.sort(key=lambda item: _PRIORITY_COVER_TEMPLATE_TAG not in (item.get("tags") or []))
         templates = []
         for item in data:
+            category_name = category_names.get(str(item.get("id") or ""))
+            if category_name:
+                item = {**item, "categoryName": category_name}
             template = _normalize_cover_template(item)
             if template is not None:
                 templates.append(template)

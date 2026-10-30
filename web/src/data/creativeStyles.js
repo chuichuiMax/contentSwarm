@@ -67,6 +67,11 @@ const STYLES_BY_TYPE_NAME = {
   工艺展示: CRAFT_STYLES,
   装修报价清单: QUOTE_STYLES,
   报价清单: QUOTE_STYLES,
+  施工报价: QUOTE_STYLES,
+  装修避坑分享: QUOTE_STYLES,
+  避坑分享: QUOTE_STYLES,
+  装修省钱攻略: QUOTE_STYLES,
+  省钱攻略: QUOTE_STYLES,
   装修案例分享: CASE_SHARE_STYLES,
   案例分享: CASE_SHARE_STYLES,
   装修知识科普: KNOWLEDGE_STYLES,
@@ -100,6 +105,8 @@ export const creativeStylesForContentType = (contentTypeCode, contentTypeName = 
   const codeFallbackName = {
     CT01: '装修案例分享',
     CT02: '装修报价清单',
+    CT03: '装修避坑分享',
+    CT04: '装修省钱攻略',
     CT07: '人设自荐'
   }[contentTypeCode]
   if (codeFallbackName) {

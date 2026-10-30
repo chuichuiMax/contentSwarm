@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, File, Form, Header, Query, UploadFile, s
 from fastapi.responses import FileResponse, RedirectResponse, Response, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from server.utils.auth_middleware import get_db, get_required_user
+from server.utils.auth_middleware import get_admin_user, get_db, get_required_user
 from yuxi.content_cover.schemas import (
     CoverComposeCreate,
     CoverEditorProjectCreate,
@@ -62,6 +62,15 @@ from yuxi.services.ai_cover_prompt_catalog_service import (
     list_ai_cover_prompt_catalog,
     resolve_ai_cover_preview_bytes,
 )
+from yuxi.services.ai_cover_template_service import (
+    apply_catalog_overrides,
+    create_ai_cover_template,
+    delete_ai_cover_template,
+    list_custom_cover_prompts,
+    list_managed_covers,
+    stored_cover_preview_bytes,
+    update_ai_cover_template,
+)
 from yuxi.content_cover.ai_cover_prompt_catalog import spec_for_variant
 from yuxi.services.hycanvas_service import HyCanvasClient
 from yuxi.services.material_library_service import get_material_file
@@ -81,12 +90,76 @@ async def ai_cover_prompts(
     current_user: User = Depends(get_required_user),
     content_type_code: str = Query(default=""),
     content_type_name: str = Query(default=""),
+    db: AsyncSession = Depends(get_db),
 ):
     del current_user
-    return await list_ai_cover_prompt_catalog(
+    data = await list_ai_cover_prompt_catalog(
         content_type_code=content_type_code,
         content_type_name=content_type_name,
     )
+    catalog = await apply_catalog_overrides(db, data.get("prompts") or [], content_type_name=content_type_name)
+    custom = await list_custom_cover_prompts(db, content_type_name=content_type_name)
+    data["prompts"] = [*catalog, *custom]
+    return data
+
+
+@content_covers.get("/ai-cover-prompts/manage")
+async def ai_cover_prompts_manage(
+    current_user: User = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    del current_user
+    return await list_managed_covers(db)
+
+
+@content_covers.post("/ai-cover-prompts/manage", status_code=status.HTTP_201_CREATED)
+async def create_ai_cover_prompt(
+    name: str = Form(""),
+    prompt: str = Form(""),
+    content_type_names: list[str] = Form(),
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    return await create_ai_cover_template(
+        db,
+        current_user,
+        name=name,
+        prompt=prompt,
+        content_type_names=content_type_names,
+        file=file,
+    )
+
+
+@content_covers.put("/ai-cover-prompts/manage/{cover_id}")
+async def update_ai_cover_prompt(
+    cover_id: str,
+    name: str = Form(""),
+    prompt: str = Form(""),
+    content_type_names: list[str] = Form(),
+    file: UploadFile | None = File(None),
+    current_user: User = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    del current_user
+    return await update_ai_cover_template(
+        db,
+        cover_id,
+        name=name,
+        prompt=prompt,
+        content_type_names=content_type_names,
+        file=file,
+    )
+
+
+@content_covers.delete("/ai-cover-prompts/manage/{cover_id}")
+async def delete_ai_cover_prompt(
+    cover_id: str,
+    current_user: User = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    del current_user
+    return await delete_ai_cover_template(db, cover_id)
 
 
 @content_covers.get("/ai-cover-prompts/{variant}/preview.png")
@@ -94,8 +167,13 @@ async def ai_cover_prompt_preview(
     variant: str,
     content_type_code: str = Query(default=""),
     content_type_name: str = Query(default=""),
+    db: AsyncSession = Depends(get_db),
 ):
     """封面参考图预览：供 img 标签加载，不要求 Bearer（与 apiGet 不同）。"""
+    custom = await stored_cover_preview_bytes(db, variant)
+    if custom:
+        content, media_type = custom
+        return Response(content=content, media_type=media_type)
     resolved = await resolve_ai_cover_preview_bytes(
         variant,
         content_type_code=content_type_code,

@@ -136,6 +136,41 @@ type createTemplateInput struct {
 	isHandwrittenQuoteTemplate bool
 }
 
+func (s *Service) templateForSourceDesign(ctx context.Context, workspaceID, sourceDesignID, userID string) (TemplateRow, bool, error) {
+	if workspaceID == "" || sourceDesignID == "" {
+		return TemplateRow{}, false, nil
+	}
+	row, err := scanTemplate(s.db.QueryRow(ctx, `SELECT `+tmplCols+` FROM "templates"
+		WHERE "source_design_id" = $1 AND "workspace_id" = $2
+		ORDER BY CASE WHEN "owner_id" = $3 THEN 0 ELSE 1 END, "created_at"
+		LIMIT 1`, sourceDesignID, workspaceID, userID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return TemplateRow{}, false, nil
+	}
+	if err != nil {
+		return TemplateRow{}, false, err
+	}
+	return row, true, nil
+}
+
+func (s *Service) updateSavedTemplate(ctx context.Context, id string, in createTemplateInput) (TemplateRow, error) {
+	if in.tags == nil {
+		in.tags = []string{}
+	}
+	const q = `UPDATE "templates" SET
+		"workspace_id" = $2, title = $3, category = $4, tags = $5, file = $6, thumbnail = $7,
+		visibility = $8, "collection_id" = $9, style = $10,
+		"is_handwritten_quote_template" = $11, "updated_at" = now()
+		WHERE id = $1 RETURNING ` + tmplCols
+	row, err := scanTemplate(s.db.QueryRow(ctx, q,
+		id, in.workspaceID, in.title, in.category, in.tags, in.file, in.thumbnail,
+		strings.ToUpper(in.visibility), in.collectionID, in.style, in.isHandwrittenQuoteTemplate))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return TemplateRow{}, ErrNotFound
+	}
+	return row, err
+}
+
 func (s *Service) saveRow(ctx context.Context, in createTemplateInput) (TemplateRow, error) {
 	const q = `INSERT INTO "templates" (id,"owner_id","source_design_id","workspace_id",title,category,tags,file,thumbnail,visibility,"collection_id",style,"is_handwritten_quote_template",attribution,"updated_at")
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'[]'::jsonb,now())

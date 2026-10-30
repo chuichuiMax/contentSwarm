@@ -38,6 +38,9 @@ export function contentSwarmHyCanvasURL(): string | null {
 export function returnToContentSwarm(): boolean {
   const target = contentSwarmHyCanvasURL();
   if (!target || typeof window === "undefined") return false;
+  // Embedded in ContentSwarm's /hycanvas iframe: reloading the same URL loops
+  // forever when the HyCanvas session cookie never sticks (looks like a flash crash).
+  if (window.parent !== window) return false;
   window.top?.location.replace(target);
   return true;
 }

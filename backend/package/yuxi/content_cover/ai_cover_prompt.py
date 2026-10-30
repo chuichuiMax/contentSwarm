@@ -761,11 +761,18 @@ def select_ai_cover_prompt(
     prompt_random: bool = True,
     prompt_variant: str | None = None,
     featured_template_index: int | None = None,
+    exclude_variants: frozenset[str] = frozenset(),
 ) -> AiCoverJobSelection:
-    pool = ai_cover_eligible_variants(
-        content_type_code=content_type_code,
-        content_type_name=content_type_name,
+    pool = tuple(
+        variant
+        for variant in ai_cover_eligible_variants(
+            content_type_code=content_type_code,
+            content_type_name=content_type_name,
+        )
+        if variant not in exclude_variants
     )
+    if not pool:
+        raise ValueError("当前内容类型没有可用的 AI 封面")
     variant = resolve_ai_cover_variant(
         pool=pool,
         prompt_random=prompt_random,

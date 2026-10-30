@@ -61,6 +61,7 @@ type Template struct {
 	Visibility                 string          `json:"visibility"` // personal|team|public
 	OwnerID                    string          `json:"ownerId"`
 	SourceDesignID             *string         `json:"sourceDesignId,omitempty"`
+	CollectionID               *string         `json:"collectionId,omitempty"`
 	WorkspaceID                *string         `json:"workspaceId"`
 	Categories                 []string        `json:"categories"`
 	Tags                       []string        `json:"tags"`
@@ -216,12 +217,13 @@ func rowToTemplate(r TemplateRow) Template {
 	}
 }
 
-// rowToTemplateForUser exposes the editable source only to its owner. A
-// template may be visible to a whole workspace or publicly, but that does not
-// grant permission to modify the owner's source design.
+// rowToTemplateForUser exposes the editable source to its owner and to members
+// of a workspace template. Opening that design and saving updates the same
+// template instead of creating another cover.
 func rowToTemplateForUser(r TemplateRow, userID string) Template {
 	template := rowToTemplate(r)
-	if r.OwnerID == userID {
+	template.CollectionID = r.CollectionID
+	if r.OwnerID == userID || r.Visibility == "workspace" {
 		template.SourceDesignID = r.SourceDesignID
 	}
 	return template
@@ -580,12 +582,26 @@ func (s *Service) SaveAsTemplate(ctx context.Context, userID string, in SaveInpu
 	// "everyone" does not make the template disappear from that category.
 	ws := in.WorkspaceID
 	wsPtr := &ws
-	row, err := s.saveRow(ctx, createTemplateInput{
+	input := createTemplateInput{
 		ownerID: userID, sourceDesignID: nilIfEmpty(in.DesignID), workspaceID: wsPtr, title: in.Title, category: nilIfEmpty(category),
 		tags: tags, file: fileRaw, thumbnail: nilIfEmpty(in.Thumbnail), visibility: visibility,
 		collectionID: nilIfEmpty(in.CollectionID), style: style,
 		isHandwrittenQuoteTemplate: in.IsHandwrittenQuoteTemplate,
-	})
+	}
+	if in.DesignID != "" {
+		existing, found, findErr := s.templateForSourceDesign(ctx, in.WorkspaceID, in.DesignID, userID)
+		if findErr != nil {
+			return Template{}, findErr
+		}
+		if found && (existing.OwnerID == userID || existing.Visibility == "workspace") {
+			row, err := s.updateSavedTemplate(ctx, existing.ID, input)
+			if err != nil {
+				return Template{}, err
+			}
+			return rowToTemplateForUser(row, userID), nil
+		}
+	}
+	row, err := s.saveRow(ctx, input)
 	if err != nil {
 		return Template{}, err
 	}

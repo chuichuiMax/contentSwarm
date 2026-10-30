@@ -193,6 +193,19 @@ const router = createRouter({
       ]
     },
     {
+      path: '/cover-manage',
+      name: 'cover-manage',
+      component: AppLayout,
+      children: [
+        {
+          path: '',
+          name: 'CoverManage',
+          component: () => import('../views/CoverManageView.vue'),
+          meta: { keepAlive: false, requiresAuth: true, requiresAdmin: true }
+        }
+      ]
+    },
+    {
       path: '/dashboard',
       name: 'dashboard',
       component: AppLayout,

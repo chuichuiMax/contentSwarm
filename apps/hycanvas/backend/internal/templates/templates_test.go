@@ -210,6 +210,11 @@ func TestRowToTemplateForUserOnlyExposesOwnedSourceDesign(t *testing.T) {
 	if shared.SourceDesignID != nil {
 		t.Fatalf("viewer must not receive source design, got %q", *shared.SourceDesignID)
 	}
+	row.Visibility = "workspace"
+	member := rowToTemplateForUser(row, "member")
+	if member.SourceDesignID == nil || *member.SourceDesignID != sourceDesignID {
+		t.Fatalf("workspace member source design = %v", member.SourceDesignID)
+	}
 }
 
 func TestDeepCopyDesign(t *testing.T) {
@@ -586,7 +591,7 @@ func TestFillTextFieldsDoesNotChangeTemplateStyleOrStructure(t *testing.T) {
 			},
 		}}}},
 	}
-	fields := []any{map[string]any{"nodeId": "title-node", "kind": "text", "label": "主标题"}}
+	fields := []any{map[string]any{"nodeId": "title-node", "kind": "text", "label": "主标题", "semanticRole": "title"}}
 	if err := fillTextFields(file, fields, map[string]string{"主标题": "替换后更长的封面标题"}); err != nil {
 		t.Fatalf("fillTextFields: %v", err)
 	}
@@ -662,8 +667,45 @@ func TestFillTextFieldsEnforcesRequiredAndMaxChars(t *testing.T) {
 	if err := fillTextFields(file, fields, map[string]string{"field_3": ""}); err != ErrBadRequest {
 		t.Fatalf("blank replacement: expected ErrBadRequest, got %v", err)
 	}
-	if err := fillTextFields(file, fields, map[string]string{"field_3": "岳阳杏林小区"}); err != ErrBadRequest {
-		t.Fatalf("oversized field: expected ErrBadRequest, got %v", err)
+	if err := fillTextFields(file, fields, map[string]string{"field_3": "岳阳杏林小区"}); err != nil {
+		t.Fatalf("fact fields longer than maxChars should autofit instead of failing: %v", err)
+	}
+}
+
+func TestFillTextFieldsAutoFitsLongFactOnSingleLine(t *testing.T) {
+	file := map[string]any{
+		"pages": []any{map[string]any{"children": []any{map[string]any{
+			"id": "job-node", "type": "text",
+			"box": map[string]any{
+				"mode": "fixed", "width": 72.0, "height": 28.0,
+				"autoFit": map[string]any{"enabled": false, "min": 8.0, "max": 24.0},
+			},
+			"content": []any{
+				map[string]any{"runs": []any{map[string]any{"text": "岗位", "style": map[string]any{"fontSize": 24.0}}}},
+			},
+		}}}},
+	}
+	fields := []any{map[string]any{
+		"nodeId": "job-node", "kind": "text", "label": "岗位", "key": "job",
+		"semanticRole": "job_position",
+		"constraints":  map[string]any{"required": true, "maxChars": 2.0},
+	}}
+	if err := fillTextFields(file, fields, map[string]string{"job": "项目经理"}); err != nil {
+		t.Fatalf("fillTextFields: %v", err)
+	}
+	node := asObj(asArr(asObj(asArr(file["pages"])[0])["children"])[0])
+	run := asObj(asArr(asObj(asArr(node["content"])[0])["runs"])[0])
+	if asStr(run["text"]) != "项目经理" {
+		t.Fatalf("text = %q", asStr(run["text"]))
+	}
+	size := asNum(asObj(run["style"])["fontSize"])
+	if size >= 24 || size < 8 {
+		t.Fatalf("fontSize = %v, want between 8 and 24", size)
+	}
+	contentW, contentH := textBoxContentSize(asObj(node["box"]))
+	w, h := estimateSingleLineLayout(node, 1)
+	if w > contentW+0.5 || h > contentH+0.5 {
+		t.Fatalf("layout still overflows: %vx%v in %vx%v box", w, h, contentW, contentH)
 	}
 }
 

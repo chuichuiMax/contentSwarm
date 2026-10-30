@@ -24,6 +24,8 @@ export const contentApi = {
   reprepareViralAssets: (assetIds) =>
     apiPost('/api/content/viral-assets/reprepare', { asset_ids: assetIds }),
   getBootstrap: () => apiGet('/api/content/bootstrap'),
+  getTargetAudienceTags: (audience) =>
+    apiGet(`/api/content/target-audience-tags${encodeQuery({ audience })}`),
   createTask: (payload) => apiPost('/api/content/tasks', payload),
   listTasks: (params) => apiGet(`/api/content/tasks${encodeQuery(params)}`),
   getTask: (taskId) => apiGet(`/api/content/tasks/${taskId}`),
@@ -48,6 +50,12 @@ export const contentApi = {
   listHyCanvasTemplates: () => apiGet('/api/content/covers/hycanvas/templates'),
   listAiCoverPrompts: (params) =>
     apiGet(`/api/content/covers/ai-cover-prompts${encodeQuery(params)}`),
+  listAiCoverManage: () => apiGet('/api/content/covers/ai-cover-prompts/manage'),
+  createAiCover: (formData) => apiPost('/api/content/covers/ai-cover-prompts/manage', formData),
+  updateAiCover: (coverId, formData) =>
+    apiPut(`/api/content/covers/ai-cover-prompts/manage/${encodeURIComponent(coverId)}`, formData),
+  deleteAiCover: (coverId) =>
+    apiDelete(`/api/content/covers/ai-cover-prompts/manage/${encodeURIComponent(coverId)}`),
   getHyCanvasTemplatePreview: (templateId) =>
     apiGet(
       `/api/content/covers/hycanvas/templates/${encodeURIComponent(templateId)}/render.png`,

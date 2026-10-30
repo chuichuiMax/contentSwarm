@@ -103,6 +103,8 @@ const creation = reactive({
 const DEFAULT_DIRECT_GENERATION_PROMPT =
   '使用我给你的一些元素，根据爆文 换一种表达方式 符合当地的口吻'
 const formValues = reactive({})
+const resolvedAudienceTags = ref([])
+let audienceTagRequestId = 0
 const currentEmployee = ref(null)
 const contentRequestExpanded = ref(false)
 const selectedCreativeStyle = ref('')
@@ -314,9 +316,38 @@ const availableContentTestCases = computed(() => {
       : Boolean(category) && item.category === category
   )
 })
-const builtinCoverTemplates = computed(() =>
-  hycanvasTemplates.value.filter((item) => item.zone !== 'featured')
-)
+const GENERAL_COVER_CATEGORY = '通用'
+
+const coverContentTypeNames = (typeName) => {
+  const name = String(typeName || '').trim()
+  if (!name) return []
+  const names = new Set([name])
+  const code = CONTENT_TYPE_NAME_TO_CODE[name]
+  if (!code) return [...names]
+  for (const [alias, aliasCode] of Object.entries(CONTENT_TYPE_NAME_TO_CODE)) {
+    if (aliasCode === code && (alias.includes(name) || name.includes(alias))) names.add(alias)
+  }
+  return [...names]
+}
+
+const builtinCoverTemplates = computed(() => {
+  const templates = hycanvasTemplates.value.filter((item) => item.zone !== 'featured')
+  const typeName = selectedStudioContentType.value?.name || formValues.mp_content_type_name || ''
+  const categorized = templates.some((item) => String(item.category_name || '').trim())
+  if (!typeName || !categorized) return templates
+  const accepted = new Set(coverContentTypeNames(typeName))
+  return templates.filter((item) => {
+    const category = String(item.category_name || '').trim()
+    return category === GENERAL_COVER_CATEGORY || accepted.has(category)
+  })
+})
+const builtinCoverEmptyText = computed(() => {
+  const typeName = selectedStudioContentType.value?.name || formValues.mp_content_type_name || ''
+  if (typeName && hycanvasTemplates.value.some((item) => item.zone !== 'featured' && item.category_name)) {
+    return `当前内容类型暂无封面模板，请在「${typeName}」或「通用」分类下保存模板`
+  }
+  return 'HyCanvas 尚未配置或暂无内置封面模板'
+})
 const featuredCoverTemplates = computed(() =>
   hycanvasTemplates.value.filter((item) => item.zone === 'featured')
 )
@@ -1193,8 +1224,29 @@ const syncGeneratedContentRequest = () => {
       departmentName: userStore.departmentName
     },
     contentType: selectedStudioContentType.value,
-    businessVariables: businessVariableSnapshot.value
+    businessVariables: businessVariableSnapshot.value,
+    audienceTags: resolvedAudienceTags.value.length ? resolvedAudienceTags.value : null
   })
+}
+
+const refreshTargetAudienceTags = async (audienceName, { syncRequest = true } = {}) => {
+  const name = String(audienceName || '').trim()
+  if (!name) {
+    resolvedAudienceTags.value = []
+    if (syncRequest) syncGeneratedContentRequest()
+    return
+  }
+  const requestId = ++audienceTagRequestId
+  try {
+    const response = await contentApi.getTargetAudienceTags(name)
+    if (requestId !== audienceTagRequestId) return
+    resolvedAudienceTags.value = response.tags || []
+  } catch (error) {
+    if (requestId !== audienceTagRequestId) return
+    resolvedAudienceTags.value = []
+    message.warning(error.message || `未能读取目标人群「${name}」对应标签知识库`)
+  }
+  if (syncRequest) syncGeneratedContentRequest()
 }
 
 const loadCurrentEmployee = async () => {
@@ -1227,7 +1279,8 @@ const initializeFormValues = () => {
   formValues.generation_prompt = String(saved.generation_prompt ?? '').trim()
     ? saved.generation_prompt
     : DEFAULT_DIRECT_GENERATION_PROMPT
-  syncGeneratedContentRequest()
+  resolvedAudienceTags.value = []
+  void refreshTargetAudienceTags(formValues['目标人群'])
 }
 
 const onContentTypeChange = (value) => {
@@ -1322,6 +1375,10 @@ const onBusinessTextBlur = (key, value) => {
 }
 
 const onBusinessSelectChange = (key, value) => {
+  if (key === '目标人群') {
+    void refreshTargetAudienceTags(value)
+    return
+  }
   if (key === '工艺类型') {
     const allowed = processNamesByType.value[value] || []
     const currentName = String(formValues['工艺名称'] || '').trim()
@@ -2246,6 +2303,15 @@ watch(
 )
 
 watch(selectedHyCanvasTemplateId, initializeHyCanvasFields)
+watch(
+  () => [builtinCoverTemplates.value, selectedHyCanvasTemplateId.value],
+  () => {
+    if (!hycanvasTemplates.value.length || !selectedHyCanvasTemplateId.value) return
+    if (!builtinCoverTemplates.value.some((item) => item.id === selectedHyCanvasTemplateId.value)) {
+      selectedHyCanvasTemplateId.value = ''
+    }
+  }
+)
 watch(coverTemplateTab, (mode) => {
   if (mode === 'ai') {
     if (!selectedAiCoverPromptVariant.value) {
@@ -2458,7 +2524,11 @@ const buildBrief = () => ({
   user_request: String(formValues.user_request || '').trim(),
   content_type_code: studioContentTypeCode.value || creation.content_type_code || undefined,
   brand: {},
-  audience: [],
+  audience: resolvedAudienceTags.value.length
+    ? [...resolvedAudienceTags.value]
+    : Array.isArray(store.task?.brief?.audience)
+      ? [...store.task.brief.audience]
+      : [],
   business_variables: Object.fromEntries(
     activeFields.value
       .map((field) => [field.key, formValues[field.key]])
@@ -3501,7 +3571,7 @@ const returnToContentCreation = async () => {
                   </div>
                   <a-empty
                     v-if="coverTemplateTab === 'builtin' && !builtinCoverTemplates.length"
-                    description="HyCanvas 尚未配置或暂无内置封面模板"
+                    :description="builtinCoverEmptyText"
                   />
                   <template v-if="coverTemplateTab === 'ai'">
                     <div class="material-selector-title ai-cover-prompt-header">
@@ -4420,7 +4490,7 @@ const returnToContentCreation = async () => {
                       <small>{{ item.format?.width }} × {{ item.format?.height }}</small>
                     </button>
                   </div>
-                  <a-empty v-else description="HyCanvas 尚未配置或暂无内置封面模板" />
+                  <a-empty v-else :description="builtinCoverEmptyText" />
                 </a-spin>
                 <div v-if="selectedHyCanvasTemplate" class="hycanvas-fields">
                   <label

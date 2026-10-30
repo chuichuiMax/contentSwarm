@@ -73,7 +73,7 @@ function mdOutlineToDesign(md: string, fallbackTitle: string): DesignFile {
   })) as DesignFile["pages"];
   return file;
 }
-import { ApiError, type AiProviderPreset, type DesignRecord, type HomeItem, type MyTask, type StorageUsageView, type TaskStatus, type TemplateCollectionSummary, type TemplateSummary, type WorkspaceRole } from "@hc/sdk";
+import { ApiError, type AiProviderPreset, type DesignRecord, type FillableFieldSummary, type HomeItem, type MyTask, type StorageUsageView, type TaskStatus, type TemplateCollectionSummary, type TemplateSummary, type WorkspaceRole } from "@hc/sdk";
 import { formatBytes } from "@/lib/format";
 import { useDateFormat } from "@/lib/datetime";
 import { resolvedTheme, setThemePreference } from "@/lib/theme";
@@ -672,6 +672,36 @@ export function DashboardApp({ view }: { view: DashboardView }) {
     if (f.label === "Blank") setSizeOpen(true);
     else if (zone) void router.push({ pathname: dashboardPath("templates"), query: { zone } });
     else void createDesign(f.w, f.h, f.label, f.kind);
+  }
+
+  async function copyTemplate(template: TemplateSummary) {
+    if (!activeWorkspaceId || busy) return;
+    setBusy(true);
+    try {
+      const file = await oc.getTemplateFile(template.id);
+      const title = `${template.title} 副本`;
+      file.title = title;
+      const created = await oc.createDesign({ workspaceId: activeWorkspaceId, title, from: file });
+      const declared = (file.meta as { brandEditableFields?: FillableFieldSummary[] } | undefined)?.brandEditableFields;
+      await oc.saveAsTemplate({
+        workspaceId: activeWorkspaceId,
+        designId: created.id,
+        file,
+        title,
+        category: template.categories[0],
+        tags: template.tags,
+        visibility: template.visibility === "team" ? "workspace" : template.visibility === "personal" ? "private" : "public",
+        collectionId: template.collectionId ?? undefined,
+        fillableFields: declared,
+        isHandwrittenQuoteTemplate: template.isHandwrittenQuoteTemplate === 1,
+      });
+      setTplRefresh((n) => n + 1);
+      toast.success("已复制为新模板");
+    } catch {
+      toast.error("复制模板失败");
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function applyTemplate(template: TemplateSummary | string) {
@@ -1356,9 +1386,12 @@ export function DashboardApp({ view }: { view: DashboardView }) {
                   {filteredTemplates.map((t) => (
                     <li key={t.id} className="group relative rounded-2xl border border-neutral-200 bg-surface shadow-sm transition hover:shadow-md">
                       <button
-                        onClick={() => void applyTemplate(t)}
+                        onClick={() => {
+                          if (t.sourceDesignId) void open(t.sourceDesignId);
+                          else void applyTemplate(t);
+                        }}
                         disabled={busy}
-                        title={tr("dashboard.create_from_template")}
+                        title={t.sourceDesignId ? "编辑模板" : tr("dashboard.create_from_template")}
                         className="block w-full text-start disabled:opacity-60"
                       >
                         <div className="aspect-[4/3] overflow-hidden rounded-t-2xl bg-neutral-100"><DesignThumb templateId={t.id} previewUrl={t.previewUrls[0]} /></div>
@@ -1379,6 +1412,9 @@ export function DashboardApp({ view }: { view: DashboardView }) {
                         {menuFor === `template:${t.id}` && (
                           <div className="absolute end-0 z-30 mt-1 w-44 overflow-hidden rounded-xl border border-neutral-200 bg-surface py-1 text-sm shadow-lg" onClick={(event) => event.stopPropagation()}>
                             <MenuRow icon={Copy} onClick={() => { setMenuFor(null); void applyTemplate(t); }}>{tr("dashboard.create_from_template")}</MenuRow>
+                            {canManageTemplate(t) && (
+                              <MenuRow icon={Copy} onClick={() => { setMenuFor(null); void copyTemplate(t); }}>复制新模板</MenuRow>
+                            )}
                             {t.sourceDesignId && (
                               <MenuRow icon={Pencil} onClick={() => {
                                 setMenuFor(null);

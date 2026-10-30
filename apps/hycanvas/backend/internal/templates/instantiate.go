@@ -217,19 +217,29 @@ func fillTextFields(file map[string]any, declarations []any, values map[string]s
 			if !present {
 				continue
 			}
+			value = normalizeFilledText(value)
+			if key != "" {
+				values[key] = value
+			}
+			if label != "" {
+				values[label] = value
+			}
+			narrative := isNarrativeSemanticRole(asStr(field["semanticRole"]))
 			if required, _ := constraints["required"].(bool); required && strings.TrimSpace(value) == "" {
 				return ErrBadRequest
 			}
-			if maxChars := int(asNum(constraints["maxChars"])); maxChars > 0 && present && utf8.RuneCountInString(strings.ReplaceAll(value, "\n", "")) > maxChars {
-				return ErrBadRequest
-			}
-			if maxLines := int(asNum(constraints["maxLines"])); maxLines > 0 && present && strings.Count(value, "\n")+1 > maxLines {
-				return ErrBadRequest
-			}
-			if maxCharsPerLine := int(asNum(constraints["maxCharsPerLine"])); maxCharsPerLine > 0 && present {
-				for _, line := range strings.Split(value, "\n") {
-					if utf8.RuneCountInString(line) > maxCharsPerLine {
-						return ErrBadRequest
+			if narrative {
+				if maxChars := int(asNum(constraints["maxChars"])); maxChars > 0 && present && utf8.RuneCountInString(value) > maxChars {
+					return ErrBadRequest
+				}
+				if maxLines := int(asNum(constraints["maxLines"])); maxLines > 0 && present && strings.Count(value, "\n")+1 > maxLines {
+					return ErrBadRequest
+				}
+				if maxCharsPerLine := int(asNum(constraints["maxCharsPerLine"])); maxCharsPerLine > 0 && present {
+					for _, line := range strings.Split(value, "\n") {
+						if utf8.RuneCountInString(line) > maxCharsPerLine {
+							return ErrBadRequest
+						}
 					}
 				}
 			}
@@ -242,8 +252,13 @@ func fillTextFields(file map[string]any, declarations []any, values map[string]s
 	}
 
 	remaining := make(map[string]string, len(values))
+	filledNodeIDs := make(map[string]struct{}, len(values))
 	for label, value := range values {
-		remaining[fieldNodes[label]] = value
+		nodeID := fieldNodes[label]
+		remaining[nodeID] = value
+		if nodeID != "" {
+			filledNodeIDs[nodeID] = struct{}{}
+		}
 	}
 	for _, pageRaw := range asArr(file["pages"]) {
 		for _, root := range asArr(asObj(pageRaw)["children"]) {
@@ -285,6 +300,7 @@ func fillTextFields(file map[string]any, declarations []any, values map[string]s
 	if len(remaining) > 0 {
 		return ErrBadRequest
 	}
+	fitFilledTextNodes(file, declarations, filledNodeIDs)
 	adjustTextFieldFlow(file, declarations)
 	return nil
 }

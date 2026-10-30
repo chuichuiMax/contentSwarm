@@ -3,31 +3,245 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from yuxi.content.rules import brief_variable_map
 from yuxi.content.v3.title_formula_slots import process_title_options
 
 FACT_TEMPLATE_ROLES = frozenset(
-    {"project_name", "project_name_en", "project_area", "designer", "completion_year", "brand_name"}
+    {
+        "project_name",
+        "project_name_en",
+        "project_area",
+        "designer",
+        "completion_year",
+        "brand_name",
+        "design_style",
+        "layout",
+        "service_region",
+        "target_audience",
+        "process_type",
+        "service_years",
+        "job_position",
+    }
 )
 _FACT_ROLES = FACT_TEMPLATE_ROLES
 _NARRATIVE_ROLES = frozenset({"title", "subtitle", "body_excerpt"})
 _UNSUPPORTED_CLAIMS = ("免费", "保证", "保价", "最低", "第一", "省钱", "零风险")
+# 与 HyCanvas SaveAsTemplateDialog semanticRoles 一致：semanticRole -> 业务变量名
+SEMANTIC_ROLE_BUSINESS_LABEL: dict[str, str] = {
+    "title": "内容标题",
+    "subtitle": "内容副标题",
+    "project_name": "项目名称",
+    "project_name_en": "项目英文名",
+    "project_area": "项目面积",
+    "designer": "设计师",
+    "completion_year": "完成年份",
+    "brand_name": "品牌名称",
+    "design_style": "设计风格",
+    "layout": "户型",
+    "service_region": "所在区域",
+    "target_audience": "目标人群",
+    "process_type": "工艺类型",
+    "service_years": "年限",
+    "job_position": "岗位",
+    "body_excerpt": "正文摘要",
+}
+SEMANTIC_ROLE_VARIABLE_KEYS: dict[str, tuple[str, ...]] = {
+    "project_name": (
+        "project_name",
+        "community_name",
+        "楼盘信息",
+        "项目名称",
+        "case_background",
+        "project_site",
+    ),
+    "project_name_en": ("project_name_en", "community_name_en", "项目英文名"),
+    "project_area": ("project_area", "area", "area_sqm", "quantity", "外框面积", "项目面积"),
+    "designer": ("designer", "designer_name", "设计师"),
+    "completion_year": ("completion_year", "year", "完成年份"),
+    "brand_name": ("brand_name", "品牌名称"),
+    "design_style": ("设计风格", "design_style", "scene"),
+    "layout": ("户型", "房屋布局", "户型布局", "layout"),
+    "service_region": ("所在区域", "region", "city", "location", "serviceCity"),
+    "target_audience": ("目标人群", "target_audience", "audience"),
+    "process_type": ("工艺类型", "process_type", "工艺名称", "process"),
+    "service_years": ("从业年限", "年限", "service_years"),
+    "job_position": ("岗位", "job", "job_title", "position"),
+}
+# 图层 label 与业务变量名一致时可无 semanticRole 直读简报
+_BUSINESS_VARIABLE_LABELS = frozenset(
+    key for keys in SEMANTIC_ROLE_VARIABLE_KEYS.values() for key in keys
+) | frozenset(SEMANTIC_ROLE_BUSINESS_LABEL.values())
+_CHINESE_SEMANTIC_ROLE: dict[str, str] = {label: role for role, label in SEMANTIC_ROLE_BUSINESS_LABEL.items()}
+# 封面模板上常见的人群角标文案（无 semanticRole 时的兜底）
+_TARGET_AUDIENCE_COVER_LABELS = frozenset(
+    {
+        "毛坯",
+        "毛坯房",
+        "精装房",
+        "旧房改造",
+        "旧房翻新",
+        "新房装修",
+        "局部改造",
+        "别墅",
+        "乡墅",
+        "改善型",
+    }
+)
+
+
+def _label_maps_to_target_audience(label: str, role: str) -> bool:
+    if role == "target_audience":
+        return True
+    text = str(label or "").strip()
+    if not text:
+        return False
+    if "目标人群" in text:
+        return True
+    return text in _TARGET_AUDIENCE_COVER_LABELS
+
+
+def _clean_field_label(label: str) -> str:
+    text = str(label or "").strip()
+    if len(text) >= 2 and text.startswith("<") and text.endswith(">"):
+        return text[1:-1].strip()
+    return text
+
+
+def _infer_template_field_role(declared_role: str, label: str) -> str:
+    role = normalize_semantic_role(declared_role)
+    if role in _FACT_ROLES | _NARRATIVE_ROLES or role == "label":
+        return role
+    for candidate in (_clean_field_label(label), str(label or "").strip()):
+        if not candidate:
+            continue
+        inferred = normalize_semantic_role(candidate)
+        if inferred in _FACT_ROLES | _NARRATIVE_ROLES:
+            return inferred
+    return role
+
+
+def normalize_semantic_role(role: str) -> str:
+    text = str(role or "").strip()
+    if not text:
+        return ""
+    if text in _FACT_ROLES or text in _NARRATIVE_ROLES or text == "label":
+        return text
+    mapped = _CHINESE_SEMANTIC_ROLE.get(text)
+    if mapped:
+        return mapped
+    for normalized, keys in SEMANTIC_ROLE_VARIABLE_KEYS.items():
+        if text in keys:
+            return normalized
+    return text
+
+
+def business_variable_label_for_role(role: str) -> str:
+    normalized = normalize_semantic_role(role)
+    return SEMANTIC_ROLE_BUSINESS_LABEL.get(normalized, normalized or "业务变量")
+
+
+def _pick_brief_variable(variables: dict[str, Any], *keys: str) -> str:
+    for key in keys:
+        raw = variables.get(key)
+        if raw is None or raw == "" or raw == []:
+            continue
+        if isinstance(raw, (list, tuple)):
+            text = "、".join(str(item).strip() for item in raw if str(item).strip())
+        else:
+            text = str(raw).strip()
+        if text:
+            return text
+    return ""
+
+
+def _brief_text(brief: dict[str, Any], *keys: str) -> str:
+    sources = [brief.get("form_values"), brief.get("business_variables")]
+    for source in sources:
+        if not isinstance(source, dict):
+            continue
+        for key in keys:
+            raw = source.get(key)
+            if isinstance(raw, (list, tuple)):
+                text = "、".join(str(item).strip() for item in raw if str(item).strip())
+            else:
+                text = str(raw or "").strip()
+            if text:
+                return text
+    return ""
+
+
+def _service_years(brief: dict[str, Any]) -> str:
+    years = _brief_text(brief, "从业年限", "年限", "service_years")
+    if years and "年" not in years:
+        return f"{years}年"
+    return years
 
 
 def template_fact_sources(brief: dict[str, Any]) -> dict[str, str]:
-    form_values = brief.get("form_values") or {}
-    brand = brief.get("brand") or {}
-    return {
-        "project_name": str(form_values.get("project_name") or form_values.get("community_name") or "").strip(),
-        "project_name_en": str(
-            form_values.get("project_name_en") or form_values.get("community_name_en") or ""
-        ).strip(),
-        "project_area": str(
-            form_values.get("project_area") or form_values.get("area") or form_values.get("area_sqm") or ""
-        ).strip(),
-        "designer": str(form_values.get("designer") or form_values.get("designer_name") or "").strip(),
-        "completion_year": str(form_values.get("completion_year") or form_values.get("year") or "").strip(),
-        "brand_name": str(brand.get("name") or form_values.get("brand_name") or "").strip(),
+    variables = brief_variable_map(brief)
+    brand = brief.get("brand") if isinstance(brief.get("brand"), dict) else {}
+    brand_name = str(brand.get("name") or "").strip() or _pick_brief_variable(variables, "brand_name")
+    sources = {
+        role: _pick_brief_variable(variables, *keys)
+        for role, keys in SEMANTIC_ROLE_VARIABLE_KEYS.items()
     }
+    sources["brand_name"] = brand_name or sources.get("brand_name", "")
+    years = sources.get("service_years") or _service_years(brief)
+    if years and "年" not in years:
+        years = f"{years}年"
+    sources["service_years"] = years
+    return sources
+
+
+def _value_from_semantic_role(
+    role: str,
+    *,
+    sources: dict[str, str],
+    brief: dict[str, Any],
+    template_fields: dict[str, str],
+    field_key: str,
+    label: str,
+) -> str:
+    normalized = normalize_semantic_role(role)
+    if field_key in template_fields and str(template_fields[field_key]).strip():
+        return str(template_fields[field_key]).strip()
+    if normalized in sources and str(sources[normalized]).strip():
+        return str(sources[normalized]).strip()
+    if normalized in SEMANTIC_ROLE_VARIABLE_KEYS:
+        variables = brief_variable_map(brief)
+        picked = _pick_brief_variable(variables, *SEMANTIC_ROLE_VARIABLE_KEYS[normalized])
+        if picked:
+            return picked
+    if not role and _label_maps_to_target_audience(label, role):
+        return str(sources.get("target_audience") or "").strip()
+    if normalized in _NARRATIVE_ROLES:
+        return str(sources.get(normalized) or "").strip()
+    if not role:
+        if "副标题" in label:
+            return sources.get("subtitle", "")
+        if "标题" in label or "语录" in label:
+            return sources.get("title", "")
+        return sources.get("body_excerpt", "")
+    return ""
+
+
+def _value_from_field_label(label: str, *, brief: dict[str, Any], sources: dict[str, str]) -> str:
+    variables = brief_variable_map(brief)
+    for candidate in (_clean_field_label(label), str(label or "").strip()):
+        if not candidate:
+            continue
+        if candidate in _BUSINESS_VARIABLE_LABELS:
+            picked = _pick_brief_variable(variables, candidate)
+            if picked:
+                return picked
+        inferred = normalize_semantic_role(candidate)
+        if inferred in sources and str(sources[inferred]).strip():
+            return str(sources[inferred]).strip()
+        if inferred in SEMANTIC_ROLE_VARIABLE_KEYS:
+            picked = _pick_brief_variable(variables, *SEMANTIC_ROLE_VARIABLE_KEYS[inferred])
+            if picked:
+                return picked
+    return ""
 
 
 def missing_required_template_fields(
@@ -38,11 +252,18 @@ def missing_required_template_fields(
     for field in declarations:
         label = str(field.get("label") or "").strip()
         field_key = str(field.get("key") or label).strip()
-        role = str(field.get("semanticRole") or "").strip()
+        role = normalize_semantic_role(str(field.get("semanticRole") or "").strip())
         constraints = field.get("constraints") or {}
         if field.get("kind") != "text" or not label or role in {"", "label", *_NARRATIVE_ROLES, *_FACT_ROLES}:
             continue
-        value = sources.get(role, "")
+        value = _value_from_semantic_role(
+            role,
+            sources=sources,
+            brief=brief,
+            template_fields={},
+            field_key=field_key,
+            label=label,
+        )
         if role == "project_area" and not re.search(r"\d+(?:\.\d+)?", value):
             value = ""
         elif role == "completion_year" and not re.search(r"(?:19|20)\d{2}", value):
@@ -191,16 +412,6 @@ def prepare_visual_plan_template_fields(
     return prepared
 
 
-__all__ = [
-    "FACT_TEMPLATE_ROLES",
-    "compile_cover_narrative_fields",
-    "is_decorative_cover_label",
-    "is_ordinal_badge_template_field",
-    "missing_required_template_fields",
-    "ordinal_badge_fill_value",
-    "prepare_visual_plan_template_fields",
-    "template_fact_sources",
-]
 def _wrap_visual_text(value: str, *, max_chars_per_line: int, max_lines: int) -> str:
     if len(value) <= max_chars_per_line or "\n" in value:
         return value
@@ -239,37 +450,54 @@ def resolve_hycanvas_template_fields(
     for field in declarations:
         if field.get("kind") != "text" or not field.get("label"):
             continue
-        label = str(field["label"])
+        label = str(field["label"]).strip()
         field_key = str(field.get("key") or label)
-        role = str(field.get("semanticRole") or "")
+        declared_role = str(field.get("semanticRole") or "").strip()
+        role = _infer_template_field_role(declared_role, label)
         if role == "label":
             continue
-        value = str(template_fields.get(field_key) or sources.get(role) or "").strip()
-        if not role:
-            if field_key in template_fields:
-                value = str(template_fields[field_key]).strip()
-            elif "副标题" in label:
-                value = sources["subtitle"]
-            elif "标题" in label or "语录" in label:
-                value = sources["title"]
-            else:
-                value = sources["body_excerpt"]
+        value = _value_from_semantic_role(
+            role,
+            sources=sources,
+            brief=brief,
+            template_fields=template_fields,
+            field_key=field_key,
+            label=label,
+        ).strip()
+        if not value:
+            value = _value_from_field_label(label, brief=brief, sources=sources).strip()
         if role == "project_area":
             match = re.search(r"\d+(?:\.\d+)?", value)
             value = match.group(0) if match else ""
         elif role == "completion_year":
             match = re.search(r"(?:19|20)\d{2}", value)
             value = match.group(0) if match else ""
+        elif role == "service_years" and value and "年" not in value:
+            value = f"{value}年"
         constraints = field.get("constraints") or {}
         if constraints.get("required") and not value:
-            raise ValueError(f"封面模板必填字段“{label}”未完成自动适配")
+            if role in _FACT_ROLES:
+                continue
+            biz = business_variable_label_for_role(role)
+            raise ValueError(
+                f"封面模板必填字段“{label}”未完成自动适配"
+                + (f"（已绑定业务变量「{biz}」，请确认任务已填写）" if biz else "")
+            )
         max_chars = constraints.get("maxChars")
-        if isinstance(max_chars, int) and max_chars > 0 and len(value.replace("\n", "")) > max_chars:
+        if (
+            role in _NARRATIVE_ROLES
+            and isinstance(max_chars, int)
+            and max_chars > 0
+            and len(value.replace("\n", "")) > max_chars
+        ):
             raise ValueError(f"封面字段“{label}”超过模板限制的 {max_chars} 个字符")
+        if role in _FACT_ROLES:
+            value = re.sub(r"[\r\n]+", "", value)
         max_chars_per_line = constraints.get("maxCharsPerLine")
         max_lines = constraints.get("maxLines")
         if (
-            isinstance(max_chars_per_line, int)
+            role in _NARRATIVE_ROLES
+            and isinstance(max_chars_per_line, int)
             and max_chars_per_line > 0
             and isinstance(max_lines, int)
             and max_lines > 1
@@ -284,12 +512,23 @@ def resolve_hycanvas_template_fields(
                 )
             except ValueError as exc:
                 raise ValueError(f"封面字段“{label}”超过模板限制的 {max_lines} 行") from exc
+        if not value and role in _FACT_ROLES and not constraints.get("required"):
+            continue
         fields[field_key] = value
     return fields
 
 
 __all__ = [
+    "FACT_TEMPLATE_ROLES",
+    "SEMANTIC_ROLE_BUSINESS_LABEL",
+    "business_variable_label_for_role",
+    "compile_cover_narrative_fields",
+    "is_decorative_cover_label",
+    "is_ordinal_badge_template_field",
     "missing_required_template_fields",
+    "normalize_semantic_role",
+    "ordinal_badge_fill_value",
+    "prepare_visual_plan_template_fields",
     "resolve_hycanvas_template_fields",
     "template_fact_sources",
 ]

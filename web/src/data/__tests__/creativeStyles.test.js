@@ -28,6 +28,18 @@ describe('creativeStylesForContentType', () => {
     ])
     assert.deepEqual(labels('CT06', '装修知识科普'), ['实景案例拆解型', '极简美学设计型'])
     assert.deepEqual(labels('CT07', '人设自荐'), ['理性设计师'])
+    assert.deepEqual(labels('CT03', '装修避坑分享'), [
+      '项目经理掏心窝',
+      '本地信任型',
+      '案例证明型',
+      '痛点共鸣型'
+    ])
+    assert.deepEqual(labels('CT04', ''), [
+      '项目经理掏心窝',
+      '本地信任型',
+      '案例证明型',
+      '痛点共鸣型'
+    ])
   })
 
   it('uses 价格秀明 for craft and case, 价格透明 for quotes', () => {

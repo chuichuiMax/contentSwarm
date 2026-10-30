@@ -2326,6 +2326,55 @@ class ContentCover(Base):
         }
 
 
+class AiCoverTemplate(Base):
+    """管理员新增的 AI 封面模板。"""
+
+    __tablename__ = "ai_cover_templates"
+
+    id = Column(String(64), primary_key=True)
+    name = Column(String(64), nullable=False)
+    prompt = Column(Text, nullable=False)
+    content_type_names = Column(JSON, nullable=False, default=list)
+    file_name = Column(String(255), nullable=False, unique=True)
+    media_type = Column(String(64), nullable=False)
+    image = Column(LargeBinary, nullable=False)
+    created_by = Column(String(64), nullable=False, index=True)
+    created_at = Column(DateTime, default=utc_now_naive)
+
+    def to_catalog_dict(self) -> dict[str, Any]:
+        return {
+            "variant": self.id,
+            "slot_index": 0,
+            "label": self.name,
+            "title": self.name,
+            "description": "",
+            "preview_url": f"/api/content/covers/ai-cover-prompts/{self.id}/preview.png",
+            "selectable": True,
+            "prompt_body": self.prompt,
+            "is_smart_random": False,
+            "content_type_names": list(self.content_type_names or []),
+            "created_at": format_utc_datetime(self.created_at),
+            "file_name": self.file_name,
+            "source": "custom",
+        }
+
+
+class AiCoverCatalogOverride(Base):
+    """内置 AI 封面的名称、提示词、内容类型、图片和删除状态。"""
+
+    __tablename__ = "ai_cover_catalog_overrides"
+
+    variant = Column(String(32), primary_key=True)
+    name = Column(String(64), nullable=False)
+    prompt = Column(Text, nullable=False, default="")
+    content_type_names = Column(JSON, nullable=False, default=list)
+    file_name = Column(String(255), nullable=True)
+    media_type = Column(String(64), nullable=True)
+    image = Column(LargeBinary, nullable=True)
+    hidden = Column(Boolean, nullable=False, default=False)
+    updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
+
+
 class ContentMpFavorite(Base):
     """小程序内容收藏，按员工隔离。"""
 

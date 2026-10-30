@@ -1,6 +1,7 @@
 import pytest
 
 from yuxi.content_cover.ai_cover_prompt_catalog import (
+    list_ai_cover_manage_catalog,
     specs_for_content_type,
     variant_from_oss_basename,
 )
@@ -40,6 +41,24 @@ def test_specs_for_content_type_excludes_p12_unless_case_share():
     case_specs = specs_for_content_type(content_type_name="装修案例分享")
     assert "p12" in [spec.variant for spec in case_specs]
     assert len(case_specs) == 17
+
+
+def test_list_ai_cover_manage_catalog_fills_prompts_and_content_types():
+    covers = list_ai_cover_manage_catalog()["covers"]
+    assert len(covers) == 17
+    assert covers[0]["variant"] == "smart-random"
+    assert covers[0]["title"] == "随机匹配提示词风格"
+    handwritten = next(item for item in covers if item["variant"] == "p1")
+    assert handwritten["title"] == "手写风双行标题"
+    assert "主标题示例" in handwritten["prompt_body"]
+    assert "装修案例分享" in handwritten["content_type_names"]
+    assert "装修避坑分享" in handwritten["content_type_names"]
+    assert "人设自荐" in handwritten["content_type_names"]
+    case_cover = next(item for item in covers if item["variant"] == "p12")
+    assert case_cover["title"] == "案例顶栏黄白黑体"
+    assert case_cover["content_type_names"] == ["装修案例分享"]
+    assert "装修案例分享" in case_cover["prompt_body"]
+    assert case_cover["preview_url"].endswith("/p12/preview.png")
 
 
 @pytest.mark.asyncio
