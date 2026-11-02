@@ -47,6 +47,7 @@ def booking(monkeypatch):
     )
     repo = SimpleNamespace(
         share=AsyncMock(return_value=share),
+        sharer_account_phone=AsyncMock(return_value="19900000002"),
         upsert=AsyncMock(return_value="lead-a"),
         submission=AsyncMock(return_value=None),
         record_submission=Mock(),
@@ -116,6 +117,36 @@ async def test_committed_submission_retry_does_not_reset_lead(booking):
     booking.repo.upsert.assert_not_called()
     booking.phone.assert_not_called()
     booking.repo.record_submission.assert_not_called()
+
+
+@pytest.mark.parametrize("contact_phone", ["19900000001", "19900000002", None])
+@pytest.mark.asyncio
+async def test_self_booking_uses_account_phone_and_skips_all_lead_writes(booking, contact_phone):
+    booking.repo.share.return_value.sharer_phone = contact_phone
+    booking.repo.sharer_account_phone.return_value = "19900000001"
+    results = await asyncio.gather(
+        *[service.submit_booking(booking.db, "share-a", "session-a", None, "code-a", None) for _ in range(2)]
+    )
+    expected = {"success": True, "id": None, "recorded": False, "reason": "self_booking"}
+    assert results == [expected, expected]
+    assert await service.submit_booking(booking.db, "share-a", "session-a", None, "new-code", None) == expected
+    booking.repo.sharer_account_phone.assert_awaited_once_with("employee-a")
+    booking.phone.assert_awaited_once()
+    booking.repo.upsert.assert_not_awaited()
+    booking.repo.record_submission.assert_not_called()
+    booking.db.commit.assert_not_awaited()
+    booking.redis.delete.assert_not_awaited()
+
+
+@pytest.mark.parametrize("account_phone", ["19900000002", None, ""])
+@pytest.mark.asyncio
+async def test_matching_public_contact_does_not_exclude_another_customer(booking, account_phone):
+    booking.repo.share.return_value.sharer_phone = "19900000001"
+    booking.repo.sharer_account_phone.return_value = account_phone
+    result = await service.submit_booking(booking.db, "share-a", "session-a", None, "code-a", None)
+    assert result["id"] == "lead-a"
+    booking.repo.upsert.assert_awaited_once()
+    booking.repo.sharer_account_phone.assert_awaited_once_with("employee-a")
 
 
 @pytest.mark.parametrize(

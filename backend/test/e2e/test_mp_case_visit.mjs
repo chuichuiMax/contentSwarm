@@ -154,8 +154,8 @@ test('save failure retains the sheet and allows retry without changing employee 
   assert.equal(modal.length, 0)
 })
 
-for (const samePhone of [true, false, undefined]) {
-  test(`contact phone match ${samePhone} only changes the persisted booking success notice`, async () => {
+for (const recorded of [false, true, undefined]) {
+  test(`booking recorded=${recorded} distinguishes self-booking from a saved appointment`, async () => {
     let complete
     let submitted = 0
     const { instance, modal } = createPage({ submitBooking: () => {
@@ -168,17 +168,17 @@ for (const samePhone of [true, false, undefined]) {
     await instance.submitBooking(event)
     assert.equal(submitted, 1)
     assert.equal(modal.length, 0)
-    complete({ success: true, id: 'lead-a', same_contact_phone: samePhone })
+    complete({ success: true, id: recorded === false ? null : 'lead-a', recorded, same_contact_phone: true })
     await pending
     assert.equal(instance.bookingVisible, false)
     assert.equal(instance.bookingConsent, false)
     assert.equal(instance.bookingSession, '')
     assert.equal(instance.bookingError, '')
     assert.equal(modal.length, 1)
-    assert.equal(modal[0].title, '预约申请已提交')
+    assert.equal(modal[0].title, recorded === false ? '无需提交预约' : '预约申请已提交')
     assert.equal(modal[0].showCancel, false)
-    assert.equal(modal[0].content, samePhone
-      ? '分享人和授权人联系方式相同\n工作人员将联系您安排免费工地参观。'
+    assert.equal(modal[0].content, recorded === false
+      ? '您授权的手机号与分享账号相同，无需预约自己分享的案例。'
       : '工作人员将联系您安排免费工地参观。')
   })
 }

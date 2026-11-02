@@ -288,9 +288,9 @@ async def test_pc_employee_filters_export_and_unfiltered_summary(visit_api):
         share = await db.get(ContentMaterialShare, "share-a")
         share.sharer_employee_id = None
         await db.commit()
-    # Missing historical employee metadata must not hide leads or change ownership.
+    # Recover missing historical employee links from the actual sharing account.
     row = (await client.get(base, headers=headers)).json()["items"][0]
-    assert row["id"] == "lead-1" and row["sharer_name"] is None and row["employee_code"] is None
+    assert row["id"] == "lead-1" and row["sharer_name"] == "真实员工%甲" and row["employee_code"] == "00123"
     assert (await client.get(base, headers=visit_api.tokens[5])).json()["total"] == 4
 
 
@@ -326,9 +326,11 @@ async def test_pc_branch_options_include_all_employee_branches_without_expanding
         assert load_workbook(io.BytesIO(exported.content)).active.max_row == 1
         assert (await client.get(base + "/summary", headers=headers, params=params)).json() == summary.json()
 
-    # Knowing another employee's branch must not grant access to that employee's leads.
+    # Recover this account's employee link without exposing others in the same branch.
     response = await client.get(base, headers=visit_api.tokens[2], params={"branch": "长沙门店"})
-    assert response.json()["items"] == [] and response.json()["total"] == 0
+    assert response.status_code == 200, response.text
+    assert response.json()["total"] == 1
+    assert [row["id"] for row in response.json()["items"]] == ["lead-2"]
 
 
 @pytest.mark.asyncio
