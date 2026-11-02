@@ -196,6 +196,8 @@ async def submit_booking(
         share = await repo.share(token, for_update=True)
         if share is None:
             raise booking_error(404, "MATERIAL_SHARE_NOT_FOUND", "案例分享不存在或已失效")
+        if session.get("booking_result"):
+            return session["booking_result"]
         submitted = await repo.submission(session_id)
         if submitted:
             return {
@@ -210,6 +212,13 @@ async def submit_booking(
                 raise booking_error(503, "WECHAT_UNAVAILABLE", "微信手机号服务暂时不可用，请稍后重试") from None
             session["phone_code"] = phone_code
             await redis.setex(key, VISITOR_SESSION_TTL, json.dumps(session))
+        # The public contact is editable; only the actual sharing account identifies a self-booking.
+        account_phone = await repo.sharer_account_phone(share.sharer_uid)
+        if account_phone and account_phone == session["phone"]:
+            result = {"success": True, "id": None, "recorded": False, "reason": "self_booking"}
+            session["booking_result"] = result
+            await redis.setex(key, VISITOR_SESSION_TTL, json.dumps(session))
+            return result
         lead_id = await repo.upsert(
             {
                 "id": f"cvl_{uuid.uuid4().hex}",
