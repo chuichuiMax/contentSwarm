@@ -18,9 +18,22 @@ class CaseShareRepository:
         self.db = db
 
     async def listing(
-        self, predicates: list, page: int, page_size: int | None, *, keyword="", source=None, start=None, end=None
+        self,
+        predicates: list,
+        page: int,
+        page_size: int | None,
+        *,
+        keyword="",
+        sharer_uid=None,
+        source=None,
+        start=None,
+        end=None,
     ):
         share, employee = ContentMaterialShare, ContentEmployee
+        predicates = list(predicates)
+        if sharer_uid is not None:
+            # Match data-overview counts for legacy records; display/authorization still use the actual sharer.
+            predicates.append(func.coalesce(share.sharer_uid, share.owner_uid) == sharer_uid)
         # Preserve sharing-time snapshots; older shares resolve through the actual operator.
         query = (
             select(
