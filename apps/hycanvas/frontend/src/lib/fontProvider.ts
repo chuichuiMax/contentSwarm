@@ -31,6 +31,7 @@ class FontProvider {
   private loaded = new Set<string>();
   private loading = new Set<string>();
   private subs = new Set<() => void>();
+  private notifyScheduled = false;
   // Uploaded fonts (FR-6): key (lowercased family) -> { family, src (data URL) }.
   private custom = new Map<string, { family: string; src: string }>();
 
@@ -65,6 +66,8 @@ class FontProvider {
     if (typeof document === "undefined" || typeof FontFace === "undefined") return false;
     const key = family.toLowerCase();
     if (this.loaded.has(key) && this.custom.has(key)) return true; // already registered
+    if (this.loading.has(key)) return false;
+    this.loading.add(key);
     try {
       const escaped = src.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
       const face = new FontFace(family, `url("${escaped}")`);
@@ -77,6 +80,8 @@ class FontProvider {
       return true;
     } catch {
       return false;
+    } finally {
+      this.loading.delete(key);
     }
   }
 
@@ -146,8 +151,9 @@ class FontProvider {
     const refs = (doc as unknown as { fonts?: { family?: string; url?: string; source?: string }[] }).fonts;
     if (Array.isArray(refs)) {
       for (const f of refs) {
-        if (f.url && f.family && !this.loaded.has(f.family.toLowerCase())) {
-          void this.registerCustomFont(f.family, f.url, false);
+        const key = f.family.toLowerCase();
+        if (f.url && f.family && !this.loaded.has(key) && !this.loading.has(key)) {
+          void this.registerCustomFont(f.family, f.url, false, false);
         }
       }
     }
@@ -171,7 +177,14 @@ class FontProvider {
   }
 
   private notify(): void {
-    for (const cb of this.subs) cb();
+    if (this.notifyScheduled) return;
+    this.notifyScheduled = true;
+    const flush = () => {
+      this.notifyScheduled = false;
+      for (const cb of this.subs) cb();
+    };
+    if (typeof requestAnimationFrame === "function") requestAnimationFrame(flush);
+    else void Promise.resolve().then(flush);
   }
 }
 

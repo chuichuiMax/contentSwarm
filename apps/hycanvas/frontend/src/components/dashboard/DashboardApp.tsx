@@ -3,6 +3,11 @@
 // previews and hover menus. Rename/delete/create use modals + toasts (no native
 // dialogs). Favorites/shared sections and projects are deferred.
 
+/** ContentSwarm automation covers — hidden from dashboard recents (still openable by URL). */
+const CONTENTS_WARM_COVER_KIND = "contentswarm-cover";
+const excludeAutomationCovers = (list: HomeItem[]) =>
+  list.filter((item) => item.docKind !== CONTENTS_WARM_COVER_KIND);
+
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { useRouter } from "next/router";
 import {
@@ -348,7 +353,10 @@ export function DashboardApp({ view }: { view: DashboardView }) {
 
   const load = useCallback(async (q: string) => {
     if (!activeWorkspaceId) return [] as HomeItem[];
-    return q.trim() ? oc.search(activeWorkspaceId, q.trim()) : oc.home(activeWorkspaceId, "recent");
+    const list = q.trim()
+      ? await oc.search(activeWorkspaceId, q.trim())
+      : await oc.home(activeWorkspaceId, "recent");
+    return excludeAutomationCovers(list);
   }, [activeWorkspaceId]);
 
   useEffect(() => {
@@ -400,7 +408,7 @@ export function DashboardApp({ view }: { view: DashboardView }) {
     let cancelled = false;
     void (async () => {
       const f = await oc.home(activeWorkspaceId, "favorites").catch(() => []);
-      if (!cancelled) setFavorites(f);
+      if (!cancelled) setFavorites(excludeAutomationCovers(f));
     })();
     return () => {
       cancelled = true;

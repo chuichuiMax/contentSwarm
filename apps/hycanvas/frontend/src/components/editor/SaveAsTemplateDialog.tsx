@@ -266,7 +266,6 @@ export function SaveAsTemplateDialog({
       useEditor.getState().setDocMeta({ brandEditableFields: preparedFields });
       await onSaved?.(preparedFields);
       toast.success(designId ? "模板已更新" : tr("editor.saved_as_template"));
-      onClose();
     } catch {
       toast.error(tr("editor.could_not_save_template"));
     } finally {
@@ -298,7 +297,14 @@ export function SaveAsTemplateDialog({
   }
 
   return (
-    <Modal open={open} onClose={onClose} title="设置模板字段并保存">
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="设置模板字段并保存"
+      closeOnBackdropClick={false}
+      closeOnEscape={false}
+      width="w-[32rem]"
+    >
       <form
         onSubmit={(e) => {
           e.preventDefault();

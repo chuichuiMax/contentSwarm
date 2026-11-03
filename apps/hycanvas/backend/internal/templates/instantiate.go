@@ -92,6 +92,8 @@ func (s *Service) Instantiate(ctx context.Context, userID, templateID string, in
 		}
 	}
 	applied, _ := deepCopyDesign(file)
+	markContentSwarmAutomationCover(applied)
+	PrepareCoverDesignTextSpread(applied)
 	title := strings.TrimSpace(in.Title)
 	if title == "" {
 		title = template.Title

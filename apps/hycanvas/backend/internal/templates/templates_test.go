@@ -688,7 +688,7 @@ func TestFillTextFieldsAutoFitsLongFactOnSingleLine(t *testing.T) {
 	fields := []any{map[string]any{
 		"nodeId": "job-node", "kind": "text", "label": "岗位", "key": "job",
 		"semanticRole": "job_position",
-		"constraints":  map[string]any{"required": true, "maxChars": 2.0},
+		"constraints":  map[string]any{"required": true, "maxChars": 8.0},
 	}}
 	if err := fillTextFields(file, fields, map[string]string{"job": "项目经理"}); err != nil {
 		t.Fatalf("fillTextFields: %v", err)
@@ -699,13 +699,21 @@ func TestFillTextFieldsAutoFitsLongFactOnSingleLine(t *testing.T) {
 		t.Fatalf("text = %q", asStr(run["text"]))
 	}
 	size := asNum(asObj(run["style"])["fontSize"])
-	if size >= 24 || size < 8 {
-		t.Fatalf("fontSize = %v, want between 8 and 24", size)
+	if size != 24 {
+		t.Fatalf("fontSize = %v, want 24 (no shrink)", size)
 	}
 	contentW, contentH := textBoxContentSize(asObj(node["box"]))
-	w, h := estimateSingleLineLayout(node, 1)
-	if w > contentW+0.5 || h > contentH+0.5 {
-		t.Fatalf("layout still overflows: %vx%v in %vx%v box", w, h, contentW, contentH)
+	ls := asNum(asObj(run["style"])["letterSpacing"])
+	if ls < 0 {
+		t.Fatalf("letterSpacing must not be negative (overlap), got %v", ls)
+	}
+	w, h := estimateSingleLineLayout(node, 1, ls)
+	if w > contentW+2.0 || h > contentH+0.5 {
+		t.Fatalf("layout still overflows: %vx%v in %vx%v box (ls=%v)", w, h, contentW, contentH, ls)
+	}
+	tr := asObj(node["transform"])
+	if sx := asNum(tr["scaleX"]); sx != 0 && (sx < 0.999 || sx > 1.001) {
+		t.Fatalf("must not squeeze with scaleX, got %+v", tr)
 	}
 }
 

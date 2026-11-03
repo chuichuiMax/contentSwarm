@@ -13,8 +13,15 @@ BASE = "/srv/contentswarm"
 FILES = (
     "backend/package/yuxi/services/content_service.py",
     "backend/package/yuxi/content/control/visual_template_fields.py",
+    "apps/hycanvas/backend/internal/templates/cover_automation.go",
     "apps/hycanvas/backend/internal/templates/instantiate.go",
     "apps/hycanvas/backend/internal/templates/text_autofit.go",
+    "apps/hycanvas/backend/internal/persistence/persistence.go",
+    "apps/hycanvas/backend/internal/render/automation_text_autofit.go",
+    "apps/hycanvas/backend/internal/render/raster.go",
+    "apps/hycanvas/backend/internal/httpapi/render.go",
+    "apps/hycanvas/frontend/src/lib/fontProvider.ts",
+    "web/src/views/HycanvasWorkspaceView.vue",
 )
 
 
@@ -82,9 +89,19 @@ def main() -> int:
         timeout=30,
     )
     hc = o.read().decode().strip() or hycanvas
-    _, o, _ = c.exec_command(f"docker restart {hc}", timeout=120)
-    print("restart hycanvas:", hc, o.read().decode())
-    time.sleep(12)
+    touch = (
+        f"docker exec {hc} sh -c 'touch /app/backend/internal/templates/text_autofit.go "
+        "/app/backend/internal/render/raster.go && sleep 8 && "
+        "grep -c automationSingleLineLetterFit /app/backend/internal/render/raster.go'"
+    )
+    _, o, _ = c.exec_command(touch, timeout=60)
+    print("hycanvas air touch:", o.read().decode().strip())
+    _, o, _ = c.exec_command(
+        f"docker logs {hc} 2>&1 | grep -E 'building|running|error' | tail -5",
+        timeout=30,
+    )
+    print("hycanvas build log:", o.read().decode("utf-8", errors="replace").strip())
+    time.sleep(6)
     _, o, _ = c.exec_command("curl -sS -m 15 http://127.0.0.1:5050/api/system/health", timeout=30)
     print("health:", o.read().decode().strip())
     c.close()

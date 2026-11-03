@@ -10,6 +10,7 @@ import (
 	"hycanvas/backend/internal/accounts"
 	"hycanvas/backend/internal/persistence"
 	"hycanvas/backend/internal/render"
+	"hycanvas/backend/internal/templates"
 	"hycanvas/backend/internal/uploads"
 )
 
@@ -102,6 +103,7 @@ func renderRasterHandler(p *persistence.Service, acct *accounts.Service, up *upl
 			fetch = func(aid string) ([]byte, string, error) { return up.ContentInWorkspace(r.Context(), ws, aid) }
 		}
 		file := embedDesignFileAssets(fetch, loaded.File, page)
+		templates.PrepareCoverDesignTextSpread(file)
 		var out []byte
 		var mime string
 		if format == "jpg" {

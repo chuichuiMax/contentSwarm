@@ -123,8 +123,9 @@ func (s *Service) ListByWorkspace(ctx context.Context, workspaceID string, limit
 	const q = `SELECT id, "workspace_id", title, "schema_version", "doc_kind", "template_zone", "thumbnail_url", "current_snapshot_id",
 		"created_at", "updated_at", "deleted_at", "purge_after", "source_design_id", "source_version_id"
 		FROM "designs" WHERE "workspace_id" = $1 AND "deleted_at" IS NULL
+		AND COALESCE("doc_kind", '') <> $3
 		ORDER BY "updated_at" DESC LIMIT $2`
-	rows, err := s.db.Query(ctx, q, workspaceID, limit)
+	rows, err := s.db.Query(ctx, q, workspaceID, limit, DocKindContentSwarmCover)
 	if err != nil {
 		return nil, err
 	}

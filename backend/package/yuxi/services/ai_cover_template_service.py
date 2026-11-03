@@ -11,7 +11,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from yuxi.content_cover.ai_cover_prompt import AiCoverJobSelection, select_ai_cover_prompt
+from yuxi.content_cover.ai_cover_prompt import AiCoverJobSelection, materialize_ai_cover_prompt, select_ai_cover_prompt
 from yuxi.content_cover.ai_cover_prompt_catalog import list_ai_cover_manage_catalog, specs_for_content_type
 from yuxi.services.content_type_service import ensure_default_content_types
 from yuxi.storage.postgres.models_business import User
@@ -146,6 +146,9 @@ async def selection_for_saved_cover(
     variant: str | None,
     *,
     content_type_name: str = "",
+    title: str = "",
+    subtitle: str = "",
+    form_values: dict | None = None,
 ) -> AiCoverJobSelection | None:
     cover_id = (variant or "").strip().lower()
     if not is_custom_cover_id(cover_id):
@@ -156,7 +159,12 @@ async def selection_for_saved_cover(
     names = list(row.content_type_names or [])
     if content_type_name.strip() and content_type_name.strip() not in names:
         raise ValueError("该封面模板未关联当前内容类型")
-    return AiCoverJobSelection(prompt=row.prompt, variant=row.id, render_copy_with_image2=True)
+    return _with_live_copy(
+        AiCoverJobSelection(prompt=row.prompt, variant=row.id, render_copy_with_image2=True),
+        title=title,
+        subtitle=subtitle,
+        form_values=form_values,
+    )
 
 
 async def create_ai_cover_template(
@@ -338,11 +346,34 @@ async def delete_ai_cover_template(db: AsyncSession, cover_id: str) -> dict:
     return {"success": True}
 
 
+def _with_live_copy(
+    selection: AiCoverJobSelection,
+    *,
+    title: str,
+    subtitle: str,
+    form_values: dict | None,
+) -> AiCoverJobSelection:
+    return AiCoverJobSelection(
+        prompt=materialize_ai_cover_prompt(
+            selection.prompt,
+            title=title,
+            subtitle=subtitle,
+            form_values=form_values,
+        ),
+        variant=selection.variant,
+        render_copy_with_image2=selection.render_copy_with_image2,
+        extra_parameters=selection.extra_parameters,
+    )
+
+
 async def catalog_override_selection(
     db: AsyncSession,
     variant: str | None,
     *,
     content_type_name: str = "",
+    title: str = "",
+    subtitle: str = "",
+    form_values: dict | None = None,
 ) -> AiCoverJobSelection | None:
     cover_id = (variant or "").strip().lower()
     if not cover_id or is_custom_cover_id(cover_id):
@@ -353,7 +384,12 @@ async def catalog_override_selection(
     names = list(row.content_type_names or [])
     if content_type_name.strip() and content_type_name.strip() not in names:
         raise ValueError("该封面模板未关联当前内容类型")
-    return AiCoverJobSelection(prompt=row.prompt, variant=row.variant, render_copy_with_image2=True)
+    return _with_live_copy(
+        AiCoverJobSelection(prompt=row.prompt, variant=row.variant, render_copy_with_image2=True),
+        title=title,
+        subtitle=subtitle,
+        form_values=form_values,
+    )
 
 
 async def cover_generation_selection(
@@ -370,6 +406,9 @@ async def cover_generation_selection(
         db,
         prompt_controls.get("prompt_variant"),
         content_type_name=content_type_name,
+        title=title,
+        subtitle=subtitle,
+        form_values=form_values,
     )
     if saved:
         return saved
@@ -382,5 +421,13 @@ async def cover_generation_selection(
         exclude_variants=await hidden_catalog_variants(db),
         **prompt_controls,
     )
-    override = await catalog_override_selection(db, selection.variant, content_type_name=content_type_name)
-    return override or selection
+    override = await catalog_override_selection(
+        db,
+        selection.variant,
+        content_type_name=content_type_name,
+        title=title,
+        subtitle=subtitle,
+        form_values=form_values,
+    )
+    chosen = override or selection
+    return _with_live_copy(chosen, title=title, subtitle=subtitle, form_values=form_values)
