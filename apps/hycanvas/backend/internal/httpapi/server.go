@@ -223,7 +223,7 @@ func NewRouter(d Deps) http.Handler {
 			mountBrand(api, d.Brand, d.Accounts)
 		}
 		if d.Accounts != nil && d.Brand != nil && d.Persistence != nil {
-			mountSnapshots(api, d.Persistence, d.Brand, d.Accounts)
+			mountSnapshots(api, d.Persistence, d.Brand, d.Accounts, d.Templates)
 		}
 		if d.Accounts != nil && d.AIStudio != nil && d.Persistence != nil && d.Jobs != nil {
 			mountAIStudio(api, d.AIStudio, d.Accounts, d.Persistence, d.Jobs)

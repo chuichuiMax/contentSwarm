@@ -110,6 +110,11 @@ func TestSystemCoverTemplatesAreSelectableAndFillable(t *testing.T) {
 		if contains(template.Tags, "自动排版模板") && projectNameEnID == "" {
 			t.Fatalf("personalized cover must declare its optional project English name: %s", template.ID)
 		}
+		var titleYBefore, subtitleYBefore float64
+		if title, subtitle := nodesByID[titleID], nodesByID[subtitleID]; title != nil && subtitle != nil {
+			titleYBefore = asNum(asObj(title["transform"])["y"])
+			subtitleYBefore = asNum(asObj(subtitle["transform"])["y"])
+		}
 		if err := fillTextFields(file, template.FillableFields, fields); err != nil {
 			t.Fatalf("system cover cannot fill title and subtitle in %s: %v", template.ID, err)
 		}
@@ -125,18 +130,13 @@ func TestSystemCoverTemplatesAreSelectableAndFillable(t *testing.T) {
 		}
 		if title, subtitle := nodesByID[titleID], nodesByID[subtitleID]; title != nil && subtitle != nil {
 			titleTransform, subtitleTransform := asObj(title["transform"]), asObj(subtitle["transform"])
-			titleX, titleY := asNum(titleTransform["x"]), asNum(titleTransform["y"])
-			subtitleX, subtitleY := asNum(subtitleTransform["x"]), asNum(subtitleTransform["y"])
-			titleWidth := asNum(asObj(title["box"])["width"])
-			subtitleWidth := asNum(asObj(subtitle["box"])["width"])
-			stacked := asNum(titleTransform["rotation"]) == 0 && asNum(subtitleTransform["rotation"]) == 0 &&
-				subtitleY > titleY && titleX+titleWidth > subtitleX && subtitleX+subtitleWidth > titleX
-			if stacked && subtitleY < titleY+estimateAutoHeightText(title)+titleSubtitleGap-0.01 {
-				t.Fatalf("long title overlaps subtitle in %s", template.ID)
+			titleY := asNum(titleTransform["y"])
+			subtitleY := asNum(subtitleTransform["y"])
+			if titleY != titleYBefore || subtitleY != subtitleYBefore {
+				t.Fatalf("long title moved the cover layout in %s: titleY=%v subtitleY=%v", template.ID, titleY, subtitleY)
 			}
-			pageHeight := asNum(asObj(asArr(file["pages"])[0])["height"])
-			if stacked && subtitleY+estimateAutoHeightText(subtitle) > pageHeight-titleFlowPageMargin+0.01 {
-				t.Fatalf("long title pushes subtitle outside page in %s", template.ID)
+			if height := estimateAutoHeightText(title); height > asNum(asObj(title["box"])["height"])+0.5 {
+				t.Fatalf("long title overflows its box in %s: height=%v", template.ID, height)
 			}
 		}
 	}
@@ -287,13 +287,12 @@ func TestFillTextFieldsPreservesStyle(t *testing.T) {
 
 func TestFillTextFieldsDynamicallySeparatesStackedTitleAndSubtitle(t *testing.T) {
 	tests := []struct {
-		name      string
-		title     string
-		wantMoved bool
+		name  string
+		title string
 	}{
 		{name: "short title keeps authored spacing", title: "长沙装修"},
 		{name: "two line title keeps authored spacing", title: "长沙老房翻新报价"},
-		{name: "three line title pushes subtitle", title: "长沙同城装修工长，水电泥瓦自己盯", wantMoved: true},
+		{name: "long title shrinks instead of moving subtitle", title: "长沙同城装修工长，水电泥瓦自己盯"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -328,18 +327,14 @@ func TestFillTextFieldsDynamicallySeparatesStackedTitleAndSubtitle(t *testing.T)
 			}
 
 			subtitleY := asNum(asObj(subtitle["transform"])["y"])
-			if !tt.wantMoved {
-				if subtitleY != 640 {
-					t.Fatalf("subtitle moved for fitting title: y=%v", subtitleY)
-				}
-				return
+			if subtitleY != 640 {
+				t.Fatalf("subtitle moved for fitting title: y=%v", subtitleY)
 			}
-			titleHeight := estimateAutoHeightText(title)
-			if subtitleY < 264+titleHeight+titleSubtitleGap-0.01 {
-				t.Fatalf("subtitle still overlaps title: titleHeight=%v subtitleY=%v", titleHeight, subtitleY)
+			if height := estimateAutoHeightText(title); height > asNum(asObj(title["box"])["height"])+0.5 {
+				t.Fatalf("title still overflows its box: height=%v box=%v", height, title["box"])
 			}
-			if asNum(asObj(title["box"])["height"]) != titleHeight || asNum(asObj(title["size"])["height"]) != titleHeight {
-				t.Fatalf("auto-height title bounds were not updated: box=%+v size=%+v", title["box"], title["size"])
+			if asNum(asObj(title["transform"])["y"]) != 264 {
+				t.Fatalf("title moved: %+v", title["transform"])
 			}
 		})
 	}
@@ -347,16 +342,14 @@ func TestFillTextFieldsDynamicallySeparatesStackedTitleAndSubtitle(t *testing.T)
 
 func TestFillTextFieldsSeparatesFixedTitleAndSubtitleWithinPage(t *testing.T) {
 	tests := []struct {
-		name          string
-		title         string
-		titleY        float64
-		subtitleY     float64
-		wantTitleMove bool
-		wantSubMove   bool
+		name      string
+		title     string
+		titleY    float64
+		subtitleY float64
 	}{
 		{name: "short title keeps authored spacing", title: "北京两室", titleY: 72, subtitleY: 256.7},
-		{name: "wrapped top title pushes subtitle", title: "北京两室旧房改造施工报价明细全流程避坑指南", titleY: 72, subtitleY: 256.7, wantSubMove: true},
-		{name: "wrapped bottom title shifts group upward", title: "北京两室旧房改造施工报价明细全流程避坑指南", titleY: 945.6, subtitleY: 1130.3, wantTitleMove: true, wantSubMove: true},
+		{name: "long top title shrinks inside its box", title: "北京两室旧房改造施工报价明细全流程避坑指南", titleY: 72, subtitleY: 256.7},
+		{name: "long bottom title stays in place", title: "北京两室旧房改造施工报价明细全流程避坑指南", titleY: 945.6, subtitleY: 1130.3},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -397,17 +390,14 @@ func TestFillTextFieldsSeparatesFixedTitleAndSubtitleWithinPage(t *testing.T) {
 
 			gotTitleY := asNum(asObj(title["transform"])["y"])
 			gotSubtitleY := asNum(asObj(subtitle["transform"])["y"])
-			if (gotTitleY < tt.titleY) != tt.wantTitleMove {
-				t.Fatalf("title y=%v, want moved=%v", gotTitleY, tt.wantTitleMove)
+			if gotTitleY != tt.titleY {
+				t.Fatalf("title moved: y=%v", gotTitleY)
 			}
-			if (gotSubtitleY != tt.subtitleY) != tt.wantSubMove {
-				t.Fatalf("subtitle y=%v, want moved=%v", gotSubtitleY, tt.wantSubMove)
+			if gotSubtitleY != tt.subtitleY {
+				t.Fatalf("subtitle moved: y=%v", gotSubtitleY)
 			}
-			if gotSubtitleY < gotTitleY+estimateAutoHeightText(title)+titleSubtitleGap-0.01 {
-				t.Fatalf("subtitle overlaps wrapped title: titleY=%v subtitleY=%v", gotTitleY, gotSubtitleY)
-			}
-			if gotSubtitleY+estimateAutoHeightText(subtitle) > 1440-titleFlowPageMargin+0.01 {
-				t.Fatalf("subtitle left the page: y=%v height=%v", gotSubtitleY, estimateAutoHeightText(subtitle))
+			if height := estimateAutoHeightText(title); height > asNum(asObj(title["box"])["height"])+0.5 {
+				t.Fatalf("title overflows its box: height=%v", height)
 			}
 		})
 	}
@@ -564,6 +554,32 @@ func TestNormalizeTemplateTypographyCanonicalizesSystemFontAndRecordsContract(t 
 	}
 }
 
+func TestNormalizeTemplateTypographyKeepsOnlyPackagedFonts(t *testing.T) {
+	file := map[string]any{
+		"pages": []any{map[string]any{"children": []any{
+			map[string]any{"id": "sans", "type": "text", "content": []any{map[string]any{
+				"runs": []any{map[string]any{"text": "标题", "style": map[string]any{"fontFamily": "Playfair Display", "fontSize": 48.0}}},
+			}}},
+			map[string]any{"id": "serif", "type": "text", "content": []any{map[string]any{
+				"runs": []any{map[string]any{"text": "副标题", "style": map[string]any{"fontFamily": "Noto Serif SC", "fontSize": 28.0}}},
+			}}},
+		}}},
+	}
+	fields := []any{
+		map[string]any{"nodeId": "sans", "kind": "text", "label": "主标题"},
+		map[string]any{"nodeId": "serif", "kind": "text", "label": "副标题"},
+	}
+	if err := normalizeTemplateTypography(file, fields); err != nil {
+		t.Fatalf("normalizeTemplateTypography: %v", err)
+	}
+	children := asArr(asObj(asArr(file["pages"])[0])["children"])
+	sans := asStr(asObj(asObj(asArr(asObj(asArr(asObj(children[0])["content"])[0])["runs"])[0])["style"])["fontFamily"])
+	serif := asStr(asObj(asObj(asArr(asObj(asArr(asObj(children[1])["content"])[0])["runs"])[0])["style"])["fontFamily"])
+	if sans != "Noto Sans SC" || serif != "Noto Serif SC" {
+		t.Fatalf("packaged fonts = %q, %q", sans, serif)
+	}
+}
+
 func TestNormalizeTemplateTypographyRejectsMissingTextNode(t *testing.T) {
 	file := map[string]any{"pages": []any{}}
 	fields := []any{map[string]any{"nodeId": "missing", "kind": "text", "label": "主标题"}}
@@ -608,8 +624,13 @@ func TestFillTextFieldsDoesNotChangeTemplateStyleOrStructure(t *testing.T) {
 	if asStr(firstRun["text"]) != "替换后更长的封面标题" || asStr(secondRun["text"]) != "" {
 		t.Fatalf("only text values should change: %+v", paragraphs)
 	}
-	if asNum(asObj(firstRun["style"])["fontSize"]) != 140 || asNum(asObj(secondRun["style"])["fontSize"]) != 80 {
-		t.Fatalf("template font sizes changed: %+v", paragraphs)
+	firstSize := asNum(asObj(firstRun["style"])["fontSize"])
+	secondSize := asNum(asObj(secondRun["style"])["fontSize"])
+	if firstSize > 140 || secondSize > 80 || firstSize < 140*minTextScale-0.01 || secondSize < 80*minTextScale-0.01 {
+		t.Fatalf("font scale out of range: %+v", paragraphs)
+	}
+	if height := estimateAutoHeightText(node); height > asNum(box["height"])+0.5 {
+		t.Fatalf("replacement overflows the template box: height=%v", height)
 	}
 }
 

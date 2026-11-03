@@ -405,6 +405,19 @@ type SaveInput struct {
 
 const canonicalSystemFont = "Noto Sans SC"
 
+const packagedSerifFont = "Noto Serif SC"
+
+// packagedFontFamily keeps generated covers on the font files shipped with the
+// project. Anything else is stored as the packaged sans face.
+func packagedFontFamily(family string) string {
+	switch strings.ToLower(strings.TrimSpace(family)) {
+	case "noto serif sc", "noto serif cjk sc":
+		return packagedSerifFont
+	default:
+		return canonicalSystemFont
+	}
+}
+
 // normalizeTemplateTypography makes fillable text deterministic across the
 // browser and server renderer, then records the effective run typography in
 // the field declaration. The design file remains the rendering source of truth.
@@ -417,10 +430,7 @@ func normalizeTemplateTypography(file map[string]any, fields []any) error {
 					for _, paragraphRaw := range asArr(node["content"]) {
 						for _, runRaw := range asArr(asObj(paragraphRaw)["runs"]) {
 							style := asObj(asObj(runRaw)["style"])
-							family := strings.TrimSpace(asStr(style["fontFamily"]))
-							if family == "" || strings.EqualFold(family, "system") {
-								style["fontFamily"] = canonicalSystemFont
-							}
+							style["fontFamily"] = packagedFontFamily(asStr(style["fontFamily"]))
 						}
 					}
 					textNodes[asStr(node["id"])] = node

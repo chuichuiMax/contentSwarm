@@ -307,7 +307,8 @@ export function DashboardApp({ view }: { view: DashboardView }) {
   // The active section comes from the URL (one static page per view; see
   // pages/dashboard/[[...view]].tsx). Every section renders that same page
   // component, so navigating re-renders this mounted app with a new `view`
-  // prop and switching stays instant (no remount, no refetch).
+  // prop and switching stays instant (no remount). Home refetches when it
+  // becomes active so an edited cover's thumbnail replaces the cached preview.
   // No-op when already there, so re-clicking the active rail item (or
   // re-submitting a search from Home) can't stack duplicate history entries.
   const gotoView = useCallback(
@@ -352,7 +353,7 @@ export function DashboardApp({ view }: { view: DashboardView }) {
   }, [activeWorkspaceId]);
 
   useEffect(() => {
-    if (!activeWorkspaceId) return;
+    if (view !== "home" || !activeWorkspaceId) return;
     let cancelled = false;
     void (async () => {
       const [recent, tpls] = await Promise.all([oc.home(activeWorkspaceId, "recent"), oc.listTemplates().catch(() => [])]);
@@ -364,7 +365,7 @@ export function DashboardApp({ view }: { view: DashboardView }) {
     return () => {
       cancelled = true;
     };
-  }, [activeWorkspaceId]);
+  }, [view, activeWorkspaceId]);
 
   // Load trashed designs when the Trash view is opened.
   useEffect(() => {

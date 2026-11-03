@@ -961,7 +961,7 @@ def test_hycanvas_template_fields_use_agent_rewrite_for_missing_required_fact():
     assert fields == {"免费量尺规划": "空间规划"}
 
 
-def test_hycanvas_template_fields_wraps_text_without_changing_template_style():
+def test_hycanvas_template_fields_keep_title_on_one_line_for_font_shrink():
     fields = content_tools._hycanvas_template_fields(
         [
             {
@@ -975,4 +975,4 @@ def test_hycanvas_template_fields_wraps_text_without_changing_template_style():
         brief={},
     )
 
-    assert fields["主标题"] == "真香，89㎡\n收纳远超预期"
+    assert fields["主标题"] == "真香，89㎡收纳远超预期"

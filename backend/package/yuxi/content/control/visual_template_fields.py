@@ -199,24 +199,9 @@ __all__ = [
     "missing_required_template_fields",
     "ordinal_badge_fill_value",
     "prepare_visual_plan_template_fields",
+    "resolve_hycanvas_template_fields",
     "template_fact_sources",
 ]
-def _wrap_visual_text(value: str, *, max_chars_per_line: int, max_lines: int) -> str:
-    if len(value) <= max_chars_per_line or "\n" in value:
-        return value
-    if max_lines == 2 and len(value) <= max_chars_per_line * 2:
-        minimum = len(value) - max_chars_per_line
-        candidates = range(minimum, max_chars_per_line + 1)
-        preferred_endings = "，。！？；：、,.!?;:㎡%元万亿"
-        breakpoint = min(
-            candidates,
-            key=lambda index: (value[index - 1] not in preferred_endings, abs(index * 2 - len(value))),
-        )
-        return f"{value[:breakpoint]}\n{value[breakpoint:]}"
-    lines = [value[index : index + max_chars_per_line] for index in range(0, len(value), max_chars_per_line)]
-    if len(lines) > max_lines:
-        raise ValueError(f"文字超过模板限制的 {max_lines} 行")
-    return "\n".join(lines)
 
 
 def resolve_hycanvas_template_fields(
@@ -266,30 +251,5 @@ def resolve_hycanvas_template_fields(
         max_chars = constraints.get("maxChars")
         if isinstance(max_chars, int) and max_chars > 0 and len(value.replace("\n", "")) > max_chars:
             raise ValueError(f"封面字段“{label}”超过模板限制的 {max_chars} 个字符")
-        max_chars_per_line = constraints.get("maxCharsPerLine")
-        max_lines = constraints.get("maxLines")
-        if (
-            isinstance(max_chars_per_line, int)
-            and max_chars_per_line > 0
-            and isinstance(max_lines, int)
-            and max_lines > 1
-            and "\n" not in value
-            and len(value) > max_chars_per_line
-        ):
-            try:
-                value = _wrap_visual_text(
-                    value,
-                    max_chars_per_line=max_chars_per_line,
-                    max_lines=max_lines,
-                )
-            except ValueError as exc:
-                raise ValueError(f"封面字段“{label}”超过模板限制的 {max_lines} 行") from exc
         fields[field_key] = value
     return fields
-
-
-__all__ = [
-    "missing_required_template_fields",
-    "resolve_hycanvas_template_fields",
-    "template_fact_sources",
-]

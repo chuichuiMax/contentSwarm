@@ -58,6 +58,40 @@ func TestEffectiveFontItalicSupportsTemplateStyleFormats(t *testing.T) {
 	}
 }
 
+func TestCJKCollectionFamilyUsesRegionalSansAndSerifNames(t *testing.T) {
+	regions := []string{"JP", "KR", "SC", "TC", "HK"}
+	if got := cjkCollectionFamily("NotoSansCJK", 2, regions); got != "NotoSansSC" {
+		t.Fatalf("sans family = %q", got)
+	}
+	if got := cjkCollectionFamily("NotoSerifCJK", 2, regions); got != "NotoSerifSC" {
+		t.Fatalf("serif family = %q", got)
+	}
+	if got := cjkCollectionFamily("NotoSansCJK", 7, regions); got != "NotoSansCJK7" {
+		t.Fatalf("extra collection face = %q", got)
+	}
+}
+
+func TestLookupFontMatchesPackagedTemplateNames(t *testing.T) {
+	isolateFontRegistry(t)
+	regular, err := opentype.Parse(goregular.TTF)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bold, err := opentype.Parse(gobold.TTF)
+	if err != nil {
+		t.Fatal(err)
+	}
+	registerParsedFont("NotoSansSC", 400, regular)
+	registerParsedFont("NotoSerifSC", 700, bold)
+
+	if got := lookupFont("Noto Sans SC", 400); got != regular {
+		t.Fatal("Noto Sans SC did not resolve to the packaged sans face")
+	}
+	if got := lookupFont("Noto Serif SC", 700); got != bold {
+		t.Fatal("Noto Serif SC did not resolve to the packaged serif face")
+	}
+}
+
 func TestSystemFontUsesOneDeterministicCJKFamilyAndNearestWeight(t *testing.T) {
 	isolateFontRegistry(t)
 	regular, err := opentype.Parse(goregular.TTF)

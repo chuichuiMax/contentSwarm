@@ -240,6 +240,24 @@ func RegisteredFamilies() []string {
 	return out
 }
 
+// cjkCollectionFamily names a face inside a Noto CJK collection. The Debian
+// packages ship Sans and Serif as regional faces in a fixed order. Templates
+// address them as "Noto Sans SC" and "Noto Serif SC", which lookup compares
+// after removing spaces.
+func cjkCollectionFamily(family string, index int, regions []string) string {
+	script := ""
+	switch family {
+	case "NotoSansCJK":
+		script = "Sans"
+	case "NotoSerifCJK":
+		script = "Serif"
+	}
+	if script != "" && index < len(regions) {
+		return "Noto" + script + regions[index]
+	}
+	return fmt.Sprintf("%s%d", family, index)
+}
+
 // LoadFontDir registers every font file in dir, so a self-hoster can drop in
 // the scripts their users write in. Filenames follow the convention the
 // template renderer already uses: "Family-Weight.ttf" (weight optional,
@@ -291,10 +309,7 @@ func LoadFontDir(dir string) (int, []error) {
 					errs = append(errs, fmt.Errorf("%s font %d: %w", e.Name(), i, fontErr))
 					continue
 				}
-				registeredFamily := fmt.Sprintf("%s%d", family, i)
-				if family == "NotoSansCJK" && i < len(regions) {
-					registeredFamily = "NotoSans" + regions[i]
-				}
+				registeredFamily := cjkCollectionFamily(family, i, regions)
 				registerParsedFont(registeredFamily, weight, font)
 				n++
 			}

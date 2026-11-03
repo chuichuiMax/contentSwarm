@@ -21,6 +21,8 @@ import { isLowResolution, computeEffectivePpi, renderTransition } from "@hc/engi
 import type { CanvasLike as CanvasLikeCtx } from "@hc/engine";
 import { prefersReducedMotion } from "@/lib/theme";
 import { fontCatalog, type FontCategory } from "@hc/text";
+import { isContentSwarmManaged } from "@/lib/managedAuth";
+import { isPackagedFont, PACKAGED_FONTS } from "@/lib/packagedFonts";
 import {
   AlignStartVertical, AlignCenterVertical, AlignEndVertical,
   AlignStartHorizontal, AlignCenterHorizontal, AlignEndHorizontal,
@@ -1424,6 +1426,19 @@ export function PropertiesPanel({ workspaceId }: { workspaceId?: string | null }
                 >
                   {brandFonts.map((f) => (
                     <option key={f} value={f}>{f}</option>
+                  ))}
+                </select>
+              </>
+            ) : isContentSwarmManaged ? (
+              <>
+                <select aria-label={tr("editor.font_family")}
+                  value={isPackagedFont(cs?.fontFamily) ? cs?.fontFamily : ""}
+                  onChange={(e) => { fonts.ensure(e.target.value); setChar({ fontFamily: e.target.value }); }}
+                  className={selectCls}
+                >
+                  {!isPackagedFont(cs?.fontFamily) && <option value="">{tr("editor.packaged_font_unavailable")}</option>}
+                  {PACKAGED_FONTS.map((font) => (
+                    <option key={font.family} value={font.family}>{tr(font.labelKey)}</option>
                   ))}
                 </select>
               </>

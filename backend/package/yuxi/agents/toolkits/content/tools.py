@@ -245,11 +245,6 @@ def _hycanvas_template_fields(
     template_fields: dict[str, str] | None = None,
 ) -> dict[str, str]:
     """Resolve author-declared template semantics from locked content inputs."""
-    from yuxi.content.control.visual_template_fields import (
-        is_ordinal_badge_template_field,
-        ordinal_badge_fill_value,
-        template_fact_sources,
-    )
     from yuxi.content.control.visual_template_fields import resolve_hycanvas_template_fields
 
     return resolve_hycanvas_template_fields(
@@ -258,71 +253,6 @@ def _hycanvas_template_fields(
         brief=brief,
         template_fields=template_fields,
     )
-    template_fields = template_fields or {}
-    sources = {
-        "title": visual_text[0] if visual_text else "",
-        "subtitle": visual_text[1] if len(visual_text) > 1 else "",
-        "body_excerpt": visual_text[1] if len(visual_text) > 1 else (visual_text[0] if visual_text else ""),
-        **template_fact_sources(brief),
-    }
-    fields: dict[str, str] = {}
-    for field in declarations:
-        if field.get("kind") != "text" or not field.get("label"):
-            continue
-        label = str(field["label"])
-        field_key = str(field.get("key") or label)
-        role = str(field.get("semanticRole") or "")
-        if role == "label":
-            continue
-        if is_ordinal_badge_template_field(field):
-            fields[field_key] = ordinal_badge_fill_value(field)
-            continue
-        value = str(template_fields.get(field_key) or sources.get(role) or "").strip()
-        if not role:
-            if field_key in template_fields:
-                value = str(template_fields[field_key]).strip()
-            elif "副标题" in label:
-                value = sources["subtitle"]
-            elif "标题" in label or "语录" in label:
-                value = sources["title"]
-            else:
-                value = sources["body_excerpt"]
-        if role == "project_area":
-            match = re.search(r"\d+(?:\.\d+)?", value)
-            value = match.group(0) if match else ""
-        elif role == "completion_year":
-            match = re.search(r"(?:19|20)\d{2}", value)
-            value = match.group(0) if match else ""
-        constraints = field.get("constraints") or {}
-        if constraints.get("required") and not value:
-            from yuxi.content.control.visual_template_fields import FACT_TEMPLATE_ROLES
-
-            if role in FACT_TEMPLATE_ROLES:
-                continue
-            raise ValueError(f"封面模板必填字段“{label}”未完成自动适配")
-        max_chars = constraints.get("maxChars")
-        if isinstance(max_chars, int) and max_chars > 0 and len(value.replace("\n", "")) > max_chars:
-            raise ValueError(f"封面字段“{label}”超过模板限制的 {max_chars} 个字符")
-        max_chars_per_line = constraints.get("maxCharsPerLine")
-        max_lines = constraints.get("maxLines")
-        if (
-            isinstance(max_chars_per_line, int)
-            and max_chars_per_line > 0
-            and isinstance(max_lines, int)
-            and max_lines > 1
-            and "\n" not in value
-            and len(value) > max_chars_per_line
-        ):
-            try:
-                value = _wrap_visual_text(
-                    value,
-                    max_chars_per_line=max_chars_per_line,
-                    max_lines=max_lines,
-                )
-            except ValueError as exc:
-                raise ValueError(f"封面字段“{label}”超过模板限制的 {max_lines} 行") from exc
-        fields[field_key] = value
-    return fields
 
 
 def _runtime_uid(runtime: ToolRuntime | None) -> str:

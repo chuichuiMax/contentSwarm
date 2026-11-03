@@ -5,6 +5,7 @@ package home
 
 import (
 	"context"
+	"net/url"
 	"sort"
 	"strings"
 
@@ -54,8 +55,11 @@ func NewService(db DBTX, persist *persistence.Service, access Access) *Service {
 func designToItem(d persistence.DesignRecord, starred bool) HomeItem {
 	var thumbnailURL *string
 	if d.ThumbnailURL != nil && *d.ThumbnailURL != "" {
-		url := "/api/v1/designs/" + d.ID + "/thumbnail"
-		thumbnailURL = &url
+		value := "/api/v1/designs/" + d.ID + "/thumbnail"
+		if d.UpdatedAt != "" {
+			value += "?v=" + url.QueryEscape(d.UpdatedAt)
+		}
+		thumbnailURL = &value
 	}
 	return HomeItem{
 		Kind:         "design",

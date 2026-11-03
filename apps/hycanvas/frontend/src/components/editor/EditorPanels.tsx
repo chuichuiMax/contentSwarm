@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type For
 import { Square, SquareRoundCorner, Circle, Triangle, Pentagon, Hexagon, Star, Diamond, Octagon, Frame, QrCode, Type, Upload, Search, Table as TableIcon, BarChart3, LineChart, AreaChart, PieChart, Donut, ScatterChart, Radar, Wand2, ImagePlus, Settings2, Trash2, Folder, FolderPlus, Pencil, X, Tag, ChevronLeft, Link as LinkIcon, Mic, Video, MonitorUp, CircleStop, Spline, Clock, LayoutGrid, Shapes, Sparkles, Stethoscope, AlignStartVertical, Play, ChevronDown, Send, Plus, RotateCcw, FileDown, FileText, Paperclip } from "lucide-react";
 import { migrate, type ChartType, type Node, type Fill, type Color, type Theme } from "@hc/schema";
 import { searchFonts, type FontCatalogEntry } from "@hc/text";
+import { PACKAGED_FONTS } from "@/lib/packagedFonts";
 import { toHex, fromHex, relativeLuminance } from "@hc/color";
 import { formatBytes } from "@/lib/format";
 import { qrModules } from "@/lib/qr";
@@ -808,7 +809,13 @@ export function TextPanel() {
   // Pairing preview cards render in their target fonts; eagerly load that small
   // fixed set. The scrollable font list below lazy-loads per row, but the pairing
   // cards sit above it and never enter that observer's range.
-  useEffect(() => { for (const p of pairings()) { fonts.ensure(p.headFont); fonts.ensure(p.subFont); } }, []);
+  useEffect(() => {
+    if (isContentSwarmManaged) {
+      for (const font of PACKAGED_FONTS) fonts.ensure(font.family);
+      return;
+    }
+    for (const p of pairings()) { fonts.ensure(p.headFont); fonts.ensure(p.subFont); }
+  }, []);
   // Page the (full-library) results in on scroll; reset when the search changes.
   // Resetting during render (comparing the previous query) rather than in an
   // effect avoids an extra render pass.
@@ -841,7 +848,7 @@ export function TextPanel() {
     reader.readAsDataURL(file);
   }
 
-  const addText = (text: string, fontSize: number, weight: number, family = "system") => {
+  const addText = (text: string, fontSize: number, weight: number, family = isContentSwarmManaged ? "Noto Sans SC" : "system") => {
     fonts.ensure(family);
     addNode("text", {
       name: text.slice(0, 24),
@@ -904,6 +911,16 @@ export function TextPanel() {
           <button onClick={() => addText(tr("editor.add_body_text"), 20, 400)} className="rounded-xl bg-neutral-50 px-4 py-3 text-start text-sm text-neutral-800 hover:border-brand-300 hover:bg-brand-50">{tr("editor.add_body_text")}</button>
         </CollapsibleSection>
 
+        {isContentSwarmManaged ? (
+          <CollapsibleSection title={tr("editor.fonts")} icon={Search} defaultOpen>
+            {PACKAGED_FONTS.map((font) => (
+              <button key={font.family} onClick={() => applyFont(font.family)} className="flex w-full items-center justify-between rounded-lg bg-neutral-50 px-3 py-2 text-start text-[15px] text-neutral-800 hover:bg-brand-50" style={{ fontFamily: `'${font.family}', sans-serif` }}>
+                <span className="truncate">{tr(font.labelKey)}</span>
+              </button>
+            ))}
+          </CollapsibleSection>
+        ) : (
+        <>
         <CollapsibleSection title={tr("editor.font_pairings")} icon={Sparkles} defaultOpen>
           {pairings().map((p) => (
             <button key={p.name} onClick={() => addPairing(p)} className="rounded-xl bg-neutral-50 px-4 py-2.5 text-start hover:bg-brand-50">
@@ -950,6 +967,8 @@ export function TextPanel() {
             {fontLimit < results.length && <FontListSentinel onMore={showMoreFonts} />}
           </div>
         </CollapsibleSection>
+        </>
+        )}
       </div>
     </PanelShell>
   );

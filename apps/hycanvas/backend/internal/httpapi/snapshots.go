@@ -11,6 +11,7 @@ import (
 	"hycanvas/backend/internal/accounts"
 	"hycanvas/backend/internal/brand"
 	"hycanvas/backend/internal/persistence"
+	"hycanvas/backend/internal/templates"
 )
 
 // mountSnapshots attaches the user-facing snapshot-save route (doc 04 + doc 18).
@@ -18,11 +19,11 @@ import (
 // (a non-manage-brand saver's out-of-kit colors/fonts are rejected when a lock
 // is on), which is why it lives here with both services rather than in
 // mountPersistence.
-func mountSnapshots(api chi.Router, p *persistence.Service, br *brand.Service, acct *accounts.Service) {
-	api.With(requireAuth(acct)).Post("/designs/{id}/snapshots", snapshotHandler(p, br, acct))
+func mountSnapshots(api chi.Router, p *persistence.Service, br *brand.Service, acct *accounts.Service, tpl *templates.Service) {
+	api.With(requireAuth(acct)).Post("/designs/{id}/snapshots", snapshotHandler(p, br, acct, tpl))
 }
 
-func snapshotHandler(p *persistence.Service, br *brand.Service, acct *accounts.Service) http.HandlerFunc {
+func snapshotHandler(p *persistence.Service, br *brand.Service, acct *accounts.Service, tpl *templates.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
 			File      persistence.DesignFile `json:"file"`
@@ -78,9 +79,22 @@ func snapshotHandler(p *persistence.Service, br *brand.Service, acct *accounts.S
 			persistenceProblem(w, r, err)
 			return
 		}
+		var thumbnail *string
 		if body.Thumbnail != "" && len(body.Thumbnail) <= 256*1024 && strings.HasPrefix(body.Thumbnail, "data:image/") {
+			thumbnail = &body.Thumbnail
 			if err := p.SetThumbnail(r.Context(), id, ws, body.Thumbnail); err != nil {
 				persistenceProblem(w, r, err)
+				return
+			}
+		}
+		if tpl != nil {
+			raw, err := json.Marshal(body.File)
+			if err != nil {
+				problemWithCode(w, r, http.StatusInternalServerError, "Internal Server Error", "template sync failed", "template_sync_failed")
+				return
+			}
+			if err := tpl.SyncSourceDesign(r.Context(), id, raw, thumbnail); err != nil {
+				problemWithCode(w, r, http.StatusInternalServerError, "Internal Server Error", "template sync failed", "template_sync_failed")
 				return
 			}
 		}

@@ -226,13 +226,6 @@ func fillTextFields(file map[string]any, declarations []any, values map[string]s
 			if maxLines := int(asNum(constraints["maxLines"])); maxLines > 0 && present && strings.Count(value, "\n")+1 > maxLines {
 				return ErrBadRequest
 			}
-			if maxCharsPerLine := int(asNum(constraints["maxCharsPerLine"])); maxCharsPerLine > 0 && present {
-				for _, line := range strings.Split(value, "\n") {
-					if utf8.RuneCountInString(line) > maxCharsPerLine {
-						return ErrBadRequest
-					}
-				}
-			}
 		}
 	}
 	for label := range values {
@@ -278,6 +271,7 @@ func fillTextFields(file map[string]any, declarations []any, values map[string]s
 						asObj(runRaw)["text"] = text
 					}
 				}
+				shrinkTextToBox(node)
 				delete(remaining, asStr(node["id"]))
 			})
 		}
@@ -285,121 +279,58 @@ func fillTextFields(file map[string]any, declarations []any, values map[string]s
 	if len(remaining) > 0 {
 		return ErrBadRequest
 	}
-	adjustTextFieldFlow(file, declarations)
 	return nil
 }
 
-const (
-	titleSubtitleGap    = 16.0
-	titleFlowPageMargin = 32.0
-)
+const minTextScale = 0.2
 
-// adjustTextFieldFlow keeps a vertically stacked subtitle below the rendered
-// height of a wrapped title. Template coordinates remain authoritative for
-// short text; only content that reaches the subtitle moves the subtitle. Fixed
-// boxes grow when their text needs more room, and bottom-aligned title groups
-// move upward so the subtitle remains inside the page. Both nodes are updated
-// in the instantiated design, so the editor and server export share the same
-// layout.
-func adjustTextFieldFlow(file map[string]any, declarations []any) {
-	titleID, subtitleID := "", ""
-	for _, raw := range declarations {
-		field := asObj(raw)
-		if asStr(field["kind"]) != "text" {
-			continue
-		}
-		switch asStr(field["semanticRole"]) {
-		case "title":
-			titleID = asStr(field["nodeId"])
-		case "subtitle":
-			subtitleID = asStr(field["nodeId"])
-		}
-	}
-	if titleID == "" || subtitleID == "" {
+// shrinkTextToBox reduces the filled text's font until its wrapped height fits
+// the template box. Positions and box size stay as authored, so a long title
+// does not push the subtitle or insert an extra break that the template did
+// not design.
+func shrinkTextToBox(node map[string]any) {
+	target := textBoxHeight(node)
+	if target <= 0 || estimateAutoHeightText(node) <= target+0.5 {
 		return
 	}
+	lo, hi := minTextScale, 1.0
+	best := lo
+	for i := 0; i < 14; i++ {
+		mid := (lo + hi) / 2
+		if estimateAutoHeightTextScaled(node, mid) <= target+0.5 {
+			best = mid
+			lo = mid
+		} else {
+			hi = mid
+		}
+	}
+	if best >= 0.995 {
+		return
+	}
+	applyTextScale(node, best)
+}
 
-	for _, pageRaw := range asArr(file["pages"]) {
-		var title, subtitle map[string]any
-		for _, childRaw := range asArr(asObj(pageRaw)["children"]) {
-			child := asObj(childRaw)
-			switch asStr(child["id"]) {
-			case titleID:
-				title = child
-			case subtitleID:
-				subtitle = child
-			}
-		}
-		if asStr(title["type"]) != "text" || asStr(subtitle["type"]) != "text" {
-			continue
-		}
-		titleTransform, subtitleTransform := asObj(title["transform"]), asObj(subtitle["transform"])
-		if asNum(titleTransform["rotation"]) != 0 || asNum(subtitleTransform["rotation"]) != 0 {
-			continue
-		}
-		titleX, titleY := asNum(titleTransform["x"]), asNum(titleTransform["y"])
-		subtitleX, subtitleY := asNum(subtitleTransform["x"]), asNum(subtitleTransform["y"])
-		if subtitleY <= titleY {
-			continue
-		}
-		titleWidth := asNum(asObj(title["box"])["width"])
-		if titleWidth <= 0 {
-			titleWidth = asNum(asObj(title["size"])["width"])
-		}
-		subtitleWidth := asNum(asObj(subtitle["box"])["width"])
-		if subtitleWidth <= 0 {
-			subtitleWidth = asNum(asObj(subtitle["size"])["width"])
-		}
-		if titleX+titleWidth <= subtitleX || subtitleX+subtitleWidth <= titleX {
-			continue
-		}
-		box := asObj(title["box"])
-		if enabled, _ := asObj(box["autoFit"])["enabled"].(bool); enabled {
-			continue
-		}
-		height := estimateAutoHeightText(title)
-		if height <= 0 {
-			continue
-		}
-		if current := asNum(box["height"]); height > current {
-			box["height"] = height
-			if size := asObj(title["size"]); size != nil {
-				size["height"] = height
-			}
-		}
-		desiredY := titleY + height + titleSubtitleGap
-		if desiredY <= subtitleY {
-			continue
-		}
+func textBoxHeight(node map[string]any) float64 {
+	if height := asNum(asObj(node["box"])["height"]); height > 0 {
+		return height
+	}
+	return asNum(asObj(node["size"])["height"])
+}
 
-		subtitleHeight := estimateAutoHeightText(subtitle)
-		if subtitleHeight <= 0 {
-			subtitleHeight = asNum(asObj(subtitle["size"])["height"])
-		}
-		subtitleBox := asObj(subtitle["box"])
-		if current := asNum(subtitleBox["height"]); subtitleHeight > current {
-			subtitleBox["height"] = subtitleHeight
-			if size := asObj(subtitle["size"]); size != nil {
-				size["height"] = subtitleHeight
+func applyTextScale(node map[string]any, scale float64) {
+	for _, paragraphRaw := range asArr(node["content"]) {
+		for _, runRaw := range asArr(asObj(paragraphRaw)["runs"]) {
+			style := asObj(asObj(runRaw)["style"])
+			if fontSize := asNum(style["fontSize"]); fontSize > 0 {
+				style["fontSize"] = fontSize * scale
 			}
-		}
-
-		if pageHeight := asNum(asObj(pageRaw)["height"]); pageHeight > 0 {
-			overflow := desiredY + subtitleHeight + titleFlowPageMargin - pageHeight
-			if overflow > 0 {
-				maxShift := titleY - titleFlowPageMargin
-				if maxShift < 0 {
-					maxShift = 0
+			lineHeight := asObj(style["lineHeight"])
+			if asStr(lineHeight["mode"]) == "absolute" {
+				if value := asNum(lineHeight["value"]); value > 0 {
+					lineHeight["value"] = value * scale
 				}
-				if overflow > maxShift {
-					overflow = maxShift
-				}
-				titleY -= overflow
-				desiredY -= overflow
-				titleTransform["y"] = titleY
 			}
 		}
-		subtitleTransform["y"] = desiredY
 	}
 }
 
@@ -440,6 +371,13 @@ func templateWrapChunks(text string) []templateTextChunk {
 }
 
 func estimateAutoHeightText(node map[string]any) float64 {
+	return estimateAutoHeightTextScaled(node, 1)
+}
+
+func estimateAutoHeightTextScaled(node map[string]any, scale float64) float64 {
+	if scale <= 0 {
+		scale = 1
+	}
 	box := asObj(node["box"])
 	padding := asObj(box["padding"])
 	contentWidth := asNum(box["width"]) - asNum(padding["l"]) - asNum(padding["r"])
@@ -468,8 +406,12 @@ func estimateAutoHeightText(node map[string]any) float64 {
 			if fontSize <= 0 {
 				fontSize = 16
 			}
+			fontSize *= scale
 			runHeight := estimatedLineHeight(style, fontSize)
-			letterSpacing := asNum(style["letterSpacing"])
+			if asStr(asObj(style["lineHeight"])["mode"]) == "absolute" {
+				runHeight *= scale
+			}
+			letterSpacing := asNum(style["letterSpacing"]) * scale
 			for _, chunk := range templateWrapChunks(asStr(run["text"])) {
 				chunkWidth := 0.0
 				for _, r := range chunk.text {
@@ -540,7 +482,9 @@ func restoreTemplateTypography(node map[string]any, typography map[string]any) {
 					break
 				}
 				if style := asObj(asObj(runContractRaw)["style"]); style != nil {
-					asObj(runs[runIndex])["style"] = deepCloneValue(style)
+					cloned := asObj(deepCloneValue(style))
+					cloned["fontFamily"] = packagedFontFamily(asStr(cloned["fontFamily"]))
+					asObj(runs[runIndex])["style"] = cloned
 				}
 			}
 		}
@@ -588,6 +532,7 @@ func restoreTemplateTypography(node map[string]any, typography map[string]any) {
 				}
 				axes["wght"] = weight
 			}
+			style["fontFamily"] = packagedFontFamily(asStr(style["fontFamily"]))
 			contractIndex++
 		}
 	}

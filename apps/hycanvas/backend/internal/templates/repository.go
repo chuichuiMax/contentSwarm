@@ -136,6 +136,17 @@ type createTemplateInput struct {
 	isHandwrittenQuoteTemplate bool
 }
 
+// SyncSourceDesign copies a saved source design into every template created
+// from it, so catalog thumbnails and later cover fills match the edited file.
+func (s *Service) SyncSourceDesign(ctx context.Context, sourceDesignID string, file json.RawMessage, thumbnail *string) error {
+	if strings.TrimSpace(sourceDesignID) == "" || len(file) == 0 {
+		return nil
+	}
+	_, err := s.db.Exec(ctx, `UPDATE "templates" SET file = $2, thumbnail = COALESCE($3, thumbnail), "updated_at" = now()
+		WHERE "source_design_id" = $1`, sourceDesignID, file, thumbnail)
+	return err
+}
+
 func (s *Service) saveRow(ctx context.Context, in createTemplateInput) (TemplateRow, error) {
 	const q = `INSERT INTO "templates" (id,"owner_id","source_design_id","workspace_id",title,category,tags,file,thumbnail,visibility,"collection_id",style,"is_handwritten_quote_template",attribution,"updated_at")
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'[]'::jsonb,now())
