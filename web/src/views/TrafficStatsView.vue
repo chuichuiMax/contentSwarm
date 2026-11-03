@@ -8,6 +8,7 @@ import { employeeApi } from '@/apis/employee_api'
 import PageHeader from '@/components/shared/PageHeader.vue'
 import {
   TRAFFIC_COLUMN_DEFAULTS,
+  TRAFFIC_COLUMN_SETTINGS_VERSION,
   cloneColumnSettings,
   moveColumnSetting,
   normalizeColumnSettings
@@ -50,6 +51,7 @@ function readStoredColumns() {
 
 const page = ref(1)
 const pageSize = ref(10)
+const sortState = ref({})
 const columnPanelOpen = ref(false)
 const columnSettings = ref(normalizeColumnSettings(readStoredColumns()))
 const columnDraft = ref(cloneColumnSettings(columnSettings.value))
@@ -75,11 +77,11 @@ const columnSorters = {
   name: (left, right) => compareText(left.name, right.name),
   login_account: (left, right) => compareText(left.login_account, right.login_account),
   employee_code: (left, right) => compareText(left.employee_code, right.employee_code),
-  decoration_count: (left, right) => left.decoration_count - right.decoration_count,
-  review_notes_count: (left, right) => left.review_notes_count - right.review_notes_count,
-  personal_generated_count: (left, right) => left.personal_generated_count - right.personal_generated_count,
-  enterprise_generated_count: (left, right) => left.enterprise_generated_count - right.enterprise_generated_count,
-  case_share_count: (left, right) => left.case_share_count - right.case_share_count,
+  decoration_count: (left, right) => (left.decoration_count ?? 0) - (right.decoration_count ?? 0),
+  review_notes_count: (left, right) => (left.review_notes_count ?? 0) - (right.review_notes_count ?? 0),
+  personal_generated_count: (left, right) => (left.personal_generated_count ?? 0) - (right.personal_generated_count ?? 0),
+  enterprise_generated_count: (left, right) => (left.enterprise_generated_count ?? 0) - (right.enterprise_generated_count ?? 0),
+  case_share_count: (left, right) => (left.case_share_count ?? 0) - (right.case_share_count ?? 0),
   current_branch: (left, right) => compareText(left.current_branch, right.current_branch),
   current_department: (left, right) => compareText(left.current_department, right.current_department)
 }
@@ -94,7 +96,9 @@ const tableColumns = computed(() =>
       width: column.width === 'auto' ? (column.fixed ? 120 : undefined) : Number(column.width),
       align: COUNT_COLUMN_KEYS.has(column.key) ? 'center' : undefined,
       fixed: column.fixed ? 'left' : undefined,
-      sorter: column.sortable ? columnSorters[column.key] : undefined
+      sorter: column.sortable ? columnSorters[column.key] : undefined,
+      sortDirections: COUNT_COLUMN_KEYS.has(column.key) ? ['descend', 'ascend'] : undefined,
+      sortOrder: sortState.value.columnKey === column.key ? sortState.value.order : null
     }))
 )
 
@@ -139,6 +143,7 @@ const reset = () => {
   branch.value = undefined
   department.value = undefined
   dateRange.value = []
+  sortState.value = {}
   page.value = 1
   void load()
 }
@@ -148,8 +153,9 @@ const applyDateRange = () => {
   void load()
 }
 
-const handleTableChange = (pagination) => {
-  page.value = pagination.current
+const handleTableChange = (pagination, _filters, sorter, extra) => {
+  sortState.value = { columnKey: sorter.columnKey, order: sorter.order }
+  page.value = extra.action === 'sort' ? 1 : pagination.current
   pageSize.value = pagination.pageSize
 }
 
@@ -188,14 +194,17 @@ const openHistory = (employee, entry) => {
 }
 
 const saveColumns = () => {
-  const next = normalizeColumnSettings(columnDraft.value)
+  const next = normalizeColumnSettings({ version: TRAFFIC_COLUMN_SETTINGS_VERSION, columns: columnDraft.value })
   if (!next.some((column) => column.visible)) {
     message.warning('至少保留一列')
     return
   }
   columnSettings.value = next
   columnDraft.value = cloneColumnSettings(next)
-  localStorage.setItem(COLUMN_STORAGE_KEY, JSON.stringify(next))
+  if (!next.some((column) => column.visible && column.sortable && column.key === sortState.value.columnKey)) {
+    sortState.value = {}
+  }
+  localStorage.setItem(COLUMN_STORAGE_KEY, JSON.stringify({ version: TRAFFIC_COLUMN_SETTINGS_VERSION, columns: next }))
   columnPanelOpen.value = false
   message.success('列设置已保存')
 }
@@ -220,6 +229,19 @@ const openGenerated = (employee, scope) => {
       employee_id: employee.id,
       gallery: 'generated',
       ...(scope === 'enterprise' ? { scope } : {})
+    }
+  })
+}
+
+const openCaseShares = (employee) => {
+  router.push({
+    path: '/case-shares',
+    query: {
+      sharer_uid: employee.case_share_uid,
+      employee_name: employee.name,
+      ...(dateRange.value?.length === 2
+        ? { start_date: dateRange.value[0], end_date: dateRange.value[1] }
+        : {})
     }
   })
 }
@@ -295,6 +317,9 @@ onMounted(load)
             @click="openGenerated(record, 'enterprise')"
           >
             {{ record.enterprise_generated_count }}
+          </a-button>
+          <a-button v-else-if="column.key === 'case_share_count'" type="link" @click="openCaseShares(record)">
+            {{ record.case_share_count }}
           </a-button>
           <template v-else>{{ record[column.dataIndex] }}</template>
         </template>

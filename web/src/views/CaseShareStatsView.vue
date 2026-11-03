@@ -1,5 +1,6 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { message, Modal } from 'ant-design-vue'
 import { Download, RefreshCw, Search } from 'lucide-vue-next'
 import PageHeader from '@/components/shared/PageHeader.vue'
@@ -7,6 +8,10 @@ import { caseShareApi } from '@/apis/case_share_api'
 import { useUserStore } from '@/stores/user'
 
 const userStore = useUserStore()
+const route = useRoute()
+const router = useRouter()
+const targetUid = computed(() => typeof route.query.sharer_uid === 'string' ? route.query.sharer_uid : '')
+const targetName = computed(() => typeof route.query.employee_name === 'string' ? route.query.employee_name : '')
 const loading = ref(false)
 const loadError = ref('')
 const items = ref([])
@@ -20,7 +25,9 @@ const source = ref()
 const dates = ref([])
 const filters = ref({})
 let version = 0
-const canDelete = computed(() => userStore.can('customer_lead.delete'))
+const canDelete = computed(() => userStore.can('customer_lead.delete') && (
+  userStore.isSuperAdmin || !targetUid.value || targetUid.value === userStore.uid
+))
 const pagination = computed(() => ({
   current: page.value, pageSize: pageSize.value, total: total.value,
   showSizeChanger: true, showTotal: (count) => `共 ${count} 条`, pageSizeOptions: ['10', '20', '50']
@@ -55,6 +62,7 @@ async function load() {
   } catch (error) {
     if (current === version) {
       items.value = []
+      total.value = 0
       summary.value = null
       loadError.value = error.message || '加载案例分享失败'
     }
@@ -64,12 +72,36 @@ async function load() {
 }
 
 function search() {
-  filters.value = {
-    keyword: keyword.value.trim(), source: source.value,
+  const query = {
+    ...route.query,
+    keyword: keyword.value.trim() || undefined, source: source.value,
     start_date: dates.value?.[0], end_date: dates.value?.[1]
   }
+  if (['keyword', 'source', 'start_date', 'end_date'].some((key) => route.query[key] !== query[key])) {
+    void router.replace({ query })
+  } else {
+    page.value = 1
+    void load()
+  }
+}
+
+function applyRouteFilters() {
+  keyword.value = typeof route.query.keyword === 'string' ? route.query.keyword : ''
+  source.value = typeof route.query.source === 'string' ? route.query.source : undefined
+  const start = typeof route.query.start_date === 'string' ? route.query.start_date : undefined
+  const end = typeof route.query.end_date === 'string' ? route.query.end_date : undefined
+  dates.value = start && end ? [start, end] : []
+  filters.value = {
+    sharer_uid: targetUid.value || undefined,
+    keyword: keyword.value.trim(), source: source.value, start_date: start, end_date: end
+  }
+  total.value = 0
   page.value = 1
   void load()
+}
+
+function viewAll() {
+  void router.replace({ query: { ...route.query, sharer_uid: undefined, employee_name: undefined } })
 }
 
 function reset() {
@@ -131,7 +163,12 @@ function formatTime(value) {
   }).format(new Date(value))
 }
 
-onMounted(load)
+watch(
+  () => [route.query.sharer_uid, route.query.employee_name, route.query.keyword, route.query.source,
+    route.query.start_date, route.query.end_date],
+  applyRouteFilters,
+  { immediate: true }
+)
 watch(() => userStore.uid, () => {
   version += 1
   items.value = []
@@ -172,6 +209,10 @@ onBeforeUnmount(() => { version += 1 })
           <a-button :loading="exporting" :disabled="loading || !!loadError" @click="exportRows"><Download :size="15" />导出</a-button>
         </div>
       </a-form>
+      <div v-if="targetUid" class="employee-scope" role="status">
+        <span>当前查看：{{ targetName || targetUid }} 的案例分享 · 共 {{ total }} 条</span>
+        <a-button type="link" @click="viewAll">查看全部</a-button>
+      </div>
       <a-result v-if="loadError" status="error" title="案例分享暂时无法加载" :sub-title="loadError">
         <template #extra><a-button type="primary" @click="load">重新加载</a-button></template>
       </a-result>
@@ -209,6 +250,7 @@ onBeforeUnmount(() => { version += 1 })
   :deep(.ant-select), :deep(.ant-picker) { width: 100%; }
 }
 .filter-actions { display: flex; gap: 8px; white-space: nowrap; }
+.employee-scope { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; color: var(--color-text-secondary); }
 .keyword-search { display: inline-flex; align-items: center; justify-content: center; padding: 2px; border: 0; border-radius: 3px; background: transparent; color: var(--gray-600); cursor: pointer;
   &:hover { color: var(--main-color); }
   &:focus-visible { outline: 2px solid var(--main-color); outline-offset: 1px; }
