@@ -11,7 +11,8 @@ from openpyxl import load_workbook
 from patchright.async_api import async_playwright, expect
 
 from test.integration.api.test_case_visit_router import visit_api as visit_api
-from yuxi.storage.postgres.models_content import ContentEmployee, ContentMaterialShare
+from yuxi.storage.postgres.models_business import User
+from yuxi.storage.postgres.models_content import ContentCaseVisitLead, ContentEmployee, ContentMaterialShare
 
 
 @pytest.mark.e2e
@@ -120,6 +121,45 @@ async def test_pc_browser_search_download_and_admin_scope_with_real_api(visit_ap
             downloaded_path = await (await downloaded.value).path()
             sheet = load_workbook(io.BytesIO(downloaded_path.read_bytes())).active
             assert sheet.max_row == 1
+            async with visit_api.sessions() as db:
+                admin = await db.get(User, 3)
+                admin.username, admin.phone_number = "admin", None
+                db.add(
+                    ContentMaterialShare(
+                        id="admin-share",
+                        token="admin-token",
+                        owner_uid="visitor-test-user-5",
+                        category_id="case-admin",
+                        title="独立账号案例",
+                        sharer_uid=admin.uid,
+                        sharer_name="对外联系人",
+                        source_platform="pc",
+                    )
+                )
+                await db.flush()
+                db.add(
+                    ContentCaseVisitLead(
+                        id="admin-lead",
+                        share_id="admin-share",
+                        appid="wx-test",
+                        openid="admin-visitor",
+                        phone="19900000009",
+                        sharer_uid=admin.uid,
+                    )
+                )
+                await db.commit()
+            await page.reload(wait_until="domcontentloaded")
+            await expect(page.locator(".ant-table-tbody").get_by_text("admin", exact=True)).to_be_visible()
+            await expect(page.get_by_text("对外联系人", exact=True)).to_have_count(0)
+            await page.get_by_placeholder("电话号码、分享人姓名、工号、所属门店").fill("admin")
+            await page.get_by_role("button", name="搜索客资", exact=True).click()
+            await expect(page.get_by_text("199****0009", exact=True)).to_be_visible()
+            async with page.expect_download() as downloaded:
+                await page.get_by_role("button", name="导出", exact=True).click()
+            downloaded_path = await (await downloaded.value).path()
+            sheet = load_workbook(io.BytesIO(downloaded_path.read_bytes())).active
+            assert sheet.max_row == 2 and sheet["D2"].value == "admin"
+            assert sheet["E2"].value is None and sheet["F2"].value is None
             assert not errors
         finally:
             await browser.close()

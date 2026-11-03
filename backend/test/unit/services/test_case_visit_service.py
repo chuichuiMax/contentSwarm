@@ -47,6 +47,7 @@ def booking(monkeypatch):
     )
     repo = SimpleNamespace(
         share=AsyncMock(return_value=share),
+        sharer_account_phone=AsyncMock(return_value="19900000002"),
         upsert=AsyncMock(return_value="lead-a"),
         submission=AsyncMock(return_value=None),
         record_submission=Mock(),
@@ -118,6 +119,36 @@ async def test_committed_submission_retry_does_not_reset_lead(booking):
     booking.repo.record_submission.assert_not_called()
 
 
+@pytest.mark.parametrize("contact_phone", ["19900000001", "19900000002", None])
+@pytest.mark.asyncio
+async def test_self_booking_uses_account_phone_and_skips_all_lead_writes(booking, contact_phone):
+    booking.repo.share.return_value.sharer_phone = contact_phone
+    booking.repo.sharer_account_phone.return_value = "19900000001"
+    results = await asyncio.gather(
+        *[service.submit_booking(booking.db, "share-a", "session-a", None, "code-a", None) for _ in range(2)]
+    )
+    expected = {"success": True, "id": None, "recorded": False, "reason": "self_booking"}
+    assert results == [expected, expected]
+    assert await service.submit_booking(booking.db, "share-a", "session-a", None, "new-code", None) == expected
+    booking.repo.sharer_account_phone.assert_awaited_once_with("employee-a")
+    booking.phone.assert_awaited_once()
+    booking.repo.upsert.assert_not_awaited()
+    booking.repo.record_submission.assert_not_called()
+    booking.db.commit.assert_not_awaited()
+    booking.redis.delete.assert_not_awaited()
+
+
+@pytest.mark.parametrize("account_phone", ["19900000002", None, ""])
+@pytest.mark.asyncio
+async def test_matching_public_contact_does_not_exclude_another_customer(booking, account_phone):
+    booking.repo.share.return_value.sharer_phone = "19900000001"
+    booking.repo.sharer_account_phone.return_value = account_phone
+    result = await service.submit_booking(booking.db, "share-a", "session-a", None, "code-a", None)
+    assert result["id"] == "lead-a"
+    booking.repo.upsert.assert_awaited_once()
+    booking.repo.sharer_account_phone.assert_awaited_once_with("employee-a")
+
+
 @pytest.mark.parametrize(
     "sharer_phone,expected",
     [("19900000001", True), ("19900000002", False), (None, False), ("", False)],
@@ -176,6 +207,18 @@ async def test_phone_failure_does_not_save_customer(booking):
         await service.submit_booking(booking.db, "share-a", "session-a", "客户", "bad-code", avatar_bytes())
     booking.repo.upsert.assert_not_called()
     booking.db.commit.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_share_deleted_after_initial_read_cannot_book_or_replay_receipt(booking):
+    booking.repo.share.side_effect = [booking.repo.share.return_value, None]
+    with pytest.raises(HTTPException) as error:
+        await service.submit_booking(booking.db, "share-a", "session-a", None, "code-a", None)
+    assert error.value.status_code == 404
+    booking.repo.share.assert_awaited_with("share-a", for_update=True)
+    booking.repo.submission.assert_not_awaited()
+    booking.phone.assert_not_awaited()
+    booking.repo.upsert.assert_not_awaited()
 
 
 @pytest.mark.asyncio

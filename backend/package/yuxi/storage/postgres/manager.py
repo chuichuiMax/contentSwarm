@@ -442,6 +442,11 @@ class PostgresManager(metaclass=SingletonMeta):
             END $$
             """,
             "ALTER TABLE content_material_shares ADD COLUMN IF NOT EXISTS sharer_employee_id VARCHAR(64)",
+            "ALTER TABLE content_material_shares ADD COLUMN IF NOT EXISTS sharer_employee_name VARCHAR(80)",
+            "ALTER TABLE content_material_shares ADD COLUMN IF NOT EXISTS sharer_employee_code VARCHAR(64)",
+            "ALTER TABLE content_material_shares ADD COLUMN IF NOT EXISTS sharer_branch VARCHAR(80)",
+            "CREATE INDEX IF NOT EXISTS idx_material_share_sharer_created "
+            "ON content_material_shares(sharer_uid, created_at, id)",
             "ALTER TABLE content_material_shares ADD COLUMN IF NOT EXISTS sharer_department_id INTEGER",
             "ALTER TABLE content_material_shares ADD COLUMN IF NOT EXISTS source_platform VARCHAR(16)",
             "ALTER TABLE content_material_shares ADD COLUMN IF NOT EXISTS mp_entry_code VARCHAR(24)",

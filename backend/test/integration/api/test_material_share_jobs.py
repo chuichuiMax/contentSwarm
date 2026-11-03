@@ -79,7 +79,9 @@ async def env(monkeypatch):
     monkeypatch.setattr(jobs, "enqueue_share", enqueue)
     monkeypatch.setattr(jobs.pg_manager, "get_async_session_context", sessions)
     user = User(id=1, uid="sender", username="sender", password_hash="unused", role="superadmin")
-    employee = SimpleNamespace(id="employee", name="分享员工", login_account="19900000001")
+    employee = SimpleNamespace(
+        id="employee", name="分享员工", employee_code="0001", current_branch="分享时门店", login_account="19900000001"
+    )
     raw = image_bytes()
     async with sessions() as db:
         db.add(user)
@@ -166,6 +168,10 @@ async def test_http_unknown_pending_completed_and_legacy_contract(env):
     assert "案例正在准备中" in page.text and page.headers["cache-control"] == "no-store"
     assert "version-" not in page.text and "sender" not in page.text
     await jobs.process_material_share({}, token)
+    for suffix in ("/images/1", "/images/1.webp", "/cover.jpg"):
+        image = await env.client.get(f"/api/material-library/shares/{token}{suffix}")
+        assert image.status_code == 200, image.text
+        assert image.headers["cache-control"] == "no-cache, must-revalidate"
     response = await env.client.get(f"/api/material-library/shares/{token}")
     share = response.json()["share"]
     assert share["status"] == "completed"
@@ -225,6 +231,7 @@ async def test_custom_contact_is_frozen_before_worker_and_conflicting_retry_reje
         response = await env.client.post("/api/mp/share/cases", json={**payload, **changed})
         assert response.status_code == 409, response.text
     env.employee.name = "员工资料后来修改"
+    env.employee.current_branch = "后来的门店"
     await jobs.process_material_share({}, token)
     public = (await env.client.get(f"/api/material-library/shares/{token}")).json()["share"]
     assert (public["sharer_name"], public["sharer_phone"]) == ("对外联系人", "13800000003")
@@ -232,6 +239,11 @@ async def test_custom_contact_is_frozen_before_worker_and_conflicting_retry_reje
     async with env.sessions() as db:
         stored = await db.scalar(select(ContentMaterialShare).where(ContentMaterialShare.token == token))
         assert stored.sharer_uid == "sender" and stored.sharer_employee_id == "employee"
+        assert (stored.sharer_employee_name, stored.sharer_employee_code, stored.sharer_branch) == (
+            "分享员工",
+            "0001",
+            "分享时门店",
+        )
         assert await db.scalar(select(func.count()).select_from(ContentMaterialShareJob)) == 1
         assert await db.scalar(select(func.count()).select_from(ContentMaterialShare)) == 1
 

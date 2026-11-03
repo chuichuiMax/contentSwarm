@@ -175,6 +175,64 @@ func TestTemplatePreviewAPIKeyRouteRequiresExportScope(t *testing.T) {
 	}
 }
 
+func TestTemplateOverlayAPIKeyRouteRequiresExportScope(t *testing.T) {
+	route, designID, ok := matchAPIKeyRoute(http.MethodGet, "/api/v1/templates/template-id/render-overlay.png")
+	if !ok {
+		t.Fatal("template overlay route is not available to API keys")
+	}
+	if route.scope != apikeys.ScopeExport || designID != "" {
+		t.Fatalf("template overlay route = scope %q design %q", route.scope, designID)
+	}
+}
+
+func TestRenderTemplateOverlayPreservesAlphaAndEmbedsOnlyFirstPage(t *testing.T) {
+	var source bytes.Buffer
+	pixel := image.NewRGBA(image.Rect(0, 0, 1, 1))
+	pixel.SetRGBA(0, 0, color.RGBA{R: 255, A: 255})
+	if err := png.Encode(&source, pixel); err != nil {
+		t.Fatal(err)
+	}
+	file := map[string]any{"pages": []any{
+		map[string]any{
+			"width": 100.0, "height": 200.0,
+			"background": map[string]any{"type": "solid", "color": map[string]any{"srgb": map[string]any{"r": 1.0, "g": 1.0, "b": 1.0, "a": 1.0}}},
+			"children": []any{map[string]any{
+				"type": "image", "source": map[string]any{"assetId": "foreground"},
+				"size":      map[string]any{"width": 40.0, "height": 40.0},
+				"transform": map[string]any{"x": 20.0, "y": 20.0},
+			}},
+		},
+		map[string]any{"children": []any{map[string]any{
+			"type": "image", "source": map[string]any{"assetId": "unused-page"},
+		}}},
+	}}
+	fetches := 0
+	fetch := func(assetID string) ([]byte, string, error) {
+		fetches++
+		if assetID != "foreground" {
+			t.Fatalf("unexpected asset from unused page: %q", assetID)
+		}
+		return source.Bytes(), "image/png", nil
+	}
+	data, err := renderTemplateOverlay(file, fetch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	img, err := png.Decode(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fetches != 1 || img.Bounds().Dx() != 25 || img.Bounds().Dy() != 50 {
+		t.Fatalf("overlay fetched %d assets, dimensions = %v", fetches, img.Bounds())
+	}
+	if _, _, _, alpha := img.At(0, 0).RGBA(); alpha != 0 {
+		t.Fatalf("page background is opaque: alpha = %d", alpha)
+	}
+	if r, g, b, alpha := img.At(10, 10).RGBA(); r != 65535 || g != 0 || b != 0 || alpha != 65535 {
+		t.Fatalf("foreground lost color or alpha: RGBA = %d, %d, %d, %d", r, g, b, alpha)
+	}
+}
+
 func TestTemplateBackgroundPreviewAPIKeyRouteRequiresExportScope(t *testing.T) {
 	route, designID, ok := matchAPIKeyRoute(http.MethodPost, "/api/v1/templates/template-id/preview.png")
 	if !ok {

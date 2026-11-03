@@ -46,6 +46,9 @@ SHARE_FIELDS = (
     "sharer_phone",
     "sharer_uid",
     "sharer_employee_id",
+    "sharer_employee_name",
+    "sharer_employee_code",
+    "sharer_branch",
     "sharer_department_id",
     "source_platform",
     "mp_entry_code",
@@ -167,7 +170,12 @@ async def read_material_share_state(db, token: str):
     if job is None:
         return {"share": {"id": token, "status": "unknown"}}
     if job.status == "completed":
-        raise RuntimeError("Completed case-share job has no committed snapshot")
+        # Deletion can commit after the first job read and before the snapshot read.
+        job = await db.get(ContentMaterialShareJob, token, populate_existing=True)
+        if job.status != "deleted":
+            raise RuntimeError("Completed case-share job has no committed snapshot")
+    if job.status == "deleted":
+        raise HTTPException(410, detail={"error": {"code": "MATERIAL_SHARE_DELETED", "message": "案例分享已失效"}})
     # Failure responses never expose selected private IDs, storage paths or internal errors.
     return {"share": {"id": token, "status": job.status, "title": job.share_json.get("title", "案例分享")}}
 

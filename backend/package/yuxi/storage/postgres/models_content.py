@@ -1228,12 +1228,19 @@ class ContentMaterialShare(Base):
     sharer_phone = Column(String(64), nullable=True)
     sharer_uid = Column(String(255), nullable=True, index=True)
     sharer_employee_id = Column(String(64), nullable=True)
+    # Actual operator at sharing time; public contact fields above remain editable.
+    sharer_employee_name = Column(String(80), nullable=True)
+    sharer_employee_code = Column(String(64), nullable=True)
+    sharer_branch = Column(String(80), nullable=True)
     sharer_department_id = Column(Integer, nullable=True)
     source_platform = Column(String(16), nullable=True)
     mp_entry_code = Column(String(24), nullable=True)
     created_at = Column(DateTime, default=utc_now_naive, index=True)
 
-    __table_args__ = (Index("uq_material_share_mp_entry_code", "mp_entry_code", unique=True),)
+    __table_args__ = (
+        Index("uq_material_share_mp_entry_code", "mp_entry_code", unique=True),
+        Index("idx_material_share_sharer_created", "sharer_uid", "created_at", "id"),
+    )
 
 
 class ContentCaseVisitLead(Base):

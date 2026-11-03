@@ -43,6 +43,16 @@ const router = createRouter({
       }]
     },
     {
+      path: '/case-shares',
+      component: AppLayout,
+      children: [{
+        path: '',
+        name: 'CaseShareStats',
+        component: () => import('../views/CaseShareStatsView.vue'),
+        meta: { requiresAuth: true }
+      }]
+    },
+    {
       path: '/auth/oidc/callback', // oidc登录回调页面
       name: 'OIDCCallback',
       component: () => import('@/views/OIDCCallbackView.vue'),

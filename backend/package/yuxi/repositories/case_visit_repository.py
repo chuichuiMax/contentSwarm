@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from sqlalchemy import delete, func, or_, select, update
+from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from yuxi.storage.postgres.models_business import User
 from yuxi.storage.postgres.models_content import (
     ContentCaseVisitLead,
     ContentCaseVisitSubmission,
@@ -17,8 +18,16 @@ class CaseVisitRepository:
     def __init__(self, db: AsyncSession):
         self.db = db
 
-    async def share(self, token: str) -> ContentMaterialShare | None:
-        return await self.db.scalar(select(ContentMaterialShare).where(ContentMaterialShare.token == token))
+    async def share(self, token: str, *, for_update: bool = False) -> ContentMaterialShare | None:
+        query = select(ContentMaterialShare).where(ContentMaterialShare.token == token)
+        if for_update:
+            query = query.with_for_update().execution_options(populate_existing=True)
+        return await self.db.scalar(query)
+
+    async def sharer_account_phone(self, sharer_uid: str | None) -> str | None:
+        if not sharer_uid:
+            return None
+        return await self.db.scalar(select(User.phone_number).where(User.uid == sharer_uid, User.is_deleted == 0))
 
     async def upsert(self, values: dict) -> str:
         statement = insert(ContentCaseVisitLead).values(**values)
@@ -127,13 +136,20 @@ class CaseVisitRepository:
                 share.token,
                 share.title,
                 share.source_platform,
-                employee.name.label("sharer_name"),
-                employee.employee_code,
-                employee.current_branch.label("branch"),
+                func.coalesce(employee.name, share.sharer_employee_name, User.username).label("sharer_name"),
+                func.coalesce(employee.employee_code, share.sharer_employee_code).label("employee_code"),
+                func.coalesce(employee.current_branch, share.sharer_branch).label("branch"),
             )
             .select_from(lead)
             .outerjoin(share, lead.share_id == share.id)
-            .outerjoin(employee, share.sharer_employee_id == employee.id)
+            .outerjoin(User, and_(User.uid == func.coalesce(share.sharer_uid, lead.sharer_uid), User.is_deleted == 0))
+            .outerjoin(
+                employee,
+                or_(
+                    share.sharer_employee_id == employee.id,
+                    and_(share.sharer_employee_id.is_(None), employee.login_account == User.phone_number),
+                ),
+            )
         )
 
     async def listing(
@@ -148,28 +164,29 @@ class CaseVisitRepository:
         start=None,
         end=None,
     ) -> tuple[list, int]:
-        lead, share, employee = ContentCaseVisitLead, ContentMaterialShare, ContentEmployee
-        conditions = list(predicates)
+        # Filter the same projected identity fields used by both the list and export.
+        query = self.pc_query().where(*predicates).subquery()
+        fields = query.c
+        conditions = []
         if keyword:
             conditions.append(
                 or_(
-                    lead.phone.contains(keyword, autoescape=True),
-                    employee.name.icontains(keyword, autoescape=True),
-                    employee.employee_code.icontains(keyword, autoescape=True),
-                    employee.current_branch.icontains(keyword, autoescape=True),
+                    fields.phone.contains(keyword, autoescape=True),
+                    fields.sharer_name.icontains(keyword, autoescape=True),
+                    fields.employee_code.icontains(keyword, autoescape=True),
+                    fields.branch.icontains(keyword, autoescape=True),
                 )
             )
         if branch:
-            conditions.append(employee.current_branch == branch)
+            conditions.append(fields.branch == branch)
         if source:
-            conditions.append(share.source_platform == source)
+            conditions.append(fields.source_platform == source)
         if start is not None:
-            conditions.append(lead.acquired_at >= start)
+            conditions.append(fields.acquired_at >= start)
         if end is not None:
-            conditions.append(lead.acquired_at < end)
-        query = self.pc_query().where(*conditions)
-        total = await self.db.scalar(select(func.count()).select_from(query.subquery()))
-        query = query.order_by(lead.acquired_at.desc(), lead.id.desc())
+            conditions.append(fields.acquired_at < end)
+        total = await self.db.scalar(select(func.count()).select_from(query).where(*conditions))
+        query = select(query).where(*conditions).order_by(fields.acquired_at.desc(), fields.id.desc())
         if page_size is not None:
             query = query.offset((page - 1) * page_size).limit(page_size)
         rows = await self.db.execute(query)

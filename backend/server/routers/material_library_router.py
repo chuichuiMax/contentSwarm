@@ -369,7 +369,10 @@ async def public_share_page(
                 headers={"Cache-Control": "no-store"},
             )
     share, items = await get_public_material_share(db, token)
-    return HTMLResponse(render_public_material_share_page(share, items, request_public_base_url(request)))
+    return HTMLResponse(
+        render_public_material_share_page(share, items, request_public_base_url(request)),
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @public_share_router.get("/share/case/{token}", response_class=HTMLResponse)
@@ -386,7 +389,10 @@ async def canonical_public_share_page(
                 headers={"Cache-Control": "no-store"},
             )
     share, items = await get_public_material_share(db, token)
-    return HTMLResponse(render_public_material_share_page(share, items, request_public_base_url(request)))
+    return HTMLResponse(
+        render_public_material_share_page(share, items, request_public_base_url(request)),
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @material_library.get("/shares/{token}")
@@ -397,7 +403,7 @@ async def public_share_data(
     if re.fullmatch(r"[0-9a-f]{64}", token):
         return JSONResponse(await read_material_share_state(db, token), headers={"Cache-Control": "no-store"})
     share, items = await get_public_material_share(db, token)
-    return serialize_public_material_share(share, items)
+    return JSONResponse(serialize_public_material_share(share, items), headers={"Cache-Control": "no-store"})
 
 
 @material_library.get("/shares/{token}/images/{display_order}.webp")
@@ -411,7 +417,7 @@ async def public_share_display_image(
         content=data,
         media_type="image/webp",
         headers={
-            "Cache-Control": "public, max-age=31536000, immutable",
+            "Cache-Control": "no-cache, must-revalidate",
             "Content-Disposition": f'inline; filename="share-{display_order}.webp"',
         },
     )
@@ -429,7 +435,7 @@ async def public_share_image(
         content=data,
         media_type=content_type,
         headers={
-            "Cache-Control": "public, max-age=31536000, immutable",
+            "Cache-Control": "no-cache, must-revalidate",
             "Content-Disposition": f"inline; filename*=UTF-8''{encoded_name}",
         },
     )
@@ -445,7 +451,7 @@ async def public_share_card_cover(
         content=data,
         media_type="image/jpeg",
         headers={
-            "Cache-Control": "public, max-age=31536000, immutable",
+            "Cache-Control": "no-cache, must-revalidate",
             "Content-Disposition": 'inline; filename="share-cover.jpg"',
         },
     )
