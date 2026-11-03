@@ -30,9 +30,9 @@ async def test_case_report_filters_links_export_delete_pagination_and_error():
         {
             **rows[0],
             "id": "history",
-            "sharer_name": None,
-            "employee_code": None,
-            "branch": None,
+            "sharer_name": "历史关联员工",
+            "employee_code": "H0003",
+            "branch": "历史关联门店",
             "source_platform": None,
             "shared_at": None,
         }
@@ -105,6 +105,9 @@ async def test_case_report_filters_links_export_delete_pagination_and_error():
             await expect(page.get_by_role("columnheader", name="分享时间", exact=True)).to_be_visible()
             await expect(page.get_by_text("2026/10/15 14:11", exact=True)).to_have_count(2)
             await expect(page.get_by_role("link", name="来源未知", exact=True)).to_be_visible()
+            historical = page.get_by_role("row").filter(has_text="历史关联员工")
+            await expect(historical.get_by_role("cell", name="H0003", exact=True)).to_be_visible()
+            await expect(historical.get_by_role("cell", name="历史关联门店", exact=True)).to_be_visible()
             for width in (1440, 1366, 1280):
                 await page.set_viewport_size({"width": width, "height": 900})
                 boxes = await page.locator(".filters .ant-form-item-control, .filter-actions").evaluate_all(
