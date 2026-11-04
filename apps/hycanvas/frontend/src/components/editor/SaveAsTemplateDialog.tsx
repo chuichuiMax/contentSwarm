@@ -3,7 +3,7 @@
 // Sends the design id as the stable template identity and the in-memory file as
 // the current snapshot. Unsaved designs fall back to the inline file alone.
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { childrenOf, type Node } from "@hc/schema";
 import type { FillableFieldSummary, TemplateVisibility } from "@hc/sdk";
 import { oc } from "@/lib/sdk";
@@ -195,32 +195,56 @@ export function SaveAsTemplateDialog({
   const [title, setTitle] = useState(docTitle);
   const [category, setCategory] = useState(zoneTag ?? "");
   const [collectionId, setCollectionId] = useState(initialCollectionId);
+  const collectionIdRef = useRef(initialCollectionId);
+  function selectCollection(id: string) {
+    collectionIdRef.current = id;
+    setCollectionId(id);
+  }
   const [visibility, setVisibility] = useState<TemplateVisibility>("workspace");
   const [isHandwrittenQuoteTemplate, setIsHandwrittenQuoteTemplate] = useState(false);
   const [busy, setBusy] = useState(false);
   const doc = useEditor((s) => s.doc);
   const availableTextNodes = useMemo(() => textNodes(doc), [doc]);
   const [fillableFields, setFillableFields] = useState<FillableFieldSummary[]>(() => normalizeFillableFields(doc));
+  const savedTemplateReady = useRef(Promise.resolve());
   useEffect(() => {
-    if (!open || !templateId) return;
+    if (!open || !workspaceId) return;
     let cancelled = false;
-    void oc.getTemplate(templateId).then((template) => {
+    const applyTemplate = (template: {
+      title?: string;
+      categories?: string[];
+      collectionId?: string | null;
+      visibility?: string;
+      isHandwrittenQuoteTemplate?: 0 | 1;
+      fillableFields?: FillableFieldSummary[];
+    }) => {
       if (cancelled) return;
       if (template.title) setTitle(template.title);
       const savedCategory = template.categories?.find((item) => item.trim());
       if (savedCategory) setCategory(savedCategory);
-      if (template.collectionId) setCollectionId(template.collectionId);
-      else if (initialCollectionId) setCollectionId(initialCollectionId);
+      if (template.collectionId) selectCollection(template.collectionId);
+      else if (initialCollectionId) selectCollection(initialCollectionId);
       setVisibility(savedVisibility(template.visibility));
       setIsHandwrittenQuoteTemplate(template.isHandwrittenQuoteTemplate === 1);
       if (template.fillableFields?.length) {
         setFillableFields(normalizeFillableFields(useEditor.getState().doc, template.fillableFields));
       }
-    }).catch(() => {
-      if (!cancelled && initialCollectionId) setCollectionId(initialCollectionId);
-    });
+    };
+    const task = (async () => {
+      let id = templateId;
+      if (!id && designId && typeof oc.listTemplates === "function") {
+        const listed = await oc.listTemplates({ workspaceId });
+        id = listed.find((item) => item.sourceDesignId === designId)?.id ?? null;
+      }
+      if (!id) {
+        if (!cancelled && initialCollectionId) selectCollection(initialCollectionId);
+        return;
+      }
+      applyTemplate(await oc.getTemplate(id));
+    })();
+    savedTemplateReady.current = task.then(() => undefined, () => undefined);
     return () => { cancelled = true; };
-  }, [open, templateId, initialCollectionId]);
+  }, [open, workspaceId, designId, templateId, initialCollectionId]);
   const availableNodeIds = useMemo(() => new Set(availableTextNodes.map((node) => node.id)), [availableTextNodes]);
   const selectedFields = fillableFields.filter((field) => availableNodeIds.has(field.nodeId));
 
@@ -259,7 +283,7 @@ export function SaveAsTemplateDialog({
       return false;
     }
     setFillableFields(preparedFields);
-    let selectedCollectionId = collectionId;
+    let selectedCollectionId = collectionIdRef.current;
     if (!selectedCollectionId && category.trim()) {
       const collection = await oc.createTemplateCollection(workspaceId, category.trim());
       selectedCollectionId = collection.id;
@@ -288,6 +312,7 @@ export function SaveAsTemplateDialog({
   }
 
   async function save() {
+    await savedTemplateReady.current;
     const file = useEditor.getState().doc;
     setBusy(true);
     try {
@@ -361,7 +386,7 @@ export function SaveAsTemplateDialog({
             className="h-11 rounded-xl border border-neutral-200 bg-surface px-3.5 text-sm text-neutral-900 outline-none transition focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
           />
         </label>
-        <TemplateCollectionPicker workspaceId={workspaceId} value={collectionId} onChange={(id) => setCollectionId(id)} />
+        <TemplateCollectionPicker workspaceId={workspaceId} value={collectionId} onChange={(id) => selectCollection(id)} />
         <label className="flex cursor-pointer items-center gap-2.5 rounded-xl border border-neutral-200 px-3 py-2 text-sm text-neutral-700">
           <input
             type="checkbox"

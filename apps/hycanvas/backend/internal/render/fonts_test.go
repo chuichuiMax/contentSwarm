@@ -187,10 +187,10 @@ func TestLookupFontUsesInstalledSerifWeight(t *testing.T) {
 	registerParsedFont("NotoSerifSC", 700, bold)
 	light := lookupFont("SourceHanSerifSCVF", 300)
 	heavy := lookupFont("SourceHanSerifSCVF", 700)
-	if light == nil || heavy == nil || light == heavy {
-		t.Fatalf("serif weights collapsed: light=%p heavy=%p", light, heavy)
+	if light == nil || heavy == nil || light == bold || heavy == bold || light != heavy {
+		t.Fatalf("selected family was replaced: light=%p heavy=%p bold=%p", light, heavy, bold)
 	}
-	if heavy != bold {
-		t.Fatal("weight 700 did not select the bold serif face")
+	if got := lookupFont("Unknown Serif", 700); got != bold {
+		t.Fatal("a missing serif family should use the packaged serif weight")
 	}
 }

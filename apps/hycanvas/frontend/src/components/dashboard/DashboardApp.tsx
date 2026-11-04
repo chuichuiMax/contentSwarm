@@ -1404,7 +1404,7 @@ export function DashboardApp({ view }: { view: DashboardView }) {
                     <li key={t.id} className="group relative rounded-2xl border border-neutral-200 bg-surface shadow-sm transition hover:shadow-md">
                       <button
                         onClick={() => {
-                          if (t.sourceDesignId) void open(t.sourceDesignId);
+                          if (t.sourceDesignId) void open(t.sourceDesignId, undefined, t.id, t.collectionId ?? undefined);
                           else void applyTemplate(t);
                         }}
                         disabled={busy}

@@ -130,8 +130,10 @@ func lookupFont(family string, weight int) *opentype.Font {
 	fontMu.RLock()
 	defer fontMu.RUnlock()
 	fam := normFamily(family)
-	best, bestWeight, ok := lookupFamilyFontLocked(fam, weight)
-	if ok && weightDistance(bestWeight, weight) <= 80 {
+	// The face selected in the editor wins, including a variable font that is
+	// registered at one weight. Substituting Noto here made the exported cover
+	// a different typeface from the preview.
+	if best, _, ok := lookupFamilyFontLocked(fam, weight); ok {
 		return best
 	}
 	fallback := "notosanssc"
@@ -139,12 +141,9 @@ func lookupFont(family string, weight int) *opentype.Font {
 		fallback = "notoserifsc"
 	}
 	if fam != fallback {
-		if alt, altWeight, altOK := lookupFamilyFontLocked(fallback, weight); altOK && (!ok || weightDistance(altWeight, weight) < weightDistance(bestWeight, weight)) {
+		if alt, _, altOK := lookupFamilyFontLocked(fallback, weight); altOK {
 			return alt
 		}
-	}
-	if ok {
-		return best
 	}
 	if fam == "" || fam == "system" || fam == "systemui" || fam == "system-ui" || fam == "sansserif" || fam == "sans-serif" {
 		for _, name := range []string{"notosanssc", "notosansjp", "notosanskr", "notosanstc", "notosanshk"} {

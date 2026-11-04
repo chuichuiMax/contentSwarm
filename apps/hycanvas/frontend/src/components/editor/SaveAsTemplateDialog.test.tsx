@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   saveAsTemplate: vi.fn(),
   createTemplateCollection: vi.fn(),
   getTemplate: vi.fn(),
+  listTemplates: vi.fn(),
   success: vi.fn(),
   error: vi.fn(),
 }));
@@ -15,6 +16,7 @@ vi.mock("@/lib/sdk", () => ({ oc: {
   saveAsTemplate: mocks.saveAsTemplate,
   createTemplateCollection: mocks.createTemplateCollection,
   getTemplate: mocks.getTemplate,
+  listTemplates: mocks.listTemplates,
 } }));
 vi.mock("@/components/ui/Toast", () => ({
   useToast: () => ({ success: mocks.success, error: mocks.error }),
@@ -78,6 +80,7 @@ afterEach(() => {
 
 describe("Xiaohongshu template drafts", () => {
   it("keeps their zone tag when they are saved as reusable templates", async () => {
+    mocks.listTemplates.mockResolvedValue([]);
     mocks.saveAsTemplate.mockResolvedValue({});
     mocks.createTemplateCollection.mockResolvedValue({ id: "collection-1" });
 
@@ -122,6 +125,7 @@ describe("Xiaohongshu template drafts", () => {
   });
 
   it("fills the saved template name, category, and fields when editing", async () => {
+    mocks.listTemplates.mockResolvedValue([]);
     mocks.getTemplate.mockResolvedValue({
       id: "template-1",
       title: "已有封面",
