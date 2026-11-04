@@ -762,13 +762,17 @@ func TestFillTextFieldsAutoFitsLongFactOnSingleLine(t *testing.T) {
 		t.Fatalf("text = %q", asStr(run["text"]))
 	}
 	size := asNum(asObj(run["style"])["fontSize"])
-	if size != 24 {
-		t.Fatalf("fontSize = %v, want 24 (no shrink)", size)
+	if size >= 24 {
+		t.Fatalf("fontSize = %v, want a smaller size that keeps the template tracking", size)
 	}
 	contentW, contentH := textBoxContentSize(asObj(node["box"]))
 	ls := asNum(asObj(run["style"])["letterSpacing"])
-	if ls < 0 {
-		t.Fatalf("letterSpacing must not be negative (overlap), got %v", ls)
+	if ls != 0 {
+		t.Fatalf("letterSpacing = %v, want the template value 0", ls)
+	}
+	boxW := asNum(asObj(node["box"])["width"])
+	if boxW != 72 {
+		t.Fatalf("box width changed: %v", boxW)
 	}
 	w, h := estimateSingleLineLayout(node, 1, ls)
 	if w > contentW+2.0 || h > contentH+0.5 {

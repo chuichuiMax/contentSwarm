@@ -171,3 +171,26 @@ func TestLoadFontDirCatalogsFilenameFamily(t *testing.T) {
 		t.Fatalf("CanonicalFamily() = %q, %v", got, ok)
 	}
 }
+
+func TestLookupFontUsesInstalledSerifWeight(t *testing.T) {
+	isolateFontRegistry(t)
+	if err := RegisterFont("SourceHanSerifSCVF", 400, goregular.TTF); err != nil {
+		t.Fatal(err)
+	}
+	if err := RegisterFont("NotoSerifSC", 400, goregular.TTF); err != nil {
+		t.Fatal(err)
+	}
+	bold, err := opentype.Parse(gobold.TTF)
+	if err != nil {
+		t.Fatal(err)
+	}
+	registerParsedFont("NotoSerifSC", 700, bold)
+	light := lookupFont("SourceHanSerifSCVF", 300)
+	heavy := lookupFont("SourceHanSerifSCVF", 700)
+	if light == nil || heavy == nil || light == heavy {
+		t.Fatalf("serif weights collapsed: light=%p heavy=%p", light, heavy)
+	}
+	if heavy != bold {
+		t.Fatal("weight 700 did not select the bold serif face")
+	}
+}

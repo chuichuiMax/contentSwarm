@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	"hycanvas/backend/internal/persistence"
+	"hycanvas/backend/internal/render"
 )
 
 //go:embed seed.json
@@ -409,15 +410,22 @@ const canonicalSystemFont = "Noto Sans SC"
 
 const packagedSerifFont = "Noto Serif SC"
 
-// packagedFontFamily keeps generated covers on the font files shipped with the
-// project. Anything else is stored as the packaged sans face.
+// packagedFontFamily keeps a font the cover package actually installed.
+// A serif face such as Source Han Serif stays on the packaged serif, so the
+// weight chosen in the editor is not redrawn with the sans face.
 func packagedFontFamily(family string) string {
-	switch strings.ToLower(strings.TrimSpace(family)) {
-	case "noto serif sc", "noto serif cjk sc":
-		return packagedSerifFont
-	default:
-		return canonicalSystemFont
+	if canonical, ok := render.CanonicalFamily(family); ok {
+		return canonical
 	}
+	if serifFamilyName(family) {
+		return packagedSerifFont
+	}
+	return canonicalSystemFont
+}
+
+func serifFamilyName(family string) bool {
+	name := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(family), " ", ""))
+	return strings.Contains(name, "serif") || strings.Contains(name, "songti") || strings.Contains(name, "simsun") || strings.Contains(family, "宋")
 }
 
 // normalizeTemplateTypography makes fillable text deterministic across the

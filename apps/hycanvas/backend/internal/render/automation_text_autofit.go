@@ -8,13 +8,11 @@ import (
 	"golang.org/x/image/font"
 )
 
-const automationSingleLineKey = "contentswarmSingleLineAutoFit"
-
 func shouldAutomationSingleLineAutoFit(node map[string]any) bool {
-	if textNodeUsesTemplateTypography(node) {
-		return false
-	}
-	return asBool(asObj(node["data"])[automationSingleLineKey])
+	// Content covers use the same line box and alignment as the editor.
+	// The older even-spread painter shifted the baseline by line height.
+	_ = node
+	return false
 }
 
 func automationSingleLineText(node map[string]any) string {

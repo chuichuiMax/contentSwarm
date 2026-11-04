@@ -3,7 +3,7 @@
 // Sends the design id as the stable template identity and the in-memory file as
 // the current snapshot. Unsaved designs fall back to the inline file alone.
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { childrenOf, type Node } from "@hc/schema";
 import type { FillableFieldSummary, TemplateVisibility } from "@hc/sdk";
 import { oc } from "@/lib/sdk";
@@ -165,18 +165,28 @@ function normalizeFillableFields(
   return normalized;
 }
 
+function savedVisibility(value: string | undefined): TemplateVisibility {
+  if (value === "workspace" || value === "team") return "workspace";
+  if (value === "public") return "public";
+  return "private";
+}
+
 export function SaveAsTemplateDialog({
   open,
   onClose,
   onSaved,
   designId,
   workspaceId,
+  templateId = null,
+  initialCollectionId = "",
 }: {
   open: boolean;
   onClose: () => void;
   onSaved?: (fields: FillableFieldSummary[]) => void | Promise<void>;
   designId: string | null;
   workspaceId: string | null;
+  templateId?: string | null;
+  initialCollectionId?: string;
 }) {
   const toast = useToast();
   const docTitle = useEditor((s) => s.doc.title);
@@ -184,13 +194,33 @@ export function SaveAsTemplateDialog({
   const zoneTag = templateTagForZone(templateZone);
   const [title, setTitle] = useState(docTitle);
   const [category, setCategory] = useState(zoneTag ?? "");
-  const [collectionId, setCollectionId] = useState("");
+  const [collectionId, setCollectionId] = useState(initialCollectionId);
   const [visibility, setVisibility] = useState<TemplateVisibility>("workspace");
   const [isHandwrittenQuoteTemplate, setIsHandwrittenQuoteTemplate] = useState(false);
   const [busy, setBusy] = useState(false);
   const doc = useEditor((s) => s.doc);
   const availableTextNodes = useMemo(() => textNodes(doc), [doc]);
   const [fillableFields, setFillableFields] = useState<FillableFieldSummary[]>(() => normalizeFillableFields(doc));
+  useEffect(() => {
+    if (!open || !templateId) return;
+    let cancelled = false;
+    void oc.getTemplate(templateId).then((template) => {
+      if (cancelled) return;
+      if (template.title) setTitle(template.title);
+      const savedCategory = template.categories?.find((item) => item.trim());
+      if (savedCategory) setCategory(savedCategory);
+      if (template.collectionId) setCollectionId(template.collectionId);
+      else if (initialCollectionId) setCollectionId(initialCollectionId);
+      setVisibility(savedVisibility(template.visibility));
+      setIsHandwrittenQuoteTemplate(template.isHandwrittenQuoteTemplate === 1);
+      if (template.fillableFields?.length) {
+        setFillableFields(normalizeFillableFields(useEditor.getState().doc, template.fillableFields));
+      }
+    }).catch(() => {
+      if (!cancelled && initialCollectionId) setCollectionId(initialCollectionId);
+    });
+    return () => { cancelled = true; };
+  }, [open, templateId, initialCollectionId]);
   const availableNodeIds = useMemo(() => new Set(availableTextNodes.map((node) => node.id)), [availableTextNodes]);
   const selectedFields = fillableFields.filter((field) => availableNodeIds.has(field.nodeId));
 

@@ -1712,6 +1712,9 @@ export class HyCanvasClient {
 
   // --- templates --------------------------------------------------
   /** List templates. Accepts a keyword string (back-compat) or a filter. */
+  getTemplate(id: string): Promise<TemplateSummary & { fillableFields?: FillableFieldSummary[] }> {
+    return this.request("GET", `/v1/templates/${id}`);
+  }
   listTemplates(filter?: string | TemplateListFilter): Promise<TemplateSummary[]> {
     const f: TemplateListFilter = typeof filter === "string" ? { q: filter } : filter ?? {};
     const params = new URLSearchParams();

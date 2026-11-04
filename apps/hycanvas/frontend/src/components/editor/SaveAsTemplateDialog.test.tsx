@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   saveAsTemplate: vi.fn(),
   createTemplateCollection: vi.fn(),
+  getTemplate: vi.fn(),
   success: vi.fn(),
   error: vi.fn(),
 }));
@@ -13,6 +14,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/sdk", () => ({ oc: {
   saveAsTemplate: mocks.saveAsTemplate,
   createTemplateCollection: mocks.createTemplateCollection,
+  getTemplate: mocks.getTemplate,
 } }));
 vi.mock("@/components/ui/Toast", () => ({
   useToast: () => ({ success: mocks.success, error: mocks.error }),
@@ -117,5 +119,52 @@ describe("Xiaohongshu template drafts", () => {
       ],
     })));
     expect(mocks.error).not.toHaveBeenCalledWith("请完整填写已选择的文字字段名称、唯一编码、语义和最大字数。");
+  });
+
+  it("fills the saved template name, category, and fields when editing", async () => {
+    mocks.getTemplate.mockResolvedValue({
+      id: "template-1",
+      title: "已有封面",
+      visibility: "team",
+      categories: ["通用"],
+      collectionId: "collection-saved",
+      isHandwrittenQuoteTemplate: 1,
+      fillableFields: [{
+        nodeId: "old-title",
+        kind: "text",
+        key: "field_1",
+        label: "主标题",
+        semanticRole: "title",
+        constraints: { required: true, maxChars: 8 },
+        typography: { runs: [{ fontSize: 72 }] },
+      }],
+    });
+    mocks.saveAsTemplate.mockResolvedValue({});
+
+    render(
+      <SaveAsTemplateDialog
+        open
+        onClose={() => {}}
+        designId="design-1"
+        workspaceId="workspace-1"
+        templateId="template-1"
+        initialCollectionId="collection-saved"
+      />,
+    );
+
+    await waitFor(() => expect(screen.getByDisplayValue("已有封面")).toBeTruthy());
+    expect(screen.getByDisplayValue("通用")).toBeTruthy();
+    expect(screen.getByRole("checkbox", { name: "手写报价模板" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "主标题" })).toBeChecked();
+
+    fireEvent.click(screen.getByRole("button", { name: "保存模板" }));
+    await waitFor(() => expect(mocks.saveAsTemplate).toHaveBeenCalledWith(expect.objectContaining({
+      title: "已有封面",
+      category: "通用",
+      collectionId: "collection-saved",
+      visibility: "workspace",
+      isHandwrittenQuoteTemplate: true,
+      fillableFields: [expect.objectContaining({ nodeId: "title-1", semanticRole: "title", label: "主标题" })],
+    })));
   });
 });

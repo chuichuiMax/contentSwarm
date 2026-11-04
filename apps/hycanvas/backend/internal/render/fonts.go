@@ -130,39 +130,63 @@ func lookupFont(family string, weight int) *opentype.Font {
 	fontMu.RLock()
 	defer fontMu.RUnlock()
 	fam := normFamily(family)
-	if best := lookupFamilyFontLocked(fam, weight); best != nil {
+	best, bestWeight, ok := lookupFamilyFontLocked(fam, weight)
+	if ok && weightDistance(bestWeight, weight) <= 80 {
+		return best
+	}
+	fallback := "notosanssc"
+	if serifFamilyName(family) {
+		fallback = "notoserifsc"
+	}
+	if fam != fallback {
+		if alt, altWeight, altOK := lookupFamilyFontLocked(fallback, weight); altOK && (!ok || weightDistance(altWeight, weight) < weightDistance(bestWeight, weight)) {
+			return alt
+		}
+	}
+	if ok {
 		return best
 	}
 	if fam == "" || fam == "system" || fam == "systemui" || fam == "system-ui" || fam == "sansserif" || fam == "sans-serif" {
-		for _, fallback := range []string{"notosanssc", "notosansjp", "notosanskr", "notosanstc", "notosanshk"} {
-			if best := lookupFamilyFontLocked(fallback, weight); best != nil {
-				return best
+		for _, name := range []string{"notosanssc", "notosansjp", "notosanskr", "notosanstc", "notosanshk"} {
+			if face, _, found := lookupFamilyFontLocked(name, weight); found {
+				return face
 			}
 		}
 	}
 	return nil
 }
 
-func lookupFamilyFontLocked(family string, weight int) *opentype.Font {
+func serifFamilyName(family string) bool {
+	name := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(family), " ", ""))
+	return strings.Contains(name, "serif") || strings.Contains(name, "songti") || strings.Contains(name, "simsun") || strings.Contains(family, "宋")
+}
+
+func weightDistance(left, right int) int {
+	if left < right {
+		return right - left
+	}
+	return left - right
+}
+
+func lookupFamilyFontLocked(family string, weight int) (*opentype.Font, int, bool) {
 	var best *opentype.Font
 	bestDist := 1 << 30
 	bestWeight := 0
+	found := false
 	for k, f := range fontReg {
 		if k.family != family {
 			continue
 		}
-		d := k.weight - weight
-		if d < 0 {
-			d = -d
-		}
+		d := weightDistance(k.weight, weight)
 		preferTie := d == bestDist && ((weight >= 500 && k.weight > bestWeight) || (weight < 500 && (bestWeight == 0 || k.weight < bestWeight)))
 		if d < bestDist || preferTie {
 			bestDist = d
 			bestWeight = k.weight
 			best = f
+			found = true
 		}
 	}
-	return best
+	return best, bestWeight, found
 }
 
 // --- glyph coverage and script fallback --------------------------------------
