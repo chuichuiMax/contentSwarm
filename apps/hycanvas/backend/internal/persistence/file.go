@@ -103,6 +103,11 @@ func schemaVersionOf(file DesignFile) int {
 	return currentSchemaVersion
 }
 
+// DocKindContentSwarmCover marks HyCanvas designs created by ContentSwarm cover
+// automation. They stay editable via direct link but are omitted from dashboard
+// recents.
+const DocKindContentSwarmCover = "contentswarm-cover"
+
 // docKindOf reads file.meta.kind, or "" when absent.
 func docKindOf(file DesignFile) string {
 	if meta, ok := file["meta"].(map[string]any); ok {
@@ -111,6 +116,29 @@ func docKindOf(file DesignFile) string {
 		}
 	}
 	return ""
+}
+
+// FileMarksContentSwarmCover reports whether a stored design file belongs to
+// ContentSwarm cover automation (meta tag or automation-only layer markers).
+func FileMarksContentSwarmCover(file DesignFile) bool {
+	if docKindOf(file) == DocKindContentSwarmCover {
+		return true
+	}
+	pages, _ := file["pages"].([]any)
+	for _, pageRaw := range pages {
+		page, _ := pageRaw.(map[string]any)
+		children, _ := page["children"].([]any)
+		for _, childRaw := range children {
+			child, _ := childRaw.(map[string]any)
+			if id, _ := child["id"].(string); strings.HasPrefix(id, "contentswarm-background-") {
+				return true
+			}
+			if data, _ := child["data"].(map[string]any); data["source"] == "contentswarm-material-library" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // templateZoneOf reads the dashboard grouping marker from file.meta.

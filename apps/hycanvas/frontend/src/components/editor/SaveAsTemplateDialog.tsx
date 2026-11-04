@@ -31,6 +31,13 @@ const semanticRoles = [
   ["designer", "设计师"],
   ["completion_year", "完成年份"],
   ["brand_name", "品牌名称"],
+  ["design_style", "设计风格"],
+  ["layout", "户型"],
+  ["service_region", "所在区域"],
+  ["target_audience", "目标人群"],
+  ["process_type", "工艺类型"],
+  ["service_years", "年限"],
+  ["job_position", "岗位"],
   ["label", "标签（保留原文）"],
   ["body_excerpt", "正文摘要"],
 ] as const;
@@ -214,46 +221,51 @@ export function SaveAsTemplateDialog({
       : field));
   }
 
-  async function save() {
-    const file = useEditor.getState().doc;
-    const preparedFields = normalizeFillableFields(file, selectedFields);
-    if (!workspaceId || !title.trim()) {
+  async function persistTemplate(templateFile: ReturnType<typeof useEditor.getState>["doc"], templateTitle: string, templateDesignId?: string) {
+    const preparedFields = normalizeFillableFields(templateFile, selectedFields);
+    if (!workspaceId || !templateTitle.trim()) {
       if (!workspaceId) toast.error("工作区信息尚未加载完成，请关闭弹窗后重新打开。");
-      else if (!title.trim()) toast.error("请填写模板名称。");
-      return;
+      else if (!templateTitle.trim()) toast.error("请填写模板名称。");
+      return false;
     }
     setFillableFields(preparedFields);
+    let selectedCollectionId = collectionId;
+    if (!selectedCollectionId && category.trim()) {
+      const collection = await oc.createTemplateCollection(workspaceId, category.trim());
+      selectedCollectionId = collection.id;
+    }
+    if (!selectedCollectionId) {
+      toast.error("请选择模板分类，或先新建一个分类。");
+      return false;
+    }
+    await oc.saveAsTemplate({
+      workspaceId,
+      // designId gives the server a stable template identity; file keeps the
+      // template snapshot in sync with the editor even if autosave is still
+      // completing.
+      designId: templateDesignId,
+      file: templateFile,
+      title: templateTitle.trim(),
+      category: category.trim() || undefined,
+      tags: zoneTag ? [zoneTag] : undefined,
+      visibility,
+      collectionId: selectedCollectionId,
+      fillableFields: preparedFields.length > 0 ? preparedFields : undefined,
+      isHandwrittenQuoteTemplate,
+      thumbnail: createDesignThumbnail(templateFile),
+    });
+    return preparedFields;
+  }
+
+  async function save() {
+    const file = useEditor.getState().doc;
     setBusy(true);
     try {
-      let selectedCollectionId = collectionId;
-      if (!selectedCollectionId && category.trim()) {
-        const collection = await oc.createTemplateCollection(workspaceId, category.trim());
-        selectedCollectionId = collection.id;
-      }
-      if (!selectedCollectionId) {
-        toast.error("请选择模板分类，或先新建一个分类。");
-        return;
-      }
-      await oc.saveAsTemplate({
-        workspaceId,
-        // designId gives the server a stable template identity; file keeps the
-        // template snapshot in sync with the editor even if autosave is still
-        // completing.
-        designId: designId ?? undefined,
-        file,
-        title: title.trim(),
-        category: category.trim() || undefined,
-        tags: zoneTag ? [zoneTag] : undefined,
-        visibility,
-        collectionId: selectedCollectionId,
-        fillableFields: preparedFields.length > 0 ? preparedFields : undefined,
-        isHandwrittenQuoteTemplate,
-        thumbnail: createDesignThumbnail(file),
-      });
+      const preparedFields = await persistTemplate(file, title, designId ?? undefined);
+      if (!preparedFields) return;
       useEditor.getState().setDocMeta({ brandEditableFields: preparedFields });
       await onSaved?.(preparedFields);
-      toast.success(tr("editor.saved_as_template"));
-      onClose();
+      toast.success(designId ? "模板已更新" : tr("editor.saved_as_template"));
     } catch {
       toast.error(tr("editor.could_not_save_template"));
     } finally {
@@ -261,8 +273,38 @@ export function SaveAsTemplateDialog({
     }
   }
 
+  async function copyTemplate() {
+    if (!workspaceId || !title.trim()) {
+      if (!workspaceId) toast.error("工作区信息尚未加载完成，请关闭弹窗后重新打开。");
+      else toast.error("请填写模板名称。");
+      return;
+    }
+    setBusy(true);
+    try {
+      const copyTitle = `${title.trim()} 副本`;
+      const file = JSON.parse(JSON.stringify(useEditor.getState().doc)) as ReturnType<typeof useEditor.getState>["doc"];
+      file.title = copyTitle;
+      const created = await oc.createDesign({ workspaceId, title: copyTitle, from: file });
+      const preparedFields = await persistTemplate(file, copyTitle, created.id);
+      if (!preparedFields) return;
+      toast.success("已复制为新模板");
+      onClose();
+    } catch {
+      toast.error("复制模板失败");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
-    <Modal open={open} onClose={onClose} title="设置模板字段并保存">
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="设置模板字段并保存"
+      closeOnBackdropClick={false}
+      closeOnEscape={false}
+      width="w-[32rem]"
+    >
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -349,6 +391,9 @@ export function SaveAsTemplateDialog({
         <div className="flex justify-end gap-2">
           <Button type="button" variant="secondary" size="sm" onClick={onClose}>
             {tr("editor.cancel")}
+          </Button>
+          <Button type="button" variant="secondary" size="sm" disabled={busy} onClick={() => void copyTemplate()}>
+            复制新模板
           </Button>
           <Button type="submit" size="sm" disabled={busy}>
             {busy ? tr("editor.saving") : tr("editor.save_template")}

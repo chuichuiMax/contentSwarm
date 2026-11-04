@@ -22,6 +22,7 @@ import {
   UsersRound,
   House,
   PanelsTopLeft,
+  LayoutTemplate,
   ImagePlus,
   Braces,
   ListTree,
@@ -315,6 +316,12 @@ const mainList = computed(() => {
   })
 
   if (userStore.isAdmin) {
+    items.push({
+      name: '封面管理',
+      path: '/cover-manage',
+      icon: LayoutTemplate,
+      activeIcon: LayoutTemplate
+    })
     items.push({
       name: '数据总览',
       path: '/dashboard',

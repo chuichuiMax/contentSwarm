@@ -65,18 +65,54 @@ _STYLE_CATALOG: dict[str, dict[str, str]] = {
 }
 
 _HEARTFELT_PRICE_SHOW = "用真诚的语气表达价格秀明、团队优势"
+_QUOTE_STYLE_KEYS = ("项目经理掏心窝", "本地信任型", "案例证明型", "痛点共鸣型")
+_CRAFT_STYLE_KEYS = ("项目经理掏心窝", "本地信任型", "专业干货型", "极简美学设计型")
+_CASE_SHARE_STYLE_KEYS = ("项目经理掏心窝", "本地信任型", "案例证明型", "痛点共鸣型", "实景案例拆解型")
+_KNOWLEDGE_STYLE_KEYS = ("实景案例拆解型", "极简美学设计型")
+
 _STYLES_BY_TYPE_NAME: dict[str, tuple[str, ...]] = {
-    "工艺施工展示": ("项目经理掏心窝", "本地信任型", "专业干货型", "极简美学设计型"),
-    "工艺展示": ("项目经理掏心窝", "本地信任型", "专业干货型", "极简美学设计型"),
-    "装修报价清单": ("项目经理掏心窝", "本地信任型", "案例证明型", "痛点共鸣型"),
-    "报价清单": ("项目经理掏心窝", "本地信任型", "案例证明型", "痛点共鸣型"),
-    "装修案例分享": ("项目经理掏心窝", "本地信任型", "案例证明型", "痛点共鸣型", "实景案例拆解型"),
-    "案例分享": ("项目经理掏心窝", "本地信任型", "案例证明型", "痛点共鸣型", "实景案例拆解型"),
-    "装修知识科普": ("实景案例拆解型", "极简美学设计型"),
-    "知识科普": ("实景案例拆解型", "极简美学设计型"),
+    "工艺施工展示": _CRAFT_STYLE_KEYS,
+    "工艺展示": _CRAFT_STYLE_KEYS,
+    "装修报价清单": _QUOTE_STYLE_KEYS,
+    "报价清单": _QUOTE_STYLE_KEYS,
+    "施工报价": _QUOTE_STYLE_KEYS,
+    "装修避坑分享": _QUOTE_STYLE_KEYS,
+    "避坑分享": _QUOTE_STYLE_KEYS,
+    "装修省钱攻略": _QUOTE_STYLE_KEYS,
+    "省钱攻略": _QUOTE_STYLE_KEYS,
+    "装修案例分享": _CASE_SHARE_STYLE_KEYS,
+    "案例分享": _CASE_SHARE_STYLE_KEYS,
+    "装修知识科普": _KNOWLEDGE_STYLE_KEYS,
+    "知识科普": _KNOWLEDGE_STYLE_KEYS,
     "人设自荐": ("理性设计师",),
     "装修人设自荐": ("理性设计师",),
 }
+_CT_TO_CANONICAL_STYLE_TYPE_NAME = {
+    "CT01": "装修案例分享",
+    "CT02": "装修报价清单",
+    "CT03": "装修避坑分享",
+    "CT04": "装修省钱攻略",
+    "CT05": "施工报价",
+    "CT07": "人设自荐",
+}
+
+
+def _canonical_style_type_name(content_type_code: str | None, content_type_name: str) -> str:
+    """将内容类型名称/方向码解析为创作风格表中的 canonical 名称。"""
+    name = _text(content_type_name)
+    if name in _STYLES_BY_TYPE_NAME:
+        return name
+    direction = CONTENT_TYPE_NAME_TO_DIRECTION.get(name)
+    if direction:
+        canonical = _CT_TO_CANONICAL_STYLE_TYPE_NAME.get(direction)
+        if canonical:
+            return canonical
+        if direction == "CT06":
+            return "装修知识科普" if any(token in name for token in ("科普", "知识")) else "工艺施工展示"
+    code = _text(content_type_code)
+    if code == "CT06":
+        return "装修知识科普" if any(token in name for token in ("科普", "知识")) else "工艺施工展示"
+    return _CT_TO_CANONICAL_STYLE_TYPE_NAME.get(code, name)
 _DESCRIPTION_OVERRIDES: dict[str, dict[str, str]] = {
     "工艺施工展示": {"项目经理掏心窝": _HEARTFELT_PRICE_SHOW},
     "工艺展示": {"项目经理掏心窝": _HEARTFELT_PRICE_SHOW},
@@ -133,13 +169,8 @@ def _lock_frame_area(raw: str, seed: str) -> str | None:
 
 
 def creative_style_options(content_type_code: str | None, content_type_name: str) -> list[dict[str, str]]:
-    name = _text(content_type_name)
+    name = _canonical_style_type_name(content_type_code, content_type_name)
     keys = _STYLES_BY_TYPE_NAME.get(name)
-    if not keys:
-        name = {"CT01": "装修案例分享", "CT02": "装修报价清单", "CT07": "人设自荐"}.get(
-            _text(content_type_code), ""
-        )
-        keys = _STYLES_BY_TYPE_NAME.get(name)
     if not keys:
         return []
     overrides = _DESCRIPTION_OVERRIDES.get(name, {})
@@ -210,7 +241,18 @@ def _build_persona_fact(persona: dict[str, Any], *, job: str = "", years: str = 
     return "，".join(part for part in parts if part)
 
 
-def _build_facts(type_name: str, persona: dict[str, Any], business_variables: dict[str, Any]) -> dict[str, Any]:
+def _build_persona_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    persona = payload.get("persona")
+    return dict(persona) if isinstance(persona, dict) else {}
+
+
+def _build_facts(
+    type_name: str,
+    persona: dict[str, Any],
+    business_variables: dict[str, Any],
+    *,
+    audience_tags: list[str] | None = None,
+) -> dict[str, Any]:
     community = _text(business_variables.get("楼盘信息"))
     frame_area = _text(business_variables.get("外框面积"))
     style = _text(business_variables.get("设计风格"))
@@ -272,7 +314,10 @@ def _build_facts(type_name: str, persona: dict[str, Any], business_variables: di
             part for part in (community, locked_area or frame_area, style, f"施工{_CONSTRUCTION_BRAND}") if part
         )
     persona_fact = _build_persona_fact(persona, job=job, years=years, region=region)
-    audience = _compact_list(household, audience_target) or _compact_list("装修业主")
+    if audience_tags:
+        audience = _compact_list(household, *audience_tags) or _compact_list(*audience_tags)
+    else:
+        audience = _compact_list(household, audience_target) or _compact_list("装修业主")
     return _compact_facts(
         {
             "persona_fact": f"{persona_fact}。" if persona_fact else None,
@@ -310,6 +355,7 @@ def build_content_request_payload(
     content_type_id: str,
     content_type_code: str,
     business_variables: dict[str, Any],
+    audience_tags: list[str] | None = None,
 ) -> dict[str, Any]:
     persona = _build_persona(employee, user)
     filled = {
@@ -326,7 +372,7 @@ def build_content_request_payload(
         },
         "persona": _persona_for_generation(persona),
         "businessVariables": filled,
-        "facts": _build_facts(content_type_name, persona, filled),
+        "facts": _build_facts(content_type_name, persona, filled, audience_tags=audience_tags),
     }
 
 
@@ -400,6 +446,8 @@ async def build_mp_decoration_direct_defaults(
         industry_slug=industry_slug,
         content_type_code=content_type_code,
     )
+    from yuxi.services.target_audience_tag_service import enrich_studio_user_request_json
+
     user_request = format_content_request_json(
         employee=employee,
         user=user,
@@ -408,6 +456,7 @@ async def build_mp_decoration_direct_defaults(
         content_type_code=content_type_code,
         business_variables=business_variables,
     )
+    user_request = await enrich_studio_user_request_json(user.uid, user_request)
     return {
         "generation_prompt": DEFAULT_DIRECT_GENERATION_PROMPT,
         "creative_style": creative_style,

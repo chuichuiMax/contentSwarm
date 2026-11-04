@@ -1910,6 +1910,20 @@ async def create_cover_generate_job(db: AsyncSession, user: User, payload: Cover
         include_content_context=not (payload.render_copy_with_image2 or payload.render_prompt_text),
     )
     title = payload.title.strip() or linked_title[:60]
+    subtitle = payload.subtitle.strip()
+    if payload.render_copy_with_image2 and (payload.prompt or "").strip():
+        from yuxi.content_cover.ai_cover_prompt import materialize_ai_cover_prompt
+
+        brief = (getattr(artifact, "brief_json", None) or {}) if artifact else {}
+        prompt = materialize_ai_cover_prompt(
+            payload.prompt,
+            title=title,
+            subtitle=subtitle,
+            form_values={
+                **(brief.get("business_variables") or {}),
+                **(brief.get("form_values") or {}),
+            },
+        )
     image2_copy = payload.render_copy_with_image2
     prompt_text = payload.render_prompt_text
     ai_cover_variant = str((payload.parameters or {}).get("ai_cover_prompt_variant") or "").strip().lower()

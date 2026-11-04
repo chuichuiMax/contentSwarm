@@ -177,6 +177,16 @@ describe('buildContentRequestPayload', () => {
     assert.ok(!payload.facts.title_price)
   })
 
+  it('uses tag knowledge base entries in facts.audience when audienceTags provided', () => {
+    const payload = buildContentRequestPayload({
+      employee: { name: '测试', employee_code: 'E1', role: '设计师' },
+      contentType: { id: 'ct-id', name: '装修报价清单' },
+      businessVariables: { 目标人群: '旧房改造', 居住人口: '三口之家' },
+      audienceTags: ['旧房翻新', '局部改造']
+    })
+    assert.deepEqual(payload.facts.audience, ['三口之家', '旧房翻新', '局部改造'])
+  })
+
   it('maps knowledge pack to CT06 process without dumping style into process', () => {
     const payload = buildContentRequestPayload({
       employee: {

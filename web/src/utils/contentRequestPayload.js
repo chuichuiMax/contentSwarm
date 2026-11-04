@@ -97,7 +97,7 @@ const buildPersonaFact = (persona, { job, years, region } = {}) => {
     .join('，')
 }
 
-const buildFacts = (typeName, persona, businessVariables) => {
+const buildFacts = (typeName, persona, businessVariables, audienceTags = null) => {
   const community = text(businessVariables['楼盘信息'])
   const frameArea = text(businessVariables['外框面积'])
   const style = text(businessVariables['设计风格'])
@@ -149,7 +149,10 @@ const buildFacts = (typeName, persona, businessVariables) => {
     result = [community, lockedArea || frameArea, style, `施工${CONSTRUCTION_BRAND}`].filter(Boolean).join(' ')
   }
   const personaFact = buildPersonaFact(persona, isPersona ? { job, years, region } : {})
-  const audience = compactList(household, audienceTarget) || compactList('装修业主')
+  const audience =
+    Array.isArray(audienceTags) && audienceTags.length
+      ? compactList(household, ...audienceTags) || [...new Set(audienceTags.map(text).filter(Boolean))]
+      : compactList(household, audienceTarget) || compactList('装修业主')
   return compactFacts({
     persona_fact: personaFact ? `${personaFact}。` : undefined,
     process,
@@ -176,7 +179,8 @@ export const buildContentRequestPayload = ({
   employee,
   user = {},
   contentType,
-  businessVariables = {}
+  businessVariables = {},
+  audienceTags = null
 } = {}) => {
   const persona = buildPersona(employee, user)
   const typeName = contentType?.name || ''
@@ -195,7 +199,7 @@ export const buildContentRequestPayload = ({
     },
     persona,
     businessVariables: filledVariables,
-    facts: buildFacts(typeName, persona, filledVariables)
+    facts: buildFacts(typeName, persona, filledVariables, audienceTags)
   }
 }
 

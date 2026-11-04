@@ -51,7 +51,7 @@ export function ToolRail({ workspaceId, overlay = false, defaultCollapsed = fals
     switch (active) {
       case "templates": return <TemplatesPanel />;
       case "elements": return <ElementsPanel />;
-      case "text": return <TextPanel />;
+      case "text": return <TextPanel workspaceId={workspaceId} />;
       case "uploads": return <UploadsPanel workspaceId={workspaceId} />;
       case "stock": return <StockPanel workspaceId={workspaceId} />;
       case "apps": return <AppsPanel />;

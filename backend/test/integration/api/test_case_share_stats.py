@@ -177,6 +177,60 @@ async def test_filters_fixed_summary_and_beijing_boundaries(report):
         assert (await client.get(base, headers=headers, params=params)).status_code == 422
 
 
+@pytest.mark.parametrize("identity", ["account", "employee", "standalone", "deleted-employee", "deleted-account"])
+async def test_historical_identity_list_search_export_and_scope(report, identity):
+    async with report.sessions() as db:
+        share = await db.get(ContentMaterialShare, "historical")
+        share.sharer_uid = "visitor-test-user-1"
+        share.source_platform = "mp"
+        share.sharer_name = "代接联系人"
+        share.sharer_phone = "18800000002"
+        employee = await db.get(ContentEmployee, "emp-1")
+        employee.current_branch = "历史关联门店"
+        employee.enabled = False
+        if identity == "employee":
+            share.sharer_employee_id = employee.id
+            (await db.get(User, 1)).phone_number = None
+        elif identity in ("standalone", "deleted-employee"):
+            if identity == "deleted-employee":
+                share.sharer_employee_id = employee.id
+            await db.delete(employee)
+        elif identity == "deleted-account":
+            (await db.get(User, 1)).is_deleted = 1
+        await db.commit()
+
+    if identity in ("account", "employee"):
+        expected = ("员工1", "MP1", "历史关联门店")
+    elif identity == "deleted-account":
+        expected = (None, None, None)
+    else:
+        expected = ("visit-1", None, None)
+    base, headers = "/api/case-shares", report.tokens[5]
+    listing = (await report.client.get(base, headers=headers)).json()
+    historical = next(row for row in listing["items"] if row["id"] == "historical")
+    assert (historical["sharer_name"], historical["employee_code"], historical["branch"]) == expected
+    assert listing["total"] == 3
+    for keyword in [value for value in expected if value] + ["代接联系人", "员工2", "%"]:
+        response = await report.client.get(base, headers=headers, params={"keyword": keyword, "source": "mp"})
+        ids = [row["id"] for row in response.json()["items"]]
+        assert ids == (["historical"] if keyword in expected else [])
+        assert response.json()["total"] == len(ids)
+
+    exported = await report.client.get(base + "/export", headers=headers, params={"source": "mp"})
+    sheet = load_workbook(io.BytesIO(exported.content)).active
+    assert [cell.value for cell in sheet[2]][2:5] == [value or "—" for value in expected]
+    assert sheet.max_row == 3
+    assert (await report.client.get(base, headers=report.tokens[2])).json()["total"] == 1
+    if identity != "deleted-account":
+        own = (await report.client.get(base, headers=report.tokens[1])).json()
+        assert own["total"] == 2
+        assert {row["id"] for row in own["items"]} == {"share-a", "historical"}
+    assert (await report.client.get(base + "/summary", headers=headers)).json() == {"total": 3, "today": 1}
+    async with report.sessions() as db:
+        share = await db.get(ContentMaterialShare, "historical")
+        assert share.sharer_employee_name is None and share.sharer_branch is None
+
+
 async def test_export_all_filtered_rows_text_cells_and_permissions(report):
     client, base, headers = report.client, "/api/case-shares", report.tokens[5]
     async with report.sessions() as db:

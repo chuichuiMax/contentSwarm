@@ -854,10 +854,28 @@ func (rc *rctx) rasterText(m mat, node map[string]any) {
 	if contentW < 0 {
 		contentW = 0
 	}
+	contentH := boxH - padT - padB
+	if contentH < 0 {
+		contentH = 0
+	}
+	automationSingleLine := shouldAutomationSingleLineAutoFit(node)
+	if automationSingleLine {
+		automationSingleLineLetterFit(node, contentW, contentH, measure, runFace)
+		boxW = asNum(box["width"])
+		if boxW == 0 {
+			boxW = asNum(asObj(node["size"])["width"])
+		}
+		contentW = boxW - padL - padR
+		if contentW < 0 {
+			contentW = 0
+		}
+		drawAutomationDistributedSingleLine(rc, m, node, boxH, padL, padT, padB, contentW, contentH, scale, measure, runFace)
+		return
+	}
 	// Wrap to the content width (matches @hc/text: wrap unless the box auto-sizes
 	// its width). With no known width, fall back to no wrap (one line per
 	// paragraph) rather than breaking every word.
-	wrap := asStr(box["mode"]) != "autoWidth" && contentW > 0
+	wrap := asStr(box["mode"]) != "autoWidth" && contentW > 0 && !automationSingleLine
 
 	// A drawn segment and a laid-out visual line.
 	type seg struct {
@@ -945,6 +963,9 @@ func (rc *rctx) rasterText(m mat, node map[string]any) {
 		y = boxH - padB - total
 	}
 
+	textHL := textHighlightOf(node)
+	textOL := textOutlineOf(node)
+
 	// Draw pass: baseline sits near the line's bottom (ascent approximation).
 	for _, ln := range lines {
 		// Display order. Unlike the browser, this renderer draws rune by rune and
@@ -970,6 +991,15 @@ func (rc *rctx) rasterText(m mat, node map[string]any) {
 			x = padL + (contentW-ln.width)/2
 		case "right":
 			x = padL + (contentW - ln.width)
+		}
+		if textHL.ok {
+			lineFontSize := 16.0
+			for _, sg := range ln.segs {
+				if fs := asNum(sg.style["fontSize"]); fs > lineFontSize {
+					lineFontSize = fs
+				}
+			}
+			rc.drawTextHighlightBar(m, x, y, ln.width, lineFontSize, textHL)
 		}
 		for _, sg := range ln.segs {
 			face, _ := runFace(sg.style)
@@ -1001,9 +1031,7 @@ func (rc *rctx) rasterText(m mat, node map[string]any) {
 						return false
 					}
 				}
-				dx, dy := m.apply(x, y)
-				d := &font.Drawer{Dst: rc.dst, Src: src, Face: glyphFace, Dot: fixed.P(int(math.Round(dx)), int(math.Round(dy)))}
-				d.DrawString(string(r))
+				rc.drawOutlinedGlyph(m, x, y, r, glyphFace, src, textOL, scale)
 				adv, _ := glyphFace.GlyphAdvance(r)
 				x += float64(adv>>6)/scale + ls
 				if glyphFace != face {

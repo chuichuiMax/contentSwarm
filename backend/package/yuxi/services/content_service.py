@@ -656,6 +656,12 @@ def _parse_content_studio_production_pack(user_request: str) -> dict[str, Any] |
     audience = [str(item).strip() for item in audience if str(item).strip()]
     if content_type_code == "CT06" and not variables.get("craft_role") and audience:
         variables["craft_role"] = audience
+    if isinstance(business_variables, dict):
+        for key, value in business_variables.items():
+            name = str(key).strip()
+            if not name or value in (None, "", [], {}):
+                continue
+            variables[name] = value
     persona_fact = str(variables.get("persona_fact") or "").strip()
     return {
         "type_name": type_name,
@@ -1577,6 +1583,24 @@ async def save_content_brief(
     raw_user_request = str(
         raw_brief.get("user_request") or (raw_brief.get("form_values") or {}).get("user_request") or ""
     ).strip()
+    if raw_user_request:
+        from yuxi.services.target_audience_tag_service import enrich_studio_user_request_json
+
+        enriched_request = await enrich_studio_user_request_json(user.uid, raw_user_request)
+        if enriched_request != raw_user_request:
+            raw_user_request = enriched_request
+            raw_brief["user_request"] = enriched_request
+            form_values_patch = dict(raw_brief.get("form_values") or {})
+            form_values_patch["user_request"] = enriched_request
+            raw_brief["form_values"] = form_values_patch
+            try:
+                payload = json.loads(enriched_request)
+                facts = payload.get("facts") if isinstance(payload, dict) else None
+                if isinstance(facts, dict) and isinstance(facts.get("audience"), list):
+                    raw_brief["audience"] = facts["audience"]
+            except (TypeError, ValueError):
+                pass
+            brief = ContentBriefPayload.model_validate(raw_brief)
     quote_case = (
         _parse_content_studio_quote_case(raw_user_request, content_type_code=task.content_type_code)
         if raw_user_request

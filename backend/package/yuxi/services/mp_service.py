@@ -1565,7 +1565,13 @@ async def compile_brief(db: AsyncSession, ctx: MpContext, payload: MpCompileBrie
                 "该内容类型暂无可用爆款原文，请联系运营准备",
             ) from exc
         except ValueError as exc:
-            raise _mp_error(422, "MP_CREATIVE_STYLE_UNAVAILABLE", "该内容类型暂无可用创作风格") from exc
+            if str(exc) == "no creative styles for content type":
+                raise _mp_error(
+                    422,
+                    "MP_CREATIVE_STYLE_UNAVAILABLE",
+                    "该内容类型暂无可用创作风格",
+                ) from exc
+            raise _mp_error(422, "MP_BRIEF_PREP_FAILED", str(exc)) from exc
     created = await create_content_task(
         db,
         ctx.user,

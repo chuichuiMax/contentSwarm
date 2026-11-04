@@ -195,6 +195,7 @@ onBeforeUnmount(() => window.removeEventListener('message', handleHyCanvasMessag
     </section>
     <iframe
       v-else
+      :key="editorUrl"
       class="hycanvas-frame"
       :src="editorUrl"
       title="ContentSwarm 设计工作台"

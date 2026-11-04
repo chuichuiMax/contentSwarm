@@ -38,6 +38,23 @@ def test_creative_style_options_follow_the_style_sheet():
         "极简美学设计型",
     ]
     assert [item["label"] for item in creative_style_options("CT07", "人设自荐")] == ["理性设计师"]
+    assert [item["label"] for item in creative_style_options("CT03", "装修避坑分享")] == [
+        "项目经理掏心窝",
+        "本地信任型",
+        "案例证明型",
+        "痛点共鸣型",
+    ]
+    assert [item["label"] for item in creative_style_options("CT04", "装修省钱攻略")] == [
+        "项目经理掏心窝",
+        "本地信任型",
+        "案例证明型",
+        "痛点共鸣型",
+    ]
+    assert len(creative_style_options("CT03", "")) == 4
+    assert len(creative_style_options("CT06", "")) == 4
+    assert len(creative_style_options("CT06", "知识科普")) == 2
+    assert len(creative_style_options("CT02", "报价清单")) == 4
+    assert len(creative_style_options("CT05", "施工报价")) == 4
     craft = creative_style_options("CT06", "工艺施工展示")[0]
     quote = creative_style_options("CT02", "装修报价清单")[0]
     assert craft["description"] == "用真诚的语气表达价格秀明、团队优势"
@@ -125,6 +142,10 @@ async def test_build_mp_decoration_direct_defaults(monkeypatch):
         module,
         "pick_random_ready_viral_asset_id",
         AsyncMock(return_value="vav_test"),
+    )
+    monkeypatch.setattr(
+        "yuxi.services.target_audience_tag_service.enrich_studio_user_request_json",
+        AsyncMock(side_effect=lambda _uid, text: text),
     )
     employee = SimpleNamespace(
         name="李四",

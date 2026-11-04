@@ -8,6 +8,8 @@ import type { DesignFile, Node } from "@hc/schema";
 import { getFontEntry, fontCssUrl, isSystemFont } from "@hc/text";
 
 const CUSTOM_FONTS_KEY = "oc-custom-fonts";
+/** Skip hydrating huge data-URL fonts from localStorage (avoids tab OOM on open). */
+const MAX_CUSTOM_FONT_SRC_CHARS = 8_000_000;
 
 // The only hosts a webfont stylesheet may load from. fontCssUrl builds URLs on
 // exactly these (Bunny is the default, Google optional); a non-empty href off
@@ -29,6 +31,7 @@ class FontProvider {
   private loaded = new Set<string>();
   private loading = new Set<string>();
   private subs = new Set<() => void>();
+  private notifyScheduled = false;
   // Uploaded fonts (FR-6): key (lowercased family) -> { family, src (data URL) }.
   private custom = new Map<string, { family: string; src: string }>();
 
@@ -36,7 +39,14 @@ class FontProvider {
     if (typeof window === "undefined") return;
     try {
       const saved = JSON.parse(window.localStorage.getItem(CUSTOM_FONTS_KEY) || "[]") as { family: string; src: string }[];
-      for (const f of saved) void this.registerCustomFont(f.family, f.src, false);
+      const schedule = () => {
+        for (const f of saved) {
+          if (!f.family || !f.src || f.src.length > MAX_CUSTOM_FONT_SRC_CHARS) continue;
+          void this.registerCustomFont(f.family, f.src, false, false);
+        }
+      };
+      if (typeof requestIdleCallback === "function") requestIdleCallback(schedule);
+      else void Promise.resolve().then(schedule);
     } catch { /* ignore corrupt store */ }
   }
 
@@ -52,21 +62,26 @@ class FontProvider {
 
   /** Load an uploaded font (data URL) into document.fonts so the canvas can draw
    *  it, and (by default) persist it across sessions. Returns true on success. */
-  async registerCustomFont(family: string, src: string, persist = true): Promise<boolean> {
+  async registerCustomFont(family: string, src: string, persist = true, notify = true): Promise<boolean> {
     if (typeof document === "undefined" || typeof FontFace === "undefined") return false;
     const key = family.toLowerCase();
     if (this.loaded.has(key) && this.custom.has(key)) return true; // already registered
+    if (this.loading.has(key)) return false;
+    this.loading.add(key);
     try {
-      const face = new FontFace(family, `url(${src})`);
+      const escaped = src.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+      const face = new FontFace(family, `url("${escaped}")`);
       await face.load();
       (document as unknown as { fonts: { add: (f: FontFace) => void } }).fonts.add(face);
       this.loaded.add(key);
       this.custom.set(key, { family, src });
       if (persist) this.persistCustom();
-      this.notify();
+      if (notify) this.notify();
       return true;
     } catch {
       return false;
+    } finally {
+      this.loading.delete(key);
     }
   }
 
@@ -136,8 +151,9 @@ class FontProvider {
     const refs = (doc as unknown as { fonts?: { family?: string; url?: string; source?: string }[] }).fonts;
     if (Array.isArray(refs)) {
       for (const f of refs) {
-        if (f.url && f.family && !this.loaded.has(f.family.toLowerCase())) {
-          void this.registerCustomFont(f.family, f.url, false);
+        const key = f.family.toLowerCase();
+        if (f.url && f.family && !this.loaded.has(key) && !this.loading.has(key)) {
+          void this.registerCustomFont(f.family, f.url, false, false);
         }
       }
     }
@@ -161,7 +177,14 @@ class FontProvider {
   }
 
   private notify(): void {
-    for (const cb of this.subs) cb();
+    if (this.notifyScheduled) return;
+    this.notifyScheduled = true;
+    const flush = () => {
+      this.notifyScheduled = false;
+      for (const cb of this.subs) cb();
+    };
+    if (typeof requestAnimationFrame === "function") requestAnimationFrame(flush);
+    else void Promise.resolve().then(flush);
   }
 }
 

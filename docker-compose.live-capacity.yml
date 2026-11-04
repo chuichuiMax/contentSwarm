@@ -64,6 +64,15 @@ services:
       WATCHFILES_FORCE_POLLING: ${WATCHFILES_FORCE_POLLING:-true}
       POSTGRES_URL: ${POSTGRES_URL:-postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-yuxi}}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      NEO4J_URI: ${NEO4J_URI:-bolt://graph:7687}
+      NEO4J_USERNAME: ${NEO4J_USERNAME:-neo4j}
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-0123456789}
+      MILVUS_URI: ${MILVUS_URI:-http://milvus:19530}
+      MILVUS_DB_NAME: ${MILVUS_DB_NAME:-default}
+      MILVUS_TOKEN: ${MILVUS_TOKEN:-}
+      MINIO_URI: ${MINIO_URI:-http://minio:9000}
+      POSTGRES_POOL_SIZE: ${POSTGRES_POOL_SIZE:-10}
+      POSTGRES_MAX_OVERFLOW: ${POSTGRES_MAX_OVERFLOW:-40}
     command: python -m server.worker_dev
     restart: unless-stopped
     stop_grace_period: 30s

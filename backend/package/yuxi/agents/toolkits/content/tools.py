@@ -15,7 +15,6 @@ from yuxi.content.execution_trace import build_execution_preview
 from yuxi.content_cover.ai_cover_prompt import (
     ai_cover_prompt_controls,
     normalize_cover_form_values,
-    select_ai_cover_prompt,
 )
 from yuxi.content_cover.handwritten_quote_prompt import (
     HANDWRITTEN_QUOTE_NEGATIVE_PROMPT,
@@ -620,13 +619,16 @@ async def create_content_cover_job(
             content_type_code = getattr(task, "content_type_code", "") or ""
             content_type_name = str(brief.get("typeName") or "")
             prompt_controls = ai_cover_prompt_controls(visual_material)
-            ai_selection = select_ai_cover_prompt(
+            from yuxi.services.ai_cover_template_service import cover_generation_selection
+
+            ai_selection = await cover_generation_selection(
+                db,
                 title=text[0],
                 subtitle=text[1],
                 form_values=form_values,
                 content_type_code=content_type_code,
                 content_type_name=content_type_name,
-                **prompt_controls,
+                prompt_controls=prompt_controls,
             )
             result = await create_cover_generate_job(
                 db,

@@ -309,6 +309,25 @@ async def content_bootstrap(current_user: User = Depends(get_required_user), db:
     return await get_content_bootstrap(db, current_user)
 
 
+@content.get("/target-audience-tags")
+async def content_target_audience_tags(
+    audience: str = Query(..., min_length=1),
+    current_user: User = Depends(get_required_user),
+):
+    from yuxi.services.target_audience_tag_service import list_target_audience_tags
+
+    name = audience.strip()
+    try:
+        tags, knowledge_base_name = await list_target_audience_tags(current_user.uid, name)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {
+        "audience": name,
+        "knowledge_base_name": knowledge_base_name,
+        "tags": tags,
+    }
+
+
 @content.post("/tasks")
 async def create_task(
     payload: ContentTaskCreate,

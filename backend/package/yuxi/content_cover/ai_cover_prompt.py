@@ -636,6 +636,44 @@ AI_COVER_CATALOG_SAMPLE_P12_FORM: dict[str, Any] = {
 }
 
 
+def materialize_ai_cover_prompt(
+    prompt: str,
+    *,
+    title: str,
+    subtitle: str = "",
+    form_values: dict[str, Any] | None = None,
+) -> str:
+    """Replace catalog sample copy and template placeholders with real cover text."""
+    body = (prompt or "").strip()
+    if not body:
+        return body
+    title = title.strip()
+    subtitle = subtitle.strip()
+    if title:
+        body = body.replace(AI_COVER_CATALOG_SAMPLE_TITLE, title)
+    if subtitle:
+        body = body.replace(AI_COVER_CATALOG_SAMPLE_SUBTITLE, subtitle)
+    if "{" not in body:
+        return body
+    line1, line2 = format_ai_cover_two_lines(title=title, subtitle=subtitle)
+    line1, line2, line3 = cover_three_lines(title=title, subtitle=subtitle)
+    copy_text = format_ai_cover_copy_text(title=title, subtitle=subtitle)
+    site = _cover_form_text(form_values or {}, "工地地址", "楼盘信息", "楼盘名称")
+    area = _cover_form_text(form_values or {}, "外框面积", "面积", "建筑面积")
+    style = _cover_form_text(form_values or {}, "设计风格", "项目风格")
+    body_fields = f"工地地址/楼盘信息：{site}\n外框面积：{area}\n设计风格：{style}"
+    try:
+        return body.format(
+            line1=line1,
+            line2=line2,
+            line3=line3,
+            copy_text=copy_text,
+            body_fields=body_fields,
+        )
+    except (KeyError, ValueError, IndexError):
+        return body
+
+
 def ai_cover_prompt_body_for_catalog(variant: str) -> str:
     """创作台展示用：示例标题/副标题或案例字段填充后的完整生图提示词正文。"""
     normalized = (variant or "").strip().lower()
@@ -761,11 +799,18 @@ def select_ai_cover_prompt(
     prompt_random: bool = True,
     prompt_variant: str | None = None,
     featured_template_index: int | None = None,
+    exclude_variants: frozenset[str] = frozenset(),
 ) -> AiCoverJobSelection:
-    pool = ai_cover_eligible_variants(
-        content_type_code=content_type_code,
-        content_type_name=content_type_name,
+    pool = tuple(
+        variant
+        for variant in ai_cover_eligible_variants(
+            content_type_code=content_type_code,
+            content_type_name=content_type_name,
+        )
+        if variant not in exclude_variants
     )
+    if not pool:
+        raise ValueError("当前内容类型没有可用的 AI 封面")
     variant = resolve_ai_cover_variant(
         pool=pool,
         prompt_random=prompt_random,
@@ -796,6 +841,7 @@ __all__ = [
     "AiCoverPromptVariant",
     "ai_cover_eligible_variants",
     "ai_cover_prompt_body_for_catalog",
+    "materialize_ai_cover_prompt",
     "job_selection_for_variant",
     "resolve_ai_cover_variant",
     "ai_cover_prompt_controls",

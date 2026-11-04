@@ -191,6 +191,11 @@ func main() {
 	}
 	acct := accounts.NewService(pool, cfg.JWTSecret).WithMFASecret(mfaSecret)
 	persist := persistence.NewService(pool).WithStorage(store)
+	if n, err := persist.BackfillContentSwarmCoverDocKinds(context.Background(), 10000); err != nil {
+		logger.Warn("contentswarm cover doc_kind backfill failed", "err", err)
+	} else if n > 0 {
+		logger.Info("contentswarm cover doc_kind backfill", "updated", n)
+	}
 	titles := commentsPersist{persist}
 	homeSvc := home.NewService(pool, persist, acct)
 	// The engagement emitter (write side: activity log + notifications) depends

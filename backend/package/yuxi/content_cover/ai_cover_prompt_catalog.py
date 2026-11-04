@@ -206,6 +206,26 @@ def api_preview_url_for_variant(variant: str) -> str:
     return f"/api/content/covers/ai-cover-prompts/{variant}/preview.png"
 
 
+def list_ai_cover_manage_catalog() -> dict[str, Any]:
+    """封面管理页：全部 AI 封面，含提示词正文和可选用的内容类型。"""
+    from yuxi.services.content_type_service import DEFAULT_CONTENT_TYPES
+
+    content_type_names = [name for _code, name, _enabled in DEFAULT_CONTENT_TYPES]
+    specs = specs_for_content_type(content_type_name="装修案例分享")
+    covers: list[dict[str, Any]] = []
+    for spec in specs:
+        item = spec_to_dict(
+            spec,
+            preview_url=api_preview_url_for_variant(spec.variant),
+            content_type_name="装修案例分享",
+        )
+        item["content_type_names"] = (
+            ["装修案例分享"] if spec.variant == "p12" else content_type_names
+        )
+        covers.append(item)
+    return {"covers": covers}
+
+
 def spec_to_dict(
     spec: AiCoverPromptSpec,
     *,

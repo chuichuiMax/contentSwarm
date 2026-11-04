@@ -20,6 +20,8 @@ export function Modal({
   ariaLabel,
   children,
   width = "w-[26rem]",
+  closeOnBackdropClick = true,
+  closeOnEscape = true,
 }: {
   open: boolean;
   onClose: () => void;
@@ -27,19 +29,22 @@ export function Modal({
   ariaLabel?: string;
   children: ReactNode;
   width?: string;
+  /** When false, clicking the dimmed backdrop does not dismiss the dialog. */
+  closeOnBackdropClick?: boolean;
+  closeOnEscape?: boolean;
 }) {
   const panelRef = useRef<HTMLDivElement>(null);
   const titleId = useId();
 
   // Escape closes. Bound on the window so it works regardless of where focus is.
   useEffect(() => {
-    if (!open) return;
+    if (!open || !closeOnEscape) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
+  }, [open, onClose, closeOnEscape]);
 
   // Focus management: on open, remember what was focused, move focus into the
   // panel, and restore focus on close/unmount. Runs only in the browser.
@@ -97,7 +102,10 @@ export function Modal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-neutral-900/40 p-4 backdrop-blur-sm" onClick={onClose}>
+    <div
+      className="fixed inset-0 z-50 grid place-items-center bg-neutral-900/40 p-4 backdrop-blur-sm"
+      onClick={closeOnBackdropClick ? onClose : undefined}
+    >
       <div
         ref={panelRef}
         role="dialog"

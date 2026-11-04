@@ -254,6 +254,69 @@ def test_compile_production_pack_promotes_facts_to_factory_variables():
     assert parsed["content_type_code"] == "CT06"
 
 
+def test_compile_production_pack_merges_business_variables_for_cover_fields():
+    task = SimpleNamespace(id="ct_persona", content_goal="acquire", mode="pro", content_type_code=None)
+    template = SimpleNamespace(slug="decoration", quick_form_schema=[], pro_form_schema=[])
+    request = {
+        "contentType": {"typeName": "人设自荐", "contentTypeCode": "CT07"},
+        "persona": {"name": "测试", "employeeCode": "H10001", "role": "设计师"},
+        "businessVariables": {"岗位": "项目经理", "从业年限": "10"},
+        "facts": {
+            "persona_fact": "10岁，项目经理，从业10年。",
+            "process": ["项目经理服务"],
+            "result": "可对接咨询",
+        },
+    }
+    user_request = json.dumps(request, ensure_ascii=False)
+
+    compiled, missing = compile_content_brief(
+        task=task,
+        template=template,
+        brief=ContentBriefPayload(user_request=user_request, form_values={}),
+    )
+
+    assert missing == []
+    assert compiled["business_variables"]["岗位"] == "项目经理"
+    assert compiled["business_variables"]["从业年限"] == "10"
+
+
+def test_compile_production_pack_merges_all_business_variables_for_cover():
+    task = SimpleNamespace(id="ct_cover", content_goal="acquire", mode="pro", content_type_code=None)
+    template = SimpleNamespace(slug="decoration", quick_form_schema=[], pro_form_schema=[])
+    request = {
+        "contentType": {"typeName": "装修案例分享", "contentTypeCode": "CT01"},
+        "businessVariables": {
+            "楼盘信息": "洋湖天序",
+            "外框面积": "142㎡",
+            "设计风格": "现代",
+            "户型": "三室两厅",
+            "所在区域": "长沙",
+            "目标人群": "改善型",
+            "工艺类型": "水电",
+        },
+        "facts": {
+            "persona_fact": "案例作者。",
+            "process": ["定制化家装交付"],
+            "result": "142㎡现代实景",
+        },
+    }
+    compiled, missing = compile_content_brief(
+        task=task,
+        template=template,
+        brief=ContentBriefPayload(user_request=json.dumps(request, ensure_ascii=False), form_values={}),
+    )
+
+    assert missing == []
+    variables = compiled["business_variables"]
+    assert variables["楼盘信息"] == "洋湖天序"
+    assert variables["外框面积"] == "142㎡"
+    assert variables["设计风格"] == "现代"
+    assert variables["户型"] == "三室两厅"
+    assert variables["所在区域"] == "长沙"
+    assert variables["目标人群"] == "改善型"
+    assert variables["工艺类型"] == "水电"
+
+
 def test_compile_production_pack_promotes_community_to_case_background():
     request = {
         "contentType": {"typeName": "装修知识科普", "contentTypeCode": "CT06"},
