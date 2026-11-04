@@ -1260,6 +1260,8 @@ export function EditorApp() {
           onSaved={async () => { await save(false); }}
           designId={designId}
           workspaceId={workspaceId}
+          templateId={typeof router.query.template === "string" ? router.query.template : null}
+          initialCollectionId={typeof router.query.collection === "string" ? router.query.collection : ""}
         />
       )}
       {publishOpen && <PublishDialog open onClose={() => setPublishOpen(false)} designId={designId ?? undefined} workspaceId={workspaceId ?? undefined} />}

@@ -6,6 +6,7 @@
 
 import type { DesignFile, Node } from "@hc/schema";
 import { getFontEntry, fontCssUrl, isSystemFont } from "@hc/text";
+import { packagedFontByFamily, type PackagedFont } from "@/lib/packagedFonts";
 
 const CUSTOM_FONTS_KEY = "oc-custom-fonts";
 /** Skip hydrating huge data-URL fonts from localStorage (avoids tab OOM on open). */
@@ -90,11 +91,36 @@ class FontProvider {
     try { window.localStorage.setItem(CUSTOM_FONTS_KEY, JSON.stringify([...this.custom.values()])); } catch { /* quota: skip persistence */ }
   }
 
+  /** Load an installed cover font from the font package so the canvas can draw it. */
+  private async registerPackaged(font: PackagedFont): Promise<void> {
+    if (typeof document === "undefined" || typeof FontFace === "undefined") return;
+    const key = font.family.toLowerCase();
+    try {
+      for (const file of font.files) {
+        const face = new FontFace(font.family, `url(${file.url})`, { weight: String(file.weight) });
+        await face.load();
+        (document as unknown as { fonts: { add: (f: FontFace) => void } }).fonts.add(face);
+      }
+      this.loaded.add(key);
+      this.notify();
+    } catch {
+      /* the canvas keeps the fallback face */
+    } finally {
+      this.loading.delete(key);
+    }
+  }
+
   /** Ensure a family is loading/loaded; repaints subscribers when it arrives. */
   ensure(family: string | undefined): void {
     if (isSystemFont(family) || typeof document === "undefined") return;
     const key = family!.toLowerCase();
     if (this.loaded.has(key) || this.loading.has(key)) return;
+    const packaged = packagedFontByFamily(family);
+    if (packaged && packaged.files.length > 0) {
+      this.loading.add(key);
+      void this.registerPackaged(packaged);
+      return;
+    }
     const entry = getFontEntry(family!);
     if (!entry) return;
     this.loading.add(key);

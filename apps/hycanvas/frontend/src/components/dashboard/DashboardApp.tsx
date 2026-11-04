@@ -480,8 +480,16 @@ export function DashboardApp({ view }: { view: DashboardView }) {
   const canManageCollections = activeWs?.role === "member" || activeWs?.role === "admin" || activeWs?.role === "owner";
   const firstName = user?.name?.trim().split(/\s+/)[0] || user?.email?.split("@")[0] || "there";
 
-  const open = (id: string, brief?: string) =>
-    router.push({ pathname: "/editor", query: brief ? { id, ai: brief } : { id } });
+  const open = (id: string, brief?: string, templateId?: string, collectionId?: string) =>
+    router.push({
+      pathname: "/editor",
+      query: {
+        id,
+        ...(brief ? { ai: brief } : {}),
+        ...(templateId ? { template: templateId } : {}),
+        ...(collectionId ? { collection: collectionId } : {}),
+      },
+    });
 
   // Star/unstar a design; optimistically flip the flag in the open lists, then
   // reconcile from the server response (and drop it from Favorites when unstarred).
@@ -1427,7 +1435,7 @@ export function DashboardApp({ view }: { view: DashboardView }) {
                             {t.sourceDesignId && (
                               <MenuRow icon={Pencil} onClick={() => {
                                 setMenuFor(null);
-                                void open(t.sourceDesignId!);
+                                void open(t.sourceDesignId!, undefined, t.id, t.collectionId);
                               }}>{tr("dashboard.edit_source_template")}</MenuRow>
                             )}
                             <MenuRow icon={FileDown} onClick={() => { setMenuFor(null); void downloadTemplateHyc(t); }}>{tr("dashboard.download_as_hyc_file")}</MenuRow>

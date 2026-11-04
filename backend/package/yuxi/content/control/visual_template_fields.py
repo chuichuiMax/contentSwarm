@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from typing import Any
 
@@ -177,8 +178,36 @@ def _service_years(brief: dict[str, Any]) -> str:
     return years
 
 
+def _production_pack_values(brief: dict[str, Any]) -> dict[str, Any]:
+    """内容需求生产包里的业务变量，封面生成时和表单字段同一套来源。"""
+
+    form_values = brief.get("form_values") if isinstance(brief.get("form_values"), dict) else {}
+    merged: dict[str, Any] = {}
+    for raw in (brief.get("user_request"), form_values.get("user_request")):
+        if not isinstance(raw, str) or not raw.strip().startswith("{"):
+            continue
+        try:
+            payload = json.loads(raw)
+        except ValueError:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        for name in ("businessVariables", "business_variables", "facts"):
+            section = payload.get(name)
+            if not isinstance(section, dict):
+                continue
+            for key, value in section.items():
+                if value in (None, "", [], {}):
+                    continue
+                merged.setdefault(str(key), value)
+    return merged
+
+
 def template_fact_sources(brief: dict[str, Any]) -> dict[str, str]:
     variables = brief_variable_map(brief)
+    for key, value in _production_pack_values(brief).items():
+        if not str(variables.get(key) or "").strip():
+            variables[key] = value
     brand = brief.get("brand") if isinstance(brief.get("brand"), dict) else {}
     brand_name = str(brand.get("name") or "").strip() or _pick_brief_variable(variables, "brand_name")
     sources = {
@@ -412,24 +441,6 @@ def prepare_visual_plan_template_fields(
     return prepared
 
 
-def _wrap_visual_text(value: str, *, max_chars_per_line: int, max_lines: int) -> str:
-    if len(value) <= max_chars_per_line or "\n" in value:
-        return value
-    if max_lines == 2 and len(value) <= max_chars_per_line * 2:
-        minimum = len(value) - max_chars_per_line
-        candidates = range(minimum, max_chars_per_line + 1)
-        preferred_endings = "，。！？；：、,.!?;:㎡%元万亿"
-        breakpoint = min(
-            candidates,
-            key=lambda index: (value[index - 1] not in preferred_endings, abs(index * 2 - len(value))),
-        )
-        return f"{value[:breakpoint]}\n{value[breakpoint:]}"
-    lines = [value[index : index + max_chars_per_line] for index in range(0, len(value), max_chars_per_line)]
-    if len(lines) > max_lines:
-        raise ValueError(f"文字超过模板限制的 {max_lines} 行")
-    return "\n".join(lines)
-
-
 def resolve_hycanvas_template_fields(
     declarations: list[dict[str, Any]],
     *,
@@ -469,6 +480,8 @@ def resolve_hycanvas_template_fields(
         if role == "project_area":
             match = re.search(r"\d+(?:\.\d+)?", value)
             value = match.group(0) if match else ""
+            if value and "㎡" in label:
+                value = f"{value}㎡"
         elif role == "completion_year":
             match = re.search(r"(?:19|20)\d{2}", value)
             value = match.group(0) if match else ""
@@ -483,35 +496,8 @@ def resolve_hycanvas_template_fields(
                 f"封面模板必填字段“{label}”未完成自动适配"
                 + (f"（已绑定业务变量「{biz}」，请确认任务已填写）" if biz else "")
             )
-        max_chars = constraints.get("maxChars")
-        if (
-            role in _NARRATIVE_ROLES
-            and isinstance(max_chars, int)
-            and max_chars > 0
-            and len(value.replace("\n", "")) > max_chars
-        ):
-            raise ValueError(f"封面字段“{label}”超过模板限制的 {max_chars} 个字符")
-        if role in _FACT_ROLES:
+        if role in _FACT_ROLES or role in _NARRATIVE_ROLES:
             value = re.sub(r"[\r\n]+", "", value)
-        max_chars_per_line = constraints.get("maxCharsPerLine")
-        max_lines = constraints.get("maxLines")
-        if (
-            role in _NARRATIVE_ROLES
-            and isinstance(max_chars_per_line, int)
-            and max_chars_per_line > 0
-            and isinstance(max_lines, int)
-            and max_lines > 1
-            and "\n" not in value
-            and len(value) > max_chars_per_line
-        ):
-            try:
-                value = _wrap_visual_text(
-                    value,
-                    max_chars_per_line=max_chars_per_line,
-                    max_lines=max_lines,
-                )
-            except ValueError as exc:
-                raise ValueError(f"封面字段“{label}”超过模板限制的 {max_lines} 行") from exc
         if not value and role in _FACT_ROLES and not constraints.get("required"):
             continue
         fields[field_key] = value

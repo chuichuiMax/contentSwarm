@@ -1,6 +1,8 @@
 package render
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"golang.org/x/image/font/gofont/gobold"
@@ -12,11 +14,17 @@ func isolateFontRegistry(t *testing.T) {
 	t.Helper()
 	fontMu.Lock()
 	previous := fontReg
+	previousCatalog := fontCatalog
+	previousDir := fontDir
 	fontReg = map[fontKey]*opentype.Font{}
+	fontCatalog = nil
+	fontDir = ""
 	fontMu.Unlock()
 	t.Cleanup(func() {
 		fontMu.Lock()
 		fontReg = previous
+		fontCatalog = previousCatalog
+		fontDir = previousDir
 		fontMu.Unlock()
 	})
 }
@@ -133,5 +141,33 @@ func TestFallbackFontOrderPrefersSansAndIsStable(t *testing.T) {
 	}
 	if fallbackFamilyRank('长', "notosanssc") >= fallbackFamilyRank('长', "notosansjp") {
 		t.Fatal("Simplified Chinese glyphs should prefer Noto Sans SC")
+	}
+}
+
+func TestLoadFontDirCatalogsFilenameFamily(t *testing.T) {
+	isolateFontRegistry(t)
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "DouyinSans-700.ttf"), goregular.TTF, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	count, errs := LoadFontDir(dir)
+	if count != 1 || len(errs) != 0 {
+		t.Fatalf("LoadFontDir() = %d, %v", count, errs)
+	}
+	catalog := FontCatalog()
+	if len(catalog) != 1 || catalog[0].Family != "DouyinSans" || len(catalog[0].Weights) != 1 || catalog[0].Weights[0] != 700 {
+		t.Fatalf("catalog = %+v", catalog)
+	}
+	if catalog[0].Label == "" {
+		t.Fatal("catalog label is empty")
+	}
+	if _, ok := FontFilePath("DouyinSans-700.ttf"); !ok {
+		t.Fatal("installed font file was not published")
+	}
+	if _, ok := FontFilePath("../DouyinSans-700.ttf"); ok {
+		t.Fatal("font file path escaped the font directory")
+	}
+	if got, ok := CanonicalFamily("Douyin Sans"); !ok || got != "DouyinSans" {
+		t.Fatalf("CanonicalFamily() = %q, %v", got, ok)
 	}
 }

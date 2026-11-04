@@ -2668,18 +2668,21 @@ onBeforeUnmount(() => {
   })
 })
 
+const warnMissingRequiredField = () => {
+  const missing = activeFields.value.find(
+    (field) => field.required && !String(formValues[field.key] || '').trim()
+  )
+  if (!missing) return false
+  message.warning(`${missing.type === 'select' ? '请选择' : '请填写'}${missing.label}`)
+  return true
+}
+
 const compileBrief = async () => {
   if (!selectedContentTypeId.value) {
     message.warning('请选择内容类型')
     return
   }
-  const missing = activeFields.value.find(
-    (field) => field.required && !String(formValues[field.key] || '').trim()
-  )
-  if (missing) {
-    message.warning(`请填写${missing.label}`)
-    return
-  }
+  if (warnMissingRequiredField()) return
   try {
     window.clearTimeout(draftSaveTimer)
     await store.compileBrief(buildBrief())
@@ -2700,6 +2703,7 @@ const submitContentOnlyCreation = async () => {
     message.warning('请选择内容类型')
     return
   }
+  if (warnMissingRequiredField()) return
   if (!currentContentType.value && needsContentDirection.value) {
     message.warning('请选择创作类型')
     return

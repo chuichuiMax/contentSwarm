@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"strings"
 	"unicode"
-	"unicode/utf8"
 )
 
 type InstantiateImage struct {
@@ -226,24 +225,8 @@ func fillTextFields(file map[string]any, declarations []any, values map[string]s
 			if label != "" {
 				values[label] = value
 			}
-			narrative := isNarrativeSemanticRole(asStr(field["semanticRole"]))
 			if required, _ := constraints["required"].(bool); required && strings.TrimSpace(value) == "" {
 				return ErrBadRequest
-			}
-			if narrative {
-				if maxChars := int(asNum(constraints["maxChars"])); maxChars > 0 && present && utf8.RuneCountInString(value) > maxChars {
-					return ErrBadRequest
-				}
-				if maxLines := int(asNum(constraints["maxLines"])); maxLines > 0 && present && strings.Count(value, "\n")+1 > maxLines {
-					return ErrBadRequest
-				}
-				if maxCharsPerLine := int(asNum(constraints["maxCharsPerLine"])); maxCharsPerLine > 0 && present {
-					for _, line := range strings.Split(value, "\n") {
-						if utf8.RuneCountInString(line) > maxCharsPerLine {
-							return ErrBadRequest
-						}
-					}
-				}
 			}
 		}
 	}
@@ -253,6 +236,15 @@ func fillTextFields(file map[string]any, declarations []any, values map[string]s
 		}
 	}
 
+	narrativeNodes := make(map[string]struct{})
+	for _, raw := range declarations {
+		field := asObj(raw)
+		if isNarrativeSemanticRole(asStr(field["semanticRole"])) {
+			if id := asStr(field["nodeId"]); id != "" {
+				narrativeNodes[id] = struct{}{}
+			}
+		}
+	}
 	remaining := make(map[string]string, len(values))
 	filledNodeIDs := make(map[string]struct{}, len(values))
 	for label, value := range values {
@@ -295,7 +287,11 @@ func fillTextFields(file map[string]any, declarations []any, values map[string]s
 						asObj(runRaw)["text"] = text
 					}
 				}
-				shrinkTextToBox(node)
+				if _, narrative := narrativeNodes[asStr(node["id"])]; narrative {
+					shrinkNarrativeToSingleLine(node)
+				} else {
+					shrinkTextToBox(node)
+				}
 				delete(remaining, asStr(node["id"]))
 			})
 		}
@@ -308,6 +304,48 @@ func fillTextFields(file map[string]any, declarations []any, values map[string]s
 }
 
 const minTextScale = 0.2
+
+// shrinkNarrativeToSingleLine reduces a title or subtitle until it fits the
+// template box on one line. The box and neighboring text stay where they were.
+func shrinkNarrativeToSingleLine(node map[string]any) {
+	box := asObj(node["box"])
+	if asStr(box["mode"]) == "autoWidth" {
+		shrinkTextToBox(node)
+		return
+	}
+	contentW, _ := textBoxContentSize(box)
+	if contentW <= 0 {
+		contentW = asNum(asObj(node["size"])["width"])
+	}
+	boxH := textBoxHeight(node)
+	fits := func(scale float64) bool {
+		if contentW > 0 && estimateBaseLineWidth(node, scale) > contentW+0.5 {
+			return false
+		}
+		if boxH > 0 && estimateAutoHeightTextScaled(node, scale) > boxH+0.5 {
+			return false
+		}
+		return true
+	}
+	if contentW <= 0 && boxH <= 0 || fits(1) {
+		return
+	}
+	lo, hi := minTextScale, 1.0
+	best := lo
+	for i := 0; i < 14; i++ {
+		mid := (lo + hi) / 2
+		if fits(mid) {
+			best = mid
+			lo = mid
+		} else {
+			hi = mid
+		}
+	}
+	if best >= 0.995 {
+		return
+	}
+	applyTextScale(node, best)
+}
 
 // shrinkTextToBox reduces the filled text's font until its wrapped height fits
 // the template box. Positions and box size stay as authored, so a long title

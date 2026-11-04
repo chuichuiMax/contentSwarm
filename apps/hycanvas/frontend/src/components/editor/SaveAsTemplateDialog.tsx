@@ -310,8 +310,9 @@ export function SaveAsTemplateDialog({
           e.preventDefault();
           void save();
         }}
-        className="flex flex-col gap-4"
+        className="flex flex-col"
       >
+        <div className="flex max-h-[calc(100dvh-12rem)] flex-col gap-4 overflow-y-auto pe-1">
         <label className="flex flex-col gap-1.5">
           <span className="text-sm font-medium text-neutral-700">{tr("editor.name")}</span>
           <input
@@ -363,7 +364,7 @@ export function SaveAsTemplateDialog({
             ))}
           </div>
         </fieldset>
-        <fieldset className="flex max-h-72 flex-col gap-2 overflow-auto rounded-xl border border-neutral-200 p-3">
+        <fieldset className="flex flex-col gap-2 rounded-xl border border-neutral-200 p-3">
           <span className="text-sm font-medium text-neutral-700">可填充文字字段</span>
           <span className="text-xs text-neutral-500">勾选内容生成完成后需要自动替换的文字，并声明它的含义。</span>
           {availableTextNodes.map((node) => {
@@ -388,7 +389,8 @@ export function SaveAsTemplateDialog({
             );
           })}
         </fieldset>
-        <div className="flex justify-end gap-2">
+        </div>
+        <div className="mt-4 flex shrink-0 justify-end gap-2">
           <Button type="button" variant="secondary" size="sm" onClick={onClose}>
             {tr("editor.cancel")}
           </Button>

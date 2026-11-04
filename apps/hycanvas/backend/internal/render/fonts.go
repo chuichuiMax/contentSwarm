@@ -6,6 +6,7 @@
 package render
 
 import (
+	"encoding/binary"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"unicode"
+	"unicode/utf16"
 
 	"golang.org/x/image/font"
 	"golang.org/x/image/font/opentype"
@@ -25,9 +27,35 @@ type fontKey struct {
 }
 
 var (
-	fontMu  sync.RWMutex
-	fontReg = map[fontKey]*opentype.Font{}
+	fontMu      sync.RWMutex
+	fontReg     = map[fontKey]*opentype.Font{}
+	fontDir     string
+	fontCatalog []catalogFace
 )
+
+// catalogFace is one weight of a font the editor may offer. File is the
+// basename in FONTS_DIR; collection faces that the browser already loads as
+// web fonts leave it empty.
+type catalogFace struct {
+	Family string
+	Label  string
+	Weight int
+	File   string
+}
+
+// FontFile is one downloadable face for a family.
+type FontFile struct {
+	Weight int
+	Name   string
+}
+
+// FontCatalogEntry is a family the cover editor can select.
+type FontCatalogEntry struct {
+	Family  string
+	Label   string
+	Weights []int
+	Files   []FontFile
+}
 
 var namedFontWeights = map[string]int{
 	"thin":       100,
@@ -224,6 +252,117 @@ func fallbackFamilyRank(r rune, family string) int {
 	return 10
 }
 
+// FontCatalog groups the installed cover fonts by the family name a design
+// stores. Noto Sans SC and Noto Serif SC stay first; other families follow by
+// their display label.
+func FontCatalog() []FontCatalogEntry {
+	fontMu.RLock()
+	defer fontMu.RUnlock()
+	grouped := map[string]*FontCatalogEntry{}
+	order := []string{}
+	for _, face := range fontCatalog {
+		entry := grouped[face.Family]
+		if entry == nil {
+			entry = &FontCatalogEntry{Family: face.Family, Label: face.Label}
+			grouped[face.Family] = entry
+			order = append(order, face.Family)
+		}
+		if face.Weight > 0 && !containsInt(entry.Weights, face.Weight) {
+			entry.Weights = append(entry.Weights, face.Weight)
+		}
+		if face.File != "" && !containsFontFile(entry.Files, face.File) {
+			entry.Files = append(entry.Files, FontFile{Weight: face.Weight, Name: face.File})
+		}
+	}
+	out := make([]FontCatalogEntry, 0, len(order))
+	for _, family := range order {
+		entry := *grouped[family]
+		sort.Ints(entry.Weights)
+		sort.Slice(entry.Files, func(i, j int) bool { return entry.Files[i].Weight < entry.Files[j].Weight })
+		out = append(out, entry)
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		return fontCatalogRank(out[i].Family) < fontCatalogRank(out[j].Family) ||
+			(fontCatalogRank(out[i].Family) == fontCatalogRank(out[j].Family) && out[i].Label < out[j].Label)
+	})
+	return out
+}
+
+func fontCatalogRank(family string) int {
+	switch family {
+	case "Noto Sans SC":
+		return 0
+	case "Noto Serif SC":
+		return 1
+	default:
+		return 2
+	}
+}
+
+func containsInt(values []int, want int) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
+func containsFontFile(files []FontFile, name string) bool {
+	for _, file := range files {
+		if file.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// CanonicalFamily returns the design font name for a family installed in the
+// cover font package. Matching ignores spaces and case.
+func CanonicalFamily(family string) (string, bool) {
+	key := normFamily(family)
+	if key == "" {
+		return "", false
+	}
+	fontMu.RLock()
+	defer fontMu.RUnlock()
+	for _, face := range fontCatalog {
+		if normFamily(face.Family) == key {
+			return face.Family, true
+		}
+	}
+	return "", false
+}
+
+// FontFilePath returns the installed file for a catalog basename.
+func FontFilePath(name string) (string, bool) {
+	base := filepath.Base(name)
+	if base != name || base == "." || base == string(filepath.Separator) {
+		return "", false
+	}
+	fontMu.RLock()
+	defer fontMu.RUnlock()
+	if fontDir == "" {
+		return "", false
+	}
+	for _, face := range fontCatalog {
+		if face.File == base {
+			return filepath.Join(fontDir, base), true
+		}
+	}
+	return "", false
+}
+
+func rememberFace(family, label string, weight int, file string) {
+	if strings.TrimSpace(family) == "" {
+		return
+	}
+	if strings.TrimSpace(label) == "" {
+		label = family
+	}
+	fontCatalog = append(fontCatalog, catalogFace{Family: family, Label: label, Weight: weight, File: file})
+}
+
 // RegisteredFamilies lists the registered family names, for startup logging so
 // an operator can see what coverage the server actually has.
 func RegisteredFamilies() []string {
@@ -269,6 +408,10 @@ func LoadFontDir(dir string) (int, []error) {
 	if err != nil {
 		return 0, []error{fmt.Errorf("read font dir: %w", err)}
 	}
+	fontMu.Lock()
+	fontDir = dir
+	fontCatalog = nil
+	fontMu.Unlock()
 	var errs []error
 	n := 0
 	for _, e := range entries {
@@ -311,6 +454,7 @@ func LoadFontDir(dir string) (int, []error) {
 				}
 				registeredFamily := cjkCollectionFamily(family, i, regions)
 				registerParsedFont(registeredFamily, weight, font)
+				rememberEditorFace(registeredFamily, "", weight, "")
 				n++
 			}
 			continue
@@ -319,9 +463,115 @@ func LoadFontDir(dir string) (int, []error) {
 			errs = append(errs, fmt.Errorf("%s: %w", e.Name(), err))
 			continue
 		}
+		rememberEditorFace(family, fontLabel(data), weight, e.Name())
 		n++
 	}
 	return n, errs
+}
+
+// rememberEditorFace publishes a face to the editor. Regional Noto collections
+// collapse to the two Simplified Chinese families the covers already use.
+func rememberEditorFace(family, label string, weight int, file string) {
+	switch family {
+	case "NotoSansSC":
+		rememberFace("Noto Sans SC", "黑体", weight, "")
+	case "NotoSerifSC":
+		rememberFace("Noto Serif SC", "宋体", weight, "")
+	case "NotoSansJP", "NotoSansKR", "NotoSansTC", "NotoSansHK",
+		"NotoSerifJP", "NotoSerifKR", "NotoSerifTC", "NotoSerifHK":
+		return
+	default:
+		if strings.Contains(family, "CJK") {
+			return
+		}
+		rememberFace(family, label, weight, file)
+	}
+}
+
+// fontLabel reads the font's own family name, preferring Simplified Chinese.
+func fontLabel(data []byte) string {
+	if len(data) < 12 {
+		return ""
+	}
+	magic := string(data[:4])
+	if magic != "\x00\x01\x00\x00" && magic != "OTTO" {
+		return ""
+	}
+	count := int(binary.BigEndian.Uint16(data[4:6]))
+	if count <= 0 || 12+count*16 > len(data) {
+		return ""
+	}
+	nameOff, nameLen := 0, 0
+	for i := 0; i < count; i++ {
+		rec := 12 + i*16
+		tag := string(data[rec : rec+4])
+		off := int(binary.BigEndian.Uint32(data[rec+8 : rec+12]))
+		length := int(binary.BigEndian.Uint32(data[rec+12 : rec+16]))
+		if tag == "name" {
+			nameOff, nameLen = off, length
+		}
+	}
+	if nameOff <= 0 || nameLen < 6 || nameOff+nameLen > len(data) {
+		return ""
+	}
+	table := data[nameOff : nameOff+nameLen]
+	records := int(binary.BigEndian.Uint16(table[2:4]))
+	storage := int(binary.BigEndian.Uint16(table[4:6]))
+	bestScore := -1
+	best := ""
+	for i := 0; i < records; i++ {
+		rec := 6 + i*12
+		if rec+12 > len(table) {
+			break
+		}
+		platform := binary.BigEndian.Uint16(table[rec : rec+2])
+		language := binary.BigEndian.Uint16(table[rec+4 : rec+6])
+		nameID := int(binary.BigEndian.Uint16(table[rec+6 : rec+8]))
+		length := int(binary.BigEndian.Uint16(table[rec+8 : rec+10]))
+		offset := int(binary.BigEndian.Uint16(table[rec+10 : rec+12]))
+		if nameID != 1 && nameID != 16 {
+			continue
+		}
+		start := storage + offset
+		if start < 0 || start+length > len(table) {
+			continue
+		}
+		raw := table[start : start+length]
+		text := ""
+		score := 0
+		if platform == 0 || platform == 3 {
+			if len(raw)%2 != 0 {
+				continue
+			}
+			units := make([]uint16, len(raw)/2)
+			for j := range units {
+				units[j] = binary.BigEndian.Uint16(raw[j*2:])
+			}
+			text = string(utf16.Decode(units))
+			switch language {
+			case 0x0804:
+				score = 4
+			case 1033:
+				score = 2
+			default:
+				score = 1
+			}
+		} else {
+			text = string(raw)
+		}
+		text = strings.TrimSpace(strings.ReplaceAll(text, "\x00", ""))
+		if text == "" {
+			continue
+		}
+		if nameID == 16 {
+			score++
+		}
+		if score > bestScore {
+			bestScore = score
+			best = text
+		}
+	}
+	return best
 }
 
 // faceCovering builds a face for r at the given size, falling back across the

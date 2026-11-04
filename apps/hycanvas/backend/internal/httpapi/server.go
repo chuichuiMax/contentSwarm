@@ -191,6 +191,7 @@ func NewRouter(d Deps) http.Handler {
 		}
 		if d.Accounts != nil {
 			mountApps(api, d.Accounts)
+			mountFonts(api, d.Accounts)
 		}
 		if d.Accounts != nil && d.Jobs != nil {
 			mountJobs(api, d.Jobs, d.Accounts)

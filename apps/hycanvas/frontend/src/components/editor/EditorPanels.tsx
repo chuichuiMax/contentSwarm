@@ -6,7 +6,7 @@ import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type For
 import { Square, SquareRoundCorner, Circle, Triangle, Pentagon, Hexagon, Star, Diamond, Octagon, Frame, QrCode, Type, Upload, Search, Table as TableIcon, BarChart3, LineChart, AreaChart, PieChart, Donut, ScatterChart, Radar, Wand2, ImagePlus, Settings2, Trash2, Folder, FolderPlus, Pencil, X, Tag, ChevronLeft, Link as LinkIcon, Mic, Video, MonitorUp, CircleStop, Spline, Clock, LayoutGrid, Shapes, Sparkles, Stethoscope, AlignStartVertical, Play, ChevronDown, Send, Plus, RotateCcw, FileDown, FileText, Paperclip } from "lucide-react";
 import { migrate, type ChartType, type Node, type Fill, type Color, type Theme } from "@hc/schema";
 import { searchFonts, type FontCatalogEntry } from "@hc/text";
-import { PACKAGED_FONTS } from "@/lib/packagedFonts";
+import { usePackagedFonts } from "@/lib/packagedFonts";
 import { toHex, fromHex, relativeLuminance } from "@hc/color";
 import { formatBytes } from "@/lib/format";
 import { qrModules } from "@/lib/qr";
@@ -836,13 +836,14 @@ export function TextPanel({ workspaceId }: { workspaceId?: string | null }) {
   // Pairing preview cards render in their target fonts; eagerly load that small
   // fixed set. The scrollable font list below lazy-loads per row, but the pairing
   // cards sit above it and never enter that observer's range.
+  const packageFonts = usePackagedFonts();
   useEffect(() => {
     if (isContentSwarmManaged) {
-      for (const font of PACKAGED_FONTS) fonts.ensure(font.family);
+      for (const font of packageFonts) fonts.ensure(font.family);
       return;
     }
     for (const p of pairings()) { fonts.ensure(p.headFont); fonts.ensure(p.subFont); }
-  }, []);
+  }, [packageFonts]);
   // Page the (full-library) results in on scroll; reset when the search changes.
   // Resetting during render (comparing the previous query) rather than in an
   // effect avoids an extra render pass.
@@ -1058,9 +1059,9 @@ export function TextPanel({ workspaceId }: { workspaceId?: string | null }) {
 
         {isContentSwarmManaged ? (
           <CollapsibleSection title={tr("editor.fonts")} icon={Search} defaultOpen>
-            {PACKAGED_FONTS.map((font) => (
+            {packageFonts.map((font) => (
               <button key={font.family} onClick={() => applyFont(font.family)} className="flex w-full items-center justify-between rounded-lg bg-neutral-50 px-3 py-2 text-start text-[15px] text-neutral-800 hover:bg-brand-50" style={{ fontFamily: `'${font.family}', sans-serif` }}>
-                <span className="truncate">{tr(font.labelKey)}</span>
+                <span className="truncate">{font.label}</span>
               </button>
             ))}
           </CollapsibleSection>

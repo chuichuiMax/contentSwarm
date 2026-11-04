@@ -9,6 +9,7 @@ import (
 	"image/color"
 	"image/png"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -16,9 +17,11 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"golang.org/x/image/font/gofont/goregular"
 
 	"hycanvas/backend/internal/accounts"
 	"hycanvas/backend/internal/persistence"
+	"hycanvas/backend/internal/render"
 	"hycanvas/backend/internal/storage"
 )
 
@@ -338,6 +341,10 @@ func TestFillTextFieldsDynamicallySeparatesStackedTitleAndSubtitle(t *testing.T)
 			if height := estimateAutoHeightText(title); height > asNum(asObj(title["box"])["height"])+0.5 {
 				t.Fatalf("title still overflows its box: height=%v box=%v", height, title["box"])
 			}
+			contentW, _ := textBoxContentSize(asObj(title["box"]))
+			if width := estimateBaseLineWidth(title, 1); contentW > 0 && width > contentW+0.5 {
+				t.Fatalf("title wrapped instead of shrinking: width=%v box=%v", width, contentW)
+			}
 			if asNum(asObj(title["transform"])["y"]) != 264 {
 				t.Fatalf("title moved: %+v", title["transform"])
 			}
@@ -582,6 +589,41 @@ func TestNormalizeTemplateTypographyKeepsOnlyPackagedFonts(t *testing.T) {
 	serif := asStr(asObj(asObj(asArr(asObj(asArr(asObj(children[1])["content"])[0])["runs"])[0])["style"])["fontFamily"])
 	if sans != "Noto Sans SC" || serif != "Noto Serif SC" {
 		t.Fatalf("packaged fonts = %q, %q", sans, serif)
+	}
+}
+
+func TestNormalizeTemplateTypographyKeepsInstalledPackageFont(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "DouyinSans-700.ttf"), goregular.TTF, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, errs := render.LoadFontDir(dir); len(errs) != 0 {
+		t.Fatalf("LoadFontDir: %v", errs)
+	}
+	t.Cleanup(func() { _, _ = render.LoadFontDir(t.TempDir()) })
+
+	file := map[string]any{
+		"pages": []any{map[string]any{"children": []any{
+			map[string]any{"id": "custom", "type": "text", "content": []any{map[string]any{
+				"runs": []any{map[string]any{"text": "标题", "style": map[string]any{"fontFamily": "Douyin Sans", "fontSize": 48.0}}},
+			}}},
+			map[string]any{"id": "missing", "type": "text", "content": []any{map[string]any{
+				"runs": []any{map[string]any{"text": "副标题", "style": map[string]any{"fontFamily": "Playfair Display", "fontSize": 28.0}}},
+			}}},
+		}}},
+	}
+	fields := []any{
+		map[string]any{"nodeId": "custom", "kind": "text", "label": "主标题"},
+		map[string]any{"nodeId": "missing", "kind": "text", "label": "副标题"},
+	}
+	if err := normalizeTemplateTypography(file, fields); err != nil {
+		t.Fatalf("normalizeTemplateTypography: %v", err)
+	}
+	children := asArr(asObj(asArr(file["pages"])[0])["children"])
+	custom := asStr(asObj(asObj(asArr(asObj(asArr(asObj(children[0])["content"])[0])["runs"])[0])["style"])["fontFamily"])
+	missing := asStr(asObj(asObj(asArr(asObj(asArr(asObj(children[1])["content"])[0])["runs"])[0])["style"])["fontFamily"])
+	if custom != "DouyinSans" || missing != "Noto Sans SC" {
+		t.Fatalf("fonts = %q, %q", custom, missing)
 	}
 }
 
@@ -978,6 +1020,18 @@ func TestTemplates_DB(t *testing.T) {
 	}
 	if zoneResaved.IsHandwrittenQuoteTemplate != 1 {
 		t.Fatalf("checked template flag = %d, want 1", zoneResaved.IsHandwrittenQuoteTemplate)
+	}
+	collection, err := svc.CreateCollection(ctx, owner.ID, ws.ID, "通用")
+	if err != nil {
+		t.Fatalf("create collection: %v", err)
+	}
+	byID, err := svc.SaveAsTemplate(ctx, owner.ID, SaveInput{
+		WorkspaceID: ws.ID, DesignID: zoneRec.ID, File: zoneDesign,
+		Title: "Updated By Template ID", Visibility: "workspace", CollectionID: collection.ID,
+		IsHandwrittenQuoteTemplate: true,
+	})
+	if err != nil || byID.ID != zoneSaved.ID || byID.Title != "Updated By Template ID" || byID.CollectionID == nil || *byID.CollectionID != collection.ID {
+		t.Fatalf("editing an existing cover should update it: %+v err=%v", byID, err)
 	}
 	var linkedTemplateCount int
 	if err := tx.QueryRow(ctx, `SELECT count(*) FROM "templates" WHERE "source_design_id" = $1`, zoneRec.ID).Scan(&linkedTemplateCount); err != nil {

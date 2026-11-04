@@ -22,7 +22,8 @@ import type { CanvasLike as CanvasLikeCtx } from "@hc/engine";
 import { prefersReducedMotion } from "@/lib/theme";
 import { fontCatalog, type FontCategory } from "@hc/text";
 import { isContentSwarmManaged } from "@/lib/managedAuth";
-import { isPackagedFont, PACKAGED_FONTS } from "@/lib/packagedFonts";
+import { fonts } from "@/lib/fontProvider";
+import { isPackagedFont, usePackagedFonts } from "@/lib/packagedFonts";
 import {
   AlignStartVertical, AlignCenterVertical, AlignEndVertical,
   AlignStartHorizontal, AlignCenterHorizontal, AlignEndHorizontal,
@@ -31,7 +32,6 @@ import {
   Group as GroupIcon, Ungroup, Lock, Unlock, Eye, EyeOff, Sparkles,
   AlignLeft, AlignCenter, AlignRight, AlignJustify, ImagePlus,
 } from "lucide-react";
-import { fonts } from "@/lib/fontProvider";
 import { promptText, alertText } from "@/lib/promptDialog";
 import { filterPresets, resolvePresetOps, autoEnhanceOps, alphaMaskFromCutout, removeBackground, rasterizeToPng, type AdjOp } from "@/lib/imageFilters";
 import { AddEffectRow, EffectStack } from "./EffectStack";
@@ -617,6 +617,10 @@ function QrLogoControl({ id, logoAssetId, logoScale, workspaceId }: { id: string
 
 export function PropertiesPanel({ workspaceId }: { workspaceId?: string | null } = {}) {
   useEditor((s) => s.rev);
+  const packageFonts = usePackagedFonts();
+  useEffect(() => {
+    for (const font of packageFonts) fonts.ensure(font.family);
+  }, [packageFonts]);
   const selection = useEditor((s) => s.selection);
   const activePage = useEditor((s) => s.activePage);
   // The table cell targeted by the cell-formatting controls (F27).
@@ -1437,8 +1441,8 @@ export function PropertiesPanel({ workspaceId }: { workspaceId?: string | null }
                   className={selectCls}
                 >
                   {!isPackagedFont(cs?.fontFamily) && <option value="">{tr("editor.packaged_font_unavailable")}</option>}
-                  {PACKAGED_FONTS.map((font) => (
-                    <option key={font.family} value={font.family}>{tr(font.labelKey)}</option>
+                  {packageFonts.map((font) => (
+                    <option key={font.family} value={font.family}>{font.label}</option>
                   ))}
                 </select>
               </>

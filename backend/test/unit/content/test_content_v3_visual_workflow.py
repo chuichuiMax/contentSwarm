@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
@@ -844,6 +845,96 @@ def test_hycanvas_template_fields_resolve_semantics_and_constraints():
         "项目面积": "152",
         "项目名称": "岳阳·杏林小区",
         "封面标题": "住进理想新家",
+    }
+
+
+def test_hycanvas_template_fields_read_area_and_project_from_production_pack():
+    pack = json.dumps(
+        {
+            "businessVariables": {
+                "外框面积": "168",
+                "楼盘信息": "阳光城·尚东湾嘉林苑",
+                "所在区域": "长沙",
+                "设计风格": "东方古雅",
+            },
+            "facts": {"case_subtitle": "168㎡东方古雅实景", "case_background": "阳光城·尚东湾嘉林苑"},
+        },
+        ensure_ascii=False,
+    )
+    fields = content_tools._hycanvas_template_fields(
+        [
+            {
+                "kind": "text",
+                "key": "field_1",
+                "label": "189㎡",
+                "semanticRole": "project_area",
+                "constraints": {"required": True, "maxChars": 6},
+            },
+            {
+                "kind": "text",
+                "key": "field_2",
+                "label": "大泽湖",
+                "semanticRole": "project_name",
+                "constraints": {"required": True, "maxChars": 12},
+            },
+            {
+                "kind": "text",
+                "key": "field_3",
+                "label": "长沙",
+                "semanticRole": "service_region",
+                "constraints": {"required": True, "maxChars": 4},
+            },
+            {
+                "kind": "text",
+                "key": "field_4",
+                "label": "复古风潮",
+                "semanticRole": "design_style",
+                "constraints": {"required": True, "maxChars": 6},
+            },
+        ],
+        visual_text=["标题"],
+        brief={"form_values": {"user_request": pack}},
+    )
+
+    assert fields == {
+        "field_1": "168㎡",
+        "field_2": "阳光城·尚东湾嘉林苑",
+        "field_3": "长沙",
+        "field_4": "东方古雅",
+    }
+
+
+def test_hycanvas_template_fields_read_layout_audience_craft_and_years():
+    pack = json.dumps(
+        {
+            "businessVariables": {
+                "设计风格": "雅致现代",
+                "户型": "三室两厅",
+                "目标人群": "毛坯",
+                "工艺类型": "水电",
+                "从业年限": "8年",
+            }
+        },
+        ensure_ascii=False,
+    )
+    fields = content_tools._hycanvas_template_fields(
+        [
+            {"kind": "text", "key": "field_1", "label": "风格", "semanticRole": "design_style", "constraints": {"required": True, "maxChars": 8}},
+            {"kind": "text", "key": "field_2", "label": "户型", "semanticRole": "layout", "constraints": {"required": True, "maxChars": 8}},
+            {"kind": "text", "key": "field_3", "label": "人群", "semanticRole": "target_audience", "constraints": {"required": True, "maxChars": 8}},
+            {"kind": "text", "key": "field_4", "label": "工艺", "semanticRole": "process_type", "constraints": {"required": True, "maxChars": 8}},
+            {"kind": "text", "key": "field_5", "label": "年限", "semanticRole": "service_years", "constraints": {"required": True, "maxChars": 8}},
+        ],
+        visual_text=["标题"],
+        brief={"form_values": {"user_request": pack}},
+    )
+
+    assert fields == {
+        "field_1": "雅致现代",
+        "field_2": "三室两厅",
+        "field_3": "毛坯",
+        "field_4": "水电",
+        "field_5": "8年",
     }
 
 
