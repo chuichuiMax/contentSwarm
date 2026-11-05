@@ -52,7 +52,7 @@ async def test_direct_generation_uses_only_requested_inputs(monkeypatch):
 
     assert result.title == "费用标题"
     assert result.body == "费用正文"
-    assert result.topics == ["装修避坑", "费用"]
+    assert result.topics == ["费用"]
     assert load_model_calls == [
         {
             "fully_specified_name": "ark:doubao-seed-2-1-pro-260915",
@@ -69,24 +69,16 @@ async def test_direct_generation_uses_only_requested_inputs(monkeypatch):
     ]
     assert len(calls[0]) == 1
     prompt = calls[0][0].content
-    assert "你是一名内容创作者" not in prompt
-    assert "反差价值型" in prompt
-    assert "爆款正文" in prompt
-    assert '"serialNo":"002"' in prompt
+    assert "用户生成提示词" in prompt
     assert "使用给定元素仿写，并符合北京本地口吻" in prompt
-    assert "结尾按自然转化来写，不要照搬原文里的引流收尾" in prompt
-    assert "不得因此杜撰其他人的报价、节省金额、客户经历或施工结果" in prompt
-    assert "金额、单位、面积、数量及报价明细必须准确保留" in prompt
+    assert prompt.index("用户生成提示词") < prompt.index("业务数据只用来核对事实")
+    assert '"serialNo":"002"' in prompt
+    assert "反差价值型" not in prompt
+    assert "爆款正文" not in prompt
+    assert "装修避坑" not in prompt
+    assert "装修公司推荐" not in prompt
     assert "封禁词替换表" in prompt
     assert '"报价": ["费用"]' in prompt
-    assert "排版与表情要求" in prompt
-    assert "不得用 Emoji 替代价格、数字、面积、时间、单位、品牌名或专业信息" in prompt
-    assert "标题不超过20个字" in prompt
-    assert "最近有打算装修的朋友，有什么问题都可以一起聊一聊" in prompt
-    assert "不要硬凑引流话术" in prompt
-    assert "在下方留下" not in prompt
-    assert "装修避坑" in prompt
-    assert "装修公司推荐" in prompt
 
 
 @pytest.mark.unit
@@ -109,9 +101,7 @@ async def test_direct_generation_pins_region_company_topic(monkeypatch):
         user_request='{"businessVariables":{"所在区域":"株洲市"}}',
     )
 
-    assert result.topics[0] == "株洲装修公司推荐"
-    assert result.topics[1] == "装修避坑"
-    assert "装修日记" in result.topics
+    assert result.topics == ["装修避坑", "装修日记"]
     assert all(not topic.startswith("#") for topic in result.topics)
 
 
@@ -140,7 +130,7 @@ async def test_direct_generation_omits_empty_creative_style(monkeypatch):
 
     prompt = calls[0][0].content
     assert "创作风格：" not in prompt
-    assert "爆款正文" in prompt
+    assert "爆款正文" not in prompt
 
 
 @pytest.mark.unit
@@ -169,12 +159,12 @@ async def test_review_notes_generation_uses_owner_voice_and_knowledge(monkeypatc
     )
 
     prompt = calls[0][0].content
-    assert "站在业主角度" in prompt
-    assert "好评笔记知识库" in prompt
+    assert "用户生成提示词" in prompt
+    assert "站在业主角度写好评笔记" in prompt
+    assert "好评笔记知识库只作参考" in prompt
     assert "业主去未完工的工地看隐蔽工程" in prompt
     assert '"项目经理":"王五"' in prompt
     assert "爆款原文" not in prompt
-    assert "留下小区和面积" in prompt
 
 
 def test_limit_content_title_stops_at_sentence_end():
@@ -219,3 +209,198 @@ async def test_direct_generation_rejects_forbidden_terms_without_replacements(mo
             user_request="写一段内容",
             forbidden_lexicon={"APP": []},
         )
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_direct_generation_sends_prompt_with_first_image(monkeypatch):
+    from io import BytesIO
+
+    from PIL import Image
+
+    calls = []
+
+    class FakeModel:
+        def bind_tools(self, schemas, **kwargs):
+            return self
+
+        async def ainvoke(self, messages):
+            calls.append(messages)
+            return _tool_response({"title": "标题", "body": "正文", "topics": []})
+
+    monkeypatch.setattr(generation, "resolve_chat_model_spec", lambda value: value or "default")
+    monkeypatch.setattr(generation, "load_chat_model", lambda **kwargs: FakeModel())
+    buffer = BytesIO()
+    Image.new("RGB", (8, 8), "red").save(buffer, format="PNG")
+
+    await generation.generate_direct_content(
+        model_spec=None,
+        creative_style={"name": "信息流", "instruction": "强调公司工艺"},
+        viral_source={"title": "爆款标题", "body": "爆款正文"},
+        user_request="写一段内容",
+        generation_prompt="根据我提供的图片写文案",
+        reference_image=(buffer.getvalue(), "image/png"),
+    )
+
+    content = calls[0][0].content
+    assert isinstance(content, list)
+    assert content[0]["type"] == "text"
+    assert "根据我提供的图片写文案" in content[0]["text"]
+    assert "已附上第一张图片" in content[0]["text"]
+    assert content[1]["type"] == "image_url"
+    assert content[1]["image_url"]["url"].startswith("data:image/jpeg;base64,")
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_text_only_model_retries_without_the_image(monkeypatch):
+    from io import BytesIO
+
+    from PIL import Image
+
+    calls = []
+
+    class FakeModel:
+        def bind_tools(self, schemas, **kwargs):
+            return self
+
+        async def ainvoke(self, messages):
+            calls.append(messages)
+            if len(calls) == 1:
+                raise RuntimeError(
+                    "Error code: 400 - {'code': 20041, 'message': "
+                    "'The model is not a VLM (Vision Language Model). Please use text-only prompts.', 'data': None}"
+                )
+            return _tool_response({"title": "标题", "body": "正文", "topics": []})
+
+    monkeypatch.setattr(generation, "resolve_chat_model_spec", lambda value: value or "default")
+    monkeypatch.setattr(generation, "load_chat_model", lambda **kwargs: FakeModel())
+    buffer = BytesIO()
+    Image.new("RGB", (8, 8), "red").save(buffer, format="PNG")
+    usage = {}
+
+    await generation.generate_direct_content(
+        model_spec="siliconflow-cn:Qwen/Qwen2.5-7B-Instruct",
+        creative_style={},
+        viral_source={"title": "", "body": ""},
+        user_request="写一段内容",
+        generation_prompt="根据提示词写",
+        reference_image=(buffer.getvalue(), "image/png"),
+        usage_out=usage,
+    )
+
+    assert isinstance(calls[0][0].content, list)
+    assert isinstance(calls[1][0].content, str)
+    assert "已附上第一张图片" not in calls[1][0].content
+    assert usage["image_attached"] is False
+    assert "不能看图" in usage["image_omitted_reason"]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_named_tool_choice_rejection_retries_with_auto(monkeypatch):
+    choices = []
+
+    class FakeModel:
+        def __init__(self):
+            self.choice = None
+
+        def bind_tools(self, schemas, **kwargs):
+            self.choice = kwargs.get("tool_choice")
+            return self
+
+        async def ainvoke(self, messages):
+            choices.append(self.choice)
+            if self.choice != "auto":
+                raise RuntimeError(
+                    "Error code: 400 - {'code': 20015, 'message': "
+                    "'Value error, Specifying functions for tool_choice is not yet supported.', 'data': None}"
+                )
+            return _tool_response({"title": "标题", "body": "正文", "topics": ["装修避坑"]})
+
+    monkeypatch.setattr(generation, "resolve_chat_model_spec", lambda value: value or "default")
+    monkeypatch.setattr(generation, "load_chat_model", lambda **kwargs: FakeModel())
+
+    result = await generation.generate_direct_content(
+        model_spec="siliconflow-cn:Qwen/Qwen3-VL-8B-Instruct",
+        creative_style={},
+        viral_source={"title": "", "body": ""},
+        user_request="写一段内容",
+        generation_prompt="根据图片写",
+    )
+
+    assert choices == ["ContentArtifactAIEditOutput", "auto"]
+    assert result.title == "标题"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_plain_text_response_is_used_as_copy(monkeypatch):
+    class FakeModel:
+        def bind_tools(self, schemas, **kwargs):
+            return self
+
+        async def ainvoke(self, messages):
+            return AIMessage(content="阳台收纳做好了\n\n靠墙的柜子把洗衣机藏起来，台面还能放绿植。")
+
+    monkeypatch.setattr(generation, "resolve_chat_model_spec", lambda value: value or "default")
+    monkeypatch.setattr(generation, "load_chat_model", lambda **kwargs: FakeModel())
+
+    result = await generation.generate_direct_content(
+        model_spec="siliconflow-cn:Qwen/Qwen3-VL-8B-Instruct",
+        creative_style={},
+        viral_source={"title": "", "body": ""},
+        user_request="{}",
+        generation_prompt="根据图片写阳台收纳",
+    )
+
+    assert result.title == "阳台收纳做好了"
+    assert "洗衣机" in result.body
+    assert result.topics == []
+
+
+def test_reference_knowledge_is_written_into_the_prompt():
+    prompt = generation._direct_generation_prompt(
+        style_block="",
+        viral_source={"title": "", "body": ""},
+        user_request="{}",
+        generation_prompt="按提示词写",
+        forbidden_lexicon={},
+        knowledge_context="",
+        reference_knowledge="现代风格常用浅色柜体。",
+    )
+    assert "内容类型知识库只作参考" in prompt
+    assert "现代风格常用浅色柜体。" in prompt
+    assert prompt.index("用户生成提示词") < prompt.index("内容类型知识库只作参考")
+
+
+def test_prepare_reference_image_keeps_a_readable_jpeg():
+    from io import BytesIO
+
+    from PIL import Image
+
+    image = Image.new("RGB", (2400, 1800), (180, 90, 40))
+    raw = BytesIO()
+    image.save(raw, format="PNG")
+    mime, encoded = generation.prepare_reference_image(raw.getvalue(), "image/png")
+    assert mime == "image/jpeg"
+    import base64
+
+    data = base64.b64decode(encoded)
+    assert len(data) <= 480_000
+    with Image.open(BytesIO(data)) as compressed:
+        assert compressed.format == "JPEG"
+        assert max(compressed.size) <= 1600
+
+
+def test_response_token_usage_reads_model_counts():
+    response = _tool_response({"title": "标题", "body": "正文", "topics": []})
+    response.usage_metadata = {"input_tokens": 120, "output_tokens": 40, "total_tokens": 160}
+    assert generation.response_token_usage(response) == {
+        "input_tokens": 120,
+        "output_tokens": 40,
+        "total_tokens": 160,
+    }
+    response.usage_metadata = None
+    response.response_metadata = {"token_usage": {"prompt_tokens": 8, "completion_tokens": 3}}
+    assert generation.response_token_usage(response)["total_tokens"] == 11

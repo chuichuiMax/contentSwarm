@@ -6,6 +6,14 @@ from yuxi.content.model.forbidden_words import parse_replacement_table, replace_
 from yuxi.services import content_forbidden_words_service as service
 
 
+def test_docling_padded_table_is_readable():
+    content = """| 问题词   | 常用表达方式              |
+|-------|---------------------|
+| 报价    | 报J、报+、费用、           |
+| APP   |                     |"""
+    assert parse_replacement_table(content) == {"报价": ["报J", "报+", "费用"], "APP": []}
+
+
 def test_table_preserves_alternatives_and_empty_cells():
     assert parse_replacement_table("| 问题词 | 常用表达方式 |\n|---|---|\n| 报价 | 报J、报+、费用、 |\n|APP||") == {
         "报价": ["报J", "报+", "费用"],
@@ -146,6 +154,70 @@ async def test_loads_full_authorized_table_and_refreshes_between_runs(monkeypatc
     assert second["alternatives"] == {"报价": ["报J"]}
     assert first["snapshot_hash"] != second["snapshot_hash"]
     assert first["sources"][0]["chunk_ids"] == ["chunk"]
+
+
+@pytest.mark.asyncio
+async def test_reads_parsed_markdown_when_chunks_are_missing(monkeypatch):
+    from yuxi import knowledge_base
+    from yuxi.repositories import knowledge_base_repository as kb_repo_mod
+    from yuxi.repositories import knowledge_file_repository as file_repo_mod
+    from yuxi.repositories import user_repository as user_repo_mod
+
+    user = SimpleNamespace(uid="user", role="superadmin", department_id=1)
+
+    async def get_user(uid):
+        return user
+
+    async def list_by_name(self, name):
+        return [SimpleNamespace(kb_id="kb", created_by="user", share_config={"access_level": "global"})]
+
+    async def list_chunks(self, kb_id):
+        return []
+
+    file = SimpleNamespace(
+        file_id="file",
+        is_folder=False,
+        markdown_file="http://localhost:9000/knowledgebases/kb/parsed/file.md",
+    )
+
+    async def list_files(self, kb_id):
+        assert kb_id == "kb"
+        return [file]
+
+    class FakeMinio:
+        async def adownload_file(self, bucket, object_name):
+            assert bucket == "knowledgebases"
+            assert object_name == "kb/parsed/file.md"
+            return "| 问题词 | 常用表达方式 |\n|---|---|\n| 报价 | 费用 |".encode()
+
+    monkeypatch.setattr(user_repo_mod.UserRepository, "get_by_uid", staticmethod(get_user))
+    monkeypatch.setattr(kb_repo_mod.KnowledgeBaseRepository, "list_by_name", list_by_name)
+    monkeypatch.setattr(service.KnowledgeChunkRepository, "list_by_kb_id", list_chunks)
+    monkeypatch.setattr(file_repo_mod.KnowledgeFileRepository, "list_by_kb_id", list_files)
+    monkeypatch.setattr(knowledge_base, "_database_info_accessible", staticmethod(lambda _user, _db: True))
+    monkeypatch.setattr("yuxi.storage.minio.get_minio_client", lambda: FakeMinio())
+
+    snapshot = await service.load_forbidden_words("user", "封禁词库")
+    assert snapshot["alternatives"] == {"报价": ["费用"]}
+    assert snapshot["sources"][0]["chunk_ids"] == []
+
+
+@pytest.mark.asyncio
+async def test_direct_generation_continues_when_forbidden_library_is_missing(monkeypatch):
+    async def missing(uid, name):
+        raise ValueError(f"必须能访问唯一的“{name}”，当前找到 0 个")
+
+    monkeypatch.setattr(service, "load_forbidden_words", missing)
+    snapshot = await service.load_optional_forbidden_words("user", "封禁词库")
+    assert snapshot["alternatives"] == {}
+    assert snapshot["knowledge_base_id"] == ""
+
+    async def ambiguous(uid, name):
+        raise ValueError(f"必须能访问唯一的“{name}”，当前找到 2 个")
+
+    monkeypatch.setattr(service, "load_forbidden_words", ambiguous)
+    with pytest.raises(ValueError, match="找到 2 个"):
+        await service.load_optional_forbidden_words("user", "封禁词库")
 
 
 @pytest.mark.asyncio

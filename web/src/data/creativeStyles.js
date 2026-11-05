@@ -1,3 +1,5 @@
+import contentStylePrompts from './contentStylePrompts.js'
+
 const STYLE_CATALOG = {
   项目经理掏心窝: {
     value: '项目经理掏心窝',
@@ -41,30 +43,14 @@ const STYLE_CATALOG = {
   }
 }
 
-const HEARTFELT_PRICE_SHOW = '用真诚的语气表达价格秀明、团队优势'
-
-const CRAFT_STYLES = ['项目经理掏心窝', '本地信任型', '专业干货型', '极简美学设计型']
-
 const QUOTE_STYLES = ['项目经理掏心窝', '本地信任型', '案例证明型', '痛点共鸣型']
-
-const CASE_SHARE_STYLES = ['项目经理掏心窝', '本地信任型', '案例证明型', '痛点共鸣型', '实景案例拆解型']
 
 const KNOWLEDGE_STYLES = ['实景案例拆解型', '极简美学设计型']
 
 const PERSONA_STYLES = ['理性设计师']
 
-/** 同一风格在不同内容类型下的说明 */
-const DESCRIPTION_OVERRIDES = {
-  工艺施工展示: { 项目经理掏心窝: HEARTFELT_PRICE_SHOW },
-  工艺展示: { 项目经理掏心窝: HEARTFELT_PRICE_SHOW },
-  装修案例分享: { 项目经理掏心窝: HEARTFELT_PRICE_SHOW },
-  案例分享: { 项目经理掏心窝: HEARTFELT_PRICE_SHOW }
-}
-
 /** @type {Record<string, string[]>} */
 const STYLES_BY_TYPE_NAME = {
-  工艺施工展示: CRAFT_STYLES,
-  工艺展示: CRAFT_STYLES,
   装修报价清单: QUOTE_STYLES,
   报价清单: QUOTE_STYLES,
   施工报价: QUOTE_STYLES,
@@ -72,23 +58,32 @@ const STYLES_BY_TYPE_NAME = {
   避坑分享: QUOTE_STYLES,
   装修省钱攻略: QUOTE_STYLES,
   省钱攻略: QUOTE_STYLES,
-  装修案例分享: CASE_SHARE_STYLES,
-  案例分享: CASE_SHARE_STYLES,
   装修知识科普: KNOWLEDGE_STYLES,
   知识科普: KNOWLEDGE_STYLES,
   人设自荐: PERSONA_STYLES,
   装修人设自荐: PERSONA_STYLES
 }
 
-const stylesFromKeys = (keys = [], typeName = '') =>
-  keys
-    .map((key) => {
-      const style = STYLE_CATALOG[key]
-      if (!style) return null
-      const description = DESCRIPTION_OVERRIDES[typeName]?.[key]
-      return description ? { ...style, description } : style
-    })
-    .filter(Boolean)
+const PROMPT_STYLE_NAMES = {
+  工艺施工展示: '工艺施工展示',
+  工艺展示: '工艺施工展示',
+  装修案例分享: '装修案例分享',
+  案例分享: '装修案例分享'
+}
+
+const stylesFromKeys = (keys = []) =>
+  keys.map((key) => STYLE_CATALOG[key]).filter(Boolean)
+
+const promptStylesForType = (typeName) => {
+  const items = contentStylePrompts[PROMPT_STYLE_NAMES[typeName] || '']
+  if (!items?.length) return null
+  return items.map((item) => ({
+    value: item.label,
+    label: item.label,
+    description: item.description || '',
+    prompt: item.prompt || ''
+  }))
+}
 
 /** @deprecated 保留导出供旧引用；请改用 creativeStylesForContentType */
 export const CREATIVE_STYLE_OPTIONS = Object.values(STYLE_CATALOG)
@@ -99,8 +94,10 @@ export const CREATIVE_STYLE_OPTIONS = Object.values(STYLE_CATALOG)
  */
 export const creativeStylesForContentType = (contentTypeCode, contentTypeName = '') => {
   const name = String(contentTypeName || '').trim()
+  const prompted = promptStylesForType(name)
+  if (prompted) return prompted
   if (name && STYLES_BY_TYPE_NAME[name]) {
-    return stylesFromKeys(STYLES_BY_TYPE_NAME[name], name)
+    return stylesFromKeys(STYLES_BY_TYPE_NAME[name])
   }
   const codeFallbackName = {
     CT01: '装修案例分享',
@@ -109,8 +106,6 @@ export const creativeStylesForContentType = (contentTypeCode, contentTypeName = 
     CT04: '装修省钱攻略',
     CT07: '人设自荐'
   }[contentTypeCode]
-  if (codeFallbackName) {
-    return stylesFromKeys(STYLES_BY_TYPE_NAME[codeFallbackName], codeFallbackName)
-  }
-  return []
+  if (!codeFallbackName) return []
+  return promptStylesForType(codeFallbackName) || stylesFromKeys(STYLES_BY_TYPE_NAME[codeFallbackName] || [])
 }

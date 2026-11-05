@@ -175,16 +175,17 @@ async def test_review_notes_direct_run_does_not_require_cover(direct_run):
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_direct_run_requires_explicit_reference_id(direct_run):
+async def test_direct_run_allows_missing_viral_reference(direct_run):
     ctx = direct_run
     ctx.payload = ContentDirectGenerateCreate(request_id="request-1")
 
-    with pytest.raises(HTTPException) as exc:
-        await service.create_direct_content_run(ctx.db, ctx.user, ctx.task.id, ctx.payload)
+    result = await service.create_direct_content_run(ctx.db, ctx.user, ctx.task.id, ctx.payload)
 
-    assert exc.value.status_code == 409
+    assert result == {"run_id": "run-1"}
     ctx.asset_lookup.assert_not_awaited()
-    ctx.run_repo.create_run.assert_not_awaited()
+    frozen = ctx.run_repo.create_run.call_args.kwargs["input_payload"]
+    assert frozen["viral_asset_id"] is None
+    assert frozen["viral_source"] == {"title": "", "body": ""}
 
 
 @pytest.mark.unit

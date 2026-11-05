@@ -7,7 +7,11 @@ import time
 from sqlalchemy import select
 
 from yuxi.content.control.visual_template_fields import resolve_hycanvas_template_fields
-from yuxi.content.generation import DEFAULT_DIRECT_GENERATION_PROMPT, generate_direct_content
+from yuxi.content.generation import (
+    DEFAULT_DIRECT_GENERATION_PROMPT,
+    _direct_request_content_type,
+    generate_direct_content,
+)
 from yuxi.utils.line_breaks import normalize_escaped_newlines
 from yuxi.content_cover.ai_cover_prompt import (
     ai_cover_prompt_controls,
@@ -25,9 +29,15 @@ from yuxi.services.content_cover_service import (
     create_cover_generate_job,
     create_hycanvas_cover_job,
     ensure_hycanvas_reference_asset,
+    get_cover_asset_file,
     set_current_cover,
 )
-from yuxi.services.content_forbidden_words_service import load_forbidden_words, load_knowledge_base_text
+from yuxi.services.material_library_service import get_material_file
+from yuxi.services.content_forbidden_words_service import (
+    load_knowledge_base_text,
+    load_optional_forbidden_words,
+    lookup_knowledge_base_text,
+)
 from yuxi.services.run_queue_service import append_run_stream_event, clear_cancel_signal, has_cancel_signal
 from yuxi.storage.postgres.manager import pg_manager
 from yuxi.storage.postgres.models_business import User
@@ -37,6 +47,91 @@ from yuxi.utils.logging_config import logger
 
 DIRECT_COVER_TIMEOUT_SECONDS = 900
 DIRECT_COVER_POLL_SECONDS = 1
+PROMPT_CATALOG_KB_NAME = "创作提示词"
+
+
+def content_type_knowledge_names(content_type_name: str) -> list[str]:
+    name = str(content_type_name or "").strip()
+    if not name:
+        return []
+    names = [name]
+    if not name.endswith("知识库"):
+        names.append(f"{name}知识库")
+    return names
+
+
+async def lookup_content_knowledge(uid: str, name: str, *, limit: int = 12000) -> dict | None:
+    try:
+        return await lookup_knowledge_base_text(uid, name, limit=limit)
+    except Exception:
+        logger.warning("知识库查找失败 name=%s", name, exc_info=True)
+        return None
+
+
+def content_type_name_from_payload(payload: dict) -> str:
+    brief = payload.get("content_brief") if isinstance(payload.get("content_brief"), dict) else {}
+    form = brief.get("form_values") if isinstance(brief.get("form_values"), dict) else {}
+    name = str(form.get("mp_content_type_name") or "").strip()
+    if name:
+        return name
+    _code, type_name = _direct_request_content_type(str(payload.get("user_request") or ""))
+    return type_name
+
+
+def first_reference_image_locator(payload: dict) -> tuple[str, str]:
+    """返回用户选择或上传的第一张图：图库条目优先，其次封面素材。"""
+
+    visual = payload.get("visual_material") or {}
+    if not isinstance(visual, dict):
+        visual = {}
+    composition = visual.get("photo_composition") or {}
+    slots = composition.get("slots") if isinstance(composition, dict) else None
+    if isinstance(slots, list):
+        for slot in slots:
+            item_id = str(slot.get("image_item_id") or "").strip() if isinstance(slot, dict) else ""
+            if item_id:
+                return "item", item_id
+    item_id = str(visual.get("image_item_id") or "").strip()
+    if item_id:
+        return "item", item_id
+    asset_id = str(visual.get("image_asset_id") or "").strip()
+    if asset_id:
+        return "asset", asset_id
+    brief = payload.get("content_brief") if isinstance(payload.get("content_brief"), dict) else {}
+    form = brief.get("form_values") if isinstance(brief.get("form_values"), dict) else {}
+    asset_ids = form.get("cover_asset_ids")
+    if isinstance(asset_ids, list):
+        for item in asset_ids:
+            asset_id = str(item or "").strip()
+            if asset_id:
+                return "asset", asset_id
+    asset_id = str(form.get("cover_asset_id") or "").strip()
+    if asset_id:
+        return "asset", asset_id
+    attachments = brief.get("attachments")
+    if isinstance(attachments, list):
+        for item in attachments:
+            if not isinstance(item, dict):
+                continue
+            asset_id = str(item.get("asset_id") or "").strip()
+            if asset_id:
+                return "asset", asset_id
+    return "", ""
+
+
+async def _load_first_reference_image(uid: str, payload: dict) -> tuple[bytes, str] | None:
+    if payload.get("skip_cover"):
+        return None
+    kind, image_id = first_reference_image_locator(payload)
+    if not image_id:
+        return None
+    async with pg_manager.get_async_session_context() as db:
+        user = (await db.execute(select(User).where(User.uid == uid, User.is_deleted == 0))).scalar_one()
+        if kind == "item":
+            data, content_type, _name = await get_material_file(db, user, image_id, allow_case_browse=True)
+            return data, content_type
+        data, content_type, _name = await get_cover_asset_file(db, user, image_id)
+        return data, content_type
 
 
 async def process_direct_content_run(ctx, run_id: str):
@@ -67,10 +162,56 @@ async def process_direct_content_run(ctx, run_id: str):
     try:
         if await has_cancel_signal(run_id):
             raise asyncio.CancelledError
-        forbidden_snapshot = await load_forbidden_words(str(run.uid), "封禁词库")
+        forbidden_snapshot = await load_optional_forbidden_words(str(run.uid), "封禁词库")
         knowledge_context = ""
         if payload.get("skip_cover"):
             knowledge_context = await load_knowledge_base_text(str(run.uid), "好评笔记知识库")
+        reference_image = await _load_first_reference_image(str(run.uid), payload)
+        knowledge_hits = [
+            {
+                "name": "封禁词库",
+                "hit": bool(forbidden_snapshot.get("knowledge_base_id")),
+                "kb_id": forbidden_snapshot.get("knowledge_base_id") or "",
+                "chars": len(forbidden_snapshot.get("alternatives") or {}),
+                "role": "forbidden",
+            }
+        ]
+        reference_knowledge = ""
+        if payload.get("skip_cover"):
+            knowledge_hits.append(
+                {"name": "好评笔记知识库", "hit": bool(knowledge_context), "kb_id": "", "chars": len(knowledge_context)}
+            )
+        else:
+            for kb_name in content_type_knowledge_names(content_type_name_from_payload(payload)):
+                found = await lookup_content_knowledge(str(run.uid), kb_name)
+                if found is None:
+                    continue
+                reference_knowledge = found["text"]
+                knowledge_hits.append(
+                    {
+                        "name": found["name"],
+                        "hit": True,
+                        "kb_id": found["kb_id"],
+                        "chars": len(found["text"]),
+                    }
+                )
+                break
+            if not knowledge_hits:
+                queried = content_type_knowledge_names(content_type_name_from_payload(payload))
+                knowledge_hits.append(
+                    {"name": queried[0] if queried else "", "hit": False, "kb_id": "", "chars": 0}
+                )
+        prompt_catalog = await lookup_content_knowledge(str(run.uid), PROMPT_CATALOG_KB_NAME, limit=80000)
+        knowledge_hits.append(
+            {
+                "name": PROMPT_CATALOG_KB_NAME,
+                "hit": prompt_catalog is not None,
+                "kb_id": (prompt_catalog or {}).get("kb_id") or "",
+                "chars": len((prompt_catalog or {}).get("text") or ""),
+                "role": "prompt_catalog",
+            }
+        )
+        usage_log: dict = {}
         generation = asyncio.create_task(
             generate_direct_content(
                 model_spec=payload.get("model_spec"),
@@ -80,6 +221,9 @@ async def process_direct_content_run(ctx, run_id: str):
                 generation_prompt=str(payload.get("generation_prompt", DEFAULT_DIRECT_GENERATION_PROMPT)),
                 forbidden_lexicon=forbidden_snapshot["alternatives"],
                 knowledge_context=knowledge_context,
+                reference_knowledge=reference_knowledge,
+                reference_image=reference_image,
+                usage_out=usage_log,
             )
         )
         generation_started_at = time.monotonic()
@@ -116,6 +260,7 @@ async def process_direct_content_run(ctx, run_id: str):
                 raise RuntimeError("内容任务不存在")
             review = {"status": "not_run", "checks": [], "review_mode": "direct_generation"}
             artifact = await repo.get_artifact_for_task(task.id)
+            image_kind, image_id = first_reference_image_locator(payload)
             runtime_snapshot = {
                 "creation_mode": "viral_rewrite",
                 "generation_mode": "direct",
@@ -124,6 +269,18 @@ async def process_direct_content_run(ctx, run_id: str):
                 "viral_asset_id": payload.get("viral_asset_id"),
                 "visual_material": payload.get("visual_material") or {},
                 "forbidden_lexicon": forbidden_snapshot,
+                "generation_log": {
+                    "model": usage_log.get("model") or payload.get("model_spec") or "",
+                    "prompt": usage_log.get("prompt") or payload.get("generation_prompt") or "",
+                    "image_attached": bool(usage_log.get("image_attached")),
+                    "image_omitted_reason": usage_log.get("image_omitted_reason") or "",
+                    "image_item_id": image_id if image_kind == "item" else "",
+                    "image_asset_id": image_id if image_kind == "asset" else "",
+                    "input_tokens": usage_log.get("input_tokens"),
+                    "output_tokens": usage_log.get("output_tokens"),
+                    "total_tokens": usage_log.get("total_tokens"),
+                    "knowledge_hits": knowledge_hits,
+                },
             }
             strategy_snapshot = {
                 "generation_mode": "direct",

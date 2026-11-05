@@ -30,8 +30,9 @@ def test_access_token_contains_instance_claims(monkeypatch):
     assert payload["aud"] == JWT_AUDIENCE
 
 
-def test_access_token_auto_generates_dev_secret(monkeypatch):
+def test_access_token_auto_generates_dev_secret(monkeypatch, tmp_path):
     monkeypatch.setenv("YUXI_ENV", "development")
+    monkeypatch.setenv("YUXI_DEV_SECRET_DIR", str(tmp_path))
     monkeypatch.delenv("JWT_SECRET_KEY", raising=False)
     monkeypatch.setenv("YUXI_INSTANCE_ID", "pytest-instance")
 
@@ -59,8 +60,23 @@ def test_access_token_rejects_public_default_secret_in_production(monkeypatch):
         AuthUtils.create_access_token({"sub": "1"})
 
 
-def test_access_token_auto_generates_dev_instance_id(monkeypatch):
+def test_dev_secret_stays_valid_after_restart(monkeypatch, tmp_path):
     monkeypatch.setenv("YUXI_ENV", "development")
+    monkeypatch.setenv("YUXI_DEV_SECRET_DIR", str(tmp_path))
+    monkeypatch.delenv("JWT_SECRET_KEY", raising=False)
+    monkeypatch.setenv("YUXI_INSTANCE_ID", "pytest-instance")
+
+    token = AuthUtils.create_access_token({"sub": "1"})
+    secret = os.environ["JWT_SECRET_KEY"]
+    monkeypatch.delenv("JWT_SECRET_KEY", raising=False)
+
+    assert AuthUtils.verify_access_token(token)["sub"] == "1"
+    assert os.environ["JWT_SECRET_KEY"] == secret
+
+
+def test_access_token_auto_generates_dev_instance_id(monkeypatch, tmp_path):
+    monkeypatch.setenv("YUXI_ENV", "development")
+    monkeypatch.setenv("YUXI_DEV_SECRET_DIR", str(tmp_path))
     monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-key-with-enough-randomness")
     monkeypatch.delenv("YUXI_INSTANCE_ID", raising=False)
 

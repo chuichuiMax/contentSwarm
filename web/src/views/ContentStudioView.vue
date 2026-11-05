@@ -108,10 +108,7 @@ let audienceTagRequestId = 0
 const currentEmployee = ref(null)
 const contentRequestExpanded = ref(false)
 const selectedCreativeStyle = ref('')
-const viralAssets = ref([])
-const viralAssetsLoading = ref(false)
 const selectedViralAssetId = ref('')
-let viralAssetsRequest = 0
 const selectedContentTestCaseId = ref()
 const quoteTestCaseTypeSyncing = ref(false)
 const selectedAngleId = ref('')
@@ -297,14 +294,17 @@ const availableCreativeStyleOptions = computed(() =>
     selectedStudioContentType.value?.name || formValues.mp_content_type_name || ''
   )
 )
+const onCreativeStyleChange = (event) => {
+  const value = event?.target?.value ?? event
+  const option = availableCreativeStyleOptions.value.find((item) => item.value === value)
+  if (option?.prompt) formValues.generation_prompt = option.prompt
+}
+
 const selectedCreativeStyleOption = computed(
   () =>
     availableCreativeStyleOptions.value.find(
       (item) => item.value === selectedCreativeStyle.value
     ) || null
-)
-const selectedViralAsset = computed(
-  () => viralAssets.value.find((item) => item.id === selectedViralAssetId.value) || null
 )
 const availableContentTestCases = computed(() => {
   const category = { CT01: 'self-introduction', CT06: 'construction-craft', CT07: 'daily-work' }[
@@ -728,9 +728,6 @@ const selectedStudioContentType = computed(() =>
 )
 const studioContentTypeCode = computed(
   () => CONTENT_TYPE_NAME_TO_CODE[selectedStudioContentType.value?.name] || ''
-)
-const viralContentTypeCode = computed(() =>
-  store.task ? studioContentTypeCode.value : currentContentType.value
 )
 const PROCESS_NAME_GUARD_HINT = '请先选择工艺类型，或没有工艺类型，请联系管理员配置'
 const FIELD_SELECT_OPTIONS = {
@@ -1272,13 +1269,24 @@ const initializeFormValues = () => {
   const contentType = studioContentTypes.value.find((item) => item.id === selectedContentTypeId.value)
   formValues.mp_content_type_id = selectedContentTypeId.value
   formValues.mp_content_type_name = contentType?.name || saved.mp_content_type_name || ''
+  modelSpec.value = String(saved.model_spec || '')
   activeFields.value.forEach((field) => {
     if (saved[field.key] !== undefined) formValues[field.key] = saved[field.key]
     else formValues[field.key] = field.type === 'tags' ? [] : ''
   })
-  formValues.generation_prompt = String(saved.generation_prompt ?? '').trim()
-    ? saved.generation_prompt
-    : DEFAULT_DIRECT_GENERATION_PROMPT
+  const savedCreativeStyle =
+    typeof saved.creative_style === 'string'
+      ? saved.creative_style
+      : saved.creative_style?.name || ''
+  const styleOptions = availableCreativeStyleOptions.value
+  const savedStyle = styleOptions.find((item) => item.value === savedCreativeStyle) || null
+  const defaultStyle = savedStyle || styleOptions.find((item) => item.prompt) || styleOptions[0] || null
+  selectedCreativeStyle.value = defaultStyle?.value || ''
+  const savedPrompt = String(saved.generation_prompt ?? '').trim()
+  formValues.generation_prompt =
+    savedStyle && savedPrompt
+      ? saved.generation_prompt
+      : defaultStyle?.prompt || savedPrompt || DEFAULT_DIRECT_GENERATION_PROMPT
   resolvedAudienceTags.value = []
   void refreshTargetAudienceTags(formValues['目标人群'])
 }
@@ -1294,15 +1302,17 @@ const onContentTypeChange = (value) => {
   Object.keys(formValues).forEach((key) => {
     if (!keepKeys.has(key)) delete formValues[key]
   })
+  const sameType = String(saved.mp_content_type_id || '') === String(selectedContentTypeId.value || '')
   const savedCreativeStyle =
     typeof saved.creative_style === 'string'
       ? saved.creative_style
       : saved.creative_style?.name || ''
-  selectedCreativeStyle.value = availableCreativeStyleOptions.value.some(
-    (item) => item.value === savedCreativeStyle
-  )
-    ? savedCreativeStyle
-    : ''
+  const styleOptions = availableCreativeStyleOptions.value
+  const savedStyle = sameType
+    ? styleOptions.find((item) => item.value === savedCreativeStyle) || null
+    : null
+  const defaultStyle = savedStyle || styleOptions.find((item) => item.prompt) || styleOptions[0] || null
+  selectedCreativeStyle.value = defaultStyle?.value || ''
   selectedViralAssetId.value = saved.viral_asset_id || ''
   const hasSavedValues = Object.values(saved).some(
     (value) =>
@@ -1315,9 +1325,11 @@ const onContentTypeChange = (value) => {
     if (saved[field.key] !== undefined) formValues[field.key] = saved[field.key]
     else formValues[field.key] = field.type === 'tags' ? [] : ''
   })
-  formValues.generation_prompt = String(saved.generation_prompt ?? '').trim()
-    ? saved.generation_prompt
-    : DEFAULT_DIRECT_GENERATION_PROMPT
+  const savedPrompt = sameType ? String(saved.generation_prompt ?? '').trim() : ''
+  formValues.generation_prompt =
+    savedStyle && savedPrompt
+      ? saved.generation_prompt
+      : defaultStyle?.prompt || savedPrompt || DEFAULT_DIRECT_GENERATION_PROMPT
   syncGeneratedContentRequest()
   if (studioContentTypeCode.value) creation.content_type_code = studioContentTypeCode.value
   appliedFrameAreaBand = ''
@@ -1389,41 +1401,6 @@ const onBusinessSelectChange = (key, value) => {
 const guardProcessNameSelect = (fieldKey, open) => {
   if (!open || fieldKey !== '工艺名称') return
   if (processNameNeedsTypeHint.value) message.warning(PROCESS_NAME_GUARD_HINT)
-}
-
-const loadViralAssets = async () => {
-  const request = ++viralAssetsRequest
-  const contentType = viralContentTypeCode.value
-  const industrySlug = selectedIndustrySlug.value
-  viralAssets.value = []
-  if (!contentType || !industrySlug) {
-    selectedViralAssetId.value = ''
-    viralAssetsLoading.value = false
-    return
-  }
-  viralAssetsLoading.value = true
-  try {
-    const response = await contentApi.listViralAssets({
-      industry_slug: industrySlug,
-      ready_only: true,
-      content_type_code: contentType,
-      limit: 100
-    })
-    if (request !== viralAssetsRequest) return
-    viralAssets.value = (response.items || []).filter(
-      (item) => item.reference_card?.content_type_code === contentType
-    )
-    if (!viralAssets.value.some((item) => item.id === selectedViralAssetId.value)) {
-      selectedViralAssetId.value = viralAssets.value[0]?.id || ''
-    }
-  } catch (error) {
-    if (request !== viralAssetsRequest) return
-    viralAssets.value = []
-    selectedViralAssetId.value = ''
-    message.warning(error.message || '爆款原文加载失败')
-  } finally {
-    if (request === viralAssetsRequest) viralAssetsLoading.value = false
-  }
 }
 
 const revokePreviewUrls = (urls) => {
@@ -2333,13 +2310,6 @@ watch(
     if (!selectedCreativeStyleOption.value) selectedCreativeStyle.value = ''
   }
 )
-watch(
-  [viralContentTypeCode, selectedIndustrySlug],
-  () => {
-    void loadViralAssets()
-  },
-  { immediate: true }
-)
 watch(selectedImageItemId, (itemId) => void loadSelectedImagePreview(itemId))
 watch(
   [selectedImageItemId, selectedHyCanvasTemplateId],
@@ -2549,6 +2519,7 @@ const buildBrief = () => ({
   form_values: {
     user_request: String(formValues.user_request || '').trim(),
     generation_prompt: String(formValues.generation_prompt || '').trim(),
+    model_spec: modelSpec.value.trim(),
     ...(selectedCreativeStyleOption.value
       ? {
           creative_style: {
@@ -2557,7 +2528,7 @@ const buildBrief = () => ({
           }
         }
       : {}),
-    viral_asset_id: selectedViralAssetId.value || null
+    viral_asset_id: null
   },
   visual_material:
     selectedImageItemId.value || selectedHyCanvasTemplateId.value || coverTemplateTab.value === 'ai'
@@ -2712,10 +2683,6 @@ const submitContentOnlyCreation = async () => {
     message.warning('请填写内容需求')
     return
   }
-  if (viralAssetsLoading.value || !selectedViralAsset.value) {
-    message.warning('请选择一篇爆款原文')
-    return
-  }
   if (
     !selectedHandwrittenQuoteTemplate.value &&
     photoComposition.value?.slots.some((slot) => !slot.image_item_id)
@@ -2744,7 +2711,7 @@ const submitContentOnlyCreation = async () => {
     await store.startDirectRun(modelSpec.value, {
       user_request: String(formValues.user_request || '').trim(),
       generation_prompt: String(formValues.generation_prompt || '').trim(),
-      viral_asset_id: selectedViralAssetId.value,
+      viral_asset_id: null,
       creative_style: selectedCreativeStyleOption.value
         ? {
             name: selectedCreativeStyleOption.value.label,
@@ -3209,13 +3176,14 @@ const returnToContentCreation = async () => {
                     >
                       <div class="creative-style-heading">
                         <span id="creative-style-label">创作风格</span>
-                        <small>可选，生成时会作为独立创作偏好保存</small>
+                        <small>选择后填入对应提示词，可再修改</small>
                       </div>
                       <a-radio-group
                         v-model:value="selectedCreativeStyle"
                         class="creative-style-options"
                         :disabled="briefLocked || creationSubmitting"
                         aria-labelledby="creative-style-label"
+                        @change="onCreativeStyleChange"
                       >
                         <a-radio-button
                           v-for="item in availableCreativeStyleOptions"
@@ -3224,40 +3192,9 @@ const returnToContentCreation = async () => {
                           class="creative-style-option"
                         >
                           <strong>{{ item.label }}</strong>
-                          <small>{{ item.description }}</small>
+                          <small v-if="item.description">{{ item.description }}</small>
                         </a-radio-button>
                       </a-radio-group>
-                    </div>
-                    <div v-if="selectedContentTypeId" class="field-block viral-reference-field">
-                      <label id="viral-reference-label" for="viral-reference-select">爆款原文</label>
-                      <a-select
-                        id="viral-reference-select"
-                        v-model:value="selectedViralAssetId"
-                        show-search
-                        option-filter-prop="label"
-                        :loading="viralAssetsLoading"
-                        :disabled="briefLocked || creationSubmitting || !viralContentTypeCode"
-                        placeholder="请选择同类型爆款原文"
-                        aria-labelledby="viral-reference-label"
-                      >
-                        <a-select-option
-                          v-for="item in viralAssets"
-                          :key="item.id"
-                          :value="item.id"
-                          :label="item.title"
-                        >
-                          {{ item.title }}
-                        </a-select-option>
-                      </a-select>
-                      <small v-if="selectedViralAsset" class="viral-reference-summary">
-                        {{ selectedViralAsset.reference_card?.summary || '已选择可用爆款原文' }}
-                      </small>
-                      <small
-                        v-else-if="viralContentTypeCode && !viralAssetsLoading"
-                        class="viral-reference-summary warning"
-                      >
-                        当前内容类型暂无已审核爆款原文
-                      </small>
                     </div>
                     <div v-if="selectedContentTypeId" class="field-block direct-generation-prompt">
                       <label id="direct-generation-prompt-label" for="direct-generation-prompt">
@@ -3266,7 +3203,7 @@ const returnToContentCreation = async () => {
                       <a-textarea
                         id="direct-generation-prompt"
                         v-model:value="formValues.generation_prompt"
-                        :rows="3"
+                        :rows="8"
                         :readonly="briefLocked"
                         aria-labelledby="direct-generation-prompt-label"
                         placeholder="请输入新生成时交给大模型的写作要求"

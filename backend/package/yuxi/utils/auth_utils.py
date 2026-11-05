@@ -1,6 +1,7 @@
 import os
 import secrets
 from datetime import timedelta
+from pathlib import Path
 from typing import Any
 
 import jwt
@@ -20,6 +21,24 @@ def _is_production_env() -> bool:
     return os.environ.get("YUXI_ENV", "development").strip().lower() in {"prod", "production"}
 
 
+def _dev_secret_file(name: str) -> Path:
+    root = Path(os.environ.get("YUXI_DEV_SECRET_DIR", "saves/dev-auth"))
+    return root / f"{name}.txt"
+
+
+def _read_or_create_dev_secret(name: str, value_factory) -> str:
+    path = _dev_secret_file(name)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    except FileExistsError:
+        return path.read_text(encoding="utf-8").strip()
+    value = value_factory()
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(value)
+    return value
+
+
 def _get_or_create_dev_env(name: str, value_factory) -> str:
     value = os.environ.get(name, "").strip()
     if value:
@@ -27,9 +46,8 @@ def _get_or_create_dev_env(name: str, value_factory) -> str:
     if _is_production_env():
         raise ValueError(f"{name} 未配置，请在生产环境的 .env.prod 中设置持久化随机值")
 
-    value = value_factory()
+    value = _read_or_create_dev_secret(name, value_factory)
     os.environ[name] = value
-    print(f"{name} 未配置，开发环境已自动生成临时随机值，服务重启后会重新生成。")
     return value
 
 

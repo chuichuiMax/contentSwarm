@@ -18,6 +18,7 @@ import {
   UserRoundCog,
   Workflow
 } from 'lucide-vue-next'
+import GenerationCallLog from '@/components/content/GenerationCallLog.vue'
 import MarkdownPreview from '@/components/common/MarkdownPreview.vue'
 import XiaohongshuDistributionDrawer from '@/components/content/XiaohongshuDistributionDrawer.vue'
 import { contentApi } from '@/apis/content_api'
@@ -36,6 +37,7 @@ const artifact = ref(null)
 const versions = ref([])
 const runAudit = ref(null)
 const distributionOpen = ref(false)
+const callLogOpen = ref(false)
 const coverUrl = ref('')
 
 const taskId = computed(() => props.taskId || route.params.taskId)
@@ -43,6 +45,7 @@ const review = computed(() => artifact.value?.review_snapshot || task.value?.rev
 const reviewChecks = computed(() => review.value.checks || [])
 const evidenceItems = computed(() => artifact.value?.evidence_snapshot?.items || [])
 const strategy = computed(() => artifact.value?.strategy_snapshot || task.value?.strategy || {})
+const generationLog = computed(() => artifact.value?.runtime_config_snapshot?.generation_log || null)
 const reviewStatus = computed(() => review.value.status || 'pending')
 const historicalOriginal = computed(() => task.value?.runtime_config_snapshot?.creation_mode !== 'viral_rewrite')
 const matchDecision = computed(() => runAudit.value?.match_decision || {})
@@ -150,6 +153,7 @@ onBeforeUnmount(() => {
           <a-button @click="router.push('/content/accounts')">
             <UserRoundCog :size="16" />账号管理
           </a-button>
+          <a-button @click="callLogOpen = true"><Bot :size="16" />发给模型的数据</a-button>
           <a-button v-if="!historicalOriginal" @click="router.push(`/content/tasks/${task.id}`)">
             <FilePenLine :size="16" />继续编辑
           </a-button>
@@ -330,6 +334,10 @@ onBeforeUnmount(() => {
       <a-button @click="router.push('/content/new')">返回内容生产</a-button>
     </div>
 
+    <a-modal v-model:open="callLogOpen" title="发给模型的数据" :width="760" centered destroy-on-close>
+      <GenerationCallLog :log="generationLog" />
+      <template #footer><a-button @click="callLogOpen = false">关闭</a-button></template>
+    </a-modal>
     <XiaohongshuDistributionDrawer v-model:open="distributionOpen" :artifact="artifact" />
   </div>
 </template>

@@ -15,10 +15,9 @@ from yuxi.content.mp_studio_direct import (
 
 def test_creative_style_options_follow_the_style_sheet():
     assert [item["label"] for item in creative_style_options("CT06", "工艺施工展示")] == [
-        "项目经理掏心窝",
-        "本地信任型",
+        "信息流",
+        "工艺介绍",
         "专业干货型",
-        "极简美学设计型",
     ]
     assert [item["label"] for item in creative_style_options("CT02", "装修报价清单")] == [
         "项目经理掏心窝",
@@ -27,10 +26,10 @@ def test_creative_style_options_follow_the_style_sheet():
         "痛点共鸣型",
     ]
     assert [item["label"] for item in creative_style_options("CT01", "装修案例分享")] == [
-        "项目经理掏心窝",
-        "本地信任型",
-        "案例证明型",
-        "痛点共鸣型",
+        "信息流类型",
+        "重点楼盘案例介绍",
+        "设计风格亮点介绍",
+        "设计风格亮点介绍（2）",
         "实景案例拆解型",
     ]
     assert [item["label"] for item in creative_style_options("CT06", "装修知识科普")] == [
@@ -51,13 +50,16 @@ def test_creative_style_options_follow_the_style_sheet():
         "痛点共鸣型",
     ]
     assert len(creative_style_options("CT03", "")) == 4
-    assert len(creative_style_options("CT06", "")) == 4
+    assert len(creative_style_options("CT06", "")) == 3
     assert len(creative_style_options("CT06", "知识科普")) == 2
     assert len(creative_style_options("CT02", "报价清单")) == 4
     assert len(creative_style_options("CT05", "施工报价")) == 4
     craft = creative_style_options("CT06", "工艺施工展示")[0]
     quote = creative_style_options("CT02", "装修报价清单")[0]
-    assert craft["description"] == "用真诚的语气表达价格秀明、团队优势"
+    case_share = creative_style_options("CT01", "案例分享")
+    assert craft["description"] == "强调公司工艺"
+    assert "根据我提供的图片" in craft["prompt"]
+    assert case_share[1]["prompt"]
     assert quote["description"] == "用真诚的语气表达价格透明、团队优势"
 
 

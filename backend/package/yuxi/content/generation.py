@@ -11,20 +11,12 @@ from yuxi.agents import load_chat_model, resolve_chat_model_spec
 from yuxi.utils.line_breaks import normalize_escaped_newlines
 from yuxi.content.model.forbidden_words import replace_forbidden_words
 from yuxi.content.schemas import ContentArtifactAIEditOutput, ReviewReport
-from yuxi.content.v3.modular_rules import merge_pinned_topics, topic_region_name
 from yuxi.utils.logging_config import logger
 
 SKILLS_ROOT = Path(__file__).resolve().parents[1] / "agents" / "skills" / "buildin"
 DEFAULT_DIRECT_GENERATION_PROMPT = "使用我给你的一些元素，根据爆文 换一种表达方式 符合当地的口吻"
-NATURAL_CLOSING_INSTRUCTION = (
-    "结尾要自然转化，像跟准备装修的朋友聊天，不要硬凑引流话术。"
-    "不要要求对方留下小区和面积，也不要承诺马上提供案例或费用。"
-    "用一两句口语收束即可，例如：最近有打算装修的朋友，有什么问题都可以一起聊一聊。"
-)
 DIRECT_TITLE_MAX_CHARS = 20
-CASE_SHARE_DIRECT_TITLE_MAX_CHARS = 30
 DIRECT_TOPIC_LIMIT = 10
-_TOPIC_REGION_KEYS = ("所在区域", "city", "location", "region", "serviceCity")
 SKILL_VERSIONS = {
     "content-value-analyzer": "1.3.0",
     "content-strategy-planner": "4.0.1",
@@ -64,52 +56,6 @@ def _direct_request_content_type(user_request: str) -> tuple[str, str]:
     if not isinstance(content_type, dict):
         return "", ""
     return str(content_type.get("contentTypeCode") or "").strip(), str(content_type.get("typeName") or "").strip()
-
-
-def _case_share_form_values(user_request: str) -> dict[str, Any]:
-    try:
-        data = json.loads(user_request)
-    except json.JSONDecodeError:
-        return {}
-    if not isinstance(data, dict):
-        return {}
-    form_values: dict[str, Any] = {}
-    business_variables = data.get("businessVariables")
-    facts = data.get("facts")
-    if isinstance(business_variables, dict):
-        form_values.update(business_variables)
-    if isinstance(facts, dict):
-        form_values.update(facts)
-    return form_values
-
-
-def _case_share_copy_from_request(user_request: str, *, fallback_title: str) -> tuple[str, str] | None:
-    from yuxi.content_cover.ai_cover_prompt import format_case_share_title_parts, is_case_share_content_type
-
-    code, name = _direct_request_content_type(user_request)
-    if not is_case_share_content_type(content_type_code=code, content_type_name=name):
-        return None
-    site_title, subtitle_line = format_case_share_title_parts(
-        title=fallback_title,
-        form_values=_case_share_form_values(user_request),
-    )
-    if not site_title and not subtitle_line:
-        return None
-    return site_title, subtitle_line
-
-
-def _ensure_case_share_body_lead(body: str, subtitle_line: str) -> str:
-    body = body.strip()
-    subtitle_line = subtitle_line.strip()
-    if not subtitle_line:
-        return body
-    chunks = [chunk.strip() for chunk in body.split("\n\n") if chunk.strip()]
-    if not chunks:
-        return subtitle_line
-    if chunks[0] == subtitle_line:
-        return body
-    tail = "\n\n".join(chunks[1:]) if len(chunks) > 1 else ""
-    return f"{subtitle_line}\n\n{tail}" if tail else subtitle_line
 
 
 def _extend_incomplete_title_suffix(head: str, full: str, *, max_overflow: int = 2) -> str:
@@ -191,27 +137,6 @@ async def _invoke_json(model_spec: str | None, *, skill_slug: str, prompt: str) 
     return _parse_json(_response_text(response))
 
 
-def _region_from_user_request(user_request: str) -> str:
-    try:
-        payload = json.loads(user_request)
-    except json.JSONDecodeError:
-        return ""
-    if not isinstance(payload, dict):
-        return ""
-    sources: list[Any] = []
-    for key in ("businessVariables", "business_variables", "form_values"):
-        section = payload.get(key)
-        if isinstance(section, dict):
-            sources.extend(section.get(name) for name in _TOPIC_REGION_KEYS)
-    facts = payload.get("facts")
-    if isinstance(facts, dict):
-        sources.append(facts.get("location"))
-    for value in sources:
-        if name := topic_region_name(value):
-            return name
-    return ""
-
-
 def _direct_generation_prompt(
     *,
     style_block: str,
@@ -220,84 +145,206 @@ def _direct_generation_prompt(
     generation_prompt: str,
     forbidden_lexicon: dict[str, list[str]],
     knowledge_context: str,
+    image_attached: bool = False,
+    reference_knowledge: str = "",
 ) -> str:
-    shared_tail = (
-        "排版与表情要求：\n"
-        "正文要自然分段，使用适合移动端阅读的短句、空行和必要的 Markdown 排版；"
-        "根据语义加入少量合适的 Emoji，位置要自然，不能堆砌或连续重复；"
-        "不得用 Emoji 替代价格、数字、面积、时间、单位、品牌名或专业信息。\n\n"
-        "封禁词替换表（不要在成品中解释替换过程）：\n"
+    del style_block, viral_source
+    forbidden_block = (
+        "封禁词替换表（成品中不要解释替换）：\n"
         f"{json.dumps(forbidden_lexicon, ensure_ascii=False)}\n"
-        "存在候选表达时选择符合上下文的写法；候选为空时改写整句，避免出现问题词。"
+        "有候选表达就换用候选；没有候选就改写该句，避免出现问题词。"
     )
-    code, type_name = _direct_request_content_type(user_request)
-    from yuxi.content_cover.ai_cover_prompt import is_case_share_content_type
-
-    case_share_title_rule = ""
-    is_case_share = is_case_share_content_type(content_type_code=code, content_type_name=type_name)
-    if is_case_share:
-        case_share_title_rule = (
-            "内容类型为装修案例分享：title 只写工地地址（优先 businessVariables.工地地址，否则楼盘/小区名）；"
-            "body 的第一段必须单独一行，作为副标题，内容为「外框面积+设计风格+实景」连续拼写（如142㎡现代实景），"
-            f"不加标点；title 与副标题各不超过{CASE_SHARE_DIRECT_TITLE_MAX_CHARS}字；第二段起再写案例正文。\n\n"
-        )
-    if knowledge_context:
-        return (
-            "请站在业主角度，用第一人称写一篇好评笔记。返回字段 title、body、topics；"
-            "不要输出解释、审核意见或额外字段。\n\n"
-            "标题是业主自己的一句结论，不超过"
-            f"{DIRECT_TITLE_MAX_CHARS}个字，不要出现楼盘、小区或项目案名。\n"
-            "正文用短段落写自己看到的服务和现场，可以按设计师、预算师、项目经理、客户经理、工匠展开；"
-            "表单里已有的人名、岗位、店面和区域必须沿用，不要改成知识库里另一户的人。"
-            "用户输入里的 persona 是当前登录员工，只用来核对岗位和店面；正文必须是业主在评价他们。\n"
-            "用好评笔记知识库里的业主口吻、服务场景和工艺细节来填充。"
-            "知识库中另一户的金额、退款、小区、工期和人名，表单没有就不要写入这篇。\n"
-            "话题写 8 到 10 个，像装修日记标签，包含鸿扬家装和装修避坑；"
-            "能确定城市时再包含「城市名+装修公司推荐」，例如长沙装修公司推荐、株洲装修公司推荐。"
-            "不要带 # 号。\n"
-            "不要写成员工自荐、销售转化，也不要让读者留下小区和面积。"
-            "结尾用业主自己的一句感受收住。\n"
-            "正文分段使用真实换行，不要输出反斜杠和字母 n。\n\n"
-            f"{style_block}"
-            "业主表单：\n"
-            f"{user_request}\n\n"
-            "本次生成提示词：\n"
-            f"{generation_prompt.strip()}\n\n"
-            "好评笔记知识库：\n"
-            f"{knowledge_context}\n\n"
-            f"{shared_tail}"
-        )
+    image_line = (
+        "已附上第一张图片。文案以用户生成提示词和这张图片为主，只写提示词要求、并且图片里能看到的内容。\n\n"
+        if image_attached
+        else ""
+    )
+    reference_block = (
+        f"内容类型知识库只作参考，与业务数据或图片不一致的内容不要写入：\n{reference_knowledge.strip()}\n\n"
+        if reference_knowledge.strip()
+        else ""
+    )
+    knowledge_block = (
+        f"好评笔记知识库只作参考，表单里没有的金额、小区、工期和人名不要写入：\n{knowledge_context.strip()}\n\n"
+        if knowledge_context.strip()
+        else ""
+    )
     return (
-        "请根据以下输入直接创作一篇内容。返回字段 title、body、topics；"
-        "不要输出解释、审核意见或额外字段。\n\n"
-        f"{case_share_title_rule}"
-        "参考爆款原文的开头切入、段落顺序、信息推进和口语节奏，结尾按自然转化来写，不要照搬原文里的引流收尾。"
-        "在这些位置用用户提供的事实改写，不能逐句照抄。"
-        "创作风格只决定表达手法，不得因此杜撰其他人的报价、节省金额、"
-        "客户经历或施工结果；原文有而用户未提供的事实，用已提供的信息自然替换或略去。"
-        "用户输入的金额、单位、面积、数量及报价明细必须准确保留，不自行换算或补造。"
-        "装修家居成品不得出现员工真实姓名、工号、登录账号或与工号相同的编号；"
-        "persona 里若仍有岗位、门店、从业年限，只能用来把握口吻，不要把个人标识写进 title/body/topics。"
-        + (
-            ""
-            if is_case_share
-            else (
-                f"标题不超过{DIRECT_TITLE_MAX_CHARS}个字，汉字、数字、字母、标点、单位和 Emoji 都各计 1 个字，"
-                "并且必须是完整表达。"
-            )
-        )
-        + "话题必须包含装修避坑；用户数据里能确定城市时，还要包含「城市名+装修公司推荐」，"
-        "例如长沙装修公司推荐、株洲装修公司推荐。不要带 # 号。"
-        "正文分段使用真实换行，不要输出反斜杠和字母 n。"
-        f"{NATURAL_CLOSING_INSTRUCTION}\n\n"
-        f"{style_block}"
-        "爆款原文：\n"
-        f"{json.dumps(viral_source, ensure_ascii=False)}\n\n"
-        "用户输入数据（原样保留并结合其中信息写作）：\n"
-        f"{user_request}\n\n"
-        "本次生成提示词：\n"
+        "严格按「用户生成提示词」写文案，不要另起标题公式、话题或结尾。"
+        "返回字段 title、body、topics；不要输出解释。\n\n"
+        f"{image_line}"
+        "用户生成提示词：\n"
         f"{generation_prompt.strip()}\n\n"
-        f"{shared_tail}"
+        "业务数据只用来核对事实。提示词没有要求的金额、小区、人名和经历不要补写。\n"
+        f"{user_request}\n\n"
+        f"{reference_block}"
+        f"{knowledge_block}"
+        f"{forbidden_block}"
+    )
+
+
+def prepare_reference_image(data: bytes, content_type: str) -> tuple[str, str]:
+    """把参考图压成模型可接收的 JPEG data URL 内容。"""
+
+    import base64
+    from io import BytesIO
+
+    from PIL import Image, ImageOps, UnidentifiedImageError
+
+    try:
+        with Image.open(BytesIO(data)) as image:
+            image = ImageOps.exif_transpose(image)
+            image.thumbnail((1600, 1600))
+            if image.mode not in {"RGB", "L"}:
+                image = image.convert("RGB")
+            quality = 85
+            shrunk = False
+            while True:
+                buffer = BytesIO()
+                image.save(buffer, format="JPEG", quality=quality, optimize=True)
+                small_enough = buffer.tell() <= 480_000
+                if small_enough or (quality <= 70 and (shrunk or max(image.size) <= 1024)):
+                    break
+                if quality > 70:
+                    quality -= 8
+                    continue
+                image.thumbnail((1024, 1024))
+                shrunk = True
+                quality = 75
+        encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
+        return "image/jpeg", encoded
+    except (UnidentifiedImageError, OSError, ValueError):
+        mime = content_type if str(content_type).startswith("image/") else "image/jpeg"
+        return mime, base64.b64encode(data).decode("ascii")
+
+
+def response_token_usage(response: Any) -> dict[str, int | None]:
+    """读取模型返回的 token 用量。没有用量时各字段为空。"""
+
+    usage = getattr(response, "usage_metadata", None) or {}
+    if not usage:
+        meta = getattr(response, "response_metadata", None) or {}
+        raw = meta.get("token_usage") or meta.get("usage") or {}
+        usage = raw if isinstance(raw, dict) else {}
+
+    def pick(*keys: str) -> int | None:
+        for key in keys:
+            value = usage.get(key) if isinstance(usage, dict) else None
+            if isinstance(value, int):
+                return value
+        return None
+
+    input_tokens = pick("input_tokens", "prompt_tokens")
+    output_tokens = pick("output_tokens", "completion_tokens")
+    total_tokens = pick("total_tokens")
+    if total_tokens is None and input_tokens is not None and output_tokens is not None:
+        total_tokens = input_tokens + output_tokens
+    return {
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "total_tokens": total_tokens,
+    }
+
+
+def model_rejects_image(exc: BaseException) -> bool:
+    text = str(exc)
+    return "not a VLM" in text or "text-only prompts" in text
+
+
+def model_rejects_named_tool_choice(exc: BaseException) -> bool:
+    text = str(exc)
+    return "Specifying functions for tool_choice" in text or "20015" in text
+
+
+def _json_object(text: str) -> dict[str, Any] | None:
+    candidate = text.strip()
+    if candidate.startswith("```"):
+        candidate = candidate.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+    try:
+        parsed = json.loads(candidate)
+    except json.JSONDecodeError:
+        start, end = candidate.find("{"), candidate.rfind("}")
+        if start < 0 or end <= start:
+            return None
+        try:
+            parsed = json.loads(candidate[start : end + 1])
+        except json.JSONDecodeError:
+            return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _article_fields(payload: dict[str, Any]) -> dict[str, Any] | None:
+    title = str(payload.get("title") or "").strip()
+    body = str(payload.get("body") or "").strip()
+    if not title or not body:
+        return None
+    topics = payload.get("topics") if isinstance(payload.get("topics"), list) else []
+    return {"title": title, "body": body, "topics": [str(topic) for topic in topics]}
+
+
+def _plain_article(text: str) -> dict[str, Any] | None:
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if not lines:
+        return None
+    title = lines[0].lstrip("#").strip()
+    body = "\n".join(lines[1:]).strip() if len(lines) > 1 else title
+    if not title or not body:
+        return None
+    return {"title": title, "body": body, "topics": []}
+
+
+def _response_text_content(response: Any) -> str:
+    content = getattr(response, "content", "")
+    if isinstance(content, list):
+        return "\n".join(part.get("text", "") if isinstance(part, dict) else str(part) for part in content).strip()
+    return content.strip() if isinstance(content, str) else ""
+
+
+def _output_arguments(response: Any) -> dict[str, Any] | None:
+    calls = list(getattr(response, "tool_calls", None) or [])
+    calls.extend(getattr(response, "invalid_tool_calls", None) or [])
+    extra = getattr(response, "additional_kwargs", None) or {}
+    for call in extra.get("tool_calls") or []:
+        function = call.get("function") if isinstance(call, dict) else None
+        if isinstance(function, dict):
+            calls.append({"args": function.get("arguments")})
+    for call in calls:
+        arguments = call.get("args") if isinstance(call, dict) else None
+        payload = _json_object(arguments) if isinstance(arguments, str) else arguments
+        article = _article_fields(payload) if isinstance(payload, dict) else None
+        if article:
+            return article
+    text = _response_text_content(response)
+    article = _article_fields(_json_object(text) or {})
+    if article:
+        return article
+    return _plain_article(text)
+
+
+def _append_copy_instruction(message: HumanMessage) -> HumanMessage:
+    note = "请直接输出文案。第一行写标题，空一行后写正文。不要调用工具，不要输出解释。"
+    content = message.content
+    if isinstance(content, str):
+        return HumanMessage(content=f"{content}\n\n{note}")
+    parts = []
+    for part in content:
+        if isinstance(part, dict) and part.get("type") == "text":
+            parts.append({**part, "text": f"{part.get('text', '')}\n\n{note}"})
+        else:
+            parts.append(part)
+    return HumanMessage(content=parts)
+
+
+def _direct_generation_message(prompt: str, reference_image: tuple[bytes, str] | None) -> HumanMessage:
+    if not reference_image:
+        return HumanMessage(content=prompt)
+    data, content_type = reference_image
+    mime, encoded = prepare_reference_image(data, content_type)
+    return HumanMessage(
+        content=[
+            {"type": "text", "text": prompt},
+            {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{encoded}"}},
+        ]
     )
 
 
@@ -310,6 +357,9 @@ async def generate_direct_content(
     generation_prompt: str = DEFAULT_DIRECT_GENERATION_PROMPT,
     forbidden_lexicon: dict[str, list[str]] | None = None,
     knowledge_context: str = "",
+    reference_knowledge: str = "",
+    reference_image: tuple[bytes, str] | None = None,
+    usage_out: dict[str, Any] | None = None,
 ) -> ContentArtifactAIEditOutput:
     """用创作风格、爆款原文和用户原始输入直接生成内容，不执行工作流审核。"""
 
@@ -335,58 +385,95 @@ async def generate_direct_content(
         generation_prompt=generation_prompt,
         forbidden_lexicon=forbidden_lexicon,
         knowledge_context=knowledge_context.strip(),
+        image_attached=bool(reference_image),
+        reference_knowledge=reference_knowledge,
     )
     messages = [
-        HumanMessage(content=prompt),
+        _direct_generation_message(prompt, reference_image),
     ]
     generation_started_at = time.monotonic()
-    response = await model.bind_tools(
+    bound_model = model.bind_tools(
         [ContentArtifactAIEditOutput],
         tool_choice=ContentArtifactAIEditOutput.__name__,
-    ).ainvoke(messages)
-    tool_calls = getattr(response, "tool_calls", None) or []
-    arguments = tool_calls[0].get("args") if tool_calls else None
-    if isinstance(arguments, str):
-        arguments = json.loads(arguments)
+    )
+    image_sent = bool(reference_image)
+    image_omitted_reason = ""
+
+    async def invoke(next_messages: list[HumanMessage]):
+        nonlocal bound_model
+        try:
+            return await bound_model.ainvoke(next_messages)
+        except Exception as exc:
+            if not model_rejects_named_tool_choice(exc):
+                raise
+            logger.info("Direct content model cannot force a tool, retrying with auto: model=%s", resolved_model)
+            bound_model = model.bind_tools([ContentArtifactAIEditOutput], tool_choice="auto")
+            return await bound_model.ainvoke(next_messages)
+
+    try:
+        response = await invoke(messages)
+    except Exception as exc:
+        if not reference_image or not model_rejects_image(exc):
+            raise
+        logger.info("Direct content model cannot read images, retrying with text only: model=%s", resolved_model)
+        image_sent = False
+        image_omitted_reason = "当前模型不能看图，已改为只根据文字生成"
+        prompt = _direct_generation_prompt(
+            style_block=style_block,
+            viral_source=viral_source,
+            user_request=user_request,
+            generation_prompt=generation_prompt,
+            forbidden_lexicon=forbidden_lexicon,
+            knowledge_context=knowledge_context.strip(),
+            image_attached=False,
+            reference_knowledge=reference_knowledge,
+        )
+        response = await invoke([_direct_generation_message(prompt, None)])
+    arguments = _output_arguments(response)
+    if arguments is None:
+        logger.info("Direct content model returned no copy fields, retrying as plain text: model=%s", resolved_model)
+        response = await model.ainvoke([_append_copy_instruction(messages[-1] if image_sent else _direct_generation_message(prompt, None))])
+        arguments = _output_arguments(response)
     if not isinstance(arguments, dict):
         raise ValueError("模型没有返回内容生成工具调用")
     raw_output = ContentArtifactAIEditOutput.model_validate(arguments)
-    normalized_title = normalize_escaped_newlines(
-        replace_forbidden_words(raw_output.title, forbidden_replacements)
-    )
-    case_copy = _case_share_copy_from_request(user_request, fallback_title=normalized_title)
-    if case_copy:
-        site_title, subtitle_line = case_copy
-        final_title = limit_content_title(site_title, limit=CASE_SHARE_DIRECT_TITLE_MAX_CHARS)
-        normalized_body = normalize_escaped_newlines(
-            replace_forbidden_words(raw_output.body, forbidden_replacements)
-        )
-        final_body = _ensure_case_share_body_lead(
-            normalized_body,
-            limit_content_title(subtitle_line, limit=CASE_SHARE_DIRECT_TITLE_MAX_CHARS),
-        )
-    else:
-        final_title = limit_content_title(normalized_title, limit=DIRECT_TITLE_MAX_CHARS)
-        final_body = normalize_escaped_newlines(replace_forbidden_words(raw_output.body, forbidden_replacements))
+    final_title = normalize_escaped_newlines(replace_forbidden_words(raw_output.title, forbidden_replacements)).strip()
+    final_body = normalize_escaped_newlines(replace_forbidden_words(raw_output.body, forbidden_replacements)).strip()
+    topics: list[str] = []
+    for topic in raw_output.topics:
+        text = normalize_escaped_newlines(replace_forbidden_words(topic, forbidden_replacements)).strip().lstrip("#").strip()
+        if text and text not in topics:
+            topics.append(text)
+        if len(topics) >= DIRECT_TOPIC_LIMIT:
+            break
     output = ContentArtifactAIEditOutput(
         title=final_title,
         body=final_body,
-        topics=merge_pinned_topics(
-            [
-                normalize_escaped_newlines(replace_forbidden_words(topic, forbidden_replacements))
-                for topic in raw_output.topics
-            ],
-            _region_from_user_request(user_request),
-            limit=DIRECT_TOPIC_LIMIT,
-        ),
+        topics=topics,
     )
     combined = "\n".join([output.title, output.body, *output.topics])
     residual = [term for term in forbidden_lexicon if term in combined]
     if residual:
         raise ValueError("封禁词替换后仍有残留：" + "、".join(residual))
+    tokens = response_token_usage(response)
+    if usage_out is not None:
+        usage_out.clear()
+        usage_out.update(
+            {
+                "model": resolved_model,
+                "prompt": prompt,
+                "image_attached": image_sent,
+                "image_omitted_reason": image_omitted_reason,
+                **tokens,
+            }
+        )
     logger.info(
-        "Direct content model completed: model={} total={:.2f}s",
+        "Direct content model completed: model={} input_tokens={} output_tokens={} total_tokens={} image={} total={:.2f}s",
         resolved_model,
+        tokens["input_tokens"],
+        tokens["output_tokens"],
+        tokens["total_tokens"],
+        image_sent,
         time.monotonic() - generation_started_at,
     )
     return output

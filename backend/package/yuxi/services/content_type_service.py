@@ -16,7 +16,7 @@ DEFAULT_CONTENT_TYPES: tuple[tuple[str, str, bool], ...] = (
     ("NRLX0002", "装修报价清单", True),
     ("NRLX0003", "装修避坑分享", True),
     ("NRLX0004", "装修省钱攻略", True),
-    ("NRLX0005", "装修案例分享", False),
+    ("NRLX0005", "装修案例分享", True),
     ("NRLX0006", "装修知识科普", True),
     ("NRLX0007", "人设自荐", True),
 )
@@ -56,6 +56,9 @@ def next_type_code(existing_codes: list[str]) -> str:
 async def ensure_default_content_types(db: AsyncSession) -> None:
     repo = ContentTypeRepository(db)
     if await repo.has_any():
+        case_share = await repo.get_by_name("装修案例分享")
+        if case_share is not None and not case_share.enabled:
+            case_share.enabled = True
         return
     for type_code, name, enabled in DEFAULT_CONTENT_TYPES:
         await repo.create(

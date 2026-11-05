@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { message, Modal } from 'ant-design-vue'
 import { Copy, FilePlus2, Grid2X2, History, Image, List, PencilLine, RotateCcw, Trash2 } from 'lucide-vue-next'
 import { contentApi } from '@/apis/content_api'
+import GenerationCallLog from '@/components/content/GenerationCallLog.vue'
 import MarkdownPreview from '@/components/common/MarkdownPreview.vue'
 import XiaohongshuDistributionDrawer from '@/components/content/XiaohongshuDistributionDrawer.vue'
 import { useContentStudioStore } from '@/stores/contentStudio'
@@ -51,10 +52,12 @@ const detailLoading = ref(false)
 const detailTask = ref(null)
 const detailArtifact = ref(null)
 const detailCoverUrl = ref('')
+const detailTab = ref('content')
 const distributionOpen = ref(false)
 let coverLoadId = 0
 let detailLoadId = 0
 const selectedCoverUrl = computed(() => coverUrls.value[detailTask.value?.id] || detailCoverUrl.value)
+const detailLog = computed(() => detailArtifact.value?.runtime_config_snapshot?.generation_log || null)
 const canPublish = computed(() =>
   detailTask.value?.runtime_config_snapshot?.creation_mode === 'viral_rewrite' &&
   ['passed', 'warning'].includes(detailArtifact.value?.review_snapshot?.status)
@@ -93,6 +96,7 @@ const openCard = async (task) => {
   const loadId = ++detailLoadId
   detailOpen.value = true
   detailLoading.value = true
+  detailTab.value = 'content'
   detailTask.value = null
   detailArtifact.value = null
   if (detailCoverUrl.value) URL.revokeObjectURL(detailCoverUrl.value)
@@ -338,7 +342,11 @@ onBeforeUnmount(() => {
 
     <a-modal v-model:open="detailOpen" class="history-detail-modal" title="生成结果详情" :width="920" centered destroy-on-close>
       <a-spin :spinning="detailLoading">
-        <div v-if="detailArtifact" class="history-detail-layout">
+        <a-tabs v-if="detailArtifact" v-model:activeKey="detailTab" class="history-detail-tabs">
+          <a-tab-pane key="content" tab="内容" />
+          <a-tab-pane key="log" tab="发给模型的数据" />
+        </a-tabs>
+        <div v-if="detailArtifact && detailTab === 'content'" class="history-detail-layout">
           <section class="detail-cover" aria-label="内容封面">
             <div class="detail-cover-actions">
               <span><Image :size="17" />封面</span>
@@ -363,6 +371,9 @@ onBeforeUnmount(() => {
               <div class="detail-topics"><span v-for="topic in detailArtifact.topics || []" :key="topic">#{{ topic }}</span><p v-if="!detailArtifact.topics?.length">暂无发布标签</p></div>
             </section>
           </div>
+        </div>
+        <div v-else-if="detailArtifact && detailTab === 'log'" class="history-log">
+          <GenerationCallLog :log="detailLog" />
         </div>
         <a-empty v-else-if="!detailLoading" description="内容资产尚未生成完成" />
       </a-spin>
@@ -425,7 +436,18 @@ header :deep(.ant-btn), .history-card :deep(.ant-btn) { display: inline-flex; al
 
 <style lang="less">
 .history-detail-modal {
-  .history-detail-layout { height: min(760px, calc(100dvh - 190px)); min-height: 0; display: grid; grid-template-columns: minmax(320px, .9fr) minmax(0, 1.1fr); overflow: hidden; border: 1px solid var(--gray-150); border-radius: 8px; }
+  .history-detail-tabs { margin-bottom: 12px; }
+  .history-detail-layout { height: min(720px, calc(100dvh - 230px)); min-height: 0; display: grid; grid-template-columns: minmax(320px, .9fr) minmax(0, 1.1fr); overflow: hidden; border: 1px solid var(--gray-150); border-radius: 8px; }
+  .history-log { height: min(720px, calc(100dvh - 230px)); min-height: 0; display: flex; flex-direction: column; gap: 14px; overflow: auto; padding: 16px 18px; border: 1px solid var(--gray-150); border-radius: 8px; background: var(--gray-0); }
+  .history-log-facts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin: 0; }
+  .history-log-facts div { min-width: 0; padding: 10px 12px; border: 1px solid var(--gray-150); border-radius: 8px; background: var(--gray-25); }
+  .history-log-facts dt { color: var(--color-text-tertiary); font-size: 12px; }
+  .history-log-facts dd { margin: 4px 0 0; overflow-wrap: anywhere; color: var(--color-text); font-size: 13px; }
+  .history-log section strong { display: block; margin-bottom: 8px; }
+  .history-log img { display: block; max-width: 240px; max-height: 320px; object-fit: contain; border-radius: 6px; background: var(--gray-100); }
+  .history-log-kb { margin: 0; padding-left: 18px; color: var(--color-text); font-size: 13px; line-height: 1.7; }
+  .history-log-prompt { min-height: 0; display: flex; flex-direction: column; }
+  .history-log pre { max-height: 280px; margin: 8px 0 0; padding: 12px; overflow: auto; border: 1px solid var(--gray-150); border-radius: 8px; background: var(--gray-25); white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; line-height: 1.6; }
   .detail-cover { min-width: 0; min-height: 0; display: flex; flex-direction: column; padding: 20px; border-right: 1px solid var(--gray-150); background: var(--gray-25); }
   .detail-cover-actions, .detail-section-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
   .detail-heading-main { display: inline-flex; align-items: center; gap: 8px; }
@@ -446,7 +468,9 @@ header :deep(.ant-btn), .history-card :deep(.ant-btn) { display: inline-flex; al
   .detail-footer { display: flex; justify-content: space-between; }
   .detail-footer .ant-btn { min-width: 132px; }
   @media (max-width: 700px) {
-    .history-detail-layout { height: calc(100dvh - 170px); display: block; overflow-y: auto; }
+    .history-detail-layout, .history-log { height: calc(100dvh - 170px); }
+    .history-detail-layout { display: block; overflow-y: auto; }
+    .history-log-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .detail-cover { height: min(440px, 55dvh); border-right: 0; border-bottom: 1px solid var(--gray-150); }
     .detail-content { display: block; overflow: visible; }
     .detail-body-section, .detail-body { overflow: visible; }

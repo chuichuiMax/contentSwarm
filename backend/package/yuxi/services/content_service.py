@@ -2128,10 +2128,9 @@ async def create_direct_content_run(
         if not viral_source["body"]:
             raise _content_error(409, "CONTENT_VIRAL_REFERENCE_MISSING", "匹配的爆款资产缺少原文")
         viral_asset_id = reference.id
-    elif skip_cover:
-        viral_source = {"title": "", "body": ""}
     else:
-        raise _content_error(409, "CONTENT_VIRAL_REFERENCE_MISSING", "请选择爆款原文")
+        viral_source = {"title": "", "body": ""}
+        viral_asset_id = ""
 
     request_id = payload.request_id
     run_repo = AgentRunRepository(db)

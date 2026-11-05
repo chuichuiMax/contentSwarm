@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import random
 import re
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -64,15 +65,10 @@ _STYLE_CATALOG: dict[str, dict[str, str]] = {
     },
 }
 
-_HEARTFELT_PRICE_SHOW = "用真诚的语气表达价格秀明、团队优势"
 _QUOTE_STYLE_KEYS = ("项目经理掏心窝", "本地信任型", "案例证明型", "痛点共鸣型")
-_CRAFT_STYLE_KEYS = ("项目经理掏心窝", "本地信任型", "专业干货型", "极简美学设计型")
-_CASE_SHARE_STYLE_KEYS = ("项目经理掏心窝", "本地信任型", "案例证明型", "痛点共鸣型", "实景案例拆解型")
 _KNOWLEDGE_STYLE_KEYS = ("实景案例拆解型", "极简美学设计型")
 
 _STYLES_BY_TYPE_NAME: dict[str, tuple[str, ...]] = {
-    "工艺施工展示": _CRAFT_STYLE_KEYS,
-    "工艺展示": _CRAFT_STYLE_KEYS,
     "装修报价清单": _QUOTE_STYLE_KEYS,
     "报价清单": _QUOTE_STYLE_KEYS,
     "施工报价": _QUOTE_STYLE_KEYS,
@@ -80,13 +76,18 @@ _STYLES_BY_TYPE_NAME: dict[str, tuple[str, ...]] = {
     "避坑分享": _QUOTE_STYLE_KEYS,
     "装修省钱攻略": _QUOTE_STYLE_KEYS,
     "省钱攻略": _QUOTE_STYLE_KEYS,
-    "装修案例分享": _CASE_SHARE_STYLE_KEYS,
-    "案例分享": _CASE_SHARE_STYLE_KEYS,
     "装修知识科普": _KNOWLEDGE_STYLE_KEYS,
     "知识科普": _KNOWLEDGE_STYLE_KEYS,
     "人设自荐": ("理性设计师",),
     "装修人设自荐": ("理性设计师",),
 }
+_PROMPT_STYLE_NAMES = {
+    "工艺施工展示": "工艺施工展示",
+    "工艺展示": "工艺施工展示",
+    "装修案例分享": "装修案例分享",
+    "案例分享": "装修案例分享",
+}
+_PROMPT_STYLE_PATH = Path(__file__).resolve().parent / "data" / "content_style_prompts.json"
 _CT_TO_CANONICAL_STYLE_TYPE_NAME = {
     "CT01": "装修案例分享",
     "CT02": "装修报价清单",
@@ -113,12 +114,24 @@ def _canonical_style_type_name(content_type_code: str | None, content_type_name:
     if code == "CT06":
         return "装修知识科普" if any(token in name for token in ("科普", "知识")) else "工艺施工展示"
     return _CT_TO_CANONICAL_STYLE_TYPE_NAME.get(code, name)
-_DESCRIPTION_OVERRIDES: dict[str, dict[str, str]] = {
-    "工艺施工展示": {"项目经理掏心窝": _HEARTFELT_PRICE_SHOW},
-    "工艺展示": {"项目经理掏心窝": _HEARTFELT_PRICE_SHOW},
-    "装修案例分享": {"项目经理掏心窝": _HEARTFELT_PRICE_SHOW},
-    "案例分享": {"项目经理掏心窝": _HEARTFELT_PRICE_SHOW},
-}
+
+
+def _prompt_style_options(content_type_name: str) -> list[dict[str, str]]:
+    catalog_name = _PROMPT_STYLE_NAMES.get(content_type_name)
+    if not catalog_name:
+        return []
+    catalog = json.loads(_PROMPT_STYLE_PATH.read_text(encoding="utf-8"))
+    items = catalog.get(catalog_name) or []
+    options: list[dict[str, str]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        label = _text(item.get("label"))
+        prompt = _text(item.get("prompt"))
+        if not label or not prompt:
+            continue
+        options.append({"label": label, "description": _text(item.get("description")), "prompt": prompt})
+    return options
 
 
 def _text(value: Any) -> str:
@@ -170,18 +183,17 @@ def _lock_frame_area(raw: str, seed: str) -> str | None:
 
 def creative_style_options(content_type_code: str | None, content_type_name: str) -> list[dict[str, str]]:
     name = _canonical_style_type_name(content_type_code, content_type_name)
+    prompted = _prompt_style_options(name)
+    if prompted:
+        return prompted
     keys = _STYLES_BY_TYPE_NAME.get(name)
     if not keys:
         return []
-    overrides = _DESCRIPTION_OVERRIDES.get(name, {})
     options: list[dict[str, str]] = []
     for key in keys:
         item = _STYLE_CATALOG.get(key)
-        if item is None:
-            continue
-        if key in overrides:
-            item = {**item, "description": overrides[key]}
-        options.append(item)
+        if item is not None:
+            options.append(item)
     return options
 
 
@@ -190,7 +202,11 @@ def pick_random_creative_style(content_type_code: str | None, content_type_name:
     if not options:
         raise ValueError("no creative styles for content type")
     picked = random.choice(options)
-    return {"name": picked["label"], "instruction": picked["description"]}
+    style = {"name": picked["label"], "instruction": picked["description"]}
+    prompt = _text(picked.get("prompt"))
+    if prompt:
+        style["prompt"] = prompt
+    return style
 
 
 def _build_persona(employee: ContentEmployee, user: User) -> dict[str, Any]:
@@ -457,9 +473,13 @@ async def build_mp_decoration_direct_defaults(
         business_variables=business_variables,
     )
     user_request = await enrich_studio_user_request_json(user.uid, user_request)
+    prompt = _text(creative_style.get("prompt"))
     return {
-        "generation_prompt": DEFAULT_DIRECT_GENERATION_PROMPT,
-        "creative_style": creative_style,
+        "generation_prompt": prompt or DEFAULT_DIRECT_GENERATION_PROMPT,
+        "creative_style": {
+            "name": creative_style.get("name") or "",
+            "instruction": creative_style.get("instruction") or "",
+        },
         "viral_asset_id": viral_asset_id,
         "user_request": user_request,
     }

@@ -8,6 +8,28 @@ from yuxi.services import content_direct_worker as worker
 
 
 @pytest.mark.unit
+def test_first_reference_image_uses_selected_or_uploaded_photo():
+    assert worker.first_reference_image_locator(
+        {
+            "visual_material": {
+                "image_item_id": "primary",
+                "photo_composition": {
+                    "slots": [{"image_item_id": ""}, {"image_item_id": "slot-2"}]
+                },
+            }
+        }
+    ) == ("item", "slot-2")
+    assert worker.first_reference_image_locator({"visual_material": {"image_item_id": "picked"}}) == (
+        "item",
+        "picked",
+    )
+    assert worker.first_reference_image_locator(
+        {"content_brief": {"form_values": {"cover_asset_ids": ["uploaded-1", "uploaded-2"]}}}
+    ) == ("asset", "uploaded-1")
+    assert worker.first_reference_image_locator({"skip_cover": True, "visual_material": {}}) == ("", "")
+
+
+@pytest.mark.unit
 @pytest.mark.asyncio
 async def test_review_notes_direct_run_saves_draft_without_cover(monkeypatch):
     run = SimpleNamespace(
@@ -79,7 +101,9 @@ async def test_review_notes_direct_run_saves_draft_without_cover(monkeypatch):
     monkeypatch.setattr(worker, "_set_run_terminal", AsyncMock())
     monkeypatch.setattr(worker, "append_run_stream_event", record_event)
     monkeypatch.setattr(worker, "has_cancel_signal", AsyncMock(return_value=False))
-    monkeypatch.setattr(worker, "load_forbidden_words", AsyncMock(return_value={"alternatives": {}}))
+    monkeypatch.setattr(
+        worker, "load_optional_forbidden_words", AsyncMock(return_value={"alternatives": {}, "knowledge_base_id": ""})
+    )
     monkeypatch.setattr(worker, "load_knowledge_base_text", AsyncMock(return_value="业主看了未完工的工地"))
     monkeypatch.setattr(worker, "generate_direct_content", fake_generate)
     cover = AsyncMock(side_effect=AssertionError("好评笔记不应生成封面"))
@@ -89,6 +113,7 @@ async def test_review_notes_direct_run_saves_draft_without_cover(monkeypatch):
 
     cover.assert_not_awaited()
     assert generate_calls[0]["knowledge_context"] == "业主看了未完工的工地"
+    assert generate_calls[0]["reference_image"] is None
     worker.load_knowledge_base_text.assert_awaited_once_with("user-1", "好评笔记知识库")
     assert task.status == "generated"
     assert repo.track.await_args.args[0] == "content_direct_run_completed"
