@@ -11,12 +11,14 @@ from yuxi.agents import load_chat_model, resolve_chat_model_spec
 from yuxi.utils.line_breaks import normalize_escaped_newlines
 from yuxi.content.model.forbidden_words import replace_forbidden_words
 from yuxi.content.schemas import ContentArtifactAIEditOutput, ReviewReport
+from yuxi.content.v3.modular_rules import merge_pinned_topics, topic_region_name
 from yuxi.utils.logging_config import logger
 
 SKILLS_ROOT = Path(__file__).resolve().parents[1] / "agents" / "skills" / "buildin"
 DEFAULT_DIRECT_GENERATION_PROMPT = "使用我给你的一些元素，根据爆文 换一种表达方式 符合当地的口吻"
 DIRECT_TITLE_MAX_CHARS = 20
 DIRECT_TOPIC_LIMIT = 10
+_TOPIC_REGION_KEYS = ("所在区域", "city", "location", "region", "serviceCity")
 SKILL_VERSIONS = {
     "content-value-analyzer": "1.3.0",
     "content-strategy-planner": "4.0.1",
@@ -45,6 +47,43 @@ _TITLE_SUFFIX_FRAGMENTS = (
     "施工",
     "装修",
 )
+
+
+def append_topics_within_limit(topics: list[str], extras: list[str], *, limit: int = DIRECT_TOPIC_LIMIT) -> list[str]:
+    """在已有话题后补足标签，总数不超过上限。"""
+
+    merged: list[str] = []
+    seen: set[str] = set()
+    for item in [*topics, *extras]:
+        text = str(item or "").strip().lstrip("#").strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        merged.append(text)
+        if len(merged) >= limit:
+            break
+    return merged
+
+
+def _region_from_user_request(user_request: str) -> str:
+    try:
+        payload = json.loads(user_request)
+    except json.JSONDecodeError:
+        return ""
+    if not isinstance(payload, dict):
+        return ""
+    sources: list[Any] = []
+    for key in ("businessVariables", "business_variables", "form_values"):
+        section = payload.get(key)
+        if isinstance(section, dict):
+            sources.extend(section.get(name) for name in _TOPIC_REGION_KEYS)
+    facts = payload.get("facts")
+    if isinstance(facts, dict):
+        sources.append(facts.get("location"))
+    for value in sources:
+        if name := topic_region_name(value):
+            return name
+    return ""
 
 
 def _direct_request_content_type(user_request: str) -> tuple[str, str]:
@@ -160,22 +199,37 @@ def _direct_generation_prompt(
         else ""
     )
     reference_block = (
-        f"内容类型知识库只作参考，与业务数据或图片不一致的内容不要写入：\n{reference_knowledge.strip()}\n\n"
+        "已命中的知识库用来写文案。有所选内容类型的知识库时只用该库；没有时使用其他可访问知识库。"
+        "与业务数据或图片不一致的事实不要写入：\n"
+        f"{reference_knowledge.strip()}\n\n"
         if reference_knowledge.strip()
         else ""
     )
-    knowledge_block = (
-        f"好评笔记知识库只作参考，表单里没有的金额、小区、工期和人名不要写入：\n{knowledge_context.strip()}\n\n"
-        if knowledge_context.strip()
-        else ""
-    )
+    if knowledge_context.strip():
+        topic_rule = (
+            "话题写 8 到 10 个，像装修日记标签，包含鸿扬家装和装修避坑；"
+            "能确定城市时再包含「城市名+装修公司推荐」，例如长沙装修公司推荐、株洲装修公司推荐。"
+            "不要带 # 号。\n"
+        )
+        knowledge_block = (
+            "用好评笔记知识库里的业主口吻、服务场景和工艺细节写文案。"
+            "表单里没有的金额、小区、工期和人名不要写入：\n"
+            f"{knowledge_context.strip()}\n\n"
+        )
+    else:
+        topic_rule = (
+            "话题必须包含装修避坑；用户数据里能确定城市时，还要包含「城市名+装修公司推荐」，"
+            "例如长沙装修公司推荐、株洲装修公司推荐。不要带 # 号。\n"
+        )
+        knowledge_block = ""
     return (
-        "严格按「用户生成提示词」写文案，不要另起标题公式、话题或结尾。"
-        "返回字段 title、body、topics；不要输出解释。\n\n"
+        "按「用户生成提示词」和图片写文案，不要另起标题公式或统一结尾。"
+        "返回字段 title、body、topics；不要输出解释。\n"
+        f"{topic_rule}\n"
         f"{image_line}"
         "用户生成提示词：\n"
         f"{generation_prompt.strip()}\n\n"
-        "业务数据只用来核对事实。提示词没有要求的金额、小区、人名和经历不要补写。\n"
+        "业务数据只用来核对事实。提示词和内容类型知识库没有要求的金额、小区、人名和经历不要补写。\n"
         f"{user_request}\n\n"
         f"{reference_block}"
         f"{knowledge_block}"
@@ -439,17 +493,17 @@ async def generate_direct_content(
     raw_output = ContentArtifactAIEditOutput.model_validate(arguments)
     final_title = normalize_escaped_newlines(replace_forbidden_words(raw_output.title, forbidden_replacements)).strip()
     final_body = normalize_escaped_newlines(replace_forbidden_words(raw_output.body, forbidden_replacements)).strip()
-    topics: list[str] = []
-    for topic in raw_output.topics:
-        text = normalize_escaped_newlines(replace_forbidden_words(topic, forbidden_replacements)).strip().lstrip("#").strip()
-        if text and text not in topics:
-            topics.append(text)
-        if len(topics) >= DIRECT_TOPIC_LIMIT:
-            break
     output = ContentArtifactAIEditOutput(
         title=final_title,
         body=final_body,
-        topics=topics,
+        topics=merge_pinned_topics(
+            [
+                normalize_escaped_newlines(replace_forbidden_words(topic, forbidden_replacements))
+                for topic in raw_output.topics
+            ],
+            _region_from_user_request(user_request),
+            limit=DIRECT_TOPIC_LIMIT,
+        ),
     )
     combined = "\n".join([output.title, output.body, *output.topics])
     residual = [term for term in forbidden_lexicon if term in combined]

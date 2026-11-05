@@ -14,15 +14,20 @@ let loadSeq = 0
 
 const tokenText = (value) => (Number.isInteger(value) ? String(value) : '未返回')
 
+const visibleKnowledgeHits = (log) =>
+  (log?.knowledge_hits || []).filter((item) => item.role !== 'prompt_catalog')
+
 const knowledgeLabel = (item) => {
-  if (item.role === 'prompt_catalog') return '提示词库'
   if (item.role === 'forbidden') return '封禁词库'
+  if (item.role === 'audience_tags') return '通用标签'
+  if (item.role === 'other') return '其他知识库'
   return '内容知识库'
 }
 
 const knowledgeResult = (item) => {
   if (!item.hit) return '未命中'
   if (item.role === 'forbidden') return `已命中，${item.chars || 0} 条替换`
+  if (item.role === 'audience_tags') return `已命中，补入 ${item.chars || 0} 个标签`
   return `已命中，读取 ${item.chars || 0} 字`
 }
 
@@ -80,10 +85,10 @@ onBeforeUnmount(() => {
       <p v-if="log.image_omitted_reason">{{ log.image_omitted_reason }}</p>
       <p v-else-if="!imageUrl">{{ log.image_attached ? '图片记录存在，但原图暂时无法打开' : '这次生成没有附带图片' }}</p>
     </section>
-    <section v-if="log.knowledge_hits?.length">
+    <section v-if="visibleKnowledgeHits(log).length">
       <strong>知识库</strong>
       <ul>
-        <li v-for="item in log.knowledge_hits" :key="`${item.role || 'content'}-${item.name}`">
+        <li v-for="item in visibleKnowledgeHits(log)" :key="`${item.role || 'content'}-${item.name}`">
           {{ knowledgeLabel(item) }}「{{ item.name || '未命名' }}」{{ knowledgeResult(item) }}
         </li>
       </ul>

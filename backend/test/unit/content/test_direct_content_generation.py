@@ -52,7 +52,7 @@ async def test_direct_generation_uses_only_requested_inputs(monkeypatch):
 
     assert result.title == "费用标题"
     assert result.body == "费用正文"
-    assert result.topics == ["费用"]
+    assert result.topics == ["装修避坑", "费用"]
     assert load_model_calls == [
         {
             "fully_specified_name": "ark:doubao-seed-2-1-pro-260915",
@@ -75,8 +75,8 @@ async def test_direct_generation_uses_only_requested_inputs(monkeypatch):
     assert '"serialNo":"002"' in prompt
     assert "反差价值型" not in prompt
     assert "爆款正文" not in prompt
-    assert "装修避坑" not in prompt
-    assert "装修公司推荐" not in prompt
+    assert "话题必须包含装修避坑" in prompt
+    assert "装修公司推荐" in prompt
     assert "封禁词替换表" in prompt
     assert '"报价": ["费用"]' in prompt
 
@@ -101,7 +101,9 @@ async def test_direct_generation_pins_region_company_topic(monkeypatch):
         user_request='{"businessVariables":{"所在区域":"株洲市"}}',
     )
 
-    assert result.topics == ["装修避坑", "装修日记"]
+    assert result.topics[0] == "株洲装修公司推荐"
+    assert result.topics[1] == "装修避坑"
+    assert "装修日记" in result.topics
     assert all(not topic.startswith("#") for topic in result.topics)
 
 
@@ -161,7 +163,8 @@ async def test_review_notes_generation_uses_owner_voice_and_knowledge(monkeypatc
     prompt = calls[0][0].content
     assert "用户生成提示词" in prompt
     assert "站在业主角度写好评笔记" in prompt
-    assert "好评笔记知识库只作参考" in prompt
+    assert "用好评笔记知识库里的业主口吻" in prompt
+    assert "话题写 8 到 10 个" in prompt
     assert "业主去未完工的工地看隐蔽工程" in prompt
     assert '"项目经理":"王五"' in prompt
     assert "爆款原文" not in prompt
@@ -356,7 +359,37 @@ async def test_plain_text_response_is_used_as_copy(monkeypatch):
 
     assert result.title == "阳台收纳做好了"
     assert "洗衣机" in result.body
-    assert result.topics == []
+    assert result.topics == ["装修避坑"]
+
+
+def test_topics_are_filled_from_generic_tags_up_to_ten():
+    topics = generation.append_topics_within_limit(
+        ["株洲装修公司推荐", "装修避坑"],
+        ["装修日记", "#装修避坑", "水电改造", "泥瓦", "木工", "油漆", "收纳", "软装", "旧改", "厨房"],
+    )
+    assert topics[0] == "株洲装修公司推荐"
+    assert topics[1] == "装修避坑"
+    assert "装修日记" in topics
+    assert len(topics) == 10
+    assert "厨房" not in topics
+
+
+def test_other_knowledge_bases_are_used_when_content_type_is_missing():
+    from yuxi.services.content_direct_worker import other_copy_knowledge_names
+
+    names = other_copy_knowledge_names(
+        "装修案例分享",
+        [
+            "装修案例分享",
+            "封禁词库",
+            "创作提示词",
+            "目标人群-通用-标签",
+            "好评笔记知识库",
+            "工艺施工展示知识库",
+            "装修报价知识库",
+        ],
+    )
+    assert names == ["工艺施工展示知识库", "装修报价知识库"]
 
 
 def test_reference_knowledge_is_written_into_the_prompt():
@@ -369,9 +402,9 @@ def test_reference_knowledge_is_written_into_the_prompt():
         knowledge_context="",
         reference_knowledge="现代风格常用浅色柜体。",
     )
-    assert "内容类型知识库只作参考" in prompt
+    assert "已命中的知识库用来写文案" in prompt
     assert "现代风格常用浅色柜体。" in prompt
-    assert prompt.index("用户生成提示词") < prompt.index("内容类型知识库只作参考")
+    assert prompt.index("用户生成提示词") < prompt.index("已命中的知识库用来写文案")
 
 
 def test_prepare_reference_image_keeps_a_readable_jpeg():

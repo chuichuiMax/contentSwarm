@@ -9,7 +9,9 @@ from sqlalchemy import select
 from yuxi.content.control.visual_template_fields import resolve_hycanvas_template_fields
 from yuxi.content.generation import (
     DEFAULT_DIRECT_GENERATION_PROMPT,
+    DIRECT_TOPIC_LIMIT,
     _direct_request_content_type,
+    append_topics_within_limit,
     generate_direct_content,
 )
 from yuxi.utils.line_breaks import normalize_escaped_newlines
@@ -47,7 +49,24 @@ from yuxi.utils.logging_config import logger
 
 DIRECT_COVER_TIMEOUT_SECONDS = 900
 DIRECT_COVER_POLL_SECONDS = 1
-PROMPT_CATALOG_KB_NAME = "创作提示词"
+GENERIC_AUDIENCE_TAG_KB_NAME = "目标人群-通用-标签"
+_COPY_KB_EXCLUDED = frozenset({"封禁词库", "创作提示词", "好评笔记知识库"})
+
+
+def other_copy_knowledge_names(content_type_name: str, names: list[str]) -> list[str]:
+    """内容类型没有对应知识库时，其余可访问知识库都可以用来写文案。"""
+
+    excluded = set(content_type_knowledge_names(content_type_name))
+    excluded.update(_COPY_KB_EXCLUDED)
+    selected: list[str] = []
+    for name in names:
+        text = str(name or "").strip()
+        if not text or text in excluded or text in selected:
+            continue
+        if text.startswith("目标人群-") and text.endswith("-标签"):
+            continue
+        selected.append(text)
+    return selected
 
 
 def content_type_knowledge_names(content_type_name: str) -> list[str]:
@@ -58,6 +77,30 @@ def content_type_knowledge_names(content_type_name: str) -> list[str]:
     if not name.endswith("知识库"):
         names.append(f"{name}知识库")
     return names
+
+
+async def accessible_knowledge_names(uid: str) -> list[str]:
+    from yuxi import knowledge_base
+    from yuxi.knowledge.manager import DEFAULT_SHARE_CONFIG
+    from yuxi.repositories.knowledge_base_repository import KnowledgeBaseRepository
+    from yuxi.repositories.user_repository import UserRepository
+
+    user = await UserRepository().get_by_uid(uid)
+    if not user:
+        return []
+    user_info = {"uid": user.uid, "role": user.role, "department_id": user.department_id}
+    rows = await KnowledgeBaseRepository().get_all()
+    names: list[str] = []
+    for row in sorted(rows, key=lambda item: str(item.name or "")):
+        if knowledge_base._database_info_accessible(
+            user_info,
+            {
+                "created_by": row.created_by,
+                "share_config": row.share_config or DEFAULT_SHARE_CONFIG.copy(),
+            },
+        ):
+            names.append(str(row.name or "").strip())
+    return [name for name in names if name]
 
 
 async def lookup_content_knowledge(uid: str, name: str, *, limit: int = 12000) -> dict | None:
@@ -182,7 +225,8 @@ async def process_direct_content_run(ctx, run_id: str):
                 {"name": "好评笔记知识库", "hit": bool(knowledge_context), "kb_id": "", "chars": len(knowledge_context)}
             )
         else:
-            for kb_name in content_type_knowledge_names(content_type_name_from_payload(payload)):
+            type_name = content_type_name_from_payload(payload)
+            for kb_name in content_type_knowledge_names(type_name):
                 found = await lookup_content_knowledge(str(run.uid), kb_name)
                 if found is None:
                     continue
@@ -193,24 +237,37 @@ async def process_direct_content_run(ctx, run_id: str):
                         "hit": True,
                         "kb_id": found["kb_id"],
                         "chars": len(found["text"]),
+                        "role": "content_type",
                     }
                 )
                 break
-            if not knowledge_hits:
-                queried = content_type_knowledge_names(content_type_name_from_payload(payload))
-                knowledge_hits.append(
-                    {"name": queried[0] if queried else "", "hit": False, "kb_id": "", "chars": 0}
-                )
-        prompt_catalog = await lookup_content_knowledge(str(run.uid), PROMPT_CATALOG_KB_NAME, limit=80000)
-        knowledge_hits.append(
-            {
-                "name": PROMPT_CATALOG_KB_NAME,
-                "hit": prompt_catalog is not None,
-                "kb_id": (prompt_catalog or {}).get("kb_id") or "",
-                "chars": len((prompt_catalog or {}).get("text") or ""),
-                "role": "prompt_catalog",
-            }
-        )
+            else:
+                queried = content_type_knowledge_names(type_name)
+                if queried:
+                    knowledge_hits.append(
+                        {"name": queried[0], "hit": False, "kb_id": "", "chars": 0, "role": "content_type"}
+                    )
+                parts: list[str] = []
+                budget = 12000
+                for kb_name in other_copy_knowledge_names(type_name, await accessible_knowledge_names(str(run.uid))):
+                    if budget <= 0:
+                        break
+                    found = await lookup_content_knowledge(str(run.uid), kb_name, limit=budget)
+                    if found is None or not found["text"]:
+                        continue
+                    text = found["text"][:budget]
+                    parts.append(f"【{found['name']}】\n{text}")
+                    budget -= len(text)
+                    knowledge_hits.append(
+                        {
+                            "name": found["name"],
+                            "hit": True,
+                            "kb_id": found["kb_id"],
+                            "chars": len(text),
+                            "role": "other",
+                        }
+                    )
+                reference_knowledge = "\n\n".join(parts)
         usage_log: dict = {}
         generation = asyncio.create_task(
             generate_direct_content(
@@ -243,6 +300,23 @@ async def process_direct_content_run(ctx, run_id: str):
             if done:
                 break
         output = await generation
+        if len(output.topics) < DIRECT_TOPIC_LIMIT:
+            from yuxi.services.target_audience_tag_service import parse_audience_tag_lines
+
+            audience_hit = await lookup_content_knowledge(
+                str(run.uid), GENERIC_AUDIENCE_TAG_KB_NAME, limit=8000
+            )
+            audience_tags = parse_audience_tag_lines((audience_hit or {}).get("text") or "")
+            output.topics = append_topics_within_limit(list(output.topics), audience_tags)
+            knowledge_hits.append(
+                {
+                    "name": GENERIC_AUDIENCE_TAG_KB_NAME,
+                    "hit": bool(audience_tags),
+                    "kb_id": (audience_hit or {}).get("kb_id") or "",
+                    "chars": len(audience_tags),
+                    "role": "audience_tags",
+                }
+            )
         for field in ("title", "body", "topics"):
             value = getattr(output, field)
             await append_run_stream_event(
