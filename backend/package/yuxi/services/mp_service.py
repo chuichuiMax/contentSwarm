@@ -48,6 +48,7 @@ from yuxi.repositories.cover_repository import CoverRepository
 from yuxi.repositories.employee_repository import EmployeeRepository
 from yuxi.repositories.material_library_repository import MaterialLibraryRepository
 from yuxi.repositories.agent_run_repository import TERMINAL_RUN_STATUSES
+from yuxi.services.ai_cover_template_service import list_mp_ai_cover_prompts_by_type_code
 from yuxi.services.agent_run_service import _compact_run_event_envelope, stream_agent_run_events
 from yuxi.services.run_queue_service import normalize_after_seq
 from yuxi.services.business_variable_service import list_business_variables
@@ -1108,6 +1109,11 @@ async def get_form_schema(
     hycanvas_templates = (
         await _list_mp_hycanvas_templates() if include_hycanvas_templates and service_entry == "装修家居" else []
     )
+    ai_cover_prompts_by_type_code = (
+        await list_mp_ai_cover_prompts_by_type_code(db, content_types)
+        if service_entry == "装修家居"
+        else {}
+    )
     return {
         "service_entry": service_entry,
         "requires_content_type": requires_content_type,
@@ -1135,6 +1141,7 @@ async def get_form_schema(
         "region_tree": [{"city": city, "districts": list(districts)} for city, districts in REGION_TREE],
         "cover_templates": covers,
         "hycanvas_templates": hycanvas_templates,
+        "ai_cover_prompts_by_type_code": ai_cover_prompts_by_type_code,
         "requires_cover": service_entry == "装修家居",
         "requires_photo_upload": service_entry == "装修家居",
         "direct_production": MP_DECORATION_DIRECT_UI if service_entry == "装修家居" else None,
