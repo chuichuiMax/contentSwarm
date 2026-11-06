@@ -69,6 +69,7 @@ from yuxi.services.material_library_service import (
     ensure_material_categories,
     resolve_material_category,
 )
+from yuxi.services.ai_cover_template_service import require_ai_cover_available
 from yuxi.services.content_photo_composition import GALLERY_SOURCE_ASSET_ROLES
 from yuxi.services.run_queue_service import (
     get_arq_pool,
@@ -1871,12 +1872,18 @@ async def create_poster_billboard_job(
 
 
 async def create_cover_generate_job(db: AsyncSession, user: User, payload: CoverGenerateCreate) -> dict[str, Any]:
+    repo = ContentCoverRepository(db)
+    owner_uid = _owner_uid(user)
+    existing = await repo.get_job_by_idempotency(owner_uid, payload.idempotency_key)
+    if existing:
+        return {"job": serialize_job(existing), "deduplicated": True}
+    ai_cover_variant = str((payload.parameters or {}).get("ai_cover_prompt_variant") or "").strip().lower()
+    if ai_cover_variant:
+        await require_ai_cover_available(db, ai_cover_variant)
     try:
         image2_config = await resolve_image2_config(db, owner_uid=_owner_uid(user))
     except Image2Error as exc:
         raise _error(503, "IMAGE2_NOT_CONFIGURED", "image2 中转站尚未配置") from exc
-    repo = ContentCoverRepository(db)
-    owner_uid = _owner_uid(user)
     source_assets = await repo.get_assets_for_user(
         payload.source_asset_ids, owner_uid, for_update=True, allow_material_use=True
     )
@@ -1926,7 +1933,6 @@ async def create_cover_generate_job(db: AsyncSession, user: User, payload: Cover
         )
     image2_copy = payload.render_copy_with_image2
     prompt_text = payload.render_prompt_text
-    ai_cover_variant = str((payload.parameters or {}).get("ai_cover_prompt_variant") or "").strip().lower()
     if style_reference:
         template_texts = {
             "title": title,
@@ -2229,6 +2235,9 @@ async def retry_cover_job(
         if provider_task_ids:
             retry_result_json["provider_task_ids"] = provider_task_ids
     request = deepcopy(old.request_json or {})
+    ai_cover_variant = str((request.get("parameters") or {}).get("ai_cover_prompt_variant") or "").strip().lower()
+    if ai_cover_variant and not recoverable_provider_task_id:
+        await require_ai_cover_available(db, ai_cover_variant)
     if workflow_resume:
         resume_container = "layout" if old.mode == "compose" else "parameters"
         request[resume_container] = {

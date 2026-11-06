@@ -56,6 +56,7 @@ def direct_run(monkeypatch):
     monkeypatch.setattr(service, "published_variable_codes", AsyncMock(return_value=set()))
     monkeypatch.setattr(service, "check_asset_source", source_check)
     monkeypatch.setattr(service, "get_arq_pool", AsyncMock(return_value=queue))
+    monkeypatch.setattr(service, "validate_ai_cover_choice", AsyncMock())
     return SimpleNamespace(
         db=db,
         user=SimpleNamespace(uid="user-1"),

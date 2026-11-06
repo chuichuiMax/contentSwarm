@@ -38,6 +38,8 @@ from yuxi.content.service_entry_form import (
     is_quote_content_type_name,
 )
 from yuxi.services.business_variable_service import list_business_variables
+from yuxi.content_cover.ai_cover_prompt import ai_cover_prompt_controls
+from yuxi.services.ai_cover_template_service import validate_ai_cover_choice
 from yuxi.services.employee_service import resolve_employee_material_owner
 from yuxi.services.content_photo_composition import GALLERY_SOURCE_ASSET_ROLES
 from yuxi.services.content_type_service import list_content_types
@@ -2048,9 +2050,22 @@ async def create_content_run(db: AsyncSession, user: User, task_id: str, payload
     task = await repo.get_task_for_user(task_id, user, for_update=True)
     if task is None:
         raise _content_error(404, "CONTENT_TASK_NOT_FOUND", "内容任务不存在")
+    existing = await AgentRunRepository(db).get_run_by_request_id(payload.request_id)
+    if existing:
+        if existing.uid != str(user.uid):
+            raise _content_error(409, "CONTENT_REQUEST_ID_CONFLICT", "request_id 已被其他用户使用")
+        return _run_response(existing)
     _require_runnable_v3_task(task)
     if not task.brief_json:
         raise _content_error(409, "CONTENT_TASK_NOT_READY", "请先完成业务简报")
+    visual_material = task.brief_json.get("visual_material") or {}
+    if visual_material.get("cover_mode") == "ai":
+        await validate_ai_cover_choice(
+            db,
+            content_type_code=task.content_type_code or "",
+            content_type_name=task.brief_json.get("typeName") or task.brief_json.get("content_type_name") or "",
+            prompt_controls=ai_cover_prompt_controls(visual_material),
+        )
     model_spec = _validate_model_spec(payload.model_spec)
     result = await _enqueue_content_run(
         db,
@@ -2072,6 +2087,13 @@ async def create_direct_content_run(
     task = await repo.get_task_for_user(task_id, user, for_update=True)
     if task is None:
         raise _content_error(404, "CONTENT_TASK_NOT_FOUND", "内容任务不存在")
+    request_id = payload.request_id
+    run_repo = AgentRunRepository(db)
+    existing = await run_repo.get_run_by_request_id(request_id)
+    if existing:
+        if existing.uid != str(user.uid):
+            raise _content_error(409, "CONTENT_REQUEST_ID_CONFLICT", "request_id 已被其他用户使用")
+        return _run_response(existing)
     _require_v3_task(task)
     brief = task.brief_json or {}
     form_values = brief.get("form_values") or {}
@@ -2088,6 +2110,13 @@ async def create_direct_content_run(
         raise _content_error(409, "CONTENT_TASK_NOT_READY", "请先填写内容需求")
     visual_material = brief.get("visual_material") or {}
     skip_cover = mp_service_entry_from_brief(brief) == MP_REVIEW_NOTES_ENTRY
+    if not skip_cover and visual_material.get("cover_mode") == "ai":
+        await validate_ai_cover_choice(
+            db,
+            content_type_code=task.content_type_code or "",
+            content_type_name=brief.get("typeName") or brief.get("content_type_name") or "",
+            prompt_controls=ai_cover_prompt_controls(visual_material),
+        )
     if not skip_cover:
         if not visual_material:
             raise _content_error(409, "CONTENT_COVER_MATERIAL_REQUIRED", "请选择封面图片和封面方式")
@@ -2133,13 +2162,6 @@ async def create_direct_content_run(
     else:
         raise _content_error(409, "CONTENT_VIRAL_REFERENCE_MISSING", "请选择爆款原文")
 
-    request_id = payload.request_id
-    run_repo = AgentRunRepository(db)
-    existing = await run_repo.get_run_by_request_id(request_id)
-    if existing:
-        if existing.uid != str(user.uid):
-            raise _content_error(409, "CONTENT_REQUEST_ID_CONFLICT", "request_id 已被其他用户使用")
-        return _run_response(existing)
     run_id = str(uuid.uuid4())
     input_payload = {
         "run_type": "content_direct",

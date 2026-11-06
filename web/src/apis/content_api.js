@@ -54,6 +54,8 @@ export const contentApi = {
   createAiCover: (formData) => apiPost('/api/content/covers/ai-cover-prompts/manage', formData),
   updateAiCover: (coverId, formData) =>
     apiPut(`/api/content/covers/ai-cover-prompts/manage/${encodeURIComponent(coverId)}`, formData),
+  updateAiCoverStatus: (coverId, enabled) =>
+    apiPatch(`/api/content/covers/ai-cover-prompts/manage/${encodeURIComponent(coverId)}/status`, { enabled }),
   deleteAiCover: (coverId) =>
     apiDelete(`/api/content/covers/ai-cover-prompts/manage/${encodeURIComponent(coverId)}`),
   getHyCanvasTemplatePreview: (templateId) =>

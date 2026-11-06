@@ -2341,6 +2341,7 @@ class AiCoverTemplate(Base):
     id = Column(String(64), primary_key=True)
     name = Column(String(64), nullable=False)
     prompt = Column(Text, nullable=False)
+    enabled = Column(Boolean, nullable=False, default=True, server_default="true")
     content_type_names = Column(JSON, nullable=False, default=list)
     file_name = Column(String(255), nullable=False, unique=True)
     media_type = Column(String(64), nullable=False)
@@ -2363,6 +2364,7 @@ class AiCoverTemplate(Base):
             "created_at": format_utc_datetime(self.created_at),
             "file_name": self.file_name,
             "source": "custom",
+            "enabled": bool(self.enabled),
         }
 
 
@@ -2379,6 +2381,7 @@ class AiCoverCatalogOverride(Base):
     media_type = Column(String(64), nullable=True)
     image = Column(LargeBinary, nullable=True)
     hidden = Column(Boolean, nullable=False, default=False)
+    enabled = Column(Boolean, nullable=False, default=True, server_default="true")
     updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
 
 
