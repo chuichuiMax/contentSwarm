@@ -471,6 +471,7 @@ async def list_traffic_stats(
     )
     for row, owner_uid in zip(rows, owner_uids, strict=True):
         content = content_counts.get(owner_uid, {})
+        row["case_share_uid"] = owner_uid
         row["decoration_count"] = content.get("装修家居", 0)
         row["review_notes_count"] = content.get("好评笔记", 0)
         row["personal_generated_count"] = personal_counts.get(owner_uid, 0)

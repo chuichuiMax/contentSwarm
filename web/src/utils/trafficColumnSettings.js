@@ -1,13 +1,15 @@
+export const TRAFFIC_COLUMN_SETTINGS_VERSION = 1
+
 export const TRAFFIC_COLUMN_DEFAULTS = [
   { key: 'index', title: '序号', visible: true, width: 'auto', sortable: false, fixed: false },
   { key: 'name', title: '姓名', visible: true, width: 'auto', sortable: false, fixed: false },
   { key: 'login_account', title: '手机号码', visible: true, width: 'auto', sortable: false, fixed: false },
   { key: 'employee_code', title: '员工编码', visible: true, width: 'auto', sortable: false, fixed: false },
-  { key: 'decoration_count', title: '装修家居', visible: true, width: 'auto', sortable: false, fixed: false },
-  { key: 'review_notes_count', title: '好评笔记', visible: true, width: 'auto', sortable: false, fixed: false },
-  { key: 'personal_generated_count', title: '生图（个人素材）', visible: true, width: 'auto', sortable: false, fixed: false },
-  { key: 'enterprise_generated_count', title: '生图（企业共享）', visible: true, width: 'auto', sortable: false, fixed: false },
-  { key: 'case_share_count', title: '案例分享', visible: true, width: 'auto', sortable: false, fixed: false },
+  { key: 'decoration_count', title: '装修家居', visible: true, width: 'auto', sortable: true, fixed: false },
+  { key: 'review_notes_count', title: '好评笔记', visible: true, width: 'auto', sortable: true, fixed: false },
+  { key: 'personal_generated_count', title: '生图（个人素材）', visible: true, width: 'auto', sortable: true, fixed: false },
+  { key: 'enterprise_generated_count', title: '生图（企业共享）', visible: true, width: 'auto', sortable: true, fixed: false },
+  { key: 'case_share_count', title: '案例分享', visible: true, width: 'auto', sortable: true, fixed: false },
   { key: 'current_branch', title: '所属门店', visible: true, width: 'auto', sortable: false, fixed: false },
   { key: 'current_department', title: '所属部门', visible: true, width: 'auto', sortable: false, fixed: false }
 ]
@@ -22,11 +24,13 @@ const columnWidth = (value) => {
 }
 
 export const normalizeColumnSettings = (saved) => {
+  const legacy = Array.isArray(saved)
+  const columns = legacy ? saved : saved?.version === TRAFFIC_COLUMN_SETTINGS_VERSION ? saved.columns : []
   const defaults = cloneColumnSettings(TRAFFIC_COLUMN_DEFAULTS)
   const known = new Map(defaults.map((item) => [item.key, item]))
   const used = new Set()
   const ordered = []
-  for (const item of Array.isArray(saved) ? saved : []) {
+  for (const item of Array.isArray(columns) ? columns : []) {
     const base = known.get(item?.key)
     if (!base || used.has(base.key)) continue
     used.add(base.key)
@@ -34,7 +38,8 @@ export const normalizeColumnSettings = (saved) => {
       ...base,
       visible: item.visible !== false,
       width: columnWidth(item.width),
-      sortable: Boolean(item.sortable),
+      // Legacy arrays predate default metric sorting; versioned settings preserve later user choices.
+      sortable: legacy && base.sortable ? true : typeof item.sortable === 'boolean' ? item.sortable : base.sortable,
       fixed: Boolean(item.fixed)
     })
   }

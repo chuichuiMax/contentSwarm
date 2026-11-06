@@ -26,16 +26,20 @@ logger = logging.getLogger(__name__)
 
 class ShareFilters(BaseModel):
     keyword: str = Field(default="", max_length=80)
+    sharer_uid: str | None = Field(default=None, min_length=1, max_length=255)
     source: Literal["pc", "mp"] | None = None
     start_date: date | None = None
     end_date: date | None = None
 
 
-async def share_scope(db: AsyncSession, user: User, action: str) -> list:
+async def share_scope(db: AsyncSession, user: User, action: str, *, target_uid: str | None = None) -> list:
     grants = await effective_permission_grants(db, user)
     if grants is not None and f"customer_lead.{action}" not in grants:
         raise HTTPException(403, detail={"error": {"code": "CASE_SHARE_FORBIDDEN", "message": "没有案例分享操作权限"}})
-    return [] if user.role == "superadmin" else [ContentMaterialShare.sharer_uid == str(user.uid)]
+    # Data-overview administrators may read one selected account, without gaining delete access.
+    if user.role == "superadmin" or (user.role == "admin" and action == "view_list" and target_uid is not None):
+        return []
+    return [ContentMaterialShare.sharer_uid == str(user.uid)]
 
 
 def share_filters(filters: ShareFilters) -> dict:
@@ -45,6 +49,7 @@ def share_filters(filters: ShareFilters) -> dict:
         )
     return {
         "keyword": filters.keyword.strip(),
+        "sharer_uid": filters.sharer_uid,
         "source": filters.source,
         "start": datetime.combine(filters.start_date, time.min) - timedelta(hours=8) if filters.start_date else None,
         "end": datetime.combine(filters.end_date, time.min) + timedelta(days=1, hours=-8) if filters.end_date else None,
@@ -66,7 +71,7 @@ def share_data(row, public_base_url: str) -> dict:
 async def list_shares(
     db: AsyncSession, user: User, page: int, page_size: int, public_base_url: str, filters: ShareFilters
 ):
-    predicates = await share_scope(db, user, "view_list")
+    predicates = await share_scope(db, user, "view_list", target_uid=filters.sharer_uid)
     rows, total = await CaseShareRepository(db).listing(predicates, page, page_size, **share_filters(filters))
     return {
         "items": [share_data(row, public_base_url) for row in rows],
@@ -83,7 +88,7 @@ async def share_summary(db: AsyncSession, user: User):
 
 
 async def export_shares(db: AsyncSession, user: User, filters: ShareFilters) -> bytes:
-    predicates = await share_scope(db, user, "view_list")
+    predicates = await share_scope(db, user, "view_list", target_uid=filters.sharer_uid)
     rows, _ = await CaseShareRepository(db).listing(predicates, 1, None, **share_filters(filters))
     workbook = Workbook()
     sheet = workbook.active
