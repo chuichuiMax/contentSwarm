@@ -333,6 +333,86 @@ async def test_deepseek_flash_disables_thinking_before_tool_choice(monkeypatch):
 
 @pytest.mark.unit
 @pytest.mark.asyncio
+async def test_siliconflow_deepseek_disables_thinking(monkeypatch):
+    load_calls = []
+
+    class FakeModel:
+        def bind_tools(self, schemas, **kwargs):
+            return self
+
+        async def ainvoke(self, messages):
+            return _tool_response({"title": "标题", "body": "正文", "topics": []})
+
+    monkeypatch.setattr(generation, "resolve_chat_model_spec", lambda value: value or "default")
+    monkeypatch.setattr(
+        generation,
+        "load_chat_model",
+        lambda **kwargs: load_calls.append(kwargs) or FakeModel(),
+    )
+
+    await generation.generate_direct_content(
+        model_spec="siliconflow-cn:deepseek-ai/DeepSeek-V4.1-Flash",
+        creative_style={},
+        viral_source={"title": "", "body": ""},
+        user_request="写一段内容",
+    )
+
+    assert load_calls[0]["extra_body"] == {"enable_thinking": False}
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_placeholder_body_is_requested_again(monkeypatch):
+    calls = 0
+
+    class FakeModel:
+        def bind_tools(self, schemas, **kwargs):
+            return self
+
+        async def ainvoke(self, messages):
+            nonlocal calls
+            calls += 1
+            body = "..." if calls == 1 else "卫生间这处工艺要盯紧"
+            return _tool_response({"title": "水电标题", "body": body, "topics": ["装修避坑"]})
+
+    monkeypatch.setattr(generation, "resolve_chat_model_spec", lambda value: value or "default")
+    monkeypatch.setattr(generation, "load_chat_model", lambda **kwargs: FakeModel())
+
+    result = await generation.generate_direct_content(
+        model_spec="siliconflow-cn:deepseek-ai/DeepSeek-V4.1-Flash",
+        creative_style={},
+        viral_source={"title": "", "body": ""},
+        user_request="写一段内容",
+    )
+
+    assert calls == 2
+    assert result.body == "卫生间这处工艺要盯紧"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_placeholder_body_fails_when_retry_is_still_empty(monkeypatch):
+    class FakeModel:
+        def bind_tools(self, schemas, **kwargs):
+            return self
+
+        async def ainvoke(self, messages):
+            return _tool_response({"title": "水电标题", "body": "...", "topics": []})
+
+    monkeypatch.setattr(generation, "resolve_chat_model_spec", lambda value: value or "default")
+    monkeypatch.setattr(generation, "load_chat_model", lambda **kwargs: FakeModel())
+
+    with pytest.raises(ValueError, match="没有返回可用正文"):
+        await generation.generate_direct_content(
+            model_spec="siliconflow-cn:deepseek-ai/DeepSeek-V4.1-Flash",
+            creative_style={},
+            viral_source={"title": "", "body": ""},
+            user_request="写一段内容",
+        )
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
 async def test_thinking_mode_tool_choice_retries_with_auto(monkeypatch):
     choices = []
 

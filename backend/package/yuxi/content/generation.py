@@ -377,6 +377,20 @@ def model_rejects_named_tool_choice(exc: BaseException) -> bool:
     )
 
 
+def thinking_extra_body(resolved_model: str) -> dict[str, Any] | None:
+    """关闭会把正文写成省略号、或拒绝指定工具的思考模式。"""
+    if resolved_model.startswith(("ark:doubao-", "deepseek:")):
+        return {"thinking": {"type": "disabled"}}
+    lowered = resolved_model.lower()
+    if lowered.startswith("siliconflow") and "deepseek" in lowered:
+        return {"enable_thinking": False}
+    return None
+
+
+def copy_body_is_placeholder(body: str) -> bool:
+    return re.search(r"[\w\u4e00-\u9fff]", body or "") is None
+
+
 def _json_object(text: str) -> dict[str, Any] | None:
     candidate = text.strip()
     if candidate.startswith("```"):
@@ -490,8 +504,9 @@ async def generate_direct_content(
 
     resolved_model = resolve_chat_model_spec(model_spec)
     model_kwargs: dict[str, Any] = {"temperature": 0.7}
-    if resolved_model.startswith(("ark:doubao-", "deepseek:")):
-        model_kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
+    extra_body = thinking_extra_body(resolved_model)
+    if extra_body is not None:
+        model_kwargs["extra_body"] = extra_body
     model = load_chat_model(fully_specified_name=resolved_model, **model_kwargs)
     style = creative_style if isinstance(creative_style, dict) else {}
     style_name = str(style.get("name") or "").strip()
@@ -555,8 +570,8 @@ async def generate_direct_content(
         )
         response = await invoke([_direct_generation_message(prompt, None)])
     arguments = _output_arguments(response)
-    if arguments is None:
-        logger.info("Direct content model returned no copy fields, retrying as plain text: model=%s", resolved_model)
+    if arguments is None or copy_body_is_placeholder(str((arguments or {}).get("body") or "")):
+        logger.info("Direct content model returned no usable body, retrying as plain text: model=%s", resolved_model)
         response = await model.ainvoke([_append_copy_instruction(messages[-1] if image_sent else _direct_generation_message(prompt, None))])
         arguments = _output_arguments(response)
     if not isinstance(arguments, dict):
@@ -569,6 +584,8 @@ async def generate_direct_content(
         for topic in raw_output.topics
     ]
     final_body, body_topics = detach_publish_tags(body_text, body_topics)
+    if copy_body_is_placeholder(final_body):
+        raise ValueError("模型没有返回可用正文")
     output = ContentArtifactAIEditOutput(
         title=final_title,
         body=final_body,
