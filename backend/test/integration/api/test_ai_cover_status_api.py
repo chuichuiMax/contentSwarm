@@ -134,6 +134,47 @@ async def test_concurrent_first_status_updates_preserve_native_template_fields(c
         assert row.enabled is False and row.prompt == "" and row.name == "无文案和谐画面"
 
 
+async def test_mp_form_schema_preload_and_list_both_exclude_disabled_templates(cover_api):
+    async with cover_api.sessions() as db:
+        async with db.bind.begin() as connection:
+            await connection.run_sync(Base.metadata.create_all)
+        db.add(ContentType(id="case-type", type_code="CT01", name="装修案例分享", enabled=True, created_by="test"))
+        db.add(
+            AiCoverTemplate(
+                id="caaaaaaaaaaaaaaaa",
+                name="禁用的全类型封面",
+                prompt="测试提示词",
+                content_type_names=[],
+                file_name="disabled-preload.png",
+                media_type="image/png",
+                image=b"preview",
+                enabled=False,
+                created_by="test",
+            )
+        )
+        await db.commit()
+    changed = await cover_api.client.patch(
+        BASE + "/manage/p1/status", headers=cover_api.tokens[3], json={"enabled": False}
+    )
+    assert changed.status_code == 200
+    response = await cover_api.client.get(
+        "/api/mp/content/form-schema",
+        headers=cover_api.mp_tokens[1],
+        params={"service_entry": "装修家居", "include_hycanvas_templates": "false"},
+    )
+    assert response.status_code == 200, response.text
+    preloaded = response.json()["ai_cover_prompts_by_type_code"]["CT01"]
+    listed = await cover_api.client.get(
+        "/api/mp/content/ai-cover-prompts",
+        headers=cover_api.mp_tokens[1],
+        params={"content_type_code": "CT01", "content_type_name": "装修案例分享"},
+    )
+    assert listed.status_code == 200 and listed.json()["prompts"] == preloaded
+    variants = {item["variant"] for item in preloaded}
+    assert not {"p1", "caaaaaaaaaaaaaaaa"} & variants
+    assert {"smart-random", "p12", "p17"} <= variants
+
+
 async def test_http_idempotent_generation_returns_existing_job_after_disabling_template(cover_api):
     async with cover_api.sessions() as db:
         async with db.bind.begin() as connection:

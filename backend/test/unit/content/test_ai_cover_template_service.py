@@ -3,7 +3,13 @@ from fastapi import HTTPException
 
 from types import SimpleNamespace
 
-from yuxi.services.ai_cover_template_service import cover_upload_name, is_custom_cover_id, merge_catalog_item
+from yuxi.services.ai_cover_template_service import (
+    _content_type_applies,
+    apply_catalog_overrides,
+    cover_upload_name,
+    is_custom_cover_id,
+    merge_catalog_item,
+)
 
 
 def test_cover_upload_name_keeps_local_photo_name():
@@ -36,3 +42,31 @@ def test_custom_cover_id_shape():
     assert is_custom_cover_id("c0123456789abcdef")
     assert not is_custom_cover_id("p1")
     assert not is_custom_cover_id("smart-random")
+
+
+def test_content_type_applies_treats_empty_names_as_all_types():
+    assert _content_type_applies([], "装修案例分享")
+    assert _content_type_applies(["装修案例分享"], "装修案例分享")
+    assert not _content_type_applies(["工艺施工展示"], "装修案例分享")
+
+
+@pytest.mark.asyncio
+async def test_apply_catalog_overrides_keeps_items_with_empty_override_scope():
+    item = {"variant": "p1", "title": "手写风双行标题", "label": "提示词一", "prompt_body": "旧提示词"}
+    overrides = {
+        "p1": SimpleNamespace(
+            hidden=False,
+            enabled=True,
+            name="手写风双标题",
+            prompt="新提示词",
+            content_type_names=[],
+        )
+    }
+    visible = await apply_catalog_overrides(
+        None,
+        [item],
+        content_type_name="装修案例分享",
+        overrides=overrides,
+    )
+    assert len(visible) == 1
+    assert visible[0]["title"] == "手写风双标题"

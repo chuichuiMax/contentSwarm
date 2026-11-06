@@ -13,15 +13,8 @@ from server.utils.public_url import request_public_base_url
 from yuxi.services.material_library_service import create_material_share
 from yuxi.services.material_share_jobs import MaterialShareRequest, accept_material_share
 from yuxi.content_cover.ai_cover_prompt_catalog import spec_for_variant
-from yuxi.services.ai_cover_prompt_catalog_service import (
-    list_ai_cover_prompt_catalog,
-    resolve_ai_cover_preview_bytes,
-)
-from yuxi.services.ai_cover_template_service import (
-    apply_catalog_overrides,
-    list_custom_cover_prompts,
-    stored_cover_preview_bytes,
-)
+from yuxi.services.ai_cover_prompt_catalog_service import resolve_ai_cover_preview_bytes
+from yuxi.services.ai_cover_template_service import list_mp_ai_cover_prompts, stored_cover_preview_bytes
 from yuxi.services.personal_materials import folder_counts, list_folder
 from yuxi.services.mp_service import (
     AuthCancelPayload,
@@ -410,25 +403,11 @@ async def mp_ai_cover_prompts(
     _ctx: MpContext = Depends(get_mp_context),
     db: AsyncSession = Depends(get_db),
 ):
-    data = await list_ai_cover_prompt_catalog(
+    return await list_mp_ai_cover_prompts(
+        db,
         content_type_code=content_type_code,
         content_type_name=content_type_name,
     )
-    catalog = await apply_catalog_overrides(db, data.get("prompts") or [], content_type_name=content_type_name)
-    custom = await list_custom_cover_prompts(db, content_type_name=content_type_name)
-    data["prompts"] = [*catalog, *custom]
-    prompts = []
-    for item in data.get("prompts") or []:
-        variant = str(item.get("variant") or "").strip()
-        if not variant:
-            continue
-        prompts.append(
-            {
-                **item,
-                "preview_url": f"/api/mp/content/ai-cover-prompts/{variant}/preview.png",
-            }
-        )
-    return {"prompts": prompts, "oss_prefix": data.get("oss_prefix")}
 
 
 @mp.get("/content/ai-cover-prompts/{variant}/preview.png")

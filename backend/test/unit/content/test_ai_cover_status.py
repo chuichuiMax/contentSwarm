@@ -85,6 +85,52 @@ async def test_status_only_override_preserves_native_prompt_and_copy_behavior(db
     assert next(item for item in managed if item["variant"] == "p17")["prompt_body"]
 
 
+async def test_mp_preloaded_catalog_matches_active_list_for_each_content_type(db):
+    await service.update_ai_cover_status(db, CUSTOM_ID, enabled=False)
+    await service.update_ai_cover_status(db, "p1", enabled=False)
+    content_types = [
+        {"type_code": "CT01", "name": "装修案例分享"},
+        {"type_code": "CT02", "name": "装修报价清单"},
+    ]
+    preloaded = await service.list_mp_ai_cover_prompts_by_type_code(db, content_types)
+    for item in content_types:
+        listed = await service.list_mp_ai_cover_prompts(
+            db, content_type_code=item["type_code"], content_type_name=item["name"]
+        )
+        assert preloaded[item["type_code"]] == listed["prompts"]
+        variants = {prompt["variant"] for prompt in listed["prompts"]}
+        assert not {CUSTOM_ID, "p1"} & variants
+        assert "smart-random" in variants
+    assert any(item["variant"] == "p12" for item in preloaded["CT01"])
+
+
+async def test_empty_content_type_scope_applies_to_lists_and_generation(db):
+    custom = await db.get(AiCoverTemplate, CUSTOM_ID)
+    custom.content_type_names = []
+    db.add(
+        AiCoverCatalogOverride(
+            variant="p1",
+            name="全类型封面",
+            prompt="自定义提示词",
+            content_type_names=[],
+            enabled=True,
+            hidden=False,
+        )
+    )
+    await db.flush()
+    custom_choices = await service.list_custom_cover_prompts(db, content_type_name="新增内容类型")
+    assert [item["variant"] for item in custom_choices] == [CUSTOM_ID]
+    catalog = [{"variant": "p1", "title": "原名称", "prompt_body": "原提示词"}]
+    listed = await service.apply_catalog_overrides(db, catalog, content_type_name="新增内容类型")
+    assert listed[0]["variant"] == "p1" and listed[0]["prompt_body"] == "自定义提示词"
+    for variant in (CUSTOM_ID, "p1"):
+        await service.validate_ai_cover_choice(
+            db,
+            content_type_name="新增内容类型",
+            prompt_controls={"prompt_random": False, "prompt_variant": variant},
+        )
+
+
 @pytest.mark.parametrize("variant", [CUSTOM_ID, "p1"])
 async def test_explicit_disabled_selection_is_rejected_before_generation(db, variant):
     await service.update_ai_cover_status(db, variant, enabled=False)

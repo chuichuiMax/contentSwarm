@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 import uuid
 from pathlib import Path
+from typing import Any
 
 from fastapi import HTTPException, UploadFile
 from sqlalchemy import func, select
@@ -28,6 +29,17 @@ _CUSTOM_ID = re.compile(r"^c[0-9a-f]{16}$")
 _ALLOWED_SUFFIXES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp"}
 _MAX_IMAGE_BYTES = 10 * 1024 * 1024
 _MAX_PROMPT_CHARS = 20000
+MP_AI_COVER_PREVIEW_PREFIX = "/api/mp/content/ai-cover-prompts"
+
+
+def _content_type_applies(content_type_names: list[str], wanted_name: str) -> bool:
+    wanted = wanted_name.strip()
+    if not wanted:
+        return True
+    names = [name.strip() for name in content_type_names if str(name).strip()]
+    if not names:
+        return True
+    return wanted in names
 
 
 def is_custom_cover_id(variant: str | None) -> bool:
@@ -68,7 +80,7 @@ async def list_custom_cover_prompts(
     prompts = []
     for row in result.scalars().all():
         names = list(row.content_type_names or [])
-        if wanted and wanted not in names:
+        if not _content_type_applies(names, wanted):
             continue
         prompts.append(row.to_catalog_dict())
     return prompts
@@ -108,7 +120,7 @@ async def unavailable_catalog_variants(db: AsyncSession, *, content_type_name: s
         for variant, row in overrides.items()
         if row.hidden
         or not row.enabled
-        or (wanted and row.prompt.strip() and wanted not in (row.content_type_names or []))
+        or (row.prompt.strip() and not _content_type_applies(list(row.content_type_names or []), wanted))
     }
     # Legacy styles absent from management cannot bypass the managed availability rules.
     unavailable.update(set(ai_cover_eligible_variants(content_type_name="装修案例分享")) - catalog_cover_variants())
@@ -121,19 +133,22 @@ async def apply_catalog_overrides(
     *,
     content_type_name: str = "",
     enabled_only: bool = True,
+    overrides: dict[str, AiCoverCatalogOverride] | None = None,
 ) -> list[dict]:
-    overrides = await _override_map(db)
+    if overrides is None:
+        overrides = await _override_map(db)
     wanted = content_type_name.strip()
     visible: list[dict] = []
     for item in prompts:
-        merged = merge_catalog_item(item, overrides.get(str(item.get("variant") or "")))
+        variant = str(item.get("variant") or "")
+        override = overrides.get(variant)
+        merged = merge_catalog_item(item, override)
         if merged is None:
             continue
         if enabled_only and not merged["enabled"]:
             continue
         names = list(merged.get("content_type_names") or [])
-        override = overrides.get(str(item.get("variant") or ""))
-        if wanted and override and override.prompt.strip() and wanted not in names:
+        if override is not None and override.prompt.strip() and not _content_type_applies(names, wanted):
             continue
         visible.append(merged)
     if enabled_only:
@@ -144,6 +159,90 @@ async def apply_catalog_overrides(
             if item["variant"] == "smart-random":
                 item["selectable"] = has_random_candidate
     return visible
+
+
+def _mp_ai_cover_prompt_items(
+    catalog: list[dict],
+    custom: list[dict],
+) -> list[dict[str, Any]]:
+    prompts: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in [*catalog, *custom]:
+        variant = str(item.get("variant") or "").strip()
+        if not variant or variant in seen:
+            continue
+        seen.add(variant)
+        prompts.append(
+            {
+                **item,
+                "preview_url": f"{MP_AI_COVER_PREVIEW_PREFIX}/{variant}/preview.png",
+            }
+        )
+    return prompts
+
+
+async def list_mp_ai_cover_prompts(
+    db: AsyncSession,
+    *,
+    content_type_code: str = "",
+    content_type_name: str = "",
+) -> dict[str, Any]:
+    from yuxi.services.ai_cover_prompt_catalog_service import list_ai_cover_prompt_catalog
+
+    data = await list_ai_cover_prompt_catalog(
+        content_type_code=content_type_code,
+        content_type_name=content_type_name,
+    )
+    catalog = await apply_catalog_overrides(
+        db,
+        data.get("prompts") or [],
+        content_type_name=content_type_name,
+    )
+    custom = await list_custom_cover_prompts(db, content_type_name=content_type_name)
+    return {
+        "prompts": _mp_ai_cover_prompt_items(catalog, custom),
+        "oss_prefix": data.get("oss_prefix"),
+    }
+
+
+async def list_mp_ai_cover_prompts_by_type_code(
+    db: AsyncSession,
+    content_types: list[dict[str, Any]],
+) -> dict[str, list[dict[str, Any]]]:
+    from yuxi.services.ai_cover_prompt_catalog_service import list_ai_cover_prompt_catalog
+
+    overrides = await _override_map(db)
+    custom_rows = (
+        (
+            await db.execute(
+                select(AiCoverTemplate)
+                .where(AiCoverTemplate.enabled.is_(True))
+                .order_by(AiCoverTemplate.created_at.desc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    by_code: dict[str, list[dict[str, Any]]] = {}
+    for content_type in content_types:
+        code = str(content_type.get("type_code") or "").strip()
+        name = str(content_type.get("name") or "").strip()
+        if not code:
+            continue
+        data = await list_ai_cover_prompt_catalog(content_type_code=code, content_type_name=name)
+        catalog = await apply_catalog_overrides(
+            db,
+            data.get("prompts") or [],
+            content_type_name=name,
+            overrides=overrides,
+        )
+        custom = [
+            row.to_catalog_dict()
+            for row in custom_rows
+            if _content_type_applies(list(row.content_type_names or []), name)
+        ]
+        by_code[code] = _mp_ai_cover_prompt_items(catalog, custom)
+    return by_code
 
 
 async def list_managed_covers(db: AsyncSession) -> dict:
@@ -201,10 +300,8 @@ async def require_ai_cover_available(db: AsyncSession, variant: str, *, content_
     if row is not None:
         if not row.enabled:
             raise _cover_error(422, "AI_COVER_DISABLED", "该封面已禁用，请重新选择")
-        if (
-            content_type_name.strip()
-            and (is_custom_cover_id(cover_id) or row.prompt.strip())
-            and content_type_name.strip() not in (row.content_type_names or [])
+        if (is_custom_cover_id(cover_id) or row.prompt.strip()) and not _content_type_applies(
+            list(row.content_type_names or []), content_type_name
         ):
             raise _cover_error(422, "AI_COVER_TYPE_MISMATCH", "该封面模板未关联当前内容类型，请重新选择")
 
