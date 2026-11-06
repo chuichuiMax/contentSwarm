@@ -386,7 +386,7 @@ const loadAiCoverPromptCatalog = async () => {
         (item) => item.variant === selectedAiCoverPromptVariant.value
       )
     ) {
-      selectedAiCoverPromptVariant.value = AI_COVER_SMART_RANDOM_VARIANT
+      message.warning('所选 AI 封面已不可用，请重新选择')
     }
   } catch {
     aiCoverPromptCatalogList.value = []
@@ -2731,6 +2731,10 @@ const submitContentOnlyCreation = async () => {
     message.warning('请选择一个 AI 封面提示词')
     return
   }
+  if (coverTemplateTab.value === 'ai' && !selectedAiCoverPromptOption.value?.selectable) {
+    message.warning('当前选择暂无可用 AI 封面，请重新选择')
+    return
+  }
   creationSubmitting.value = true
   try {
     window.clearTimeout(draftSaveTimer)
@@ -3605,8 +3609,8 @@ const returnToContentCreation = async () => {
                         </button>
                       </div>
                       <a-empty
-                        v-if="!aiCoverPromptCatalogLoading && !aiCoverPromptCatalogList.length"
-                        description="未读取到 AI 封面提示词预览，请检查 OSS image/AI-cover/ 命名"
+                        v-if="!aiCoverPromptCatalogLoading && !aiCoverPromptCatalogList.some((item) => item.selectable)"
+                        description="当前内容类型暂无可用 AI 封面"
                       />
                     </a-spin>
                     <div

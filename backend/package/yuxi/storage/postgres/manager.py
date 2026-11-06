@@ -732,6 +732,9 @@ class PostgresManager(metaclass=SingletonMeta):
 
         self._check_initialized()
         stmts = [
+            "ALTER TABLE IF EXISTS ai_cover_templates ADD COLUMN IF NOT EXISTS enabled BOOLEAN NOT NULL DEFAULT TRUE",
+            "ALTER TABLE IF EXISTS ai_cover_catalog_overrides "
+            "ADD COLUMN IF NOT EXISTS enabled BOOLEAN NOT NULL DEFAULT TRUE",
             "ALTER TABLE IF EXISTS content_material_folder_settings "
             "ADD COLUMN IF NOT EXISTS description VARCHAR(255) NOT NULL DEFAULT ''",
             "ALTER TABLE IF EXISTS content_material_folder_settings "

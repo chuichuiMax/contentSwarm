@@ -13,6 +13,7 @@ const keyword = ref('')
 const page = ref(1)
 const pageSize = ref(20)
 const covers = ref([])
+const statusSaving = reactive(new Set())
 const promptOpen = ref(false)
 const promptTitle = ref('')
 const promptText = ref('')
@@ -84,6 +85,7 @@ const editingId = ref('')
 const contentTypeOptions = ref([])
 const fileInput = ref(null)
 const form = reactive({
+  enabled: true,
   name: '',
   prompt: '',
   contentTypeNames: [],
@@ -94,6 +96,7 @@ const form = reactive({
 const modalTitle = computed(() => (editingId.value ? '编辑封面' : '新增封面'))
 
 const resetForm = () => {
+  form.enabled = true
   if (form.previewObject && form.previewUrl) URL.revokeObjectURL(form.previewUrl)
   form.name = ''
   form.prompt = ''
@@ -126,6 +129,7 @@ const openCreate = async () => {
 const openEdit = async (item) => {
   resetForm()
   editingId.value = item.variant
+  form.enabled = item.enabled !== false
   form.name = coverName(item)
   form.prompt = promptOf(item)
   form.contentTypeNames = [...(item.content_type_names || [])]
@@ -175,6 +179,7 @@ const saveCover = async () => {
   const body = new FormData()
   body.append('name', form.name.trim())
   body.append('prompt', form.prompt.trim())
+  if (editingId.value !== 'smart-random') body.append('enabled', String(form.enabled))
   form.contentTypeNames.forEach((name) => body.append('content_type_names', name))
   if (form.file) body.append('file', form.file, form.file.name)
   saving.value = true
@@ -216,6 +221,20 @@ const removeCover = (item) => {
   })
 }
 
+const changeStatus = async (item, enabled) => {
+  if (statusSaving.has(item.variant)) return
+  statusSaving.add(item.variant)
+  try {
+    const response = await contentApi.updateAiCoverStatus(item.variant, enabled)
+    item.enabled = response.cover.enabled
+    message.success(item.enabled ? '封面已启用' : '封面已禁用')
+  } catch (error) {
+    message.error(error.message || '更新封面状态失败')
+  } finally {
+    statusSaving.delete(item.variant)
+  }
+}
+
 onMounted(loadCovers)
 
 watch(filteredCovers, (list) => {
@@ -240,7 +259,7 @@ watch(filteredCovers, (list) => {
         >
           <template #prefix><Search :size="14" /></template>
         </a-input>
-        <p class="cover-manage-note">内容生产选择「AI封面」时展示这些封面模板。上传后使用本地照片文件名，相同文件名不能重复上传。</p>
+        <p class="cover-manage-note">内容生产选择「AI封面」时仅展示启用的模板。上传后使用本地照片文件名，相同文件名不能重复上传。</p>
         <a-button type="primary" class="lucide-icon-btn" @click="openCreate">
           <Plus :size="14" />
           新增封面
@@ -294,11 +313,24 @@ watch(filteredCovers, (list) => {
         <a-table-column title="创建时间" key="created_at" :width="180">
           <template #default="{ record }">{{ formatCreatedAt(record.created_at) }}</template>
         </a-table-column>
+        <a-table-column title="状态" key="enabled" :width="110">
+          <template #default="{ record }">
+            <span v-if="record.variant === 'smart-random'">—</span>
+            <a-switch
+              v-else
+              :checked="record.enabled !== false"
+              :loading="statusSaving.has(record.variant)"
+              :disabled="statusSaving.has(record.variant)"
+              :aria-label="`${coverName(record)}状态`"
+              @change="changeStatus(record, $event)"
+            />
+          </template>
+        </a-table-column>
         <a-table-column title="操作" key="actions" :width="160">
           <template #default="{ record }">
             <div class="row-actions">
-              <a-button type="primary" size="small" @click="openEdit(record)">编辑</a-button>
-              <a-button type="primary" size="small" @click="removeCover(record)">删除</a-button>
+              <a-button type="primary" size="small" :disabled="statusSaving.has(record.variant)" @click="openEdit(record)">编辑</a-button>
+              <a-button type="primary" size="small" :disabled="statusSaving.has(record.variant)" @click="removeCover(record)">删除</a-button>
             </div>
           </template>
         </a-table-column>
@@ -342,6 +374,12 @@ watch(filteredCovers, (list) => {
             @change="pickCoverFile"
           />
           <p v-if="form.file" class="upload-name">{{ form.file.name }}</p>
+        </a-form-item>
+        <a-form-item v-if="editingId !== 'smart-random'" label="状态" required>
+          <a-radio-group v-model:value="form.enabled">
+            <a-radio :value="true">启用</a-radio>
+            <a-radio :value="false">禁用</a-radio>
+          </a-radio-group>
         </a-form-item>
       </a-form>
       <div class="cover-form-footer">

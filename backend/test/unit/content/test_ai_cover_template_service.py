@@ -22,7 +22,9 @@ def test_merge_catalog_item_applies_edit_and_hides_deleted():
     item = {"variant": "p1", "title": "手写风双行标题", "label": "提示词一", "prompt_body": "旧提示词"}
     edited = merge_catalog_item(
         item,
-        SimpleNamespace(hidden=False, name="手写风双标题", prompt="新提示词", content_type_names=["装修案例分享"]),
+        SimpleNamespace(
+            hidden=False, enabled=True, name="手写风双标题", prompt="新提示词", content_type_names=["装修案例分享"]
+        ),
     )
     assert edited["title"] == "手写风双标题"
     assert edited["prompt_body"] == "新提示词"
