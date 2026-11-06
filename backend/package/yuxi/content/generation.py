@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from pathlib import Path
 from typing import Any
@@ -47,6 +48,53 @@ _TITLE_SUFFIX_FRAGMENTS = (
     "施工",
     "装修",
 )
+
+
+_HASHTAG = re.compile(r"[#＃]([0-9A-Za-z_\u4e00-\u9fff]{1,20})")
+_TAG_LABEL_LINE = re.compile(r"^(?:发布标签|标签|话题)\s*[:：]\s*(.*)$")
+_TAG_TOKEN = re.compile(r"^[0-9A-Za-z_\u4e00-\u9fff]{2,16}$")
+_SENTENCE_PUNCT = re.compile(r"[。！？!?；;]")
+
+
+def _tag_tokens(text: str) -> list[str]:
+    return [part for part in re.split(r"[\s,，、#＃]+", text.strip()) if part]
+
+
+def detach_publish_tags(body: str, topics: list[str]) -> tuple[str, list[str]]:
+    """把正文里的发布标签移出正文，并入话题列表。"""
+
+    extracted: list[str] = []
+    kept: list[str] = []
+    for line in body.splitlines():
+        stripped = line.strip()
+        labeled = _TAG_LABEL_LINE.match(stripped)
+        if labeled:
+            extracted.extend(_tag_tokens(labeled.group(1)))
+            continue
+        tags = _HASHTAG.findall(stripped)
+        if tags:
+            extracted.extend(tags)
+            rest = _HASHTAG.sub("", stripped)
+            rest = re.sub(r"[\s,，、]+", " ", rest).strip()
+            if rest:
+                kept.append(rest)
+            continue
+        kept.append(line)
+    while kept and not kept[-1].strip():
+        kept.pop()
+    if kept:
+        last = kept[-1].strip()
+        tokens = _tag_tokens(last)
+        if (
+            len(tokens) >= 2
+            and all(_TAG_TOKEN.fullmatch(token) for token in tokens)
+            and not _SENTENCE_PUNCT.search(last)
+        ):
+            extracted.extend(tokens)
+            kept.pop()
+            while kept and not kept[-1].strip():
+                kept.pop()
+    return "\n".join(kept).strip(), [*topics, *extracted]
 
 
 def append_topics_within_limit(topics: list[str], extras: list[str], *, limit: int = DIRECT_TOPIC_LIMIT) -> list[str]:
@@ -199,18 +247,31 @@ def _direct_generation_prompt(
         else ""
     )
     reference_block = (
-        "已命中的知识库用来写文案。有所选内容类型的知识库时只用该库；没有时使用其他可访问知识库。"
+        "已命中的知识库用来写文案。有所选内容类型的知识库时只用该库；没有时使用没有绑定内容类型的知识库。"
         "与业务数据或图片不一致的事实不要写入：\n"
         f"{reference_knowledge.strip()}\n\n"
         if reference_knowledge.strip()
         else ""
     )
+    image_topic_rule = (
+        "再根据这张图片生成 3 到 5 个小红书类型标签，只写图片里能看出的场景、工艺或风格。"
+        "所有标签合计不超过 10 个。"
+        if image_attached
+        else ""
+    )
     if knowledge_context.strip():
         topic_rule = (
-            "话题写 8 到 10 个，像装修日记标签，包含鸿扬家装和装修避坑；"
-            "能确定城市时再包含「城市名+装修公司推荐」，例如长沙装修公司推荐、株洲装修公司推荐。"
-            "不要带 # 号。\n"
-        )
+            (
+                "话题包含鸿扬家装和装修避坑；能确定城市时再包含「城市名+装修公司推荐」，"
+                "例如长沙装修公司推荐、株洲装修公司推荐。"
+                f"{image_topic_rule}"
+            )
+            if image_attached
+            else (
+                "话题写 8 到 10 个，像装修日记标签，包含鸿扬家装和装修避坑；"
+                "能确定城市时再包含「城市名+装修公司推荐」，例如长沙装修公司推荐、株洲装修公司推荐。"
+            )
+        ) + "标签只写入 topics，不要写进正文，不要带 # 号。\n"
         knowledge_block = (
             "用好评笔记知识库里的业主口吻、服务场景和工艺细节写文案。"
             "表单里没有的金额、小区、工期和人名不要写入：\n"
@@ -219,7 +280,9 @@ def _direct_generation_prompt(
     else:
         topic_rule = (
             "话题必须包含装修避坑；用户数据里能确定城市时，还要包含「城市名+装修公司推荐」，"
-            "例如长沙装修公司推荐、株洲装修公司推荐。不要带 # 号。\n"
+            "例如长沙装修公司推荐、株洲装修公司推荐。"
+            f"{image_topic_rule}"
+            "标签只写入 topics，不要写进正文，不要带 # 号。\n"
         )
         knowledge_block = ""
     return (
@@ -307,7 +370,11 @@ def model_rejects_image(exc: BaseException) -> bool:
 
 def model_rejects_named_tool_choice(exc: BaseException) -> bool:
     text = str(exc)
-    return "Specifying functions for tool_choice" in text or "20015" in text
+    return (
+        "Specifying functions for tool_choice" in text
+        or "20015" in text
+        or "Thinking mode does not support this tool_choice" in text
+    )
 
 
 def _json_object(text: str) -> dict[str, Any] | None:
@@ -376,7 +443,11 @@ def _output_arguments(response: Any) -> dict[str, Any] | None:
 
 
 def _append_copy_instruction(message: HumanMessage) -> HumanMessage:
-    note = "请直接输出文案。第一行写标题，空一行后写正文。不要调用工具，不要输出解释。"
+    note = (
+        "请直接输出文案。第一行写标题，空一行后写正文，正文里不要写标签。"
+        "正文结束后空一行，写一行「发布标签：」，同一行用空格分隔标签。"
+        "不要调用工具，不要输出解释。"
+    )
     content = message.content
     if isinstance(content, str):
         return HumanMessage(content=f"{content}\n\n{note}")
@@ -419,7 +490,7 @@ async def generate_direct_content(
 
     resolved_model = resolve_chat_model_spec(model_spec)
     model_kwargs: dict[str, Any] = {"temperature": 0.7}
-    if resolved_model.startswith("ark:doubao-"):
+    if resolved_model.startswith(("ark:doubao-", "deepseek:")):
         model_kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
     model = load_chat_model(fully_specified_name=resolved_model, **model_kwargs)
     style = creative_style if isinstance(creative_style, dict) else {}
@@ -492,15 +563,17 @@ async def generate_direct_content(
         raise ValueError("模型没有返回内容生成工具调用")
     raw_output = ContentArtifactAIEditOutput.model_validate(arguments)
     final_title = normalize_escaped_newlines(replace_forbidden_words(raw_output.title, forbidden_replacements)).strip()
-    final_body = normalize_escaped_newlines(replace_forbidden_words(raw_output.body, forbidden_replacements)).strip()
+    body_text = normalize_escaped_newlines(replace_forbidden_words(raw_output.body, forbidden_replacements)).strip()
+    body_topics = [
+        normalize_escaped_newlines(replace_forbidden_words(topic, forbidden_replacements))
+        for topic in raw_output.topics
+    ]
+    final_body, body_topics = detach_publish_tags(body_text, body_topics)
     output = ContentArtifactAIEditOutput(
         title=final_title,
         body=final_body,
         topics=merge_pinned_topics(
-            [
-                normalize_escaped_newlines(replace_forbidden_words(topic, forbidden_replacements))
-                for topic in raw_output.topics
-            ],
+            body_topics,
             _region_from_user_request(user_request),
             limit=DIRECT_TOPIC_LIMIT,
         ),
@@ -510,6 +583,7 @@ async def generate_direct_content(
     if residual:
         raise ValueError("封禁词替换后仍有残留：" + "、".join(residual))
     tokens = response_token_usage(response)
+    elapsed_seconds = round(time.monotonic() - generation_started_at, 2)
     if usage_out is not None:
         usage_out.clear()
         usage_out.update(
@@ -518,6 +592,7 @@ async def generate_direct_content(
                 "prompt": prompt,
                 "image_attached": image_sent,
                 "image_omitted_reason": image_omitted_reason,
+                "elapsed_seconds": elapsed_seconds,
                 **tokens,
             }
         )
@@ -528,7 +603,7 @@ async def generate_direct_content(
         tokens["output_tokens"],
         tokens["total_tokens"],
         image_sent,
-        time.monotonic() - generation_started_at,
+        elapsed_seconds,
     )
     return output
 

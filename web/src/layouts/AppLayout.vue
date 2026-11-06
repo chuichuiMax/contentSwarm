@@ -27,6 +27,7 @@ import {
   Braces,
   ListTree,
   Hammer,
+  Palette,
   ChevronRight,
   ChevronDown
 } from 'lucide-vue-next'
@@ -275,6 +276,13 @@ const mainList = computed(() => {
         path: '/config-manage/content-types',
         icon: Layers,
         activeIcon: Layers,
+        permissionAny: ['content_type.view_list', 'content_type.create', 'content_type.view', 'content_type.delete']
+      },
+      {
+        name: '创作风格管理',
+        path: '/config-manage/creative-styles',
+        icon: Palette,
+        activeIcon: Palette,
         permissionAny: ['content_type.view_list', 'content_type.create', 'content_type.view', 'content_type.delete']
       },
       {

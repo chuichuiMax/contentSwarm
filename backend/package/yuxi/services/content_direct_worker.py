@@ -53,17 +53,25 @@ GENERIC_AUDIENCE_TAG_KB_NAME = "目标人群-通用-标签"
 _COPY_KB_EXCLUDED = frozenset({"封禁词库", "创作提示词", "好评笔记知识库"})
 
 
-def other_copy_knowledge_names(content_type_name: str, names: list[str]) -> list[str]:
-    """内容类型没有对应知识库时，其余可访问知识库都可以用来写文案。"""
+def _viral_content_type(value) -> str:
+    if isinstance(value, list):
+        value = value[0] if value else ""
+    return str(value or "").strip()
+
+
+def other_copy_knowledge_names(content_type_name: str, libraries: list[dict]) -> list[str]:
+    """内容类型知识库未命中时，只用没有绑定内容类型的知识库写文案。"""
 
     excluded = set(content_type_knowledge_names(content_type_name))
     excluded.update(_COPY_KB_EXCLUDED)
     selected: list[str] = []
-    for name in names:
-        text = str(name or "").strip()
+    for item in libraries:
+        text = str(item.get("name") or "").strip()
         if not text or text in excluded or text in selected:
             continue
         if text.startswith("目标人群-") and text.endswith("-标签"):
+            continue
+        if _viral_content_type(item.get("viral_content_type")):
             continue
         selected.append(text)
     return selected
@@ -79,7 +87,7 @@ def content_type_knowledge_names(content_type_name: str) -> list[str]:
     return names
 
 
-async def accessible_knowledge_names(uid: str) -> list[str]:
+async def accessible_knowledge_libraries(uid: str) -> list[dict]:
     from yuxi import knowledge_base
     from yuxi.knowledge.manager import DEFAULT_SHARE_CONFIG
     from yuxi.repositories.knowledge_base_repository import KnowledgeBaseRepository
@@ -90,17 +98,22 @@ async def accessible_knowledge_names(uid: str) -> list[str]:
         return []
     user_info = {"uid": user.uid, "role": user.role, "department_id": user.department_id}
     rows = await KnowledgeBaseRepository().get_all()
-    names: list[str] = []
+    libraries: list[dict] = []
     for row in sorted(rows, key=lambda item: str(item.name or "")):
-        if knowledge_base._database_info_accessible(
+        if not knowledge_base._database_info_accessible(
             user_info,
             {
                 "created_by": row.created_by,
                 "share_config": row.share_config or DEFAULT_SHARE_CONFIG.copy(),
             },
         ):
-            names.append(str(row.name or "").strip())
-    return [name for name in names if name]
+            continue
+        name = str(row.name or "").strip()
+        if not name:
+            continue
+        params = row.additional_params if isinstance(row.additional_params, dict) else {}
+        libraries.append({"name": name, "viral_content_type": params.get("viral_content_type")})
+    return libraries
 
 
 async def lookup_content_knowledge(uid: str, name: str, *, limit: int = 12000) -> dict | None:
@@ -249,7 +262,9 @@ async def process_direct_content_run(ctx, run_id: str):
                     )
                 parts: list[str] = []
                 budget = 12000
-                for kb_name in other_copy_knowledge_names(type_name, await accessible_knowledge_names(str(run.uid))):
+                for kb_name in other_copy_knowledge_names(
+                    type_name, await accessible_knowledge_libraries(str(run.uid))
+                ):
                     if budget <= 0:
                         break
                     found = await lookup_content_knowledge(str(run.uid), kb_name, limit=budget)
@@ -350,6 +365,7 @@ async def process_direct_content_run(ctx, run_id: str):
                     "image_omitted_reason": usage_log.get("image_omitted_reason") or "",
                     "image_item_id": image_id if image_kind == "item" else "",
                     "image_asset_id": image_id if image_kind == "asset" else "",
+                    "elapsed_seconds": usage_log.get("elapsed_seconds"),
                     "input_tokens": usage_log.get("input_tokens"),
                     "output_tokens": usage_log.get("output_tokens"),
                     "total_tokens": usage_log.get("total_tokens"),

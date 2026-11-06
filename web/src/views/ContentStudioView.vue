@@ -46,7 +46,7 @@ import { contentApi } from '@/apis/content_api'
 import { materialLibraryApi } from '@/apis/material_library_api'
 import { employeeApi } from '@/apis/employee_api'
 import { CONTENT_TEST_CASES } from '@/data/contentTestCases'
-import { creativeStylesForContentType } from '@/data/creativeStyles'
+import { creativeStyleApi } from '@/apis/creative_style_api'
 import { useContentStudioStore } from '@/stores/contentStudio'
 import { formatContentRequestJson } from '@/utils/contentRequestPayload'
 import { CONTENT_TYPE_NAME_TO_CODE } from '@/utils/content_creation_types'
@@ -119,7 +119,27 @@ const selectedCoverAssetId = ref('')
 let autoResumedCoverKey = ''
 const confirmedEvidenceIds = ref([])
 const approvalNote = ref('')
-const modelSpec = ref('')
+const DEFAULT_GENERATION_MODEL = 'deepseek:deepseek-flash'
+const GENERATION_MODEL_OPTIONS = [
+  { value: '', label: '空' },
+  {
+    value: 'siliconflow-cn:Qwen/Qwen3-VL-8B-Instruct',
+    label: '硅基流动 Qwen/Qwen3-VL-8B-Instruct'
+  },
+  {
+    value: 'siliconflow-cn:deepseek-ai/DeepSeek-V4.1-Flash',
+    label: '硅基流动 deepseek-ai/DeepSeek-V4.1-Flash'
+  },
+  { value: 'deepseek:deepseek-flash', label: 'deepseek:deepseek-flash' }
+]
+const modelSpec = ref(DEFAULT_GENERATION_MODEL)
+const generationModelOptions = computed(() => {
+  const current = String(modelSpec.value || '')
+  if (!current || GENERATION_MODEL_OPTIONS.some((item) => item.value === current)) {
+    return GENERATION_MODEL_OPTIONS
+  }
+  return [...GENERATION_MODEL_OPTIONS, { value: current, label: current }]
+})
 const creationPlanPreview = ref(null)
 const creationPlanLoading = ref(false)
 const editor = reactive({ title: '', body: '', topics: [] })
@@ -288,12 +308,58 @@ const selectedHandwrittenQuoteTemplate = computed(
 const currentContentType = computed(
   () => store.task?.content_type_code || creation.content_type_code
 )
-const availableCreativeStyleOptions = computed(() =>
-  creativeStylesForContentType(
-    studioContentTypeCode.value || currentContentType.value,
-    selectedStudioContentType.value?.name || formValues.mp_content_type_name || ''
-  )
-)
+const managedCreativeStyles = ref([])
+const contentTypeDataLoading = ref(false)
+let creativeStyleRequestId = 0
+const availableCreativeStyleOptions = computed(() => managedCreativeStyles.value)
+
+const loadManagedCreativeStyles = async (contentTypeId) => {
+  const requestId = ++creativeStyleRequestId
+  if (!contentTypeId) {
+    managedCreativeStyles.value = []
+    contentTypeDataLoading.value = false
+    return
+  }
+  contentTypeDataLoading.value = true
+  try {
+    const response = await creativeStyleApi.listCreativeStyles({
+      content_type_id: contentTypeId,
+      enabled_only: true
+    })
+    if (requestId !== creativeStyleRequestId) return
+    managedCreativeStyles.value = (response.creative_styles || []).map((item) => ({
+      value: item.name,
+      label: item.name,
+      description: item.description || '',
+      prompt: item.prompt || ''
+    }))
+  } catch (error) {
+    if (requestId !== creativeStyleRequestId) return
+    managedCreativeStyles.value = []
+    message.warning(error.message || '加载创作风格失败')
+  } finally {
+    if (requestId === creativeStyleRequestId) contentTypeDataLoading.value = false
+  }
+}
+
+const applyManagedCreativeStyle = (sameType) => {
+  const saved = store.task?.brief?.form_values || {}
+  const savedCreativeStyle =
+    typeof saved.creative_style === 'string'
+      ? saved.creative_style
+      : saved.creative_style?.name || ''
+  const styleOptions = availableCreativeStyleOptions.value
+  const savedStyle = sameType
+    ? styleOptions.find((item) => item.value === savedCreativeStyle) || null
+    : null
+  const defaultStyle = savedStyle || styleOptions.find((item) => item.prompt) || styleOptions[0] || null
+  selectedCreativeStyle.value = defaultStyle?.value || ''
+  const savedPrompt = sameType ? String(saved.generation_prompt ?? '').trim() : ''
+  formValues.generation_prompt =
+    savedStyle && savedPrompt
+      ? saved.generation_prompt
+      : defaultStyle?.prompt || savedPrompt || DEFAULT_DIRECT_GENERATION_PROMPT
+}
 const onCreativeStyleChange = (event) => {
   const value = event?.target?.value ?? event
   const option = availableCreativeStyleOptions.value.find((item) => item.value === value)
@@ -1269,25 +1335,18 @@ const initializeFormValues = () => {
   const contentType = studioContentTypes.value.find((item) => item.id === selectedContentTypeId.value)
   formValues.mp_content_type_id = selectedContentTypeId.value
   formValues.mp_content_type_name = contentType?.name || saved.mp_content_type_name || ''
-  modelSpec.value = String(saved.model_spec || '')
+  modelSpec.value = Object.prototype.hasOwnProperty.call(saved, 'model_spec')
+    ? String(saved.model_spec || '')
+    : DEFAULT_GENERATION_MODEL
   activeFields.value.forEach((field) => {
     if (saved[field.key] !== undefined) formValues[field.key] = saved[field.key]
     else formValues[field.key] = field.type === 'tags' ? [] : ''
   })
-  const savedCreativeStyle =
-    typeof saved.creative_style === 'string'
-      ? saved.creative_style
-      : saved.creative_style?.name || ''
-  const styleOptions = availableCreativeStyleOptions.value
-  const savedStyle = styleOptions.find((item) => item.value === savedCreativeStyle) || null
-  const defaultStyle = savedStyle || styleOptions.find((item) => item.prompt) || styleOptions[0] || null
-  selectedCreativeStyle.value = defaultStyle?.value || ''
-  const savedPrompt = String(saved.generation_prompt ?? '').trim()
-  formValues.generation_prompt =
-    savedStyle && savedPrompt
-      ? saved.generation_prompt
-      : defaultStyle?.prompt || savedPrompt || DEFAULT_DIRECT_GENERATION_PROMPT
   resolvedAudienceTags.value = []
+  void loadManagedCreativeStyles(selectedContentTypeId.value).then(() => {
+    if (formValues.mp_content_type_id !== selectedContentTypeId.value) return
+    applyManagedCreativeStyle(true)
+  })
   void refreshTargetAudienceTags(formValues['目标人群'])
 }
 
@@ -1303,16 +1362,7 @@ const onContentTypeChange = (value) => {
     if (!keepKeys.has(key)) delete formValues[key]
   })
   const sameType = String(saved.mp_content_type_id || '') === String(selectedContentTypeId.value || '')
-  const savedCreativeStyle =
-    typeof saved.creative_style === 'string'
-      ? saved.creative_style
-      : saved.creative_style?.name || ''
-  const styleOptions = availableCreativeStyleOptions.value
-  const savedStyle = sameType
-    ? styleOptions.find((item) => item.value === savedCreativeStyle) || null
-    : null
-  const defaultStyle = savedStyle || styleOptions.find((item) => item.prompt) || styleOptions[0] || null
-  selectedCreativeStyle.value = defaultStyle?.value || ''
+  selectedCreativeStyle.value = ''
   selectedViralAssetId.value = saved.viral_asset_id || ''
   const hasSavedValues = Object.values(saved).some(
     (value) =>
@@ -1325,11 +1375,12 @@ const onContentTypeChange = (value) => {
     if (saved[field.key] !== undefined) formValues[field.key] = saved[field.key]
     else formValues[field.key] = field.type === 'tags' ? [] : ''
   })
-  const savedPrompt = sameType ? String(saved.generation_prompt ?? '').trim() : ''
-  formValues.generation_prompt =
-    savedStyle && savedPrompt
-      ? saved.generation_prompt
-      : defaultStyle?.prompt || savedPrompt || DEFAULT_DIRECT_GENERATION_PROMPT
+  formValues.generation_prompt = ''
+  void loadManagedCreativeStyles(selectedContentTypeId.value).then(() => {
+    if (formValues.mp_content_type_id !== selectedContentTypeId.value) return
+    applyManagedCreativeStyle(sameType)
+    syncGeneratedContentRequest()
+  })
   syncGeneratedContentRequest()
   if (studioContentTypeCode.value) creation.content_type_code = studioContentTypeCode.value
   appliedFrameAreaBand = ''
@@ -3170,8 +3221,13 @@ const returnToContentCreation = async () => {
                         @change="onContentTypeChange"
                       />
                     </label>
+                    <a-spin
+                      :spinning="contentTypeDataLoading"
+                      class="content-type-data-spin"
+                      tip="正在加载内容类型数据"
+                    >
                     <div
-                      v-if="selectedContentTypeId && availableCreativeStyleOptions.length"
+                      v-if="selectedContentTypeId && !contentTypeDataLoading && availableCreativeStyleOptions.length"
                       class="field-block creative-style-field"
                     >
                       <div class="creative-style-heading">
@@ -3196,7 +3252,10 @@ const returnToContentCreation = async () => {
                         </a-radio-button>
                       </a-radio-group>
                     </div>
-                    <div v-if="selectedContentTypeId" class="field-block direct-generation-prompt">
+                    <div
+                      v-if="selectedContentTypeId && !contentTypeDataLoading"
+                      class="field-block direct-generation-prompt"
+                    >
                       <label id="direct-generation-prompt-label" for="direct-generation-prompt">
                         生成提示词
                       </label>
@@ -3209,9 +3268,10 @@ const returnToContentCreation = async () => {
                         placeholder="请输入新生成时交给大模型的写作要求"
                       />
                     </div>
+                    </a-spin>
                   </section>
 
-                  <section class="brief-section variables-section">
+                  <section v-if="!contentTypeDataLoading" class="brief-section variables-section">
                     <header class="brief-section-head">
                       <MessageSquare :size="16" />
                       <strong>业务变量</strong>
@@ -3673,11 +3733,11 @@ const returnToContentCreation = async () => {
           <footer class="creation-submit-bar">
             <div v-if="!isQuickMode" class="creation-model">
               <label for="creation-model">生成模型</label>
-              <a-input
+              <a-select
                 id="creation-model"
                 v-model:value="modelSpec"
                 :disabled="creationSubmitting"
-                placeholder="系统默认模型"
+                :options="generationModelOptions"
               />
             </div>
             <span
@@ -5168,8 +5228,8 @@ const returnToContentCreation = async () => {
     flex-shrink: 0;
     font-size: 13px;
   }
-  :deep(.ant-input) {
-    width: 240px;
+  :deep(.ant-select) {
+    width: 360px;
   }
 }
 .creation-save-status {
@@ -7417,6 +7477,11 @@ const returnToContentCreation = async () => {
   background: var(--color-error-50);
   color: var(--color-error-700);
 }
+.content-type-data-spin {
+  display: block;
+  min-height: 180px;
+}
+
 .page-loading {
   min-height: 400px;
   display: flex;
@@ -7546,7 +7611,7 @@ const returnToContentCreation = async () => {
   }
   .creation-model {
     width: 100%;
-    :deep(.ant-input) {
+    :deep(.ant-select) {
       width: 100%;
       min-width: 0;
     }

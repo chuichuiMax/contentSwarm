@@ -2152,6 +2152,45 @@ class ContentType(Base):
         }
 
 
+class CreativeStyle(Base):
+    """内容创作的创作风格与提示词。"""
+
+    __tablename__ = "creative_styles"
+    __table_args__ = (
+        UniqueConstraint("content_type_id", "name", name="uq_creative_styles_type_name"),
+    )
+
+    id = Column(String(64), primary_key=True)
+    content_type_id = Column(
+        String(64),
+        ForeignKey("content_types.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    name = Column(String(128), nullable=False)
+    description = Column(String(255), nullable=False, default="")
+    prompt = Column(Text, nullable=False, default="")
+    enabled = Column(Boolean, nullable=False, default=True, index=True)
+    sort_order = Column(Integer, nullable=False, default=0)
+    created_by = Column(String(64), nullable=False, index=True)
+    created_at = Column(DateTime, default=utc_now_naive)
+    updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "content_type_id": self.content_type_id,
+            "name": self.name,
+            "description": self.description or "",
+            "prompt": self.prompt or "",
+            "enabled": bool(self.enabled),
+            "sort_order": self.sort_order,
+            "created_by": self.created_by,
+            "created_at": format_utc_datetime(self.created_at),
+            "updated_at": format_utc_datetime(self.updated_at),
+        }
+
+
 class ContentVariable(Base):
     """变量配置，服务入口与内容类型名称联动。"""
 

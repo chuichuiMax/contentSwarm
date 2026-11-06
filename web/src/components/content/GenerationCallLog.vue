@@ -14,13 +14,16 @@ let loadSeq = 0
 
 const tokenText = (value) => (Number.isInteger(value) ? String(value) : '未返回')
 
+const durationText = (value) =>
+  typeof value === 'number' && Number.isFinite(value) ? `${value.toFixed(1)} 秒` : '未记录'
+
 const visibleKnowledgeHits = (log) =>
   (log?.knowledge_hits || []).filter((item) => item.role !== 'prompt_catalog')
 
 const knowledgeLabel = (item) => {
   if (item.role === 'forbidden') return '封禁词库'
   if (item.role === 'audience_tags') return '通用标签'
-  if (item.role === 'other') return '其他知识库'
+  if (item.role === 'other') return '未绑定内容类型的知识库'
   return '内容知识库'
 }
 
@@ -75,6 +78,7 @@ onBeforeUnmount(() => {
   <div v-else class="generation-call-log">
     <dl>
       <div><dt>使用模型</dt><dd>{{ log.model || '未记录' }}</dd></div>
+      <div><dt>调用耗时</dt><dd>{{ durationText(log.elapsed_seconds) }}</dd></div>
       <div><dt>输入 Token</dt><dd>{{ tokenText(log.input_tokens) }}</dd></div>
       <div><dt>输出 Token</dt><dd>{{ tokenText(log.output_tokens) }}</dd></div>
       <div><dt>合计 Token</dt><dd>{{ tokenText(log.total_tokens) }}</dd></div>
@@ -105,7 +109,7 @@ onBeforeUnmount(() => {
 
 <style scoped lang="less">
 .generation-call-log { display: flex; flex-direction: column; gap: 14px; }
-dl { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin: 0; }
+dl { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin: 0; }
 dl div { min-width: 0; padding: 10px 12px; border: 1px solid var(--gray-150); border-radius: 8px; background: var(--gray-25); }
 dt { color: var(--color-text-tertiary); font-size: 12px; }
 dd { margin: 4px 0 0; overflow-wrap: anywhere; color: var(--color-text); font-size: 13px; }

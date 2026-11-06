@@ -250,6 +250,8 @@ async def test_direct_generation_sends_prompt_with_first_image(monkeypatch):
     assert content[0]["type"] == "text"
     assert "根据我提供的图片写文案" in content[0]["text"]
     assert "已附上第一张图片" in content[0]["text"]
+    assert "根据这张图片生成 3 到 5 个小红书类型标签" in content[0]["text"]
+    assert "所有标签合计不超过 10 个" in content[0]["text"]
     assert content[1]["type"] == "image_url"
     assert content[1]["image_url"]["url"].startswith("data:image/jpeg;base64,")
 
@@ -295,8 +297,75 @@ async def test_text_only_model_retries_without_the_image(monkeypatch):
     assert isinstance(calls[0][0].content, list)
     assert isinstance(calls[1][0].content, str)
     assert "已附上第一张图片" not in calls[1][0].content
+    assert "小红书类型标签" not in calls[1][0].content
     assert usage["image_attached"] is False
+    assert usage["elapsed_seconds"] >= 0
     assert "不能看图" in usage["image_omitted_reason"]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_deepseek_flash_disables_thinking_before_tool_choice(monkeypatch):
+    load_calls = []
+
+    class FakeModel:
+        def bind_tools(self, schemas, **kwargs):
+            return self
+
+        async def ainvoke(self, messages):
+            return _tool_response({"title": "标题", "body": "正文", "topics": []})
+
+    def fake_load_chat_model(**kwargs):
+        load_calls.append(kwargs)
+        return FakeModel()
+
+    monkeypatch.setattr(generation, "load_chat_model", fake_load_chat_model)
+
+    await generation.generate_direct_content(
+        model_spec="deepseek:deepseek-flash",
+        creative_style={},
+        viral_source={"title": "", "body": ""},
+        user_request="写一段内容",
+    )
+
+    assert load_calls[0]["extra_body"] == {"thinking": {"type": "disabled"}}
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_thinking_mode_tool_choice_retries_with_auto(monkeypatch):
+    choices = []
+
+    class FakeModel:
+        def __init__(self):
+            self.choice = None
+
+        def bind_tools(self, schemas, **kwargs):
+            self.choice = kwargs.get("tool_choice")
+            return self
+
+        async def ainvoke(self, messages):
+            choices.append(self.choice)
+            if self.choice != "auto":
+                raise RuntimeError(
+                    "Error code: 400 - {'error': {'message': "
+                    "'Thinking mode does not support this tool_choice', "
+                    "'type': 'invalid_request_error', 'code': 'invalid_request_error'}}"
+                )
+            return _tool_response({"title": "标题", "body": "正文", "topics": ["装修避坑"]})
+
+    monkeypatch.setattr(generation, "resolve_chat_model_spec", lambda value: value or "default")
+    monkeypatch.setattr(generation, "load_chat_model", lambda **kwargs: FakeModel())
+
+    result = await generation.generate_direct_content(
+        model_spec="deepseek:deepseek-flash",
+        creative_style={},
+        viral_source={"title": "", "body": ""},
+        user_request="写一段内容",
+    )
+
+    assert choices == ["ContentArtifactAIEditOutput", "auto"]
+    assert result.title == "标题"
 
 
 @pytest.mark.unit
@@ -362,6 +431,47 @@ async def test_plain_text_response_is_used_as_copy(monkeypatch):
     assert result.topics == ["装修避坑"]
 
 
+def test_publish_tags_are_removed_from_the_body():
+    body, topics = generation.detach_publish_tags(
+        "今天去看了水电。\n\n#装修避坑 #水电改造\n发布标签：厨房收纳 工地实拍",
+        ["装修日记"],
+    )
+    assert body == "今天去看了水电。"
+    assert topics == ["装修日记", "装修避坑", "水电改造", "厨房收纳", "工地实拍"]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_model_body_tags_land_in_publish_topics(monkeypatch):
+    class FakeModel:
+        def bind_tools(self, schemas, **kwargs):
+            return self
+
+        async def ainvoke(self, messages):
+            return _tool_response(
+                {
+                    "title": "标题",
+                    "body": "我去工地看了水电。\n#水电改造 #工地实拍",
+                    "topics": [],
+                }
+            )
+
+    monkeypatch.setattr(generation, "resolve_chat_model_spec", lambda value: value or "default")
+    monkeypatch.setattr(generation, "load_chat_model", lambda **kwargs: FakeModel())
+
+    result = await generation.generate_direct_content(
+        model_spec=None,
+        creative_style={},
+        viral_source={"title": "", "body": ""},
+        user_request="写一段内容",
+    )
+
+    assert result.body == "我去工地看了水电。"
+    assert "水电改造" in result.topics
+    assert "工地实拍" in result.topics
+    assert result.topics[0] == "装修避坑"
+
+
 def test_topics_are_filled_from_generic_tags_up_to_ten():
     topics = generation.append_topics_within_limit(
         ["株洲装修公司推荐", "装修避坑"],
@@ -380,16 +490,17 @@ def test_other_knowledge_bases_are_used_when_content_type_is_missing():
     names = other_copy_knowledge_names(
         "装修案例分享",
         [
-            "装修案例分享",
-            "封禁词库",
-            "创作提示词",
-            "目标人群-通用-标签",
-            "好评笔记知识库",
-            "工艺施工展示知识库",
-            "装修报价知识库",
+            {"name": "装修案例分享", "viral_content_type": "CT06"},
+            {"name": "封禁词库"},
+            {"name": "创作提示词"},
+            {"name": "目标人群-通用-标签"},
+            {"name": "好评笔记知识库"},
+            {"name": "工艺施工展示知识库", "viral_content_type": "CT01"},
+            {"name": "通用工艺说明"},
+            {"name": "装修报价知识库", "viral_content_type": ""},
         ],
     )
-    assert names == ["工艺施工展示知识库", "装修报价知识库"]
+    assert names == ["通用工艺说明", "装修报价知识库"]
 
 
 def test_reference_knowledge_is_written_into_the_prompt():

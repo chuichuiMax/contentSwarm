@@ -284,6 +284,12 @@ const router = createRouter({
           meta: { keepAlive: false, requiresAuth: true }
         },
         {
+          path: 'creative-styles',
+          name: 'CreativeStyleConfigComp',
+          component: () => import('../views/CreativeStyleConfigView.vue'),
+          meta: { keepAlive: false, requiresAuth: true }
+        },
+        {
           path: 'target-audiences',
           name: 'TargetAudienceConfigComp',
           component: () => import('../views/TargetAudienceConfigView.vue'),

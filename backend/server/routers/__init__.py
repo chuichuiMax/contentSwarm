@@ -25,6 +25,7 @@ from server.routers.account_router import accounts
 from server.routers.employee_router import employees
 from server.routers.role_router import roles
 from server.routers.content_type_router import content_types
+from server.routers.creative_style_router import creative_styles
 from server.routers.variable_router import content_variables
 from server.routers.business_variable_router import content_business_variables
 from server.routers.process_standard_router import content_process_standards
@@ -68,6 +69,7 @@ router.include_router(accounts)  # /api/accounts/* 内容发布账号管理
 router.include_router(employees)  # /api/employees/* 内容发布员工管理
 router.include_router(roles)  # /api/roles/* 内容发布角色与权限配置
 router.include_router(content_types)  # /api/content-types/* 内容类型配置
+router.include_router(creative_styles)  # /api/creative-styles/* 创作风格管理
 router.include_router(content_target_audiences)  # /api/content-target-audiences/* 目标人群配置
 router.include_router(content_resident_populations)  # /api/content-resident-populations/* 居住人口配置
 router.include_router(content_variables)  # /api/content-variables/* 业务参数配置
