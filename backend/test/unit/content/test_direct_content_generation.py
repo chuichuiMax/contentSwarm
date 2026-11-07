@@ -34,6 +34,11 @@ async def test_direct_generation_uses_only_requested_inputs(monkeypatch):
             return _tool_response({"title": "报价标题", "body": "报价正文", "topics": ["报价"]})
 
     monkeypatch.setattr(generation, "resolve_chat_model_spec", lambda value: value or "default")
+    monkeypatch.setattr(
+        generation,
+        "choose_sampling",
+        lambda: {"temperature": 0.7, "top_p": 1},
+    )
 
     def fake_load_chat_model(**kwargs):
         load_model_calls.append(kwargs)
@@ -57,6 +62,7 @@ async def test_direct_generation_uses_only_requested_inputs(monkeypatch):
         {
             "fully_specified_name": "ark:doubao-seed-2-1-pro-260915",
             "temperature": 0.7,
+            "top_p": 1,
             "extra_body": {"thinking": {"type": "disabled"}},
         }
     ]
@@ -79,6 +85,8 @@ async def test_direct_generation_uses_only_requested_inputs(monkeypatch):
     assert "装修公司推荐" in prompt
     assert "封禁词替换表" in prompt
     assert '"报价": ["费用"]' in prompt
+    assert prompt.index("封禁词替换表") < prompt.index("自我查验")
+    assert "不要写出查验过程" in prompt
 
 
 @pytest.mark.unit
@@ -251,6 +259,8 @@ async def test_direct_generation_sends_prompt_with_first_image(monkeypatch):
     assert "根据我提供的图片写文案" in content[0]["text"]
     assert "已附上第一张图片" in content[0]["text"]
     assert "根据这张图片生成 3 到 5 个小红书类型标签" in content[0]["text"]
+    assert "空间加画面里的具体细节" in content[0]["text"]
+    assert "创作风格里的示例词" in content[0]["text"]
     assert "所有标签合计不超过 10 个" in content[0]["text"]
     assert content[1]["type"] == "image_url"
     assert content[1]["image_url"]["url"].startswith("data:image/jpeg;base64,")
@@ -358,6 +368,118 @@ async def test_siliconflow_deepseek_disables_thinking(monkeypatch):
     )
 
     assert load_calls[0]["extra_body"] == {"enable_thinking": False}
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_each_generation_uses_its_own_sampling(monkeypatch):
+    sampling = {"temperature": 1.02, "top_p": 0.86}
+    usage: dict = {}
+    load_calls = []
+
+    class FakeModel:
+        def bind_tools(self, schemas, **kwargs):
+            return self
+
+        async def ainvoke(self, messages):
+            self.messages = messages
+            return _tool_response({"title": "标题", "body": "正文", "topics": []})
+
+    monkeypatch.setattr(generation, "resolve_chat_model_spec", lambda value: value or "default")
+    monkeypatch.setattr(
+        generation,
+        "load_chat_model",
+        lambda **kwargs: load_calls.append(kwargs) or FakeModel(),
+    )
+    monkeypatch.setattr(generation, "choose_sampling", lambda: sampling)
+
+    await generation.generate_direct_content(
+        model_spec="deepseek:deepseek-flash",
+        creative_style={},
+        viral_source={"title": "", "body": ""},
+        user_request="写一段内容",
+        usage_out=usage,
+    )
+
+    assert load_calls[0]["temperature"] == 1.02
+    assert load_calls[0]["top_p"] == 0.86
+    assert "seed" not in load_calls[0]
+    assert usage["temperature"] == 1.02
+    assert usage["top_p"] == 0.86
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_empty_model_response_is_reported_clearly(monkeypatch):
+    class FakeModel:
+        def bind_tools(self, schemas, **kwargs):
+            return self
+
+        async def ainvoke(self, messages):
+            raise AttributeError("'NoneType' object has no attribute 'model_dump'")
+
+    monkeypatch.setattr(generation, "resolve_chat_model_spec", lambda value: value or "default")
+    monkeypatch.setattr(generation, "load_chat_model", lambda **kwargs: FakeModel())
+
+    with pytest.raises(ValueError, match="模型没有返回内容"):
+        await generation.generate_direct_content(
+            model_spec="deepseek:deepseek-flash",
+            creative_style={},
+            viral_source={"title": "", "body": ""},
+            user_request="写一段内容",
+        )
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_unbroken_body_is_split_into_paragraphs(monkeypatch):
+    class FakeModel:
+        def bind_tools(self, schemas, **kwargs):
+            return self
+
+        async def ainvoke(self, messages):
+            return _tool_response(
+                {
+                    "title": "客厅标题",
+                    "body": "长沙润樾府，145㎡，雅致现代风。客厅这块，住进去才知道有多顺。柜子别贪多，留白才耐看。",
+                    "topics": ["装修避坑"],
+                }
+            )
+
+    monkeypatch.setattr(generation, "resolve_chat_model_spec", lambda value: value or "default")
+    monkeypatch.setattr(generation, "load_chat_model", lambda **kwargs: FakeModel())
+
+    result = await generation.generate_direct_content(
+        model_spec="siliconflow-cn:deepseek-ai/DeepSeek-V4.1-Flash",
+        creative_style={},
+        viral_source={"title": "", "body": ""},
+        user_request="写一段内容",
+    )
+
+    assert result.body == "长沙润樾府，145㎡，雅致现代风。\n\n客厅这块，住进去才知道有多顺。\n\n柜子别贪多，留白才耐看。"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_body_with_line_breaks_stays_unchanged(monkeypatch):
+    class FakeModel:
+        def bind_tools(self, schemas, **kwargs):
+            return self
+
+        async def ainvoke(self, messages):
+            return _tool_response({"title": "标题", "body": "第一段。\n\n第二段。", "topics": []})
+
+    monkeypatch.setattr(generation, "resolve_chat_model_spec", lambda value: value or "default")
+    monkeypatch.setattr(generation, "load_chat_model", lambda **kwargs: FakeModel())
+
+    result = await generation.generate_direct_content(
+        model_spec="deepseek:deepseek-flash",
+        creative_style={},
+        viral_source={"title": "", "body": ""},
+        user_request="写一段内容",
+    )
+
+    assert result.body == "第一段。\n\n第二段。"
 
 
 @pytest.mark.unit
@@ -562,6 +684,44 @@ def test_topics_are_filled_from_generic_tags_up_to_ten():
     assert "装修日记" in topics
     assert len(topics) == 10
     assert "厨房" not in topics
+
+
+def test_recent_image_topics_skip_pinned_tags():
+    topics = generation.avoid_recent_image_topics(
+        ["长沙装修公司推荐", "装修避坑", "无主灯", "#客餐厅线性灯", "无主灯", "电视墙石材"]
+    )
+    assert topics == ["无主灯", "客餐厅线性灯", "电视墙石材"]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_recent_topics_are_sent_with_the_image(monkeypatch):
+    calls = []
+
+    class FakeModel:
+        def bind_tools(self, schemas, **kwargs):
+            return self
+
+        async def ainvoke(self, messages):
+            calls.append(messages)
+            return _tool_response({"title": "标题", "body": "正文", "topics": []})
+
+    monkeypatch.setattr(generation, "resolve_chat_model_spec", lambda value: value or "default")
+    monkeypatch.setattr(generation, "load_chat_model", lambda **kwargs: FakeModel())
+
+    await generation.generate_direct_content(
+        model_spec="siliconflow-cn:Qwen/Qwen3-VL-8B-Instruct",
+        creative_style={},
+        viral_source={"title": "", "body": ""},
+        user_request="写一段内容",
+        generation_prompt="根据图片写",
+        reference_image=(b"image-bytes", "image/jpeg"),
+        recent_topics=["装修避坑", "无主灯", "电视墙石材"],
+    )
+
+    text = calls[0][0].content[0]["text"]
+    assert "最近用过这些标签：无主灯、电视墙石材" in text
+    assert "装修避坑" not in text.split("最近用过这些标签：", 1)[1]
 
 
 def test_other_knowledge_bases_are_used_when_content_type_is_missing():

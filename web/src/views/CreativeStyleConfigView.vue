@@ -26,6 +26,8 @@ const pageSize = ref(20)
 const styles = ref([])
 const contentTypes = ref([])
 const modalOpen = ref(false)
+const promptOpen = ref(false)
+const promptRecord = ref(null)
 const editingId = ref('')
 const form = reactive(emptyForm())
 
@@ -41,12 +43,19 @@ const tablePagination = computed(() => ({
   pageSizeOptions: ['10', '20', '50']
 }))
 
+const promptPreview = (value) => String(value || '').replace(/\s+/g, ' ').trim()
+
+const openPrompt = (item) => {
+  promptRecord.value = item
+  promptOpen.value = true
+}
+
 const formatCreatedAt = (value) => {
   if (!value) return '-'
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return value
   const pad = (num) => String(num).padStart(2, '0')
-  return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
 }
 
 const loadContentTypes = async () => {
@@ -226,8 +235,18 @@ watch(styles, (list) => {
           <template #default="{ index }">{{ (page - 1) * pageSize + index + 1 }}</template>
         </a-table-column>
         <a-table-column title="内容类型" data-index="content_type_name" key="content_type_name" :width="160" />
-        <a-table-column title="创作风格" data-index="name" key="name" :width="220" />
-        <a-table-column title="说明" data-index="description" key="description" ellipsis />
+        <a-table-column title="创作风格" data-index="name" key="name" :width="180" />
+        <a-table-column title="创作风格描述" data-index="description" key="description" :width="220" ellipsis />
+        <a-table-column title="文案提示词" key="prompt">
+          <template #default="{ record }">
+            <div class="prompt-cell">
+              <span class="prompt-preview">{{ promptPreview(record.prompt) || '—' }}</span>
+              <button v-if="record.prompt" type="button" class="prompt-origin-link" @click="openPrompt(record)">
+                查看原文
+              </button>
+            </div>
+          </template>
+        </a-table-column>
         <a-table-column title="状态" key="enabled" :width="140">
           <template #default="{ record }">
             <div class="status-cell">
@@ -243,7 +262,7 @@ watch(styles, (list) => {
             </div>
           </template>
         </a-table-column>
-        <a-table-column title="创建时间" key="created_at" :width="180">
+        <a-table-column title="创建时间" key="created_at" :width="200">
           <template #default="{ record }">{{ formatCreatedAt(record.created_at) }}</template>
         </a-table-column>
         <a-table-column title="操作" key="actions" :width="180">
@@ -268,7 +287,7 @@ watch(styles, (list) => {
       <a-form
         class="creative-style-form"
         :model="form"
-        :label-col="{ style: { width: '96px' } }"
+        :label-col="{ style: { width: '112px' } }"
         :wrapper-col="{ style: { flex: 1 } }"
       >
         <a-form-item label="内容类型" required>
@@ -281,10 +300,10 @@ watch(styles, (list) => {
         <a-form-item label="创作风格" required>
           <a-input v-model:value="form.name" placeholder="请输入创作风格" allow-clear />
         </a-form-item>
-        <a-form-item label="说明">
+        <a-form-item label="创作风格描述">
           <a-input v-model:value="form.description" placeholder="选填，显示在创作风格旁" allow-clear />
         </a-form-item>
-        <a-form-item label="提示词" required>
+        <a-form-item label="文案提示词" required>
           <a-textarea v-model:value="form.prompt" :rows="12" placeholder="选择该风格后填入内容创作的生成提示词" />
         </a-form-item>
         <a-form-item label="状态" required>
@@ -298,6 +317,11 @@ watch(styles, (list) => {
         <a-button type="primary" @click="closeModal">取消</a-button>
         <a-button type="primary" :loading="saving" @click="saveStyle">确定</a-button>
       </div>
+    </a-modal>
+
+    <a-modal v-model:open="promptOpen" title="文案提示词" :footer="null" width="720px">
+      <p v-if="promptRecord" class="prompt-origin-name">{{ promptRecord.name }}</p>
+      <pre class="prompt-origin">{{ promptRecord?.prompt || '暂无文案提示词' }}</pre>
     </a-modal>
   </div>
 </template>
@@ -375,6 +399,56 @@ watch(styles, (list) => {
 .row-actions {
   display: inline-flex;
   gap: 8px;
+}
+
+.prompt-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  min-width: 0;
+}
+
+.prompt-preview {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  color: var(--color-text);
+  line-height: 1.5;
+  white-space: normal;
+  word-break: break-word;
+}
+
+.prompt-origin-link {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--main-color);
+  font-size: 12px;
+  line-height: 1.4;
+  cursor: pointer;
+}
+
+.prompt-origin-name {
+  margin: 0 0 8px;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+}
+
+.prompt-origin {
+  max-height: 480px;
+  margin: 0;
+  padding: 12px;
+  overflow: auto;
+  border: 1px solid var(--gray-150);
+  border-radius: 8px;
+  background: var(--gray-25);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--color-text);
+  font-size: 13px;
+  line-height: 1.7;
 }
 
 .creative-style-form {

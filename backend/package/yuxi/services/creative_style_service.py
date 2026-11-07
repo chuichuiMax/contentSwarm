@@ -130,7 +130,7 @@ async def _require_content_type(db: AsyncSession, content_type_id: str):
 async def create_creative_style(db: AsyncSession, user: User, payload: CreativeStyleCreate) -> dict[str, Any]:
     content_type = await _require_content_type(db, payload.content_type_id.strip())
     name = _normalize_text(payload.name, field="创作风格")
-    prompt = _normalize_text(payload.prompt, field="提示词")
+    prompt = _normalize_text(payload.prompt, field="文案提示词")
     repo = CreativeStyleRepository(db)
     if await repo.get_by_type_and_name(content_type.id, name):
         raise _style_error(409, "CREATIVE_STYLE_DUPLICATE", "该内容类型下已有同名创作风格")
@@ -140,7 +140,7 @@ async def create_creative_style(db: AsyncSession, user: User, payload: CreativeS
                 "id": str(uuid.uuid4()),
                 "content_type_id": content_type.id,
                 "name": name,
-                "description": _normalize_text(payload.description, field="说明", required=False),
+                "description": _normalize_text(payload.description, field="创作风格描述", required=False),
                 "prompt": prompt,
                 "enabled": payload.enabled,
                 "sort_order": await repo.next_sort_order(content_type.id),
@@ -169,7 +169,7 @@ async def update_creative_style(db: AsyncSession, style_id: str, payload: Creati
     if payload.name is not None:
         data["name"] = _normalize_text(payload.name, field="创作风格")
     if payload.description is not None:
-        data["description"] = _normalize_text(payload.description, field="说明", required=False)
+        data["description"] = _normalize_text(payload.description, field="创作风格描述", required=False)
     if payload.prompt is not None:
         data["prompt"] = payload.prompt.strip()
     if payload.enabled is not None:

@@ -12,6 +12,7 @@ from yuxi.content.generation import (
     DIRECT_TOPIC_LIMIT,
     _direct_request_content_type,
     append_topics_within_limit,
+    avoid_recent_image_topics,
     generate_direct_content,
 )
 from yuxi.utils.line_breaks import normalize_escaped_newlines
@@ -43,7 +44,7 @@ from yuxi.services.content_forbidden_words_service import (
 from yuxi.services.run_queue_service import append_run_stream_event, clear_cancel_signal, has_cancel_signal
 from yuxi.storage.postgres.manager import pg_manager
 from yuxi.storage.postgres.models_business import User
-from yuxi.storage.postgres.models_content import ContentArtifact
+from yuxi.storage.postgres.models_content import ContentArtifact, ContentTask
 from yuxi.utils.datetime_utils import utc_now_naive
 from yuxi.utils.logging_config import logger
 
@@ -57,6 +58,26 @@ def _viral_content_type(value) -> str:
     if isinstance(value, list):
         value = value[0] if value else ""
     return str(value or "").strip()
+
+
+async def recent_image_topics(uid: str) -> list[str]:
+    """读取这个账号最近几篇发布标签，供看图时避开重复。"""
+
+    async with pg_manager.get_async_session_context() as db:
+        rows = (
+            await db.execute(
+                select(ContentArtifact.topics)
+                .join(ContentTask, ContentTask.id == ContentArtifact.task_id)
+                .where(ContentTask.created_by == uid)
+                .order_by(ContentArtifact.updated_at.desc())
+                .limit(8)
+            )
+        ).scalars()
+    collected: list[str] = []
+    for topics in rows:
+        if isinstance(topics, list):
+            collected.extend(str(item) for item in topics)
+    return avoid_recent_image_topics(collected)
 
 
 def other_copy_knowledge_names(content_type_name: str, libraries: list[dict]) -> list[str]:
@@ -295,6 +316,7 @@ async def process_direct_content_run(ctx, run_id: str):
                 knowledge_context=knowledge_context,
                 reference_knowledge=reference_knowledge,
                 reference_image=reference_image,
+                recent_topics=await recent_image_topics(str(run.uid)) if reference_image else [],
                 usage_out=usage_log,
             )
         )
@@ -361,6 +383,9 @@ async def process_direct_content_run(ctx, run_id: str):
                 "generation_log": {
                     "model": usage_log.get("model") or payload.get("model_spec") or "",
                     "prompt": usage_log.get("prompt") or payload.get("generation_prompt") or "",
+                    "temperature": usage_log.get("temperature"),
+                    "top_p": usage_log.get("top_p"),
+                    "seed": usage_log.get("seed"),
                     "image_attached": bool(usage_log.get("image_attached")),
                     "image_omitted_reason": usage_log.get("image_omitted_reason") or "",
                     "image_item_id": image_id if image_kind == "item" else "",

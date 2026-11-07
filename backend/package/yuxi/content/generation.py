@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import random
 import re
 import time
 from pathlib import Path
@@ -19,6 +20,7 @@ SKILLS_ROOT = Path(__file__).resolve().parents[1] / "agents" / "skills" / "build
 DEFAULT_DIRECT_GENERATION_PROMPT = "使用我给你的一些元素，根据爆文 换一种表达方式 符合当地的口吻"
 DIRECT_TITLE_MAX_CHARS = 20
 DIRECT_TOPIC_LIMIT = 10
+RECENT_IMAGE_TOPIC_LIMIT = 20
 _TOPIC_REGION_KEYS = ("所在区域", "city", "location", "region", "serviceCity")
 SKILL_VERSIONS = {
     "content-value-analyzer": "1.3.0",
@@ -95,6 +97,22 @@ def detach_publish_tags(body: str, topics: list[str]) -> tuple[str, list[str]]:
             while kept and not kept[-1].strip():
                 kept.pop()
     return "\n".join(kept).strip(), [*topics, *extracted]
+
+
+def avoid_recent_image_topics(topics: list[str], *, limit: int = RECENT_IMAGE_TOPIC_LIMIT) -> list[str]:
+    """去掉固定标签，留下最近用过、这次看图时尽量避开的标签。"""
+
+    kept: list[str] = []
+    seen: set[str] = set()
+    for item in topics:
+        text = str(item or "").strip().lstrip("#").strip()
+        if not text or text in seen or text == "装修避坑" or text.endswith("装修公司推荐"):
+            continue
+        seen.add(text)
+        kept.append(text)
+        if len(kept) >= limit:
+            break
+    return kept
 
 
 def append_topics_within_limit(topics: list[str], extras: list[str], *, limit: int = DIRECT_TOPIC_LIMIT) -> list[str]:
@@ -234,6 +252,7 @@ def _direct_generation_prompt(
     knowledge_context: str,
     image_attached: bool = False,
     reference_knowledge: str = "",
+    recent_topics: list[str] | None = None,
 ) -> str:
     del style_block, viral_source
     forbidden_block = (
@@ -253,8 +272,17 @@ def _direct_generation_prompt(
         if reference_knowledge.strip()
         else ""
     )
+    recent = "、".join(avoid_recent_image_topics(recent_topics or []))
+    avoid_recent = (
+        f"最近用过这些标签：{recent}。图片里还有其他能看见的内容时，改选另一个点；只剩这一点时可以保留。"
+        if recent
+        else ""
+    )
     image_topic_rule = (
-        "再根据这张图片生成 3 到 5 个小红书类型标签，只写图片里能看出的场景、工艺或风格。"
+        "再根据这张图片生成 3 到 5 个小红书类型标签。"
+        "每个标签写成空间加画面里的具体细节，例如客餐厅线性灯、电视墙石材。"
+        "创作风格里的示例词，图片里还有其他能看见的内容时不要用作标签。"
+        f"{avoid_recent}"
         "所有标签合计不超过 10 个。"
         if image_attached
         else ""
@@ -287,6 +315,7 @@ def _direct_generation_prompt(
         knowledge_block = ""
     return (
         "按「用户生成提示词」和图片写文案，不要另起标题公式或统一结尾。"
+        "正文用短句，每句单独成段，段与段之间空一行。"
         "返回字段 title、body、topics；不要输出解释。\n"
         f"{topic_rule}\n"
         f"{image_line}"
@@ -296,7 +325,9 @@ def _direct_generation_prompt(
         f"{user_request}\n\n"
         f"{reference_block}"
         f"{knowledge_block}"
-        f"{forbidden_block}"
+        f"{forbidden_block}\n"
+        "自我查验：输出前先通读标题和正文，发现歧义或不通顺就改正，"
+        "只把改正后的标题、正文和标签写入字段，不要写出查验过程。"
     )
 
 
@@ -363,6 +394,10 @@ def response_token_usage(response: Any) -> dict[str, int | None]:
     }
 
 
+def model_returned_empty(exc: BaseException) -> bool:
+    return isinstance(exc, AttributeError) and "model_dump" in str(exc)
+
+
 def model_rejects_image(exc: BaseException) -> bool:
     text = str(exc)
     return "not a VLM" in text or "text-only prompts" in text
@@ -389,6 +424,21 @@ def thinking_extra_body(resolved_model: str) -> dict[str, Any] | None:
 
 def copy_body_is_placeholder(body: str) -> bool:
     return re.search(r"[\w\u4e00-\u9fff]", body or "") is None
+
+
+def choose_sampling() -> dict[str, float]:
+    """每次生成单独抽样。数值只影响模型选词，不改提示词。"""
+    return {
+        "temperature": round(random.uniform(0.85, 1.15), 2),
+        "top_p": round(random.uniform(0.8, 1), 2),
+    }
+
+
+def segment_unbroken_body(body: str) -> str:
+    """正文没有换行时，按句末标点分成多段。"""
+    if "\n" in body:
+        return body
+    return re.sub(r"([。！？!?])[ \t]*(?=\S)", r"\1\n\n", body).strip()
 
 
 def _json_object(text: str) -> dict[str, Any] | None:
@@ -498,12 +548,14 @@ async def generate_direct_content(
     knowledge_context: str = "",
     reference_knowledge: str = "",
     reference_image: tuple[bytes, str] | None = None,
+    recent_topics: list[str] | None = None,
     usage_out: dict[str, Any] | None = None,
 ) -> ContentArtifactAIEditOutput:
     """用创作风格、爆款原文和用户原始输入直接生成内容，不执行工作流审核。"""
 
     resolved_model = resolve_chat_model_spec(model_spec)
-    model_kwargs: dict[str, Any] = {"temperature": 0.7}
+    sampling = choose_sampling()
+    model_kwargs: dict[str, Any] = dict(sampling)
     extra_body = thinking_extra_body(resolved_model)
     if extra_body is not None:
         model_kwargs["extra_body"] = extra_body
@@ -527,6 +579,7 @@ async def generate_direct_content(
         knowledge_context=knowledge_context.strip(),
         image_attached=bool(reference_image),
         reference_knowledge=reference_knowledge,
+        recent_topics=recent_topics,
     )
     messages = [
         _direct_generation_message(prompt, reference_image),
@@ -544,6 +597,8 @@ async def generate_direct_content(
         try:
             return await bound_model.ainvoke(next_messages)
         except Exception as exc:
+            if model_returned_empty(exc):
+                raise ValueError("模型没有返回内容，请再生成一次") from exc
             if not model_rejects_named_tool_choice(exc):
                 raise
             logger.info("Direct content model cannot force a tool, retrying with auto: model=%s", resolved_model)
@@ -567,6 +622,7 @@ async def generate_direct_content(
             knowledge_context=knowledge_context.strip(),
             image_attached=False,
             reference_knowledge=reference_knowledge,
+            recent_topics=recent_topics,
         )
         response = await invoke([_direct_generation_message(prompt, None)])
     arguments = _output_arguments(response)
@@ -584,6 +640,7 @@ async def generate_direct_content(
         for topic in raw_output.topics
     ]
     final_body, body_topics = detach_publish_tags(body_text, body_topics)
+    final_body = segment_unbroken_body(final_body)
     if copy_body_is_placeholder(final_body):
         raise ValueError("模型没有返回可用正文")
     output = ContentArtifactAIEditOutput(
@@ -607,6 +664,8 @@ async def generate_direct_content(
             {
                 "model": resolved_model,
                 "prompt": prompt,
+                "temperature": sampling["temperature"],
+                "top_p": sampling["top_p"],
                 "image_attached": image_sent,
                 "image_omitted_reason": image_omitted_reason,
                 "elapsed_seconds": elapsed_seconds,
