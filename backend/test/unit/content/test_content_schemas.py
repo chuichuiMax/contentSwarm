@@ -29,6 +29,17 @@ def test_visual_material_rejects_invalid_hycanvas_template_id():
         )
 
 
+def test_visual_material_treats_zero_featured_slot_as_empty():
+    selection = ContentVisualMaterialSelection(
+        cover_mode="ai",
+        image_item_id="image-1",
+        ai_cover_prompt_variant="c0123456789abcdef",
+        featured_cover_template_index=0,
+    )
+
+    assert selection.featured_cover_template_index is None
+
+
 def test_visual_material_accepts_ai_cover_mode_with_single_image():
     selection = ContentVisualMaterialSelection(
         cover_mode="ai",

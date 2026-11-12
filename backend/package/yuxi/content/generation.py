@@ -13,11 +13,24 @@ from yuxi.agents import load_chat_model, resolve_chat_model_spec
 from yuxi.utils.line_breaks import normalize_escaped_newlines
 from yuxi.content.model.forbidden_words import replace_forbidden_words
 from yuxi.content.schemas import ContentArtifactAIEditOutput, ReviewReport
+from yuxi.content.title_rules import apply_title_rules, title_is_incomplete, title_rule_instructions
 from yuxi.content.v3.modular_rules import merge_pinned_topics, topic_region_name
 from yuxi.utils.logging_config import logger
 
 SKILLS_ROOT = Path(__file__).resolve().parents[1] / "agents" / "skills" / "buildin"
 DEFAULT_DIRECT_GENERATION_PROMPT = "使用我给你的一些元素，根据爆文 换一种表达方式 符合当地的口吻"
+
+
+def default_generation_prompt(content_type_name: str) -> str:
+    """没有创作风格时，按内容类型给一条可直接生成的提示词。"""
+
+    name = str(content_type_name or "").strip() or "装修内容"
+    return (
+        f"写一篇小红书笔记，内容类型是「{name}」。"
+        "结合业务数据和图片，用口语短句写标题和正文。"
+        "标题不超过20个字。正文每句单独成段。"
+        "不要编造数据里没有的金额、小区和人名。"
+    )
 DIRECT_TITLE_MAX_CHARS = 20
 DIRECT_TOPIC_LIMIT = 10
 RECENT_IMAGE_TOPIC_LIMIT = 20
@@ -255,13 +268,18 @@ def _direct_generation_prompt(
     recent_topics: list[str] | None = None,
 ) -> str:
     del style_block, viral_source
+    generation_prompt = str(generation_prompt or "")
+    knowledge_context = str(knowledge_context or "")
+    reference_knowledge = str(reference_knowledge or "")
     forbidden_block = (
         "封禁词替换表（成品中不要解释替换）：\n"
         f"{json.dumps(forbidden_lexicon, ensure_ascii=False)}\n"
         "有候选表达就换用候选；没有候选就改写该句，避免出现问题词。"
     )
     image_line = (
-        "已附上第一张图片。文案以用户生成提示词和这张图片为主，只写提示词要求、并且图片里能看到的内容。\n\n"
+        "已附上第一张图片。文案以用户生成提示词和这张图片为主，只写提示词要求、并且图片里能看到的内容。"
+        "背景墙按画面里的家具来写：墙前是沙发、看不到电视机，写沙发背景墙；"
+        "只有看得到电视屏幕时，才写电视背景墙。不要把沙发背后的造型墙写成电视背景墙。\n\n"
         if image_attached
         else ""
     )
@@ -313,10 +331,12 @@ def _direct_generation_prompt(
             "标签只写入 topics，不要写进正文，不要带 # 号。\n"
         )
         knowledge_block = ""
+    title_rules = title_rule_instructions()
     return (
         "按「用户生成提示词」和图片写文案，不要另起标题公式或统一结尾。"
         "正文用短句，每句单独成段，段与段之间空一行。"
         "返回字段 title、body、topics；不要输出解释。\n"
+        f"{title_rules}\n"
         f"{topic_rule}\n"
         f"{image_line}"
         "用户生成提示词：\n"
@@ -396,6 +416,12 @@ def response_token_usage(response: Any) -> dict[str, int | None]:
 
 def model_returned_empty(exc: BaseException) -> bool:
     return isinstance(exc, AttributeError) and "model_dump" in str(exc)
+
+
+def model_tool_value_missing(exc: BaseException) -> bool:
+    """工具字段是 null 时，解析器会对 None 调用 strip。"""
+
+    return isinstance(exc, AttributeError) and "strip" in str(exc)
 
 
 def model_rejects_image(exc: BaseException) -> bool:
@@ -553,6 +579,13 @@ async def generate_direct_content(
 ) -> ContentArtifactAIEditOutput:
     """用创作风格、爆款原文和用户原始输入直接生成内容，不执行工作流审核。"""
 
+    user_request = str(user_request or "")
+    knowledge_context = str(knowledge_context or "")
+    reference_knowledge = str(reference_knowledge or "")
+    generation_prompt = str(generation_prompt or "").strip()
+    if not generation_prompt:
+        content_type_name = _direct_request_content_type(user_request)[1]
+        generation_prompt = default_generation_prompt(content_type_name)
     resolved_model = resolve_chat_model_spec(model_spec)
     sampling = choose_sampling()
     model_kwargs: dict[str, Any] = dict(sampling)
@@ -576,7 +609,7 @@ async def generate_direct_content(
         user_request=user_request,
         generation_prompt=generation_prompt,
         forbidden_lexicon=forbidden_lexicon,
-        knowledge_context=knowledge_context.strip(),
+        knowledge_context=knowledge_context,
         image_attached=bool(reference_image),
         reference_knowledge=reference_knowledge,
         recent_topics=recent_topics,
@@ -608,23 +641,27 @@ async def generate_direct_content(
     try:
         response = await invoke(messages)
     except Exception as exc:
-        if not reference_image or not model_rejects_image(exc):
+        if model_tool_value_missing(exc):
+            logger.info("Direct content model returned an empty tool field, retrying as plain text: model=%s", resolved_model)
+            response = await model.ainvoke([_append_copy_instruction(messages[-1])])
+        elif not reference_image or not model_rejects_image(exc):
             raise
-        logger.info("Direct content model cannot read images, retrying with text only: model=%s", resolved_model)
-        image_sent = False
-        image_omitted_reason = "当前模型不能看图，已改为只根据文字生成"
-        prompt = _direct_generation_prompt(
-            style_block=style_block,
-            viral_source=viral_source,
-            user_request=user_request,
-            generation_prompt=generation_prompt,
-            forbidden_lexicon=forbidden_lexicon,
-            knowledge_context=knowledge_context.strip(),
-            image_attached=False,
-            reference_knowledge=reference_knowledge,
-            recent_topics=recent_topics,
-        )
-        response = await invoke([_direct_generation_message(prompt, None)])
+        else:
+            logger.info("Direct content model cannot read images, retrying with text only: model=%s", resolved_model)
+            image_sent = False
+            image_omitted_reason = "当前模型不能看图，已改为只根据文字生成"
+            prompt = _direct_generation_prompt(
+                style_block=style_block,
+                viral_source=viral_source,
+                user_request=user_request,
+                generation_prompt=generation_prompt,
+                forbidden_lexicon=forbidden_lexicon,
+                knowledge_context=knowledge_context,
+                image_attached=False,
+                reference_knowledge=reference_knowledge,
+                recent_topics=recent_topics,
+            )
+            response = await invoke([_direct_generation_message(prompt, None)])
     arguments = _output_arguments(response)
     if arguments is None or copy_body_is_placeholder(str((arguments or {}).get("body") or "")):
         logger.info("Direct content model returned no usable body, retrying as plain text: model=%s", resolved_model)
@@ -633,7 +670,23 @@ async def generate_direct_content(
     if not isinstance(arguments, dict):
         raise ValueError("模型没有返回内容生成工具调用")
     raw_output = ContentArtifactAIEditOutput.model_validate(arguments)
-    final_title = normalize_escaped_newlines(replace_forbidden_words(raw_output.title, forbidden_replacements)).strip()
+    final_title = apply_title_rules(
+        normalize_escaped_newlines(replace_forbidden_words(raw_output.title, forbidden_replacements)).strip()
+    )
+    if title_is_incomplete(final_title):
+        repair = await model.ainvoke(
+            [
+                HumanMessage(
+                    content=(
+                        f"标题「{final_title}」读起来不完整。请只重写标题，补上动作的对象，"
+                        "让这句话能独立读懂。只返回新标题，不要解释。"
+                    )
+                )
+            ]
+        )
+        repaired = apply_title_rules(normalize_escaped_newlines(_response_text(repair)).strip().strip("「」\"'"))
+        if repaired and not title_is_incomplete(repaired):
+            final_title = repaired
     body_text = normalize_escaped_newlines(replace_forbidden_words(raw_output.body, forbidden_replacements)).strip()
     body_topics = [
         normalize_escaped_newlines(replace_forbidden_words(topic, forbidden_replacements))

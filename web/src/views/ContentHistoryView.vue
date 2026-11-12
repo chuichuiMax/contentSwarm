@@ -373,7 +373,7 @@ onBeforeUnmount(() => {
           </div>
         </div>
         <div v-else-if="detailArtifact && detailTab === 'log'" class="history-log">
-          <GenerationCallLog :log="detailLog" />
+          <GenerationCallLog :log="detailLog" :task-id="detailTask?.id || ''" />
         </div>
         <a-empty v-else-if="!detailLoading" description="内容资产尚未生成完成" />
       </a-spin>

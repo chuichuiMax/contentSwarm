@@ -8,7 +8,6 @@ from sqlalchemy import select
 
 from yuxi.content.control.visual_template_fields import resolve_hycanvas_template_fields
 from yuxi.content.generation import (
-    DEFAULT_DIRECT_GENERATION_PROMPT,
     DIRECT_TOPIC_LIMIT,
     _direct_request_content_type,
     append_topics_within_limit,
@@ -106,6 +105,57 @@ def content_type_knowledge_names(content_type_name: str) -> list[str]:
     if not name.endswith("知识库"):
         names.append(f"{name}知识库")
     return names
+
+
+def content_type_identity_from_payload(payload: dict) -> tuple[str, str]:
+    brief = payload.get("content_brief") if isinstance(payload.get("content_brief"), dict) else {}
+    code = str(brief.get("content_type_code") or "").strip()
+    parsed_code, parsed_name = _direct_request_content_type(str(payload.get("user_request") or ""))
+    name = content_type_name_from_payload(payload) or parsed_name
+    return code or parsed_code, name
+
+
+def bound_content_type_knowledge_names(
+    content_type_code: str, content_type_name: str, libraries: list[dict]
+) -> list[str]:
+    """知识库编辑里绑定了当前内容类型时，用这些库写文案。"""
+
+    tokens = {item for item in (str(content_type_code or "").strip(), str(content_type_name or "").strip()) if item}
+    if not tokens:
+        return []
+    already_tried = set(content_type_knowledge_names(content_type_name))
+    selected: list[str] = []
+    for item in libraries:
+        if _viral_content_type(item.get("viral_content_type")) not in tokens:
+            continue
+        text = str(item.get("name") or "").strip()
+        if not text or text in already_tried or text in _COPY_KB_EXCLUDED or text in selected:
+            continue
+        if text.startswith("目标人群-") and text.endswith("-标签"):
+            continue
+        selected.append(text)
+    return selected
+
+
+async def join_knowledge_texts(uid: str, names: list[str], *, role: str, limit: int = 12000) -> tuple[str, list[dict]]:
+    found_items: list[tuple[str, str, str]] = []
+    budget = limit
+    for kb_name in names:
+        if budget <= 0:
+            break
+        found = await lookup_content_knowledge(uid, kb_name, limit=budget)
+        if found is None or not found["text"]:
+            continue
+        text = found["text"][:budget]
+        budget -= len(text)
+        found_items.append((found["name"], text, found["kb_id"]))
+    multiple = len(found_items) > 1
+    parts = [f"【{name}】\n{text}" if multiple else text for name, text, _kb_id in found_items]
+    hits = [
+        {"name": name, "hit": True, "kb_id": kb_id, "chars": len(text), "role": role}
+        for name, text, kb_id in found_items
+    ]
+    return "\n\n".join(parts), hits
 
 
 async def accessible_knowledge_libraries(uid: str) -> list[dict]:
@@ -259,7 +309,7 @@ async def process_direct_content_run(ctx, run_id: str):
                 {"name": "好评笔记知识库", "hit": bool(knowledge_context), "kb_id": "", "chars": len(knowledge_context)}
             )
         else:
-            type_name = content_type_name_from_payload(payload)
+            type_code, type_name = content_type_identity_from_payload(payload)
             for kb_name in content_type_knowledge_names(type_name):
                 found = await lookup_content_knowledge(str(run.uid), kb_name)
                 if found is None:
@@ -281,29 +331,22 @@ async def process_direct_content_run(ctx, run_id: str):
                     knowledge_hits.append(
                         {"name": queried[0], "hit": False, "kb_id": "", "chars": 0, "role": "content_type"}
                     )
-                parts: list[str] = []
-                budget = 12000
-                for kb_name in other_copy_knowledge_names(
-                    type_name, await accessible_knowledge_libraries(str(run.uid))
-                ):
-                    if budget <= 0:
-                        break
-                    found = await lookup_content_knowledge(str(run.uid), kb_name, limit=budget)
-                    if found is None or not found["text"]:
-                        continue
-                    text = found["text"][:budget]
-                    parts.append(f"【{found['name']}】\n{text}")
-                    budget -= len(text)
-                    knowledge_hits.append(
-                        {
-                            "name": found["name"],
-                            "hit": True,
-                            "kb_id": found["kb_id"],
-                            "chars": len(text),
-                            "role": "other",
-                        }
+                libraries = await accessible_knowledge_libraries(str(run.uid))
+                bound_text, bound_hits = await join_knowledge_texts(
+                    str(run.uid),
+                    bound_content_type_knowledge_names(type_code, type_name, libraries),
+                    role="content_type",
+                )
+                knowledge_hits.extend(bound_hits)
+                reference_knowledge = bound_text
+                if not reference_knowledge:
+                    other_text, other_hits = await join_knowledge_texts(
+                        str(run.uid),
+                        other_copy_knowledge_names(type_name, libraries),
+                        role="other",
                     )
-                reference_knowledge = "\n\n".join(parts)
+                    knowledge_hits.extend(other_hits)
+                    reference_knowledge = other_text
         usage_log: dict = {}
         generation = asyncio.create_task(
             generate_direct_content(
@@ -311,7 +354,9 @@ async def process_direct_content_run(ctx, run_id: str):
                 creative_style=payload.get("creative_style") or {},
                 viral_source=payload.get("viral_source") or {},
                 user_request=str(payload.get("user_request") or ""),
-                generation_prompt=str(payload.get("generation_prompt", DEFAULT_DIRECT_GENERATION_PROMPT)),
+                generation_prompt=""
+                if (raw_prompt := payload.get("generation_prompt")) is None
+                else str(raw_prompt),
                 forbidden_lexicon=forbidden_snapshot["alternatives"],
                 knowledge_context=knowledge_context,
                 reference_knowledge=reference_knowledge,

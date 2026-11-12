@@ -335,7 +335,7 @@ onBeforeUnmount(() => {
     </div>
 
     <a-modal v-model:open="callLogOpen" title="发给模型的数据" :width="760" centered destroy-on-close>
-      <GenerationCallLog :log="generationLog" />
+      <GenerationCallLog :log="generationLog" :task-id="task?.id || ''" />
       <template #footer><a-button @click="callLogOpen = false">关闭</a-button></template>
     </a-modal>
     <XiaohongshuDistributionDrawer v-model:open="distributionOpen" :artifact="artifact" />

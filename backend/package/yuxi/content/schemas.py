@@ -4,7 +4,7 @@ from typing import Any, Literal
 
 from yuxi.content_cover.photo_composition import PhotoComposition
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from yuxi.content.model.industry.pack import IndustryPackRegressionMetrics
 
 ContentMode = Literal["quick", "pro"]
@@ -61,6 +61,14 @@ class ContentVisualMaterialSelection(BaseModel):
     ai_cover_prompt_random: bool | None = None
     ai_cover_prompt_variant: str | None = Field(default=None, max_length=32)
     featured_cover_template_index: int | None = Field(default=None, ge=1, le=32)
+
+    @field_validator("featured_cover_template_index", mode="before")
+    @classmethod
+    def empty_featured_cover_slot(cls, value: Any) -> Any:
+        """自定义封面和智能随机的序号是 0，表示没有精选模板位。"""
+        if value in (None, "", 0, "0"):
+            return None
+        return value
 
 
 class ContentBriefPayload(BaseModel):

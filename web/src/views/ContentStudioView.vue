@@ -102,6 +102,10 @@ const creation = reactive({
 })
 const DEFAULT_DIRECT_GENERATION_PROMPT =
   '使用我给你的一些元素，根据爆文 换一种表达方式 符合当地的口吻'
+const defaultGenerationPrompt = (typeName) => {
+  const name = String(typeName || '').trim() || '装修内容'
+  return `写一篇小红书笔记，内容类型是「${name}」。结合业务数据和图片，用口语短句写标题和正文。标题不超过20个字。正文每句单独成段。不要编造数据里没有的金额、小区和人名。`
+}
 const formValues = reactive({})
 const resolvedAudienceTags = ref([])
 let audienceTagRequestId = 0
@@ -355,10 +359,15 @@ const applyManagedCreativeStyle = (sameType) => {
   const defaultStyle = savedStyle || styleOptions.find((item) => item.prompt) || styleOptions[0] || null
   selectedCreativeStyle.value = defaultStyle?.value || ''
   const savedPrompt = sameType ? String(saved.generation_prompt ?? '').trim() : ''
+  const typePrompt = defaultGenerationPrompt(
+    formValues.mp_content_type_name || selectedStudioContentType.value?.name
+  )
   formValues.generation_prompt =
     savedStyle && savedPrompt
       ? saved.generation_prompt
-      : defaultStyle?.prompt || savedPrompt || DEFAULT_DIRECT_GENERATION_PROMPT
+      : defaultStyle?.prompt ||
+        savedPrompt ||
+        (styleOptions.length ? DEFAULT_DIRECT_GENERATION_PROMPT : typePrompt)
 }
 const onCreativeStyleChange = (event) => {
   const value = event?.target?.value ?? event
@@ -2598,8 +2607,10 @@ const buildBrief = () => ({
               ? selectedAiCoverPromptVariant.value || null
               : null,
           featured_cover_template_index:
-            coverTemplateTab.value === 'ai' && !aiCoverPromptIsRandom.value
-              ? selectedAiCoverPromptOption.value?.slotIndex ?? null
+            coverTemplateTab.value === 'ai' &&
+            !aiCoverPromptIsRandom.value &&
+            Number(selectedAiCoverPromptOption.value?.slotIndex) >= 1
+              ? selectedAiCoverPromptOption.value.slotIndex
               : null,
           photo_composition:
             coverTemplateTab.value === 'builtin' && !selectedHandwrittenQuoteTemplate.value
@@ -5028,10 +5039,42 @@ const returnToContentCreation = async () => {
   margin: 18px auto 0;
 }
 .studio-production {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
   padding-bottom: 0;
+  overflow: hidden;
   .studio-header,
   .studio-main {
     max-width: none;
+  }
+  .studio-header {
+    flex: 0 0 auto;
+    margin-bottom: 12px;
+  }
+  .studio-main {
+    flex: 1 1 auto;
+    min-height: 0;
+    margin-top: 0;
+    overflow: auto;
+  }
+  .completion-stage {
+    height: 100%;
+    min-height: 0;
+  }
+  .completion-layout {
+    height: 100%;
+    min-height: 0;
+    align-items: stretch;
+  }
+  .completion-conversation {
+    height: auto;
+    min-height: 0;
+  }
+  .completion-results {
+    min-height: 0;
+    overflow-y: auto;
   }
 }
 .studio-creation {

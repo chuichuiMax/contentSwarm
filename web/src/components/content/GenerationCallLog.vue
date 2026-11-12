@@ -7,7 +7,8 @@ import { materialLibraryApi } from '@/apis/material_library_api'
 import { readableGenerationSections } from '@/utils/readableGenerationPrompt'
 
 const props = defineProps({
-  log: { type: Object, default: null }
+  log: { type: Object, default: null },
+  taskId: { type: String, default: '' }
 })
 
 const imageUrl = ref('')
@@ -84,6 +85,7 @@ onBeforeUnmount(() => {
   <a-empty v-if="!log" description="这次生成没有留下调用记录" />
   <div v-else class="generation-call-log">
     <dl>
+      <div><dt>任务编码</dt><dd>{{ taskId || '未记录' }}</dd></div>
       <div><dt>使用模型</dt><dd>{{ log.model || '未记录' }}</dd></div>
       <div><dt>温度</dt><dd>{{ samplingText(log.temperature) }}</dd></div>
       <div><dt>采样范围</dt><dd>{{ samplingText(log.top_p) }}</dd></div>

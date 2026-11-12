@@ -788,3 +788,83 @@ def test_response_token_usage_reads_model_counts():
     response.usage_metadata = None
     response.response_metadata = {"token_usage": {"prompt_tokens": 8, "completion_tokens": 3}}
     assert generation.response_token_usage(response)["total_tokens"] == 11
+
+
+def test_title_rules_drop_area_next_to_a_room():
+    from yuxi.content.title_rules import apply_title_rules
+
+    assert apply_title_rules("120㎡客厅终于装完") == "120㎡终于装完"
+    assert apply_title_rules("客厅89平米太小了") == "客厅太小了"
+    assert apply_title_rules("98㎡的厨房收纳") == "98㎡收纳"
+    assert apply_title_rules("120㎡全屋定制") == "120㎡全屋定制"
+    assert apply_title_rules("客餐厅无主灯") == "客餐厅无主灯"
+
+
+def test_incomplete_body_reaction_titles_are_detected():
+    from yuxi.content.title_rules import title_is_incomplete
+
+    assert title_is_incomplete("业主说想一抬头就软下来")
+    assert not title_is_incomplete("业主说一抬头脖子就软下来")
+
+
+def test_image_prompt_distinguishes_sofa_wall_from_tv_wall():
+    prompt = generation._direct_generation_prompt(
+        style_block="",
+        viral_source={"title": "", "body": ""},
+        user_request="{}",
+        generation_prompt="根据图片写",
+        forbidden_lexicon={},
+        knowledge_context="",
+        image_attached=True,
+    )
+    assert "看不到电视机，写沙发背景墙" in prompt
+    assert "只有看得到电视屏幕时，才写电视背景墙" in prompt
+
+
+def test_bound_content_type_knowledge_uses_the_selected_type():
+    from yuxi.services.content_direct_worker import bound_content_type_knowledge_names
+
+    names = bound_content_type_knowledge_names(
+        "CT06",
+        "工艺施工展示",
+        [
+            {"name": "工艺施工展示", "viral_content_type": "CT06"},
+            {"name": "工地工艺库", "viral_content_type": "CT06"},
+            {"name": "开工记录", "viral_content_type": "开工"},
+            {"name": "封禁词库", "viral_content_type": "CT06"},
+            {"name": "目标人群-通用-标签", "viral_content_type": "CT06"},
+            {"name": "未绑定资料", "viral_content_type": ""},
+        ],
+    )
+    assert names == ["工地工艺库"]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_blank_prompt_uses_content_type_default_and_title_rule(monkeypatch):
+    calls = []
+
+    class FakeModel:
+        def bind_tools(self, schemas, **kwargs):
+            return self
+
+        async def ainvoke(self, messages):
+            calls.append(messages)
+            return _tool_response({"title": "120㎡客厅终于装完", "body": "客厅做了线性灯。", "topics": []})
+
+    monkeypatch.setattr(generation, "resolve_chat_model_spec", lambda value: value or "default")
+    monkeypatch.setattr(generation, "choose_sampling", lambda: {"temperature": 0.9, "top_p": 0.9})
+    monkeypatch.setattr(generation, "load_chat_model", lambda **kwargs: FakeModel())
+
+    result = await generation.generate_direct_content(
+        model_spec="deepseek:deepseek-flash",
+        creative_style={},
+        viral_source={},
+        user_request='{"contentType":{"typeName":"开工","contentTypeCode":""}}',
+        generation_prompt=None,
+    )
+
+    prompt = calls[0][0].content
+    assert "内容类型是「开工」" in prompt
+    assert "标题限制：" in prompt
+    assert result.title == "120㎡终于装完"
