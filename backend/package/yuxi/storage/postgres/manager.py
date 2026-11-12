@@ -1082,6 +1082,8 @@ class PostgresManager(metaclass=SingletonMeta):
             "ALTER TABLE IF EXISTS content_employees ADD COLUMN IF NOT EXISTS age INTEGER",
             "ALTER TABLE IF EXISTS content_employees ADD COLUMN IF NOT EXISTS current_branch VARCHAR(80) NOT NULL DEFAULT ''",
             "ALTER TABLE IF EXISTS content_employees ADD COLUMN IF NOT EXISTS current_department VARCHAR(128) NOT NULL DEFAULT ''",
+            "ALTER TABLE IF EXISTS requirement_list_submissions ADD COLUMN IF NOT EXISTS answers JSONB NOT NULL DEFAULT '{}'::jsonb",
+            "ALTER TABLE IF EXISTS requirement_list_submissions ALTER COLUMN address TYPE VARCHAR(200)",
             (
                 "ALTER TABLE IF EXISTS content_variables "
                 'ADD COLUMN IF NOT EXISTS ports JSONB NOT NULL DEFAULT \'["pc","app"]\'::jsonb'

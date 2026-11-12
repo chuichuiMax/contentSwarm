@@ -38,6 +38,11 @@ test('folder grants override the legacy rough-only material library', () => {
   assert.equal(canAccessScopedPath(true, grants, '/materials/images'), true)
 })
 
+test('requirement list stays open for permission-scoped employees', () => {
+  assert.equal(canAccessScopedPath(true, ['material_rough.upload'], '/requirement-lists'), true)
+  assert.equal(canAccessScopedPath(true, [], '/requirement-lists'), true)
+})
+
 test('folder-level material grants open the material library routes', () => {
   const grants = ['material_folder.enterprise-initial-rough.view']
   assert.equal(homePathForGrants(true, grants), '/materials/images')

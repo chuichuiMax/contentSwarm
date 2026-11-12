@@ -749,6 +749,7 @@ def _me_dict(employee: ContentEmployee) -> dict[str, Any]:
     data = employee.to_dict()
     return {
         "id": data["id"],
+        "employee_code": data["employee_code"],
         "name": data["name"],
         "login_account": data["login_account"],
         "role": data["role"],

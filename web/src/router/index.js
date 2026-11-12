@@ -33,6 +33,12 @@ const router = createRouter({
       meta: { requiresAuth: false }
     },
     {
+      path: '/requirement-list/fill',
+      name: 'RequirementListShare',
+      component: () => import('../views/RequirementListShareView.vue'),
+      meta: { requiresAuth: false }
+    },
+    {
       path: '/customer-leads',
       component: AppLayout,
       children: [{
@@ -50,6 +56,16 @@ const router = createRouter({
         name: 'CaseShareStats',
         component: () => import('../views/CaseShareStatsView.vue'),
         meta: { requiresAuth: true }
+      }]
+    },
+    {
+      path: '/requirement-lists',
+      component: AppLayout,
+      children: [{
+        path: '',
+        name: 'RequirementLists',
+        component: () => import('../views/RequirementListView.vue'),
+        meta: { requiresAuth: true, keepAlive: false }
       }]
     },
     {

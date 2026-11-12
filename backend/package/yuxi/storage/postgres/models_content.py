@@ -2385,6 +2385,28 @@ class AiCoverCatalogOverride(Base):
     updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
 
 
+class RequirementListSubmission(Base):
+    """需求清单提交记录。分享人、岗位、工号和门店在提交时按当前员工固化。"""
+
+    __tablename__ = "requirement_list_submissions"
+
+    id = Column(String(64), primary_key=True)
+    requirement_type = Column(String(32), nullable=False, index=True)
+    customer_name = Column(String(40), nullable=False)
+    phone = Column(String(20), nullable=False)
+    address = Column(String(200), nullable=False)
+    sharer_name = Column(String(80), nullable=False, default="")
+    role = Column(String(64), nullable=False, default="")
+    employee_code = Column(String(64), nullable=False, default="")
+    branch = Column(String(80), nullable=False, default="")
+    progress = Column(Integer, nullable=False, default=100)
+    answers = Column(JSON, nullable=False, default=dict)
+    shared_at = Column(DateTime, nullable=False)
+    submitted_at = Column(DateTime, nullable=False, index=True)
+    created_by = Column(String(64), nullable=False, index=True)
+    created_at = Column(DateTime, default=utc_now_naive)
+
+
 class ContentMpFavorite(Base):
     """小程序内容收藏，按员工隔离。"""
 

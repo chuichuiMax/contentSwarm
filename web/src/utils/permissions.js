@@ -37,6 +37,7 @@ const HOME_CANDIDATES = [
 const SCOPED_PATH_RULES = [
   { prefix: '/customer-leads', any: ['customer_lead.view_list'] },
   { prefix: '/case-shares', any: ['customer_lead.view_list'] },
+  { prefix: '/requirement-lists', open: true },
   { prefix: '/materials', any: [ROUGH_UPLOAD_PERMISSION] },
   { prefix: '/content/image-design', any: [IMAGE_DESIGN_PAGE_PERMISSION] },
   { prefix: '/hycanvas', any: [] },
@@ -79,5 +80,6 @@ export function canAccessScopedPath(permissionScoped, grants, path) {
   }
   const rule = SCOPED_PATH_RULES.find((item) => path === item.prefix || path.startsWith(`${item.prefix}/`))
   if (!rule) return false
+  if (rule.open) return true
   return hasAnyPermission(grants, rule.any)
 }
