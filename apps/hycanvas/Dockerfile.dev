@@ -10,10 +10,11 @@ FROM golang:1.25-bookworm
 
 # Node 24 (frontend dev server + npm-workspace tooling), ffmpeg (video export),
 # and db client tools used by the entrypoint's readiness wait + migrations.
-# Debian 官方源在生产机上只有几十 KB/s，系统包改走国内镜像。
+# Debian 官方源在国内不稳定，系统包改走清华镜像（HTTPS）。
 RUN sed -i \
-      -e 's|deb.debian.org|mirrors.aliyun.com|g' \
-      -e 's|security.debian.org|mirrors.aliyun.com|g' \
+      -e 's|http://|https://|g' \
+      -e 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g' \
+      -e 's|security.debian.org|mirrors.tuna.tsinghua.edu.cn|g' \
       /etc/apt/sources.list.d/debian.sources \
  && apt-get update \
  && apt-get install -y --no-install-recommends \

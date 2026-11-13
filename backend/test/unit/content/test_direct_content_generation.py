@@ -798,6 +798,7 @@ def test_title_rules_drop_area_next_to_a_room():
     assert apply_title_rules("98㎡的厨房收纳") == "98㎡收纳"
     assert apply_title_rules("120㎡全屋定制") == "120㎡全屋定制"
     assert apply_title_rules("客餐厅无主灯") == "客餐厅无主灯"
+    assert apply_title_rules("138㎡客厅做完，采光很好。") == "138㎡做完，采光很好。"
 
 
 def test_incomplete_body_reaction_titles_are_detected():
@@ -866,8 +867,36 @@ async def test_blank_prompt_uses_content_type_default_and_title_rule(monkeypatch
 
     prompt = calls[0][0].content
     assert "内容类型是「开工」" in prompt
-    assert "标题限制：" in prompt
+    assert "文案限制：" in prompt
     assert result.title == "120㎡终于装完"
+    assert result.body == "客厅做了线性灯。"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_direct_generation_strips_area_next_to_space_in_body(monkeypatch):
+    class FakeModel:
+        def bind_tools(self, schemas, **kwargs):
+            return self
+
+        async def ainvoke(self, messages):
+            return _tool_response(
+                {"title": "洋湖这套终于住进去了", "body": "138㎡客厅做完。\n\n采光很好。", "topics": []}
+            )
+
+    monkeypatch.setattr(generation, "resolve_chat_model_spec", lambda value: value or "default")
+    monkeypatch.setattr(generation, "choose_sampling", lambda: {"temperature": 0.4, "top_p": 0.9})
+    monkeypatch.setattr(generation, "load_chat_model", lambda **kwargs: FakeModel())
+
+    result = await generation.generate_direct_content(
+        model_spec="deepseek:deepseek-flash",
+        creative_style={},
+        viral_source={},
+        user_request='{"contentType":{"typeName":"装修案例分享","contentTypeCode":"CT01"}}',
+        generation_prompt="按图片写案例",
+    )
+    assert "138㎡客厅" not in result.body
+    assert "138㎡做完" in result.body
 
 
 def test_case_share_topics_skip_empty_style_and_region():
@@ -886,6 +915,15 @@ def test_case_share_topics_use_image_style_and_manual_region():
         image_attached=True,
     )
     assert topics == ["现代", "长沙", "装修", "装修案例"]
+
+
+def test_case_share_topics_skip_detail_tags_and_fallback_to_form_style():
+    topics = generation.case_share_topics(
+        ["客餐厅线性灯", "电视墙石材"],
+        '{"businessVariables":{"所在区域":"长沙市","设计风格":"原木"}}',
+        image_attached=True,
+    )
+    assert topics == ["原木", "长沙", "装修", "装修案例"]
 
 
 def test_case_share_topics_use_selected_style_without_image():
@@ -929,6 +967,9 @@ async def test_case_share_generation_keeps_only_style_region_and_fixed_tags(monk
 
     content = calls[0][0].content
     prompt = content if isinstance(content, str) else "".join(part.get("text", "") for part in content if isinstance(part, dict))
-    assert "只写一个装修风格名称" in prompt
+    assert "只写一个大众化装修风格名称" in prompt
+    assert "不要写线性灯、电视墙石材" in prompt
+    assert "正文可写硬装类设计元素" in prompt
+    assert "家具软装不要写得太具体" in prompt
     assert "话题必须包含装修避坑" not in prompt
     assert result.topics == ["现代", "长沙", "装修", "装修案例"]

@@ -1,5 +1,5 @@
-# 使用轻量级Python基础镜像
-FROM python:3.12-slim
+# 使用轻量级Python基础镜像（显式 bookworm：slim 默认已切到 trixie，国内镜像常缺该套件）
+FROM python:3.12-slim-bookworm
 COPY --from=ghcr.io/astral-sh/uv:0.7.2 /uv /uvx /bin/
 COPY --from=node:24-slim /usr/local/bin /usr/local/bin
 COPY --from=node:24-slim /usr/local/lib/node_modules /usr/local/lib/node_modules
@@ -19,11 +19,16 @@ ENV TZ=Asia/Shanghai \
 RUN npm config set registry https://registry.npmmirror.com --global \
     && npm cache clean --force
 
-# 设置时区并使用 Debian 官方源安装系统依赖
+# 设置时区并安装系统依赖（Debian 官方源在国内不稳定，系统包改走阿里云镜像）
 RUN set -ex \
     # (A) 设置时区
     && ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone \
     # (B) 安装必要的系统库
+    && sed -i \
+        -e 's|http://|https://|g' \
+        -e 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g' \
+        -e 's|security.debian.org|mirrors.tuna.tsinghua.edu.cn|g' \
+        /etc/apt/sources.list.d/debian.sources \
     && apt-get update \
     && apt-get install -y --no-install-recommends --fix-missing \
         curl \

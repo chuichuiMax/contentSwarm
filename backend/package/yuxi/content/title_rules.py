@@ -58,7 +58,7 @@ class AreaWithSpaceRule(TitleRule):
 TITLE_RULES: tuple[TitleRule, ...] = (
     AreaWithSpaceRule(
         code="area_with_space",
-        description="项目面积是整户面积，标题里不要把面积和单个空间写在一起",
+        description="项目面积是整户面积，标题和正文里都不要把面积和单个空间写在一起",
     ),
 )
 
@@ -87,4 +87,4 @@ def title_rule_instructions() -> str:
     if not descriptions:
         return ""
     descriptions.append("标题必须是读得通的完整句子，动作对象不能省略；写身体感受时要写清部位")
-    return "标题限制：" + "；".join(descriptions) + "。"
+    return "文案限制：" + "；".join(descriptions) + "。"

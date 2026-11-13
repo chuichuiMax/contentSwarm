@@ -3784,7 +3784,10 @@ const returnToContentCreation = async () => {
         <section
           v-else-if="stage === 2"
           class="stage-panel"
-          :class="{ 'completion-stage': workflowCompleted }"
+          :class="{
+            'completion-stage': workflowCompleted,
+            'active-run-stage': !workflowCompleted
+          }"
         >
           <div
             class="run-layout"
@@ -5048,6 +5051,9 @@ const returnToContentCreation = async () => {
   .studio-header,
   .studio-main {
     max-width: none;
+    width: 100%;
+    margin-left: 0;
+    margin-right: 0;
   }
   .studio-header {
     flex: 0 0 auto;
@@ -5059,6 +5065,7 @@ const returnToContentCreation = async () => {
     margin-top: 0;
     overflow: auto;
   }
+  .active-run-stage,
   .completion-stage {
     height: 100%;
     min-height: 0;
@@ -5358,6 +5365,12 @@ const returnToContentCreation = async () => {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: 20px;
+}
+.active-run-stage {
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 .active-run-layout {
   width: 100%;

@@ -178,6 +178,10 @@ def _direct_request_content_type(user_request: str) -> tuple[str, str]:
 
 CASE_SHARE_CONTENT_NAMES = frozenset({"装修案例分享", "案例分享"})
 CASE_SHARE_FIXED_TOPICS = ("装修", "装修案例")
+# 案例分享 topics 只留风格名；画面细部/硬装构件/家具词不当作风格标签。
+_CASE_SHARE_DETAIL_TAG = re.compile(
+    r"(灯|石材|背景墙|柜|沙发|茶几|岛台|岩板|木饰面|吊顶|踢脚|窗帘|地毯|造型墙|地砖|瓷砖|地板|开关|插座)"
+)
 
 
 def is_case_share_content(content_type_code: str, content_type_name: str) -> bool:
@@ -209,18 +213,25 @@ def _case_share_tag(value: Any) -> str:
     return text
 
 
+def _case_share_style_tag(value: Any) -> str:
+    text = _case_share_tag(value)
+    if not text or text in CASE_SHARE_FIXED_TOPICS or _CASE_SHARE_DETAIL_TAG.search(text):
+        return ""
+    return text
+
+
 def case_share_topics(model_topics: list[str], user_request: str, *, image_attached: bool) -> list[str]:
     """案例分享的风格标签用识别结果，不用「装修风格」四个字。缺风格或地域时跳过。"""
 
     style = ""
     if image_attached:
         for item in model_topics:
-            text = _case_share_tag(item)
-            if text and text not in CASE_SHARE_FIXED_TOPICS:
+            text = _case_share_style_tag(item)
+            if text:
                 style = text
                 break
     if not style:
-        style = _case_share_tag(_request_business_value(user_request, "设计风格"))
+        style = _case_share_style_tag(_request_business_value(user_request, "设计风格"))
     region_raw = _request_business_value(user_request, "所在区域")
     region = _case_share_tag(topic_region_name(region_raw) or region_raw)
     selected = [item for item in (style, region, *CASE_SHARE_FIXED_TOPICS) if item]
@@ -357,13 +368,20 @@ def _direct_generation_prompt(
         else ""
     )
     content_type_code, content_type_name = _direct_request_content_type(user_request)
+    case_share_body_rule = ""
     if is_case_share_content(content_type_code, content_type_name):
         topic_rule = (
-            "topics 只写一个装修风格名称，例如现代、原木、法式。"
+            "topics 只写一个大众化装修风格名称，例如现代、原木、法式、奶油、中古。"
             "有图片时只根据画面识别风格；看不出风格就让 topics 为空。"
             "没有图片时 topics 留空。"
-            "不要写装修、装修案例、装修避坑或城市推荐。风格标签写识别出的风格名，不要写「装修风格」四个字。"
+            "不要写线性灯、电视墙石材、柜体、沙发等画面细部词当风格；不要写装修、装修案例、装修避坑或城市推荐。"
+            "风格标签写识别出的风格名，不要写「装修风格」四个字。"
             "标签只写入 topics，不要写进正文，不要带 # 号。\n"
+        )
+        case_share_body_rule = (
+            "正文可写硬装类设计元素（如造型、吊顶、墙面材质、灯光氛围、布局），结合图片点到为止；"
+            "家具软装不要写得太具体（沙发款式、茶几材质、窗帘地毯等不要逐件展开）。"
+            "背景墙命名规则仍可使用。\n"
         )
         knowledge_block = ""
         if knowledge_context.strip():
@@ -406,6 +424,7 @@ def _direct_generation_prompt(
         f"{title_rules}\n"
         f"{topic_rule}\n"
         f"{image_line}"
+        f"{case_share_body_rule}"
         "用户生成提示词：\n"
         f"{generation_prompt.strip()}\n\n"
         "业务数据只用来核对事实。提示词和内容类型知识库没有要求的金额、小区、人名和经历不要补写。\n"
@@ -761,6 +780,7 @@ async def generate_direct_content(
     ]
     final_body, body_topics = detach_publish_tags(body_text, body_topics)
     final_body = segment_unbroken_body(final_body)
+    final_body = apply_title_rules(final_body)
     if copy_body_is_placeholder(final_body):
         raise ValueError("模型没有返回可用正文")
     content_type_code, content_type_name = _direct_request_content_type(user_request)
