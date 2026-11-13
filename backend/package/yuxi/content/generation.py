@@ -176,6 +176,57 @@ def _direct_request_content_type(user_request: str) -> tuple[str, str]:
     return str(content_type.get("contentTypeCode") or "").strip(), str(content_type.get("typeName") or "").strip()
 
 
+CASE_SHARE_CONTENT_NAMES = frozenset({"装修案例分享", "案例分享"})
+CASE_SHARE_FIXED_TOPICS = ("装修", "装修案例")
+
+
+def is_case_share_content(content_type_code: str, content_type_name: str) -> bool:
+    name = str(content_type_name or "").strip()
+    code = str(content_type_code or "").strip()
+    return name in CASE_SHARE_CONTENT_NAMES or code == "CT01"
+
+
+def _request_business_value(user_request: str, key: str) -> str:
+    try:
+        payload = json.loads(user_request)
+    except json.JSONDecodeError:
+        return ""
+    if not isinstance(payload, dict):
+        return ""
+    for section_name in ("businessVariables", "business_variables", "form_values"):
+        section = payload.get(section_name)
+        if isinstance(section, dict):
+            text = str(section.get(key) or "").strip()
+            if text:
+                return text
+    return ""
+
+
+def _case_share_tag(value: Any) -> str:
+    text = str(value or "").strip().lstrip("#").strip()
+    if not text or len(text) > 16 or _SENTENCE_PUNCT.search(text):
+        return ""
+    return text
+
+
+def case_share_topics(model_topics: list[str], user_request: str, *, image_attached: bool) -> list[str]:
+    """案例分享的风格标签用识别结果，不用「装修风格」四个字。缺风格或地域时跳过。"""
+
+    style = ""
+    if image_attached:
+        for item in model_topics:
+            text = _case_share_tag(item)
+            if text and text not in CASE_SHARE_FIXED_TOPICS:
+                style = text
+                break
+    if not style:
+        style = _case_share_tag(_request_business_value(user_request, "设计风格"))
+    region_raw = _request_business_value(user_request, "所在区域")
+    region = _case_share_tag(topic_region_name(region_raw) or region_raw)
+    selected = [item for item in (style, region, *CASE_SHARE_FIXED_TOPICS) if item]
+    return append_topics_within_limit([], selected)
+
+
 def _extend_incomplete_title_suffix(head: str, full: str, *, max_overflow: int = 2) -> str:
     """硬截断后若落在常见双字词中间（如「费|用」），补全词尾，避免句式残缺。"""
 
@@ -305,7 +356,23 @@ def _direct_generation_prompt(
         if image_attached
         else ""
     )
-    if knowledge_context.strip():
+    content_type_code, content_type_name = _direct_request_content_type(user_request)
+    if is_case_share_content(content_type_code, content_type_name):
+        topic_rule = (
+            "topics 只写一个装修风格名称，例如现代、原木、法式。"
+            "有图片时只根据画面识别风格；看不出风格就让 topics 为空。"
+            "没有图片时 topics 留空。"
+            "不要写装修、装修案例、装修避坑或城市推荐。风格标签写识别出的风格名，不要写「装修风格」四个字。"
+            "标签只写入 topics，不要写进正文，不要带 # 号。\n"
+        )
+        knowledge_block = ""
+        if knowledge_context.strip():
+            knowledge_block = (
+                "用好评笔记知识库里的业主口吻、服务场景和工艺细节写文案。"
+                "表单里没有的金额、小区、工期和人名不要写入：\n"
+                f"{knowledge_context.strip()}\n\n"
+            )
+    elif knowledge_context.strip():
         topic_rule = (
             (
                 "话题包含鸿扬家装和装修避坑；能确定城市时再包含「城市名+装修公司推荐」，"
@@ -696,14 +763,19 @@ async def generate_direct_content(
     final_body = segment_unbroken_body(final_body)
     if copy_body_is_placeholder(final_body):
         raise ValueError("模型没有返回可用正文")
-    output = ContentArtifactAIEditOutput(
-        title=final_title,
-        body=final_body,
-        topics=merge_pinned_topics(
+    content_type_code, content_type_name = _direct_request_content_type(user_request)
+    if is_case_share_content(content_type_code, content_type_name):
+        topics = case_share_topics(body_topics, user_request, image_attached=image_sent)
+    else:
+        topics = merge_pinned_topics(
             body_topics,
             _region_from_user_request(user_request),
             limit=DIRECT_TOPIC_LIMIT,
-        ),
+        )
+    output = ContentArtifactAIEditOutput(
+        title=final_title,
+        body=final_body,
+        topics=topics,
     )
     combined = "\n".join([output.title, output.body, *output.topics])
     residual = [term for term in forbidden_lexicon if term in combined]

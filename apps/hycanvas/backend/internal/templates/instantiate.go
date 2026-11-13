@@ -255,6 +255,7 @@ func fillTextFields(file map[string]any, declarations []any, values map[string]s
 		}
 	}
 	for _, pageRaw := range asArr(file["pages"]) {
+		pageWidth := asNum(asObj(pageRaw)["width"])
 		for _, root := range asArr(asObj(pageRaw)["children"]) {
 			visitTree(asObj(root), func(node map[string]any) {
 				value, ok := remaining[asStr(node["id"])]
@@ -289,7 +290,7 @@ func fillTextFields(file map[string]any, declarations []any, values map[string]s
 				}
 				if _, narrative := narrativeNodes[asStr(node["id"])]; narrative {
 					shrinkNarrativeToSingleLine(node)
-				} else {
+				} else if !placeCenterLineByPageMargin(node, pageWidth) {
 					shrinkTextToBox(node)
 				}
 				delete(remaining, asStr(node["id"]))
@@ -351,16 +352,85 @@ func shrinkNarrativeToSingleLine(node map[string]any) {
 // the template box. Positions and box size stay as authored, so a long title
 // does not push the subtitle or insert an extra break that the template did
 // not design.
+// placeCenterLineByPageMargin keeps a centered line on one line when the page
+// still has room on the right. The text box may start at the left edge while
+// the canvas continues past it; shrinking that box pulls the title left even
+// though the right margin can hold the full line.
+func placeCenterLineByPageMargin(node map[string]any, pageWidth float64) bool {
+	if pageWidth <= 0 || paragraphAlign(node) != "center" {
+		return false
+	}
+	// Same 1.12em estimate the later fit uses, plus hinting slack, so the
+	// widened box still holds the line after that pass.
+	needed := estimateBaseLineWidth(node, 1) + glyphFitSlack(node)
+	if needed <= 0 || needed > pageWidth-48 {
+		return false
+	}
+	box := asObj(node["box"])
+	transform := asObj(node["transform"])
+	if box == nil || transform == nil {
+		return false
+	}
+	padding := asObj(box["padding"])
+	pad := asNum(padding["l"]) + asNum(padding["r"])
+	boxWidth := asNum(box["width"])
+	if boxWidth <= 0 {
+		boxWidth = asNum(asObj(node["size"])["width"])
+	}
+	boxX := asNum(transform["x"])
+	rightGap := pageWidth - (boxX + boxWidth)
+	if rightGap <= boxX+8 {
+		return false
+	}
+	outer := needed + pad
+	left := (pageWidth - outer) / 2
+	if left < 24 {
+		left = 24
+	}
+	if left+outer > pageWidth-24 {
+		return false
+	}
+	transform["x"] = left
+	box["width"] = outer
+	if size := asObj(node["size"]); size != nil {
+		size["width"] = outer
+	}
+	return true
+}
+
+func paragraphAlign(node map[string]any) string {
+	paragraphs := asArr(node["content"])
+	if len(paragraphs) == 0 {
+		return ""
+	}
+	return asStr(asObj(asObj(paragraphs[0])["style"])["align"])
+}
+
 func shrinkTextToBox(node map[string]any) {
 	target := textBoxHeight(node)
-	if target <= 0 || estimateAutoHeightText(node) <= target+0.5 {
+	contentW, _ := textBoxContentSize(asObj(node["box"]))
+	if contentW <= 0 {
+		contentW = asNum(asObj(node["size"])["width"])
+	}
+	fits := func(scale float64) bool {
+		if target > 0 && estimateAutoHeightTextScaled(node, scale) > target+0.5 {
+			return false
+		}
+		// Hinting rounds each glyph wider than the 1em estimate. A line that
+		// sits on the box edge wraps the last character onto a clipped second line.
+		if contentW > 0 && emLineWidth(node, scale)+glyphFitSlack(node) > contentW+0.5 {
+			return false
+		}
+		return true
+	}
+	if fits(1) {
 		return
 	}
 	lo, hi := minTextScale, 1.0
 	best := lo
 	for i := 0; i < 14; i++ {
 		mid := (lo + hi) / 2
-		if estimateAutoHeightTextScaled(node, mid) <= target+0.5 {
+		if fits(mid) {
 			best = mid
 			lo = mid
 		} else {
@@ -371,6 +441,41 @@ func shrinkTextToBox(node map[string]any) {
 		return
 	}
 	applyTextScale(node, best)
+}
+
+func emLineWidth(node map[string]any, fontScale float64) float64 {
+	width := 0.0
+	for _, paragraphRaw := range asArr(node["content"]) {
+		for _, runRaw := range asArr(asObj(paragraphRaw)["runs"]) {
+			style := asObj(asObj(runRaw)["style"])
+			fontSize := asNum(style["fontSize"]) * fontScale
+			if fontSize <= 0 {
+				fontSize = 16 * fontScale
+			}
+			for _, r := range asStr(asObj(runRaw)["text"]) {
+				if r == '\n' || r == '\r' {
+					continue
+				}
+				advance := fontSize
+				if r <= unicode.MaxASCII {
+					advance = fontSize * 0.55
+				}
+				width += advance + asNum(style["letterSpacing"])
+			}
+		}
+	}
+	return width
+}
+
+func glyphFitSlack(node map[string]any) float64 {
+	count := 0
+	for _, r := range collectNodeText(node) {
+		if r == '\n' || r == '\r' || unicode.IsSpace(r) {
+			continue
+		}
+		count++
+	}
+	return float64(count) * 2
 }
 
 func textBoxHeight(node map[string]any) float64 {

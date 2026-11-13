@@ -1316,3 +1316,52 @@ func TestPhotoCompositionPreservesTemplateAndEditableCells(t *testing.T) {
 		t.Fatal("overlapping cells accepted")
 	}
 }
+
+func TestShrinkTextToBoxLeavesRoomForTheLastGlyph(t *testing.T) {
+	fontSize := 130.74
+	boxWidth := fontSize * 5
+	node := map[string]any{
+		"type": "text",
+		"box":  map[string]any{"mode": "fixed", "width": boxWidth, "height": 219.0},
+		"content": []any{map[string]any{
+			"runs": []any{map[string]any{"text": "绿城玉海棠", "style": map[string]any{"fontSize": fontSize}}},
+		}},
+	}
+	shrinkTextToBox(node)
+	run := asObj(asArr(asObj(asArr(node["content"])[0])["runs"])[0])
+	got := asNum(asObj(run["style"])["fontSize"])
+	if got >= fontSize-0.01 {
+		t.Fatalf("font stayed on the box edge: %v", got)
+	}
+	if emLineWidth(node, 1)+glyphFitSlack(node) > boxWidth+0.5 {
+		t.Fatalf("line still reaches the edge: width=%v slack=%v box=%v", emLineWidth(node, 1), glyphFitSlack(node), boxWidth)
+	}
+}
+
+func TestCenterLineUsesSpareRightMarginInsteadOfShrinking(t *testing.T) {
+	fontSize := 130.0
+	node := map[string]any{
+		"id": "title", "type": "text",
+		"transform": map[string]any{"x": 0.0, "y": 100.0},
+		"size":      map[string]any{"width": fontSize * 5, "height": 200.0},
+		"box":       map[string]any{"mode": "fixed", "width": fontSize * 5, "height": 200.0},
+		"content": []any{map[string]any{
+			"style": map[string]any{"align": "center"},
+			"runs":  []any{map[string]any{"text": "旧", "style": map[string]any{"fontSize": fontSize}}},
+		}},
+	}
+	file := map[string]any{"pages": []any{map[string]any{
+		"width": 1080.0, "height": 1440.0, "children": []any{node},
+	}}}
+	fields := []any{map[string]any{"nodeId": "title", "kind": "text", "label": "标题"}}
+	if err := fillTextFields(file, fields, map[string]string{"标题": "绿城玉海棠"}); err != nil {
+		t.Fatal(err)
+	}
+	run := asObj(asArr(asObj(asArr(node["content"])[0])["runs"])[0])
+	if got := asNum(asObj(run["style"])["fontSize"]); got < fontSize-0.5 {
+		t.Fatalf("font shrunk despite spare right margin: %v", got)
+	}
+	if x := asNum(asObj(node["transform"])["x"]); x < 150 {
+		t.Fatalf("title stayed on the left edge: x=%v", x)
+	}
+}

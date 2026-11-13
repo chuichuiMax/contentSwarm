@@ -868,3 +868,67 @@ async def test_blank_prompt_uses_content_type_default_and_title_rule(monkeypatch
     assert "内容类型是「开工」" in prompt
     assert "标题限制：" in prompt
     assert result.title == "120㎡终于装完"
+
+
+def test_case_share_topics_skip_empty_style_and_region():
+    topics = generation.case_share_topics(
+        [],
+        '{"contentType":{"typeName":"装修案例分享","contentTypeCode":"CT01"},"businessVariables":{"设计风格":"","所在区域":""}}',
+        image_attached=False,
+    )
+    assert topics == ["装修", "装修案例"]
+
+
+def test_case_share_topics_use_image_style_and_manual_region():
+    topics = generation.case_share_topics(
+        ["#现代", "客餐厅线性灯"],
+        '{"businessVariables":{"所在区域":"长沙市","设计风格":"原木"}}',
+        image_attached=True,
+    )
+    assert topics == ["现代", "长沙", "装修", "装修案例"]
+
+
+def test_case_share_topics_use_selected_style_without_image():
+    topics = generation.case_share_topics(
+        ["模型猜的风格"],
+        '{"businessVariables":{"设计风格":"法式"}}',
+        image_attached=False,
+    )
+    assert topics == ["法式", "装修", "装修案例"]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_case_share_generation_keeps_only_style_region_and_fixed_tags(monkeypatch):
+    calls = []
+
+    class FakeModel:
+        def bind_tools(self, schemas, **kwargs):
+            return self
+
+        async def ainvoke(self, messages):
+            calls.append(messages)
+            return _tool_response({"title": "洋湖这套终于住进去了", "body": "客餐厅留了整面采光。", "topics": ["现代"]})
+
+    monkeypatch.setattr(generation, "resolve_chat_model_spec", lambda value: value or "default")
+    monkeypatch.setattr(generation, "choose_sampling", lambda: {"temperature": 0.4, "top_p": 0.9})
+    monkeypatch.setattr(generation, "load_chat_model", lambda **kwargs: FakeModel())
+    monkeypatch.setattr(generation, "prepare_reference_image", lambda data, content_type: ("image/jpeg", "abc"))
+
+    result = await generation.generate_direct_content(
+        model_spec="deepseek:deepseek-flash",
+        creative_style={},
+        viral_source={},
+        user_request=(
+            '{"contentType":{"typeName":"装修案例分享","contentTypeCode":"CT01"},'
+            '"businessVariables":{"所在区域":"长沙","设计风格":""}}'
+        ),
+        generation_prompt="按图片写案例",
+        reference_image=(b"image", "image/jpeg"),
+    )
+
+    content = calls[0][0].content
+    prompt = content if isinstance(content, str) else "".join(part.get("text", "") for part in content if isinstance(part, dict))
+    assert "只写一个装修风格名称" in prompt
+    assert "话题必须包含装修避坑" not in prompt
+    assert result.topics == ["现代", "长沙", "装修", "装修案例"]
