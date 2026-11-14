@@ -31,6 +31,13 @@ from yuxi.image_design.save_targets import (
 )
 from yuxi.image_design.schemas import ImageDesignSaveTarget
 from yuxi.services.employee_service import _platform_uid, resolve_employee_for_user
+from yuxi.services.enterprise_gallery_audience import (
+    audience_catalog,
+    ensure_enterprise_gallery_audiences,
+    filter_categories_by_audience,
+    reject_enterprise_audience_denied,
+    validate_audience_id,
+)
 from yuxi.services.material_folder_permissions import (
     grant_allows_folder_upload,
     grant_allows_folder_view,
@@ -322,6 +329,7 @@ class MaterialCategoryCreate(BaseModel):
     design_style: str | None = Field(default=None, max_length=32)
     building_name: str | None = Field(default=None, max_length=80)
     area: str | None = Field(default=None, max_length=32)
+    audience_id: str | None = Field(default=None, max_length=64)
 
     @field_validator("name")
     @classmethod
@@ -352,6 +360,7 @@ class MaterialCategoryUpdate(BaseModel):
     design_style: str | None = Field(default=None, max_length=32)
     building_name: str | None = Field(default=None, max_length=80)
     area: str | None = Field(default=None, max_length=32)
+    audience_id: str | None = Field(default=None, max_length=64)
 
     @field_validator("name")
     @classmethod
@@ -956,6 +965,7 @@ async def ensure_initial_enterprise_galleries(db: AsyncSession) -> None:
         db.add(category)
         rows.append(category)
     await db.flush()
+    await ensure_enterprise_gallery_audiences(db)
 
 
 async def _industry_catalog(db: AsyncSession) -> dict[str, str]:
@@ -1792,6 +1802,7 @@ async def list_material_items(
     )
     if resolved_category is not None and not can_view_batch_script_gallery(user, resolved_category):
         raise _error(404, "MATERIAL_GALLERY_NOT_FOUND", "图库不存在")
+    await reject_enterprise_audience_denied(db, actor_user or user, resolved_category)
     if restricted and resolved_category is not None:
         case_parent = None
         if include_case_for_designer:
@@ -2093,7 +2104,10 @@ async def get_material_categories(
             or category.id not in DEFAULT_IMAGE_CATEGORY_IDS
         )
     ]
+    if material_type == "image":
+        categories = await filter_categories_by_audience(db, user, categories)
     industry_catalog = await _industry_catalog(db)
+    audiences = await audience_catalog(db) if material_type == "image" else {}
     parents = {category.id: category for category in categories if category.parent_id is None}
     result = []
     for category in categories:
@@ -2112,9 +2126,11 @@ async def get_material_categories(
             count = (await list_folder(db, user, key, page=1, page_size=1))["total"]
         else:
             count = await repo.category_item_count(_owner_uid(user), material_type, category.id)
+        audience = audiences.get(category.audience_id) if category.audience_id else None
         result.append(
             {
                 **category.to_dict(),
+                "audience_name": audience.name if audience else None,
                 "personal_folder": personal_folder_key(category),
                 **personal_gallery_fields(category, personal_settings),
                 "can_upload": can_contribute_to_category(user, category)
@@ -2213,6 +2229,13 @@ async def create_material_category(
         industry_slug = await _validate_industry_slug(db, payload.industry_slug) or "uncategorized"
     if visibility == "enterprise" and (payload.material_type != "image" or not _is_admin(user)):
         raise _error(403, "MATERIAL_CATEGORY_FORBIDDEN", "只有管理员可创建企业共享图片图库")
+    audience_id = None
+    if payload.material_type == "image" and visibility == "enterprise" and parent is None:
+        audiences = await ensure_enterprise_gallery_audiences(db)
+        default_id = next(item.id for item in audiences if item.is_default)
+        audience_id = await validate_audience_id(db, payload.audience_id) or default_id
+    elif payload.audience_id:
+        raise _error(422, "MATERIAL_AUDIENCE_ROOT_ONLY", "只有企业共享一级图库可设置受众")
     category_name = payload.name.strip()
     if payload.material_type == "image" and parent and is_enterprise_case_root(parent) and design_style:
         formatted = format_enterprise_case_gallery_display_name(building_name, design_style, area)
@@ -2234,6 +2257,7 @@ async def create_material_category(
             design_style=design_style or None,
             building_name=building_name or None,
             area=area or None,
+            audience_id=audience_id,
             name=category_name,
             description=payload.description.strip(),
             sort_order=(max(item.sort_order for item in categories) + 10),
@@ -2336,12 +2360,28 @@ async def update_material_category(
                     item.metadata_json = {**(item.metadata_json or {}), "ever_shared": True}
             gallery.visibility = changes["visibility"]
             gallery.is_global_personal = changes["visibility"] == "private" and user.role == "superadmin"
+            if changes["visibility"] == "enterprise" and gallery.parent_id is None and not gallery.audience_id:
+                gallery.audience_id = next(
+                    item.id for item in await ensure_enterprise_gallery_audiences(db) if item.is_default
+                )
+            if changes["visibility"] == "private":
+                gallery.audience_id = None
     if "name" in changes:
         category.name = changes["name"].strip()
     if "description" in changes:
         category.description = changes["description"].strip()
     if "sort_order" in changes:
         category.sort_order = changes["sort_order"]
+    if "audience_id" in changes:
+        if (
+            material_type != "image"
+            or category.visibility != "enterprise"
+            or category.parent_id
+        ):
+            raise _error(422, "MATERIAL_AUDIENCE_ROOT_ONLY", "只有企业共享一级图库可设置受众")
+        category.audience_id = await validate_audience_id(db, changes["audience_id"]) or (
+            next(item.id for item in await ensure_enterprise_gallery_audiences(db) if item.is_default)
+        )
     if "industry_slug" in changes:
         if material_type != "image" or category.parent_id:
             raise _error(422, "MATERIAL_INDUSTRY_INHERITED", "只有一级图片图库可以设置行业")
@@ -2565,8 +2605,10 @@ async def list_image_galleries(
             or category.id not in DEFAULT_IMAGE_CATEGORY_IDS
         )
     ]
+    categories = await filter_categories_by_audience(db, user, categories)
     raw = await repo.category_summaries(_owner_uid(user), material_type="image")
     industry_catalog = await _industry_catalog(db)
+    audiences = await audience_catalog(db)
     parents = {category.id: category for category in categories if category.parent_id is None}
     galleries = []
     for category in categories:
@@ -2604,9 +2646,11 @@ async def list_image_galleries(
             listing = await list_folder(db, user, personal_key, page=1, page_size=1)
             count = direct_count = listing["total"]
             personal_first = next(iter(listing["items"]), None)
+        audience = audiences.get(category.audience_id) if category.audience_id else None
         galleries.append(
             {
                 **category.to_dict(),
+                "audience_name": audience.name if audience else None,
                 "personal_folder": personal_folder_key(category),
                 **personal_gallery_fields(category, personal_settings),
                 "can_upload": can_contribute_to_category(user, category)
@@ -2659,6 +2703,11 @@ async def _get_material_item_for_read(
         )
         if category and not can_view_batch_script_gallery(user, category):
             return None
+        if category is not None:
+            try:
+                await reject_enterprise_audience_denied(db, user, category)
+            except HTTPException:
+                return None
     return item
 
 

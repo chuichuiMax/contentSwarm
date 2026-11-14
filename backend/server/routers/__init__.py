@@ -33,8 +33,10 @@ from server.routers.resident_population_router import content_resident_populatio
 from server.routers.mp_router import mp
 from server.routers.case_visit_router import case_visits
 from server.routers.case_share_router import case_shares
-from server.routers.requirement_list_router import requirement_lists
+# TODO: 上游提交缺少实体文件，临时禁用需求清单路由以免阻塞 API 启动
+# from server.routers.requirement_list_router import requirement_lists
 from server.routers.material_library_router import material_library, public_share_router as public_share_router
+from server.routers.material_audience_router import material_audiences
 from server.routers.material_integration_router import material_integration
 from server.routers.dangjia_router import dangjia
 
@@ -75,11 +77,12 @@ router.include_router(content_variables)  # /api/content-variables/* 业务参�
 router.include_router(content_business_variables)  # /api/content-business-variables/* 业务变量配置
 router.include_router(content_process_standards)  # /api/content-process-standards/* 工艺类型列表
 router.include_router(material_library)  # /api/material-library/* 素材库
+router.include_router(material_audiences)  # /api/material-audiences/* 企业图库受众
 router.include_router(material_integration)  # /api/integrations/material-library/* 素材库对外只读
 router.include_router(mp)  # /api/mp/* 获客小程序
 router.include_router(case_visits)  # 访客预约与客资报表
 router.include_router(case_shares)  # PC 案例分享统计
-router.include_router(requirement_lists)  # PC 需求清单提交记录
+# router.include_router(requirement_lists)  # PC 需求清单提交记录（实体文件缺失，临时禁用）
 router.include_router(dangjia)  # /api/dangjia/* 当家外部内容接入
 
 if not _LITE_MODE:

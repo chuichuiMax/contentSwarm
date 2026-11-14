@@ -1168,6 +1168,14 @@ class PostgresManager(metaclass=SingletonMeta):
                 "ALTER TABLE IF EXISTS content_business_variables "
                 "ADD COLUMN IF NOT EXISTS ports JSONB NOT NULL DEFAULT '[\"pc\",\"app\"]'::jsonb"
             ),
+            (
+                "ALTER TABLE IF EXISTS content_material_categories "
+                "ADD COLUMN IF NOT EXISTS audience_id VARCHAR(64)"
+            ),
+            (
+                "CREATE INDEX IF NOT EXISTS ix_content_material_categories_audience_id "
+                "ON content_material_categories (audience_id)"
+            ),
         ]
         async with self.async_engine.begin() as conn:
             await conn.execute(

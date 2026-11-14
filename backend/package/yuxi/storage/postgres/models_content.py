@@ -1348,6 +1348,7 @@ class ContentMaterialCategory(Base):
     design_style = Column(String(32), nullable=True)
     building_name = Column(String(80), nullable=True)
     area = Column(String(32), nullable=True)
+    audience_id = Column(String(64), nullable=True, index=True)
     name = Column(String(80), nullable=False)
     description = Column(String(255), nullable=False, default="")
     sort_order = Column(Integer, nullable=False, default=0)
@@ -1403,10 +1404,40 @@ class ContentMaterialCategory(Base):
             "design_style": self.design_style,
             "building_name": self.building_name,
             "area": self.area,
+            "audience_id": self.audience_id,
             "name": self.name,
             "description": self.description or "",
             "sort_order": self.sort_order,
             "is_system": self.is_system,
+            "created_at": format_utc_datetime(self.created_at),
+            "updated_at": format_utc_datetime(self.updated_at),
+        }
+
+
+class ContentMaterialAudience(Base):
+    """企业共享图库受众：按员工当前分部包含匹配划分可见范围（互斥）。"""
+
+    __tablename__ = "content_material_audiences"
+
+    id = Column(String(64), primary_key=True)
+    code = Column(String(64), nullable=False, unique=True, index=True)
+    name = Column(String(80), nullable=False)
+    match_keywords = Column(JSON, nullable=False, default=list)
+    is_default = Column(Boolean, nullable=False, default=False, server_default="false")
+    sort_order = Column(Integer, nullable=False, default=0)
+    enabled = Column(Boolean, nullable=False, default=True, server_default="true", index=True)
+    created_at = Column(DateTime, default=utc_now_naive)
+    updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "code": self.code,
+            "name": self.name,
+            "match_keywords": list(self.match_keywords or []),
+            "is_default": bool(self.is_default),
+            "sort_order": self.sort_order,
+            "enabled": bool(self.enabled),
             "created_at": format_utc_datetime(self.created_at),
             "updated_at": format_utc_datetime(self.updated_at),
         }

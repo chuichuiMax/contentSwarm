@@ -23,6 +23,7 @@ import {
 
 import { contentApi } from '@/apis/content_api'
 import { employeeApi } from '@/apis/employee_api'
+import { materialAudienceApi } from '@/apis/material_audience_api'
 import { materialLibraryApi } from '@/apis/material_library_api'
 import { useUserStore } from '@/stores/user'
 import CaseGalleryStyleFilter from '@/components/material/CaseGalleryStyleFilter.vue'
@@ -120,8 +121,16 @@ const categoryForm = reactive({
   visibility: 'private',
   design_style: '',
   building_name: '',
-  area: ''
+  area: '',
+  audience_id: undefined
 })
+const materialAudiences = ref([])
+const showAudienceField = computed(() => (
+  materialType.value === 'image'
+  && !categoryParentId.value
+  && (categoryForm.visibility === 'enterprise' || editingCategory.value?.visibility === 'enterprise')
+  && userStore.isAdmin
+))
 const categoryManagerOpen = ref(false)
 const deleteCategoryOpen = ref(false)
 const categoryDeleting = ref(false)
@@ -352,11 +361,26 @@ async function loadCategories() {
   }
 }
 
-function openCreateCategory(parentId = '') {
+async function loadMaterialAudiences() {
+  if (!userStore.isAdmin) {
+    materialAudiences.value = []
+    return
+  }
+  try {
+    const response = await materialAudienceApi.listAudiences()
+    materialAudiences.value = (response.audiences || []).filter((item) => item.enabled)
+  } catch {
+    materialAudiences.value = []
+  }
+}
+
+async function openCreateCategory(parentId = '') {
   categoryEditorMode.value = 'create'
   editingCategory.value = null
   categoryParentId.value = parentId || ''
   const parent = categoryMap.value[categoryParentId.value]
+  await loadMaterialAudiences()
+  const defaultAudience = materialAudiences.value.find((item) => item.is_default)
   Object.assign(categoryForm, {
     name: '',
     description: '',
@@ -364,15 +388,17 @@ function openCreateCategory(parentId = '') {
     industry_slug: parent?.industry_slug || '',
     design_style: '',
     building_name: '',
-    area: ''
+    area: '',
+    audience_id: defaultAudience?.id
   })
   categoryEditorOpen.value = true
 }
 
-function openEditCategory(category) {
+async function openEditCategory(category) {
   categoryEditorMode.value = 'edit'
   editingCategory.value = category
   categoryParentId.value = category.parent_id || ''
+  await loadMaterialAudiences()
   Object.assign(categoryForm, {
     name: category.name,
     visibility: category.visibility || 'private',
@@ -380,7 +406,8 @@ function openEditCategory(category) {
     industry_slug: category.industry_slug || '',
     design_style: category.design_style || '',
     building_name: category.building_name || '',
-    area: category.area || ''
+    area: category.area || '',
+    audience_id: category.audience_id || undefined
   })
   categoryEditorOpen.value = true
 }
@@ -399,6 +426,9 @@ async function saveCategory() {
   if (isDecorationGalleryChild.value && !categoryForm.area.trim()) {
     return message.warning('请输入面积')
   }
+  if (showAudienceField.value && !categoryForm.audience_id) {
+    return message.warning('请选择可见受众')
+  }
   const payload = {
     name: categoryForm.name.trim(),
     description: categoryForm.description.trim(),
@@ -406,6 +436,7 @@ async function saveCategory() {
     ...(materialType.value === 'image' && !categoryParentId.value
       ? { industry_slug: categoryForm.industry_slug }
       : {}),
+    ...(showAudienceField.value ? { audience_id: categoryForm.audience_id } : {}),
     ...(isDecorationGalleryChild.value
       ? {
           design_style: categoryForm.design_style,
@@ -1576,6 +1607,14 @@ onBeforeUnmount(() => {
             <a-radio value="private">我的素材（全员可见）</a-radio><a-radio value="enterprise">企业共享</a-radio>
           </a-radio-group>
           <small>放在“我的素材”的图库对所有用户显示，仅创建者可管理；企业共享保持现有使用规则。</small>
+        </label>
+        <label v-if="showAudienceField"><span>可见受众 <b>*</b></span>
+          <a-select v-model:value="categoryForm.audience_id" placeholder="请选择受众分组">
+            <a-select-option v-for="item in materialAudiences" :key="item.id" :value="item.id">
+              {{ item.name }}{{ item.is_default ? '（默认员工）' : '' }}
+            </a-select-option>
+          </a-select>
+          <small>事业部受众与默认员工互斥；可在「配置管理 / 企业图库受众」维护匹配规则。</small>
         </label>
         <label v-if="materialType === 'image' && !categoryParentId"><span>所属行业 <b>*</b></span><a-select v-model:value="categoryForm.industry_slug" placeholder="请选择一个行业">
           <a-select-option v-for="item in industries" :key="item.slug" :value="item.slug">{{ item.name }}</a-select-option>
