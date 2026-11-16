@@ -2875,8 +2875,10 @@ async def update_content_artifact(
         raise _content_error(404, "CONTENT_ARTIFACT_NOT_FOUND", "内容资产不存在")
     task = await repo.get_task_for_user(artifact.task_id, user, for_update=True)
     _require_v3_task(task)
+    from yuxi.utils.line_breaks import normalize_published_body
+
     artifact.title = payload.title.strip()
-    artifact.body = payload.body.strip()
+    artifact.body = normalize_published_body(payload.body)
     artifact.topics = payload.topics
     artifact.current_version += 1
     artifact.status = "draft"

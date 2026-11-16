@@ -57,7 +57,7 @@ async def test_direct_generation_uses_only_requested_inputs(monkeypatch):
 
     assert result.title == "费用标题"
     assert result.body == "费用正文"
-    assert result.topics == ["装修避坑", "费用"]
+    assert result.topics == ["装修避坑"]
     assert load_model_calls == [
         {
             "fully_specified_name": "ark:doubao-seed-2-1-pro-260915",
@@ -81,8 +81,9 @@ async def test_direct_generation_uses_only_requested_inputs(monkeypatch):
     assert '"serialNo":"002"' in prompt
     assert "反差价值型" not in prompt
     assert "爆款正文" not in prompt
-    assert "话题必须包含装修避坑" in prompt
-    assert "装修公司推荐" in prompt
+    assert "发布标签由系统从对应知识库补齐" in prompt
+    assert "正文最后一段写一句引流引导" in prompt
+    assert "标题要顺口" in prompt
     assert "封禁词替换表" in prompt
     assert '"报价": ["费用"]' in prompt
     assert prompt.index("封禁词替换表") < prompt.index("自我查验")
@@ -109,9 +110,7 @@ async def test_direct_generation_pins_region_company_topic(monkeypatch):
         user_request='{"businessVariables":{"所在区域":"株洲市"}}',
     )
 
-    assert result.topics[0] == "株洲装修公司推荐"
-    assert result.topics[1] == "装修避坑"
-    assert "装修日记" in result.topics
+    assert result.topics == ["株洲装修公司推荐", "装修避坑"]
     assert all(not topic.startswith("#") for topic in result.topics)
 
 
@@ -172,7 +171,8 @@ async def test_review_notes_generation_uses_owner_voice_and_knowledge(monkeypatc
     assert "用户生成提示词" in prompt
     assert "站在业主角度写好评笔记" in prompt
     assert "用好评笔记知识库里的业主口吻" in prompt
-    assert "话题写 8 到 10 个" in prompt
+    assert "发布标签由系统从对应知识库补齐" in prompt
+    assert "正文最后一段写一句引流引导" in prompt
     assert "业主去未完工的工地看隐蔽工程" in prompt
     assert '"项目经理":"王五"' in prompt
     assert "爆款原文" not in prompt
@@ -258,10 +258,11 @@ async def test_direct_generation_sends_prompt_with_first_image(monkeypatch):
     assert content[0]["type"] == "text"
     assert "根据我提供的图片写文案" in content[0]["text"]
     assert "已附上第一张图片" in content[0]["text"]
-    assert "根据这张图片生成 3 到 5 个小红书类型标签" in content[0]["text"]
-    assert "空间加画面里的具体细节" in content[0]["text"]
-    assert "创作风格里的示例词" in content[0]["text"]
-    assert "所有标签合计不超过 10 个" in content[0]["text"]
+    assert "沙发背景墙木饰面" in content[0]["text"]
+    assert "发布标签由系统从对应知识库补齐" in content[0]["text"]
+    assert "正文最后一段写一句引流引导" in content[0]["text"]
+    assert "标题要顺口" in content[0]["text"]
+    assert "根据这张图片生成 3 到 5 个小红书类型标签" not in content[0]["text"]
     assert content[1]["type"] == "image_url"
     assert content[1]["image_url"]["url"].startswith("data:image/jpeg;base64,")
 
@@ -644,7 +645,7 @@ def test_publish_tags_are_removed_from_the_body():
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_model_body_tags_land_in_publish_topics(monkeypatch):
+async def test_model_body_detail_tags_are_dropped_for_kb_topics(monkeypatch):
     class FakeModel:
         def bind_tools(self, schemas, **kwargs):
             return self
@@ -654,7 +655,7 @@ async def test_model_body_tags_land_in_publish_topics(monkeypatch):
                 {
                     "title": "标题",
                     "body": "我去工地看了水电。\n#水电改造 #工地实拍",
-                    "topics": [],
+                    "topics": ["沙发背景墙木饰面", "木饰面房门", "客厅无主灯射灯"],
                 }
             )
 
@@ -669,9 +670,9 @@ async def test_model_body_tags_land_in_publish_topics(monkeypatch):
     )
 
     assert result.body == "我去工地看了水电。"
-    assert "水电改造" in result.topics
-    assert "工地实拍" in result.topics
-    assert result.topics[0] == "装修避坑"
+    assert result.topics == ["装修避坑"]
+    assert "沙发背景墙木饰面" not in result.topics
+    assert "水电改造" not in result.topics
 
 
 def test_topics_are_filled_from_generic_tags_up_to_ten():
@@ -695,7 +696,7 @@ def test_recent_image_topics_skip_pinned_tags():
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_recent_topics_are_sent_with_the_image(monkeypatch):
+async def test_image_prompt_no_longer_asks_for_detail_tags(monkeypatch):
     calls = []
 
     class FakeModel:
@@ -720,8 +721,10 @@ async def test_recent_topics_are_sent_with_the_image(monkeypatch):
     )
 
     text = calls[0][0].content[0]["text"]
-    assert "最近用过这些标签：无主灯、电视墙石材" in text
-    assert "装修避坑" not in text.split("最近用过这些标签：", 1)[1]
+    assert "发布标签由系统从对应知识库补齐" in text
+    assert "正文最后一段写一句引流引导" in text
+    assert "最近用过这些标签" not in text
+    assert "根据这张图片生成 3 到 5 个小红书类型标签" not in text
 
 
 def test_other_knowledge_bases_are_used_when_content_type_is_missing():
@@ -820,6 +823,31 @@ def test_image_prompt_distinguishes_sofa_wall_from_tv_wall():
     )
     assert "看不到电视机，写沙发背景墙" in prompt
     assert "只有看得到电视屏幕时，才写电视背景墙" in prompt
+
+
+def test_craft_image_prompt_avoids_fine_grained_scene_detail():
+    prompt = generation._direct_generation_prompt(
+        style_block="",
+        viral_source={"title": "", "body": ""},
+        user_request='{"contentType":{"contentTypeCode":"CT06","typeName":"工艺施工展示"}}',
+        generation_prompt="写木饰面工艺",
+        forbidden_lexicon={},
+        knowledge_context="",
+        image_attached=True,
+    )
+    assert "图片只用来印证工艺点" in prompt
+    assert "不要逐件描写家具、软装、杂志、摆件" in prompt
+    assert "不要争论沙发背景墙或电视背景墙叫法" in prompt
+    assert "看不到电视机，写沙发背景墙" not in prompt
+    assert "正文最后一段写一句引流引导" in prompt
+    assert "标题要顺口" in prompt
+
+
+def test_awkward_craft_titles_need_rewrite():
+    from yuxi.content.title_rules import title_needs_rewrite
+
+    assert title_needs_rewrite("整户188㎡做完整面木饰面，这工艺🔥")
+    assert not title_needs_rewrite("木饰面接缝不齐？这工艺别省🔥")
 
 
 def test_bound_content_type_knowledge_uses_the_selected_type():

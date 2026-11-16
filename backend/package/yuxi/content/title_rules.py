@@ -52,7 +52,8 @@ class AreaWithSpaceRule(TitleRule):
     def apply(self, title: str) -> str:
         text = _AREA_THEN_SPACE.sub(r"\1", title)
         text = _SPACE_THEN_AREA.sub(r"\1", text)
-        return re.sub(r"\s{2,}", " ", text).strip(" ，,、")
+        # 只合并同行空白，保留正文段间换行（apply_title_rules 也会作用到 body）。
+        return re.sub(r"[^\S\n]{2,}", " ", text).strip(" ，,、")
 
 
 TITLE_RULES: tuple[TitleRule, ...] = (
@@ -61,6 +62,9 @@ TITLE_RULES: tuple[TitleRule, ...] = (
         description="项目面积是整户面积，标题和正文里都不要把面积和单个空间写在一起",
     ),
 )
+
+
+_AWKWARD_TITLE = re.compile(r"做完整面|完整面木饰面")
 
 
 def title_is_incomplete(title: str) -> bool:
@@ -72,6 +76,13 @@ def title_is_incomplete(title: str) -> bool:
         if not any(part in window for part in _BODY_PARTS):
             return True
     return False
+
+
+def title_needs_rewrite(title: str) -> bool:
+    """标题残缺或明显拗口时，触发生成侧重写。"""
+
+    text = str(title or "")
+    return title_is_incomplete(text) or bool(_AWKWARD_TITLE.search(text))
 
 
 def apply_title_rules(title: str) -> str:
@@ -86,5 +97,8 @@ def title_rule_instructions() -> str:
     descriptions = [rule.description for rule in TITLE_RULES if rule.description]
     if not descriptions:
         return ""
-    descriptions.append("标题必须是读得通的完整句子，动作对象不能省略；写身体感受时要写清部位")
+    descriptions.append(
+        "标题必须是读得通、顺口的完整句子，动作对象不能省略；写身体感受时要写清部位；"
+        "不要写「做完整面木饰面」这类拗口堆砌"
+    )
     return "文案限制：" + "；".join(descriptions) + "。"

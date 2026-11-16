@@ -1,0 +1,26 @@
+{"title": "木饰面接缝不齐？错缝才靠谱🔥", "tail": "就是石膏板接缝先错开，不留通缝。\n\n一排柜门从地到顶，上下缝隙要顺。\n\n柜门没装，先要核对柜体收口尺寸。\n\n收口全靠背板找平，靠墙那道缝才小。\n\n进场验收时，对着这篇把柜门缝和板缝看一遍。\n\n评论区留言「木饰面」，发你一份接缝验收对照要点。"}
+
+
+===pytest===
+============================= test session starts ==============================
+platform linux -- Python 3.12.13, pytest-9.0.3, pluggy-1.6.0
+rootdir: /app
+configfile: pyproject.toml
+plugins: asyncio-1.4.0, Faker-40.19.1, cov-7.1.0, httpx-0.36.2, langsmith-0.8.7, anyio-4.13.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=function, asyncio_default_test_loop_scope=function
+collected 43 items
+
+test/unit/content/test_direct_content_generation.py .................... [ 46%]
+.......................                                                  [100%]
+
+=============================== warnings summary ===============================
+package/yuxi/storage/postgres/models_business.py:22
+  /app/package/yuxi/storage/postgres/models_business.py:22: MovedIn20Warning: The ``declarative_base()`` function is now available as sqlalchemy.orm.declarative_base(). (deprecated since: 2.0) (Background on SQLAlchemy 2.0 at: https://sqlalche.me/e/b8d9)
+    Base = declarative_base()
+
+package/yuxi/knowledge/parser/unified.py:18
+  /app/package/yuxi/knowledge/parser/unified.py:18: DeprecationWarning: `langchain-community` is being sunset and is no longer actively maintained. See https://github.com/langchain-ai/langchain-community/issues/674 for details and migration guidance toward standalone integration packages.
+    from langchain_community.document_loaders import PyPDFLoader
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+======================= 43 passed, 2 warnings in 12.33s ========================

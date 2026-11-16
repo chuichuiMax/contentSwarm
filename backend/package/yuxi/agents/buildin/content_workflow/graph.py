@@ -897,7 +897,10 @@ class ContentWorkflowAgent(BaseAgent):
         return StrategySnapshotV1.model_validate(payload).model_dump(mode="json")
 
     async def _save_artifact(self, state: ContentWorkflowState) -> dict[str, Any]:
-        draft = state["content_draft"]
+        from yuxi.utils.line_breaks import normalize_published_body
+
+        draft = dict(state["content_draft"] or {})
+        draft["body"] = normalize_published_body(str(draft.get("body") or ""))
         review = state.get("review_report") or state.get("validation_report") or {"status": "passed", "checks": []}
         if not getattr(self, "_workflow_definition", {}).get("semantic_review_enabled", True):
             review = {**review, "review_mode": "deterministic_only", "semantic_review_status": "not_run"}

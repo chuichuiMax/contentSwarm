@@ -10,10 +10,10 @@ from typing import Any
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from yuxi.agents import load_chat_model, resolve_chat_model_spec
-from yuxi.utils.line_breaks import normalize_escaped_newlines
+from yuxi.utils.line_breaks import normalize_escaped_newlines, normalize_published_body
 from yuxi.content.model.forbidden_words import replace_forbidden_words
 from yuxi.content.schemas import ContentArtifactAIEditOutput, ReviewReport
-from yuxi.content.title_rules import apply_title_rules, title_is_incomplete, title_rule_instructions
+from yuxi.content.title_rules import apply_title_rules, title_needs_rewrite, title_rule_instructions
 from yuxi.content.v3.modular_rules import merge_pinned_topics, topic_region_name
 from yuxi.utils.logging_config import logger
 
@@ -177,6 +177,7 @@ def _direct_request_content_type(user_request: str) -> tuple[str, str]:
 
 
 CASE_SHARE_CONTENT_NAMES = frozenset({"装修案例分享", "案例分享"})
+CRAFT_CONTENT_NAMES = frozenset({"工艺施工展示"})
 CASE_SHARE_FIXED_TOPICS = ("装修", "装修案例")
 # 案例分享 topics 只留风格名；画面细部/硬装构件/家具词不当作风格标签。
 _CASE_SHARE_DETAIL_TAG = re.compile(
@@ -188,6 +189,12 @@ def is_case_share_content(content_type_code: str, content_type_name: str) -> boo
     name = str(content_type_name or "").strip()
     code = str(content_type_code or "").strip()
     return name in CASE_SHARE_CONTENT_NAMES or code == "CT01"
+
+
+def is_craft_content(content_type_code: str, content_type_name: str) -> bool:
+    name = str(content_type_name or "").strip()
+    code = str(content_type_code or "").strip()
+    return name in CRAFT_CONTENT_NAMES or code == "CT06"
 
 
 def _request_business_value(user_request: str, key: str) -> str:
@@ -338,13 +345,22 @@ def _direct_generation_prompt(
         f"{json.dumps(forbidden_lexicon, ensure_ascii=False)}\n"
         "有候选表达就换用候选；没有候选就改写该句，避免出现问题词。"
     )
-    image_line = (
-        "已附上第一张图片。文案以用户生成提示词和这张图片为主，只写提示词要求、并且图片里能看到的内容。"
-        "背景墙按画面里的家具来写：墙前是沙发、看不到电视机，写沙发背景墙；"
-        "只有看得到电视屏幕时，才写电视背景墙。不要把沙发背后的造型墙写成电视背景墙。\n\n"
-        if image_attached
-        else ""
-    )
+    content_type_code, content_type_name = _direct_request_content_type(user_request)
+    craft_mode = is_craft_content(content_type_code, content_type_name)
+    if image_attached and craft_mode:
+        image_line = (
+            "已附上第一张图片。图片只用来印证工艺点，围绕工艺主题写工序、验收或避坑。"
+            "不要逐件描写家具、软装、杂志、摆件等画面细节，不要争论沙发背景墙或电视背景墙叫法。"
+            "画面信息点到为止，不要把看图结果写成细部清单。\n\n"
+        )
+    elif image_attached:
+        image_line = (
+            "已附上第一张图片。文案以用户生成提示词和这张图片为主，只写提示词要求、并且图片里能看到的内容。"
+            "背景墙按画面里的家具来写：墙前是沙发、看不到电视机，写沙发背景墙；"
+            "只有看得到电视屏幕时，才写电视背景墙。不要把沙发背后的造型墙写成电视背景墙。\n\n"
+        )
+    else:
+        image_line = ""
     reference_block = (
         "已命中的知识库用来写文案。有所选内容类型的知识库时只用该库；没有时使用没有绑定内容类型的知识库。"
         "与业务数据或图片不一致的事实不要写入：\n"
@@ -352,23 +368,15 @@ def _direct_generation_prompt(
         if reference_knowledge.strip()
         else ""
     )
-    recent = "、".join(avoid_recent_image_topics(recent_topics or []))
-    avoid_recent = (
-        f"最近用过这些标签：{recent}。图片里还有其他能看见的内容时，改选另一个点；只剩这一点时可以保留。"
-        if recent
-        else ""
+    del recent_topics
+    # 发布标签由系统用知识库标签补齐；模型不要根据画面发明细部标签。
+    kb_topic_rule = (
+        "topics 不要写画面细部或材质组合词，例如沙发背景墙木饰面、木饰面房门、客厅无主灯射灯、客餐厅线性灯、电视墙石材。"
+        "发布标签由系统从对应知识库补齐，模型侧 topics 可留空。"
+        "标签只写入 topics，不要写进正文，不要带 # 号。\n"
     )
-    image_topic_rule = (
-        "再根据这张图片生成 3 到 5 个小红书类型标签。"
-        "每个标签写成空间加画面里的具体细节，例如客餐厅线性灯、电视墙石材。"
-        "创作风格里的示例词，图片里还有其他能看见的内容时不要用作标签。"
-        f"{avoid_recent}"
-        "所有标签合计不超过 10 个。"
-        if image_attached
-        else ""
-    )
-    content_type_code, content_type_name = _direct_request_content_type(user_request)
     case_share_body_rule = ""
+    craft_body_rule = ""
     if is_case_share_content(content_type_code, content_type_name):
         topic_rule = (
             "topics 只写一个大众化装修风格名称，例如现代、原木、法式、奶油、中古。"
@@ -390,41 +398,44 @@ def _direct_generation_prompt(
                 "表单里没有的金额、小区、工期和人名不要写入：\n"
                 f"{knowledge_context.strip()}\n\n"
             )
-    elif knowledge_context.strip():
-        topic_rule = (
+    elif craft_mode:
+        topic_rule = kb_topic_rule
+        craft_body_rule = (
+            "这是工艺施工展示：正文围绕一道工艺的做法、验收或避坑写，不要写成空间效果展示。"
+            "不要展开家具摆位、软装陈设、背景墙命名辨析等与工艺无关的看图细项。\n"
+        )
+        knowledge_block = (
             (
-                "话题包含鸿扬家装和装修避坑；能确定城市时再包含「城市名+装修公司推荐」，"
-                "例如长沙装修公司推荐、株洲装修公司推荐。"
-                f"{image_topic_rule}"
+                "用工艺与施工知识写文案。"
+                "表单里没有的金额、小区、工期和人名不要写入：\n"
+                f"{knowledge_context.strip()}\n\n"
             )
-            if image_attached
-            else (
-                "话题写 8 到 10 个，像装修日记标签，包含鸿扬家装和装修避坑；"
-                "能确定城市时再包含「城市名+装修公司推荐」，例如长沙装修公司推荐、株洲装修公司推荐。"
-            )
-        ) + "标签只写入 topics，不要写进正文，不要带 # 号。\n"
+            if knowledge_context.strip()
+            else ""
+        )
+    elif knowledge_context.strip():
+        topic_rule = kb_topic_rule
         knowledge_block = (
             "用好评笔记知识库里的业主口吻、服务场景和工艺细节写文案。"
             "表单里没有的金额、小区、工期和人名不要写入：\n"
             f"{knowledge_context.strip()}\n\n"
         )
     else:
-        topic_rule = (
-            "话题必须包含装修避坑；用户数据里能确定城市时，还要包含「城市名+装修公司推荐」，"
-            "例如长沙装修公司推荐、株洲装修公司推荐。"
-            f"{image_topic_rule}"
-            "标签只写入 topics，不要写进正文，不要带 # 号。\n"
-        )
+        topic_rule = kb_topic_rule
         knowledge_block = ""
     title_rules = title_rule_instructions()
     return (
-        "按「用户生成提示词」和图片写文案，不要另起标题公式或统一结尾。"
+        "按「用户生成提示词」和图片写文案，不要另起标题公式。"
+        "标题要顺口，像人能直接说出来的完整一句；不要生硬堆砌面积和材料，例如不要写「做完整面木饰面」这类拗口搭配。"
         "正文用短句，每句单独成段，段与段之间空一行。"
+        "正文最后一段写一句引流引导，贴合本篇，例如评论区留言领对应验收要点、收藏后进场对照；"
+        "不要空泛收尾，不要硬广承诺效果，不要套统一结尾模板。"
         "返回字段 title、body、topics；不要输出解释。\n"
         f"{title_rules}\n"
         f"{topic_rule}\n"
         f"{image_line}"
         f"{case_share_body_rule}"
+        f"{craft_body_rule}"
         "用户生成提示词：\n"
         f"{generation_prompt.strip()}\n\n"
         "业务数据只用来核对事实。提示词和内容类型知识库没有要求的金额、小区、人名和经历不要补写。\n"
@@ -432,7 +443,7 @@ def _direct_generation_prompt(
         f"{reference_block}"
         f"{knowledge_block}"
         f"{forbidden_block}\n"
-        "自我查验：输出前先通读标题和正文，发现歧义或不通顺就改正，"
+        "自我查验：输出前先通读标题和正文，发现歧义、拗口或不通顺就改正，"
         "只把改正后的标题、正文和标签写入字段，不要写出查验过程。"
     )
 
@@ -544,13 +555,6 @@ def choose_sampling() -> dict[str, float]:
         "temperature": round(random.uniform(0.85, 1.15), 2),
         "top_p": round(random.uniform(0.8, 1), 2),
     }
-
-
-def segment_unbroken_body(body: str) -> str:
-    """正文没有换行时，按句末标点分成多段。"""
-    if "\n" in body:
-        return body
-    return re.sub(r"([。！？!?])[ \t]*(?=\S)", r"\1\n\n", body).strip()
 
 
 def _json_object(text: str) -> dict[str, Any] | None:
@@ -759,19 +763,20 @@ async def generate_direct_content(
     final_title = apply_title_rules(
         normalize_escaped_newlines(replace_forbidden_words(raw_output.title, forbidden_replacements)).strip()
     )
-    if title_is_incomplete(final_title):
+    if title_needs_rewrite(final_title):
         repair = await model.ainvoke(
             [
                 HumanMessage(
                     content=(
-                        f"标题「{final_title}」读起来不完整。请只重写标题，补上动作的对象，"
-                        "让这句话能独立读懂。只返回新标题，不要解释。"
+                        f"标题「{final_title}」读起来不完整或不通顺。请只重写标题，"
+                        "补上动作对象，改成顺口的完整一句，不要生硬堆砌面积和材料。"
+                        "只返回新标题，不要解释。"
                     )
                 )
             ]
         )
         repaired = apply_title_rules(normalize_escaped_newlines(_response_text(repair)).strip().strip("「」\"'"))
-        if repaired and not title_is_incomplete(repaired):
+        if repaired and not title_needs_rewrite(repaired):
             final_title = repaired
     body_text = normalize_escaped_newlines(replace_forbidden_words(raw_output.body, forbidden_replacements)).strip()
     body_topics = [
@@ -779,7 +784,7 @@ async def generate_direct_content(
         for topic in raw_output.topics
     ]
     final_body, body_topics = detach_publish_tags(body_text, body_topics)
-    final_body = segment_unbroken_body(final_body)
+    final_body = normalize_published_body(final_body)
     final_body = apply_title_rules(final_body)
     if copy_body_is_placeholder(final_body):
         raise ValueError("模型没有返回可用正文")
@@ -787,8 +792,9 @@ async def generate_direct_content(
     if is_case_share_content(content_type_code, content_type_name):
         topics = case_share_topics(body_topics, user_request, image_attached=image_sent)
     else:
+        # 非案例分享：发布标签只保留城市推荐/装修避坑，细部看图标签丢弃，后续由知识库标签补齐。
         topics = merge_pinned_topics(
-            body_topics,
+            [],
             _region_from_user_request(user_request),
             limit=DIRECT_TOPIC_LIMIT,
         )

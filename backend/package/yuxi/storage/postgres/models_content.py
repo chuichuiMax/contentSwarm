@@ -18,7 +18,7 @@ from sqlalchemy import (
     UniqueConstraint,
     text,
 )
-from yuxi.utils.line_breaks import normalize_escaped_newlines
+from yuxi.utils.line_breaks import normalize_escaped_newlines, normalize_published_body
 from yuxi.storage.postgres.models_business import Base
 from yuxi.utils.datetime_utils import format_utc_datetime, utc_now_naive
 
@@ -981,7 +981,7 @@ class ContentArtifact(Base):
             "status": self.status,
             "current_version": self.current_version,
             "title": normalize_escaped_newlines(self.title),
-            "body": normalize_escaped_newlines(self.body),
+            "body": normalize_published_body(self.body),
             "topics": self.topics or [],
             "strategy_snapshot": self.strategy_snapshot or {},
             "evidence_snapshot": self.evidence_snapshot or {},

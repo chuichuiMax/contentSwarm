@@ -1,18 +1,25 @@
+#!/usr/bin/env python3
 import os
-import time
-from pathlib import Path
 import paramiko
 
-pw = os.environ.get("DEPLOY_SSH_PASSWORD") or Path(__file__).resolve().parents[2].joinpath(".deploy/10315.password").read_text().strip()
 c = paramiko.SSHClient()
 c.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-c.connect("172.16.103.15", username="root", password=pw, timeout=30)
-time.sleep(5)
-for cmd in [
-    "curl -sS -m 20 http://127.0.0.1:5050/api/system/health",
-    "curl -sS -m 10 -o /dev/null -w 'hycanvas=%{http_code}\\n' http://127.0.0.1:8005/healthz",
-    "docker ps --format '{{.Names}} {{.Status}}' | grep -E 'api-dev|hycanvas-app'",
-]:
-    _, o, e = c.exec_command(cmd, timeout=60)
-    print((o.read() + e.read()).decode())
+c.connect(
+    "172.16.103.15",
+    username="root",
+    password=os.environ.get("DEPLOY_SSH_PASSWORD") or "Hirun2026@",
+    timeout=20,
+)
+cmd = (
+    "curl -s -o /dev/null -w 'api:%{http_code}\\n' http://127.0.0.1:5050/api/system/health; "
+    "curl -s -o /dev/null -w 'web8080:%{http_code}\\n' http://127.0.0.1:8080/; "
+    "docker inspect -f '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{end}}' api-dev; "
+    "grep -n material_audience /srv/contentswarm/backend/server/routers/__init__.py || echo init_clean; "
+    "test -f /srv/contentswarm/backend/package/yuxi/services/enterprise_gallery_audience.py && echo stub_ok"
+)
+_, o, e = c.exec_command(cmd, timeout=60)
+print(o.read().decode("utf-8", "replace"))
+err = e.read().decode("utf-8", "replace")
+if err.strip():
+    print(err)
 c.close()
