@@ -1,5 +1,6 @@
 from yuxi.utils.line_breaks import (
     ensure_blank_line_paragraphs,
+    merge_lone_emoji_paragraphs,
     normalize_published_body,
     segment_unbroken_body,
 )
@@ -14,6 +15,13 @@ def test_single_newlines_become_blank_line_paragraphs():
     raw = "第一句。\n第二句。\n第三句。"
     assert ensure_blank_line_paragraphs(raw) == "第一句。\n\n第二句。\n\n第三句。"
     assert normalize_published_body(raw) == "第一句。\n\n第二句。\n\n第三句。"
+
+
+def test_lone_emoji_paragraphs_merge_into_neighbors():
+    raw = "封板前那半天。\n\n🔍\n\n龙骨得用全轻钢。\n\n💡\n\n收藏这篇。"
+    assert merge_lone_emoji_paragraphs(raw) == "封板前那半天。🔍\n\n龙骨得用全轻钢。💡\n\n收藏这篇。"
+    assert normalize_published_body(raw) == "封板前那半天。🔍\n\n龙骨得用全轻钢。💡\n\n收藏这篇。"
+    assert normalize_published_body("🔍\n\n龙骨先看排布。") == "🔍龙骨先看排布。"
 
 
 def test_normalize_published_body_fixes_zaijian_typo_and_formats():

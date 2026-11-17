@@ -30,6 +30,11 @@ def segment_unbroken_body(body: str) -> str:
     return re.sub(r"([。！？!?])[ \t]*(?=\S)", r"\1\n\n", body).strip()
 
 
+_LONE_EMOJI_PARAGRAPH = re.compile(
+    r"^[\U0001F300-\U0001FAFF\U00002700-\U000027BF\U0001F600-\U0001F64F\U0001F680-\U0001F6FF\s]+$"
+)
+
+
 def ensure_blank_line_paragraphs(body: str) -> str:
     """小红书正文：每句/每段之间空一行。单换行补成空行分段。"""
     text = (body or "").replace("\r\n", "\n").replace("\r", "\n").strip()
@@ -43,8 +48,41 @@ def ensure_blank_line_paragraphs(body: str) -> str:
     return segment_unbroken_body(text)
 
 
+def merge_lone_emoji_paragraphs(body: str) -> str:
+    """表情不能单独成段：并入上一段末尾；若在文首则并入下一段开头。"""
+    text = (body or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+    if not text:
+        return text
+    paragraphs = [part.strip() for part in re.split(r"\n\s*\n", text) if part.strip()]
+    if not paragraphs:
+        return text
+    merged: list[str] = []
+    pending = ""
+    for paragraph in paragraphs:
+        if _LONE_EMOJI_PARAGRAPH.fullmatch(paragraph):
+            emoji = re.sub(r"\s+", "", paragraph)
+            if not emoji:
+                continue
+            if merged:
+                merged[-1] = f"{merged[-1].rstrip()}{emoji}"
+            else:
+                pending += emoji
+            continue
+        if pending:
+            paragraph = f"{pending}{paragraph.lstrip()}"
+            pending = ""
+        merged.append(paragraph)
+    if pending:
+        if merged:
+            merged[-1] = f"{merged[-1].rstrip()}{pending}"
+        else:
+            merged.append(pending)
+    return "\n\n".join(merged)
+
+
 def normalize_published_body(body: str) -> str:
     """发布正文落库/展示前：还原转义换行、纠正已知误写、统一空行分段。"""
     text = normalize_escaped_newlines(body or "").strip()
     text = fix_content_body_typos(text)
-    return ensure_blank_line_paragraphs(text)
+    text = ensure_blank_line_paragraphs(text)
+    return merge_lone_emoji_paragraphs(text)

@@ -1,0 +1,15 @@
+[32m11-17 11:22:14[0m [1mINFO[0m [36mapp.py:79[0m: [1mLoading config from saves/config/base.toml[0m
+{"title": "吊顶装完才想起封板前没看龙骨🫠", "changed": true, "blank_para": 12, "lone_emoji_para_indexes": [], "has_search_emoji": true, "has_bulb_emoji": true, "body_sample": "吊顶封板以后，里面的活就全被遮住了。\n\n所以真正该盯的，是封板之前那半天。🔍\n\n龙骨得用全轻钢的，副龙骨按300×600毫米排布。\n\n拐角的地方要加支撑板，结构稳了，后面才不容易变形。\n\n我这套在洋湖1号，泥木阶段正在做这一步。\n\n石膏板拼缝要做V字缝，再配嵌缝腻子加纸带。\n\n少一道，日后那位置就容易出问题。\n\n上螺钉"}
+
+===pytest===
+============================= test session starts ==============================
+platform linux -- Python 3.12.13, pytest-9.0.3, pluggy-1.6.0
+rootdir: /app
+configfile: pyproject.toml
+plugins: asyncio-1.4.0, Faker-40.19.1, cov-7.1.0, httpx-0.36.2, langsmith-0.8.7, anyio-4.13.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=function, asyncio_default_test_loop_scope=function
+collected 4 items
+
+test/unit/content/test_normalize_published_body.py ....                  [100%]
+
+============================== 4 passed in 0.15s ===============================
