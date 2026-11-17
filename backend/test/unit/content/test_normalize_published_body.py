@@ -1,9 +1,19 @@
-from yuxi.utils.line_breaks import normalize_published_body, segment_unbroken_body
+from yuxi.utils.line_breaks import (
+    ensure_blank_line_paragraphs,
+    normalize_published_body,
+    segment_unbroken_body,
+)
 
 
 def test_segment_unbroken_body_inserts_paragraph_breaks():
     raw = "第一句。 第二句！第三句？结尾。"
     assert segment_unbroken_body(raw) == "第一句。\n\n第二句！\n\n第三句？\n\n结尾。"
+
+
+def test_single_newlines_become_blank_line_paragraphs():
+    raw = "第一句。\n第二句。\n第三句。"
+    assert ensure_blank_line_paragraphs(raw) == "第一句。\n\n第二句。\n\n第三句。"
+    assert normalize_published_body(raw) == "第一句。\n\n第二句。\n\n第三句。"
 
 
 def test_normalize_published_body_fixes_zaijian_typo_and_formats():

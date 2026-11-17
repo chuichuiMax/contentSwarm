@@ -1,0 +1,58 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.13, pytest-9.0.3, pluggy-1.6.0
+rootdir: /app
+configfile: pyproject.toml
+plugins: asyncio-1.4.0, Faker-40.19.1, cov-7.1.0, httpx-0.36.2, langsmith-0.8.7, anyio-4.13.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=function, asyncio_default_test_loop_scope=function
+collected 4 items
+
+test/unit/content/test_direct_content_generation.py FFFF                 [100%]
+
+=================================== FAILURES ===================================
+______________ test_direct_generation_uses_only_requested_inputs _______________
+test/unit/content/test_direct_content_generation.py:69: in test_direct_generation_uses_only_requested_inputs
+    assert len(calls) == 1
+E   AssertionError: assert 2 == 1
+E    +  where 2 = len([[HumanMessage(content='按「用户生成提示词」和图片写文案，不要另起标题公式。标题要顺口，像人能直接说出来的完整一句；不要生硬堆砌面积和材料，例如不要写「做完整面木饰面」这类拗口搭配。标题带 1 个贴合情绪的 em...；事实、工艺点和引流结尾不要改。\n第一行只写新标题，空一行后写正文，不要标签，不要解释。\n\n原标题：费用标题\n\n原正文：\n费用正文', additional_kwargs={}, response_metadata={})]])
+----------------------------- Captured stderr call -----------------------------
+[32m11-16 15:52:31[0m [1mINFO[0m [36mgeneration.py:881[0m: [1mDirect content model completed: model=ark:doubao-seed-2-1-pro-260915 input_tokens=None output_tokens=None total_tokens=None image=False total=0.00s[0m
+___________________ test_placeholder_body_is_requested_again ___________________
+test/unit/content/test_direct_content_generation.py:574: in test_placeholder_body_is_requested_again
+    assert calls == 2
+E   assert 3 == 2
+----------------------------- Captured stderr call -----------------------------
+[32m11-16 15:52:31[0m [1mINFO[0m [36mgeneration.py:770[0m: [1mDirect content model returned no usable body, retrying as plain text: model=%s[0m
+[32m11-16 15:52:31[0m [1mINFO[0m [36mgeneration.py:881[0m: [1mDirect content model completed: model=siliconflow-cn:deepseek-ai/DeepSeek-V4.1-Flash input_tokens=None output_tokens=None total_tokens=None image=False total=0.00s[0m
+_______________ test_thinking_mode_tool_choice_retries_with_auto _______________
+test/unit/content/test_direct_content_generation.py:633: in test_thinking_mode_tool_choice_retries_with_auto
+    assert choices == ["ContentArtifactAIEditOutput", "auto"]
+E   AssertionError: assert ['ContentArti...auto', 'auto'] == ['ContentArti...tput', 'auto']
+E     
+E     Left contains one more item: 'auto'
+E     Use -v to get more diff
+----------------------------- Captured stderr call -----------------------------
+[32m11-16 15:52:31[0m [1mINFO[0m [36mgeneration.py:740[0m: [1mDirect content model cannot force a tool, retrying with auto: model=%s[0m
+[32m11-16 15:52:31[0m [1mINFO[0m [36mgeneration.py:881[0m: [1mDirect content model completed: model=deepseek:deepseek-flash input_tokens=None output_tokens=None total_tokens=None image=False total=0.00s[0m
+______________ test_named_tool_choice_rejection_retries_with_auto ______________
+test/unit/content/test_direct_content_generation.py:670: in test_named_tool_choice_rejection_retries_with_auto
+    assert choices == ["ContentArtifactAIEditOutput", "auto"]
+E   AssertionError: assert ['ContentArti...auto', 'auto'] == ['ContentArti...tput', 'auto']
+E     
+E     Left contains one more item: 'auto'
+E     Use -v to get more diff
+=============================== warnings summary ===============================
+package/yuxi/storage/postgres/models_business.py:22
+  /app/package/yuxi/storage/postgres/models_business.py:22: MovedIn20Warning: The ``declarative_base()`` function is now available as sqlalchemy.orm.declarative_base(). (deprecated since: 2.0) (Background on SQLAlchemy 2.0 at: https://sqlalche.me/e/b8d9)
+    Base = declarative_base()
+
+package/yuxi/knowledge/parser/unified.py:18
+  /app/package/yuxi/knowledge/parser/unified.py:18: DeprecationWarning: `langchain-community` is being sunset and is no longer actively maintained. See https://github.com/langchain-ai/langchain-community/issues/674 for details and migration guidance toward standalone integration packages.
+    from langchain_community.document_loaders import PyPDFLoader
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED test/unit/content/test_direct_content_generation.py::test_direct_generation_uses_only_requested_inputs
+FAILED test/unit/content/test_direct_content_generation.py::test_placeholder_body_is_requested_again
+FAILED test/unit/content/test_direct_content_generation.py::test_thinking_mode_tool_choice_retries_with_auto
+FAILED test/unit/content/test_direct_content_generation.py::test_named_tool_choice_rejection_retries_with_auto
+======================== 4 failed, 2 warnings in 11.90s ========================

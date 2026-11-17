@@ -31,7 +31,7 @@ async def test_direct_generation_uses_only_requested_inputs(monkeypatch):
 
         async def ainvoke(self, messages):
             calls.append(messages)
-            return _tool_response({"title": "报价标题", "body": "报价正文", "topics": ["报价"]})
+            return _tool_response({"title": "报价标题🔥", "body": "报价正文😭", "topics": ["报价"]})
 
     monkeypatch.setattr(generation, "resolve_chat_model_spec", lambda value: value or "default")
     monkeypatch.setattr(
@@ -55,8 +55,8 @@ async def test_direct_generation_uses_only_requested_inputs(monkeypatch):
         forbidden_lexicon={"报价": ["费用"]},
     )
 
-    assert result.title == "费用标题"
-    assert result.body == "费用正文"
+    assert result.title == "费用标题🔥"
+    assert result.body == "费用正文😭"
     assert result.topics == ["装修避坑"]
     assert load_model_calls == [
         {
@@ -262,6 +262,8 @@ async def test_direct_generation_sends_prompt_with_first_image(monkeypatch):
     assert "发布标签由系统从对应知识库补齐" in content[0]["text"]
     assert "正文最后一段写一句引流引导" in content[0]["text"]
     assert "标题要顺口" in content[0]["text"]
+    assert "标题带 1 个贴合情绪的 emoji" in content[0]["text"]
+    assert "段与段之间必须空一行" in content[0]["text"]
     assert "根据这张图片生成 3 到 5 个小红书类型标签" not in content[0]["text"]
     assert content[1]["type"] == "image_url"
     assert content[1]["image_url"]["url"].startswith("data:image/jpeg;base64,")
@@ -468,7 +470,7 @@ async def test_body_with_line_breaks_stays_unchanged(monkeypatch):
             return self
 
         async def ainvoke(self, messages):
-            return _tool_response({"title": "标题", "body": "第一段。\n\n第二段。", "topics": []})
+            return _tool_response({"title": "标题🔥", "body": "第一段。😭\n\n第二段。", "topics": []})
 
     monkeypatch.setattr(generation, "resolve_chat_model_spec", lambda value: value or "default")
     monkeypatch.setattr(generation, "load_chat_model", lambda **kwargs: FakeModel())
@@ -480,7 +482,68 @@ async def test_body_with_line_breaks_stays_unchanged(monkeypatch):
         user_request="写一段内容",
     )
 
-    assert result.body == "第一段。\n\n第二段。"
+    assert result.body == "第一段。😭\n\n第二段。"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_single_newline_body_is_expanded_to_blank_paragraphs(monkeypatch):
+    class FakeModel:
+        def bind_tools(self, schemas, **kwargs):
+            return self
+
+        async def ainvoke(self, messages):
+            return _tool_response(
+                {
+                    "title": "标题🔥",
+                    "body": "第一句。😭\n第二句。\n第三句。",
+                    "topics": [],
+                }
+            )
+
+    monkeypatch.setattr(generation, "resolve_chat_model_spec", lambda value: value or "default")
+    monkeypatch.setattr(generation, "load_chat_model", lambda **kwargs: FakeModel())
+
+    result = await generation.generate_direct_content(
+        model_spec="deepseek:deepseek-flash",
+        creative_style={},
+        viral_source={"title": "", "body": ""},
+        user_request="写一段内容",
+    )
+
+    assert result.body == "第一句。😭\n\n第二句。\n\n第三句。"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_missing_emoji_triggers_repair(monkeypatch):
+    calls = []
+
+    class FakeModel:
+        def bind_tools(self, schemas, **kwargs):
+            return self
+
+        async def ainvoke(self, messages):
+            calls.append(messages)
+            if len(calls) == 1:
+                return _tool_response({"title": "标题", "body": "第一段。\n\n第二段。", "topics": []})
+            return _tool_response({"title": "标题🔥", "body": "第一段。😭\n\n第二段。👍", "topics": []})
+
+    monkeypatch.setattr(generation, "resolve_chat_model_spec", lambda value: value or "default")
+    monkeypatch.setattr(generation, "load_chat_model", lambda **kwargs: FakeModel())
+
+    result = await generation.generate_direct_content(
+        model_spec="deepseek:deepseek-flash",
+        creative_style={},
+        viral_source={"title": "", "body": ""},
+        user_request="写一段内容",
+    )
+
+    assert len(calls) == 2
+    assert "🔥" in result.title
+    assert "😭" in result.body
+    assert generation.text_has_emoji(result.title)
+    assert generation.text_has_emoji(result.body)
 
 
 @pytest.mark.unit
@@ -495,8 +558,8 @@ async def test_placeholder_body_is_requested_again(monkeypatch):
         async def ainvoke(self, messages):
             nonlocal calls
             calls += 1
-            body = "..." if calls == 1 else "卫生间这处工艺要盯紧"
-            return _tool_response({"title": "水电标题", "body": body, "topics": ["装修避坑"]})
+            body = "..." if calls == 1 else "卫生间这处工艺要盯紧😭"
+            return _tool_response({"title": "水电标题🔥", "body": body, "topics": ["装修避坑"]})
 
     monkeypatch.setattr(generation, "resolve_chat_model_spec", lambda value: value or "default")
     monkeypatch.setattr(generation, "load_chat_model", lambda **kwargs: FakeModel())
@@ -509,7 +572,7 @@ async def test_placeholder_body_is_requested_again(monkeypatch):
     )
 
     assert calls == 2
-    assert result.body == "卫生间这处工艺要盯紧"
+    assert result.body == "卫生间这处工艺要盯紧😭"
 
 
 @pytest.mark.unit
@@ -555,7 +618,7 @@ async def test_thinking_mode_tool_choice_retries_with_auto(monkeypatch):
                     "'Thinking mode does not support this tool_choice', "
                     "'type': 'invalid_request_error', 'code': 'invalid_request_error'}}"
                 )
-            return _tool_response({"title": "标题", "body": "正文", "topics": ["装修避坑"]})
+            return _tool_response({"title": "标题🔥", "body": "正文😭", "topics": ["装修避坑"]})
 
     monkeypatch.setattr(generation, "resolve_chat_model_spec", lambda value: value or "default")
     monkeypatch.setattr(generation, "load_chat_model", lambda **kwargs: FakeModel())
@@ -568,7 +631,7 @@ async def test_thinking_mode_tool_choice_retries_with_auto(monkeypatch):
     )
 
     assert choices == ["ContentArtifactAIEditOutput", "auto"]
-    assert result.title == "标题"
+    assert result.title == "标题🔥"
 
 
 @pytest.mark.unit
@@ -591,7 +654,7 @@ async def test_named_tool_choice_rejection_retries_with_auto(monkeypatch):
                     "Error code: 400 - {'code': 20015, 'message': "
                     "'Value error, Specifying functions for tool_choice is not yet supported.', 'data': None}"
                 )
-            return _tool_response({"title": "标题", "body": "正文", "topics": ["装修避坑"]})
+            return _tool_response({"title": "标题🔥", "body": "正文😭", "topics": ["装修避坑"]})
 
     monkeypatch.setattr(generation, "resolve_chat_model_spec", lambda value: value or "default")
     monkeypatch.setattr(generation, "load_chat_model", lambda **kwargs: FakeModel())
@@ -605,7 +668,7 @@ async def test_named_tool_choice_rejection_retries_with_auto(monkeypatch):
     )
 
     assert choices == ["ContentArtifactAIEditOutput", "auto"]
-    assert result.title == "标题"
+    assert result.title == "标题🔥"
 
 
 @pytest.mark.unit

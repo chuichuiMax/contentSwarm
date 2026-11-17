@@ -30,8 +30,21 @@ def segment_unbroken_body(body: str) -> str:
     return re.sub(r"([。！？!?])[ \t]*(?=\S)", r"\1\n\n", body).strip()
 
 
+def ensure_blank_line_paragraphs(body: str) -> str:
+    """小红书正文：每句/每段之间空一行。单换行补成空行分段。"""
+    text = (body or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+    if not text:
+        return text
+    if "\n\n" in text:
+        return re.sub(r"\n{3,}", "\n\n", text).strip()
+    if "\n" in text:
+        lines = [line.strip() for line in text.split("\n") if line.strip()]
+        return "\n\n".join(lines)
+    return segment_unbroken_body(text)
+
+
 def normalize_published_body(body: str) -> str:
-    """发布正文落库/展示前：还原转义换行、纠正已知误写、无换行时按句分段。"""
+    """发布正文落库/展示前：还原转义换行、纠正已知误写、统一空行分段。"""
     text = normalize_escaped_newlines(body or "").strip()
     text = fix_content_body_typos(text)
-    return segment_unbroken_body(text)
+    return ensure_blank_line_paragraphs(text)

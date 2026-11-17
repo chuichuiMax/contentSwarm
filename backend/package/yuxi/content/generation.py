@@ -69,6 +69,18 @@ _HASHTAG = re.compile(r"[#＃]([0-9A-Za-z_\u4e00-\u9fff]{1,20})")
 _TAG_LABEL_LINE = re.compile(r"^(?:发布标签|标签|话题)\s*[:：]\s*(.*)$")
 _TAG_TOKEN = re.compile(r"^[0-9A-Za-z_\u4e00-\u9fff]{2,16}$")
 _SENTENCE_PUNCT = re.compile(r"[。！？!?；;]")
+_EMOJI = re.compile(
+    "["
+    "\U0001F300-\U0001FAFF"
+    "\U00002700-\U000027BF"
+    "\U0001F600-\U0001F64F"
+    "\U0001F680-\U0001F6FF"
+    "]"
+)
+
+
+def text_has_emoji(text: str) -> bool:
+    return bool(_EMOJI.search(text or ""))
 
 
 def _tag_tokens(text: str) -> list[str]:
@@ -427,7 +439,8 @@ def _direct_generation_prompt(
     return (
         "按「用户生成提示词」和图片写文案，不要另起标题公式。"
         "标题要顺口，像人能直接说出来的完整一句；不要生硬堆砌面积和材料，例如不要写「做完整面木饰面」这类拗口搭配。"
-        "正文用短句，每句单独成段，段与段之间空一行。"
+        "标题带 1 个贴合情绪的 emoji；正文自然穿插 2 到 4 个 emoji，不要堆在同一处，不要整篇不用表情。"
+        "正文用短句，每句单独成段，段与段之间必须空一行（用空行分段，不要只用单个换行）。"
         "正文最后一段写一句引流引导，贴合本篇，例如评论区留言领对应验收要点、收藏后进场对照；"
         "不要空泛收尾，不要硬广承诺效果，不要套统一结尾模板。"
         "返回字段 title、body、topics；不要输出解释。\n"
@@ -788,6 +801,48 @@ async def generate_direct_content(
     final_body = apply_title_rules(final_body)
     if copy_body_is_placeholder(final_body):
         raise ValueError("模型没有返回可用正文")
+    if not text_has_emoji(final_title) or not text_has_emoji(final_body):
+        try:
+            emoji_repair = await model.ainvoke(
+                [
+                    HumanMessage(
+                        content=(
+                            "下面这篇小红书标题或正文缺少表情。"
+                            "请重写标题和正文：标题保留原意并带 1 个贴合情绪的 emoji；"
+                            "正文每句单独成段且段间空一行，自然穿插 2 到 4 个 emoji；"
+                            "事实、工艺点和引流结尾不要改。\n"
+                            "第一行只写新标题，空一行后写正文，不要标签，不要解释。\n\n"
+                            f"原标题：{final_title}\n\n原正文：\n{final_body}"
+                        )
+                    )
+                ]
+            )
+            repaired_article = _output_arguments(emoji_repair)
+        except Exception as exc:
+            logger.info("Emoji repair skipped: %s", exc)
+            repaired_article = None
+        if repaired_article:
+            repaired_title = apply_title_rules(
+                normalize_escaped_newlines(
+                    replace_forbidden_words(repaired_article["title"], forbidden_replacements)
+                ).strip()
+            )
+            repaired_body = normalize_published_body(
+                replace_forbidden_words(
+                    normalize_escaped_newlines(repaired_article["body"]),
+                    forbidden_replacements,
+                )
+            )
+            repaired_body = apply_title_rules(repaired_body)
+            if (
+                repaired_title
+                and repaired_body
+                and not copy_body_is_placeholder(repaired_body)
+                and text_has_emoji(repaired_title)
+                and text_has_emoji(repaired_body)
+            ):
+                final_title = repaired_title
+                final_body = repaired_body
     content_type_code, content_type_name = _direct_request_content_type(user_request)
     if is_case_share_content(content_type_code, content_type_name):
         topics = case_share_topics(body_topics, user_request, image_attached=image_sent)
