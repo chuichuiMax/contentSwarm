@@ -1,0 +1,142 @@
+[32m11-18 10:39:42[0m [1mINFO[0m [36mapp.py:79[0m: [1mLoading config from saves/config/base.toml[0m
+user {'id': 1, 'username': 'tiechuideUId', 'role': 'superadmin'}
+user {'id': 2, 'username': '张淑琪', 'role': '新渠道'}
+user {'id': 3, 'username': '徐铁锤', 'role': 'admin'}
+user {'id': 4, 'username': '潘文静', 'role': '设计师'}
+user {'id': 5, 'username': '已注销用户-3ab0', 'role': 'admin'}
+user {'id': 6, 'username': '已注销用户-1a0a', 'role': 'admin'}
+user {'id': 7, 'username': '已注销用户-91be', 'role': 'admin'}
+user {'id': 8, 'username': '已注销用户-de15', 'role': 'admin'}
+user {'id': 9, 'username': '已注销用户-dab6', 'role': 'admin'}
+user {'id': 10, 'username': '已注销用户-73ea', 'role': 'admin'}
+user {'id': 11, 'username': '已注销用户-dcd1', 'role': 'admin'}
+user {'id': 12, 'username': '已注销用户-7a14', 'role': 'admin'}
+user {'id': 13, 'username': '已注销用户-05d8', 'role': 'admin'}
+user {'id': 14, 'username': '蒲萄', 'role': 'superadmin'}
+user {'id': 15, 'username': '周莉', 'role': '运营'}
+user {'id': 16, 'username': '陈玉竹', 'role': '楼盘经理'}
+uid 1
+HTTP 500
+Internal Server Error
+
+===logs===
+    |   File "/usr/local/lib/python3.12/site-packages/starlette/_exception_handler.py", line 53, in wrapped_app
+    |     raise exc
+    |   File "/usr/local/lib/python3.12/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
+    |     await app(scope, receive, sender)
+    |   File "/usr/local/lib/python3.12/site-packages/fastapi/routing.py", line 120, in app
+    |     response = await f(request)
+    |                ^^^^^^^^^^^^^^^^
+    |   File "/usr/local/lib/python3.12/site-packages/fastapi/routing.py", line 674, in app
+    |     raw_response = await run_endpoint_function(
+    |                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |   File "/usr/local/lib/python3.12/site-packages/fastapi/routing.py", line 328, in run_endpoint_function
+    |     return await dependant.call(**values)
+    |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |   File "/app/server/routers/material_library_router.py", line 147, in material_categories
+    |     response = await get_material_categories(
+    |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |   File "/app/package/yuxi/services/material_library_service.py", line 2070, in get_material_categories
+    |     await ensure_initial_enterprise_galleries(db)
+    |   File "/app/package/yuxi/services/material_library_service.py", line 968, in ensure_initial_enterprise_galleries
+    |     await ensure_enterprise_gallery_audiences(db)
+    |   File "/app/package/yuxi/services/enterprise_gallery_audience.py", line 193, in ensure_enterprise_gallery_audiences
+    |     if category.audience_id:
+    |        ^^^^^^^^^^^^^^^^^^^^
+    | AttributeError: 'ContentMaterialCategory' object has no attribute 'audience_id'
+    +------------------------------------
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.12/site-packages/uvicorn/protocols/http/httptools_impl.py", line 421, in run_asgi
+    result = await app(  # type: ignore[func-returns-value]
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/uvicorn/middleware/proxy_headers.py", line 63, in __call__
+    return await self.app(scope, receive, send)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/fastapi/applications.py", line 1159, in __call__
+    await super().__call__(scope, receive, send)
+  File "/usr/local/lib/python3.12/site-packages/starlette/applications.py", line 90, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "/usr/local/lib/python3.12/site-packages/starlette/middleware/errors.py", line 186, in __call__
+    raise exc
+  File "/usr/local/lib/python3.12/site-packages/starlette/middleware/errors.py", line 164, in __call__
+    await self.app(scope, receive, _send)
+  File "/usr/local/lib/python3.12/site-packages/starlette/middleware/base.py", line 191, in __call__
+    with recv_stream, send_stream, collapse_excgroups():
+                                   ^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/contextlib.py", line 158, in __exit__
+    self.gen.throw(value)
+  File "/usr/local/lib/python3.12/site-packages/starlette/_utils.py", line 87, in collapse_excgroups
+    raise exc
+  File "/usr/local/lib/python3.12/site-packages/starlette/middleware/base.py", line 193, in __call__
+    response = await self.dispatch_func(request, call_next)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/server/main.py", line 104, in dispatch
+    return await call_next(request)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/starlette/middleware/base.py", line 168, in call_next
+    raise app_exc from app_exc.__cause__ or app_exc.__context__
+  File "/usr/local/lib/python3.12/site-packages/starlette/middleware/base.py", line 144, in coro
+    await self.app(scope, receive_or_disconnect, send_no_error)
+  File "/usr/local/lib/python3.12/site-packages/starlette/middleware/base.py", line 191, in __call__
+    with recv_stream, send_stream, collapse_excgroups():
+                                   ^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/contextlib.py", line 158, in __exit__
+    self.gen.throw(value)
+  File "/usr/local/lib/python3.12/site-packages/starlette/_utils.py", line 87, in collapse_excgroups
+    raise exc
+  File "/usr/local/lib/python3.12/site-packages/starlette/middleware/base.py", line 193, in __call__
+    response = await self.dispatch_func(request, call_next)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/server/utils/access_log_middleware.py", line 50, in dispatch
+    response = await call_next(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/starlette/middleware/base.py", line 168, in call_next
+    raise app_exc from app_exc.__cause__ or app_exc.__context__
+  File "/usr/local/lib/python3.12/site-packages/starlette/middleware/base.py", line 144, in coro
+    await self.app(scope, receive_or_disconnect, send_no_error)
+  File "/usr/local/lib/python3.12/site-packages/starlette/middleware/cors.py", line 88, in __call__
+    await self.app(scope, receive, send)
+  File "/usr/local/lib/python3.12/site-packages/starlette/middleware/exceptions.py", line 63, in __call__
+    await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
+  File "/usr/local/lib/python3.12/site-packages/starlette/_exception_handler.py", line 53, in wrapped_app
+    raise exc
+  File "/usr/local/lib/python3.12/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "/usr/local/lib/python3.12/site-packages/fastapi/middleware/asyncexitstack.py", line 18, in __call__
+    await self.app(scope, receive, send)
+  File "/usr/local/lib/python3.12/site-packages/starlette/routing.py", line 660, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "/usr/local/lib/python3.12/site-packages/starlette/routing.py", line 680, in app
+    await route.handle(scope, receive, send)
+  File "/usr/local/lib/python3.12/site-packages/starlette/routing.py", line 276, in handle
+    await self.app(scope, receive, send)
+  File "/usr/local/lib/python3.12/site-packages/fastapi/routing.py", line 134, in app
+    await wrap_app_handling_exceptions(app, request)(scope, receive, send)
+  File "/usr/local/lib/python3.12/site-packages/starlette/_exception_handler.py", line 53, in wrapped_app
+    raise exc
+  File "/usr/local/lib/python3.12/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "/usr/local/lib/python3.12/site-packages/fastapi/routing.py", line 120, in app
+    response = await f(request)
+               ^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/fastapi/routing.py", line 674, in app
+    raw_response = await run_endpoint_function(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/fastapi/routing.py", line 328, in run_endpoint_function
+    return await dependant.call(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/server/routers/material_library_router.py", line 147, in material_categories
+    response = await get_material_categories(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/package/yuxi/services/material_library_service.py", line 2070, in get_material_categories
+    await ensure_initial_enterprise_galleries(db)
+  File "/app/package/yuxi/services/material_library_service.py", line 968, in ensure_initial_enterprise_galleries
+    await ensure_enterprise_gallery_audiences(db)
+  File "/app/package/yuxi/services/enterprise_gallery_audience.py", line 193, in ensure_enterprise_gallery_audiences
+    if category.audience_id:
+       ^^^^^^^^^^^^^^^^^^^^
+AttributeError: 'ContentMaterialCategory' object has no attribute 'audience_id'
+11-18 10:39:42 INFO: 127.0.0.1:51448 - "GET /api/system/health HTTP/1.1" 200 - 0ms

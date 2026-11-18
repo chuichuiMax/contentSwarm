@@ -1,0 +1,234 @@
+=== enterprise_gallery_audience.py ===
+428 /srv/contentswarm/backend/package/yuxi/services/enterprise_gallery_audience.py
+
+"""企业共享图库受众：按员工当前分部包含匹配，互斥可见。"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from fastapi import HTTPException
+from pydantic import BaseModel, Field, field_validator
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from yuxi.services.employee_service import resolve_employee_for_user
+from yuxi.storage.postgres.models_business import User
+from yuxi.storage.postgres.models_content import ContentMaterialAudience, ContentMaterialCategory
+from yuxi.utils.datetime_utils import utc_now_naive
+
+DEFAULT_AUDIENCE_ID = "mga_default"
+DEFAULT_AUDIENCE_CODE = "default"
+WOODWORK_AUDIENCE_ID = "mga_woodwork"
+WOODWORK_AUDIENCE_CODE = "woodwork"
+WOODWORK_GALLERY_NAME = "邻奢木作"
+WOODWORK_MATCH_KEYWORD = "木作事业部"
+
+INITIAL_AUDIENCES: tuple[dict[str, Any], ...] = (
+    {
+        "id": DEFAULT_AUDIENCE_ID,
+        "code": DEFAULT_AUDIENCE_CODE,
+        "name": "默认员工",
+        "match_keywords": [],
+        "is_default": True,
+        "sort_order": 1000,
+        "enabled": True,
+    },
+    {
+        "id": WOODWORK_AUDIENCE_ID,
+        "code": WOODWORK_AUDIENCE_CODE,
+        "name": "木作事业部",
+        "match_keywords": [WOODWORK_MATCH_KEYWORD],
+        "is_default": False,
+        "sort_order": 10,
+        "enabled": True,
+    },
+)
+
+
+class MaterialAudienceCreate(BaseModel):
+    code: str = Field(min_length=1, max_length=64)
+    name: str = Field(min_length=1, max_length=80)
+    match_keywords: list[str] = Field(default_factory=list)
+    sort_order: int = Field(default=100, ge=0, le=100000)
+    enabled: bool = True
+
+    @field_validator("code")
+    @classmethod
+    def validate_code(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if not normalized or not all(ch.isalnum() or ch in {"_", "-"} for ch in normalized):
+            raise ValueError("受众编码仅支持字母、数字、下划线和短横线")
+        return normalized
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("受众名称不能为空")
+        return normalized
+
+    @field_validator("match_keywords")
+    @classmethod
+    def validate_keywords(cls, value: list[str]) -> list[str]:
+        keywords: list[str] = []
+        for item in value:
+            text = str(item or "").strip()
+            if text and text not in keywords:
+                keywords.append(text)
+        return keywords
+
+
+
+    if changed:
+        await db.flush()
+    return list(
+        (
+            await db.execute(
+                select(ContentMaterialAudience).order_by(
+                    ContentMaterialAudience.sort_order,
+                    ContentMaterialAudience.code,
+                )
+            )
+        ).scalars()
+    )
+
+
+async def ensure_enterprise_gallery_audiences(db: AsyncSession) -> list[ContentMaterialAudience]:
+    audiences = await ensure_material_audiences(db)
+    default_id = next(item.id for item in audiences if item.is_default)
+    woodwork = next((item for item in audiences if item.code == WOODWORK_AUDIENCE_CODE), None)
+    woodwork_id = woodwork.id if woodwork is not None else WOODWORK_AUDIENCE_ID
+    roots = list(
+        (
+            await db.execute(
+                select(ContentMaterialCategory).where(
+                    ContentMaterialCategory.material_type == "image",
+                    ContentMaterialCategory.visibility == "enterprise",
+                    ContentMaterialCategory.parent_id.is_(None),
+                    ContentMaterialCategory.deleted_at.is_(None),
+                )
+            )
+        ).scalars()
+    )
+    changed = False
+    for category in roots:
+        if category.audience_id:
+            continue
+        if category.name == WOODWORK_GALLERY_NAME:
+            category.audience_id = woodwork_id
+            changed = True
+            continue
+        category.audience_id = default_id
+        changed = True
+    if changed:
+        await db.flush()
+    return audiences
+
+
+def resolve_root_audience_id(
+    category: ContentMaterialCategory | None,
+    *,
+    roots_by_id: dict[str, ContentMaterialCategory],
+    default_audience_id: str,
+) -> str | None:
+    if category is None or category.visibility != "enterprise":
+        return None
+    root = category if not category.parent_id else roots_by_id.get(category.parent_id)
+    if root is None:
+        return default_audience_id
+    return root.audience_id or default_audience_id
+
+
+def enterprise_category_visible_for_audience(
+    category: ContentMaterialCategory,
+    *,
+    user_audience_id: str,
+    is_admin: bool,
+    roots_by_id: dict[str, ContentMaterialCategory],
+    default_audience_id: str,
+) -> bool:
+    if is_admin or category.visibility != "enterprise":
+        return True
+    assigned = resolve_root_audience_id(
+        category,
+        roots_by_id=roots_by_id,
+        default_audience_id=default_audience_id,
+    )
+    return assigned == user_audience_id
+
+
+async def resolve_user_material_audience(
+    db: AsyncSession,
+    user: User,
+
+=== MLS ensure_initial ===
+42:    ensure_enterprise_gallery_audiences,
+45:    validate_audience_id,
+332:    audience_id: str | None = Field(default=None, max_length=64)
+363:    audience_id: str | None = Field(default=None, max_length=64)
+930:async def ensure_initial_enterprise_galleries(db: AsyncSession) -> None:
+968:    await ensure_enterprise_gallery_audiences(db)
+2070:        await ensure_initial_enterprise_galleries(db)
+2129:        audience = audiences.get(getattr(category, 'audience_id', None)) if getattr(category, 'audience_id', None) else None
+2232:    audience_id = None
+2234:        audiences = await ensure_enterprise_gallery_audiences(db)
+2236:        audience_id = await validate_audience_id(db, payload.audience_id) or default_id
+2237:    elif payload.audience_id:
+2296:        await ensure_initial_enterprise_galleries(db)
+2362:            if changes["visibility"] == "enterprise" and gallery.parent_id is None and not getattr(gallery, 'audience_id', None):
+2363:                if hasattr(gallery, 'audience_id'):
+2364:                    if hasattr(gallery, 'audience_id'):
+2365:                        gallery.audience_id = next(
+2366:                    item.id for item in await ensure_enterprise_gallery_audiences(db) if item.is_default
+2369:                if hasattr(gallery, 'audience_id'):
+2370:                    if hasattr(gallery, 'audience_id'):
+2371:                        gallery.audience_id = None
+2378:    if "audience_id" in changes:
+2385:        if hasattr(category, 'audience_id'):
+2386:            category.audience_id = await validate_audience_id(db, changes["audience_id"]) or (
+2387:            next(item.id for item in await ensure_enterprise_gallery_audiences(db) if item.is_default)
+2477:        await ensure_initial_enterprise_galleries(db)
+2574:    await ensure_initial_enterprise_galleries(db)
+2653:        audience = audiences.get(getattr(category, 'audience_id', None)) if getattr(category, 'audience_id', None) else None
+
+=== ContentMaterialCategory fields ===
+FILE /srv/contentswarm/backend/package/yuxi/storage/postgres/models_content.py
+class ContentMaterialCategory(Base):
+    """用户维护的素材图片图库或封面模板分类。"""
+
+    __tablename__ = "content_material_categories"
+
+    owner_uid = Column(String(255), primary_key=True)
+    material_type = Column(String(32), primary_key=True, index=True)
+    id = Column(String(64), primary_key=True)
+    tenant_id = Column(String(64), nullable=True, index=True)
+    visibility = Column(String(20), nullable=False, default="private", server_default="private")
+    parent_id = Column(String(64), nullable=True, index=True)
+    industry_slug = Column(String(80), nullable=False, default="uncategorized", index=True)
+    image_design_role = Column(String(20), nullable=True)
+    is_global_personal = Column(Boolean, nullable=False, default=False, server_default="false")
+    design_style = Column(String(32), nullable=True)
+    building_name = Column(String(80), nullable=True)
+    area = Column(String(32), nullable=True)
+    name = Column(String(80), nullable=False)
+    description = Column(String(255), nullable=False, default="")
+    sort_order = Column(Integer, nullable=False, default=0)
+    is_system = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime, default=utc_now_naive, index=True)
+    updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
+    deleted_at = Column(DateTime, nullable=True, index=True)
+
+    __table_args__ = (
+        CheckConstraint(
+            "material_type IN ('image', 'cover_template')",
+            name="ck_content_material_category_type",
+        ),
+        CheckConstraint(
+            "image_design_role IS NULL OR image_design_role IN ('reference', 'rough', 'generated')",
+            name="ck_content_material_category_image_design_role",
+        ),
+        Index(
+            "uq_content_material_category_owner_type_n

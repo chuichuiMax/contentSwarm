@@ -1,0 +1,126 @@
+FILE /srv/contentswarm/backend/package/yuxi/storage/postgres/models_content.py
+--- class ContentMaterialCategory ---
+class ContentMaterialCategory(Base):
+    """用户维护的素材图片图库或封面模板分类。"""
+
+    __tablename__ = "content_material_categories"
+
+    owner_uid = Column(String(255), primary_key=True)
+    material_type = Column(String(32), primary_key=True, index=True)
+    id = Column(String(64), primary_key=True)
+    tenant_id = Column(String(64), nullable=True, index=True)
+    visibility = Column(String(20), nullable=False, default="private", server_default="private")
+    parent_id = Column(String(64), nullable=True, index=True)
+    industry_slug = Column(String(80), nullable=False, default="uncategorized", index=True)
+    image_design_role = Column(String(20), nullable=True)
+    is_global_personal = Column(Boolean, nullable=False, default=False, server_default="false")
+    design_style = Column(String(32), nullable=True)
+    building_name = Column(String(80), nullable=True)
+    area = Column(String(32), nullable=True)
+    name = Column(String(80), nullable=False)
+    description = Column(String(255), nullable=False, default="")
+    sort_order = Column(Integer, nullable=False, default=0)
+    is_system = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime, default=utc_now_naive, index=True)
+    updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
+    deleted_at = Column(DateTime, nullable=True, index=True)
+
+    __table_args__ = (
+        CheckConstraint(
+            "material_type IN ('image', 'cover_template')",
+            name="ck_content_material_category_type",
+        ),
+        CheckConstraint(
+            "image_design_role IS NULL OR image_design_role IN ('reference', 'rough', 'generated')",
+            name="ck_content_material_category_image_design_role",
+        ),
+        Index(
+            "uq_content_material_category_owner_type_name_active",
+            "owner_uid",
+            "material_type",
+            text("lower(name)"),
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL"),
+            sqlite_where=text("deleted_at IS NULL"),
+        ),
+        Index(
+            "idx_content_material_category_owner_type_sort",
+            "owner_uid",
+            "material_type",
+            "sort_order"
+===END===
+--- class ContentMaterialAudience ---
+class ContentMaterialAudience(Base):
+    """企业共享图库受众：按员工当前分部包含匹配划分可见范围（互斥）。"""
+
+    __tablename__ = "content_material_audiences"
+
+    id = Column(String(64), primary_key=True)
+    code = Column(String(64), nullable=False, unique=True, index=True)
+    name = Column(String(80), nullable=False)
+    match_keywords = Column(JSON, nullable=False, default=list)
+    is_default = Column(Boolean, nullable=False, default=False, server_default="false")
+    sort_order = Column(Integer, nullable=False, default=0)
+    enabled = Column(Boolean, nullable=False, default=True, server_default="true", index=True)
+    created_at = Column(DateTime, default=utc_now_naive)
+    updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "code": self.code,
+            "name": self.name,
+            "match_keywords": list(self.match_keywords or []),
+            "is_default": bool(self.is_default),
+            "sort_order": self.sort_order,
+            "enabled": bool(self.enabled),
+            "created_at": format_utc_datetime(self.created_at),
+            "updated_at": format_utc_datetime(self.updated_at),
+        }
+
+
+class ContentCoverPosterTemplate(Base):
+    __tablename__ = "content_cover_poster_templates"
+
+    id = Column(String(64), primary_key=True)
+    owner_uid = Column(String(255), nullable=False, index=True)
+    tenant_id = Column(String(64), nullable=True, index=True)
+    asset_id = Column(
+        String(64), ForeignKey("content_cover_assets.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    name = Column(String(255), nullable=False)
+    category = Column(String(80), nullable=False, default="未分类", index=True)
+    tags_json = Column(JSON, nullable=False, default=list)
+    template_type = Column(String(32), nullable=False, default="alpha_overlay", index=True)
+    canvas_width = Column(Integer, nullable=False)
+    canvas_height = Column(Integer, nullable=False)
+    product_box_json = Column(JSON, nullable=True)
+    safe_area_json = Column(JSON, nullable=False, default=dict)
+    text_slots_json = Column(JSON, nullable=False, default=list)
+    fixed_region
+===END===
+HIT_COUNT 1
+42:    ensure_enterprise_gallery_audiences,
+45:    validate_audience_id,
+332:    audience_id: str | None = Field(default=None, max_length=64)
+363:    audience_id: str | None = Field(default=None, max_length=64)
+930:async def ensure_initial_enterprise_galleries(db: AsyncSession) -> None:
+968:    await ensure_enterprise_gallery_audiences(db)
+2129:        audience = audiences.get(getattr(category, 'audience_id', None)) if getattr(category, 'audience_id', None) else None
+2232:    audience_id = None
+2234:        audiences = await ensure_enterprise_gallery_audiences(db)
+2236:        audience_id = await validate_audience_id(db, payload.audience_id) or default_id
+2237:    elif payload.audience_id:
+2362:            if changes["visibility"] == "enterprise" and gallery.parent_id is None and not getattr(gallery, 'audience_id', None):
+2363:                if hasattr(gallery, 'audience_id'):
+2364:                    if hasattr(gallery, 'audience_id'):
+2365:                        gallery.audience_id = next(
+2366:                    item.id for item in await ensure_enterprise_gallery_audiences(db) if item.is_default
+2369:                if hasattr(gallery, 'audience_id'):
+2370:                    if hasattr(gallery, 'audience_id'):
+2371:                        gallery.audience_id = None
+2378:    if "audience_id" in changes:
+2385:        if hasattr(category, 'audience_id'):
+2386:            category.audience_id = await validate_audience_id(db, changes["audience_id"]) or (
+2387:            next(item.id for item in await ensure_enterprise_gallery_audiences(db) if item.is_default)
+2653:        audience = audiences.get(getattr(category, 'audience_id', None)) if getattr(category, 'audience_id', None) else None

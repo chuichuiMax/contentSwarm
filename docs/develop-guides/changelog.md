@@ -1,5 +1,7 @@
 # 未发布
 
+- 测试环境素材库 `/api/material-library/categories`、`galleries` 在 `ContentMaterialCategory` 尚未落地 `audience_id` 字段时不再 500：受众绑定跳过，`to_dict` 安全返回空受众。
+
 - 正文里单独成段的 emoji（如 🔍、💡）会并入相邻文字段，不能再独占一行；提示词同步禁止表情单独占行。
 
 - 直接生成正文统一空行分段：模型只给单换行时也会补成段间空行；标题与正文缺少 emoji 时会补表情重写。提示词同步要求标题带 1 个 emoji、正文自然穿插 2 到 4 个。
