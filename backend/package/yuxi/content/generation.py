@@ -96,6 +96,37 @@ def body_has_cta(body: str) -> bool:
     return bool(_CTA_MARKERS.search("\n".join(paragraphs[-2:])))
 
 
+_SENTENCE_END = re.compile(r"(?<=[。！？!?])\s*")
+
+
+def trim_cta_to_single_sentence(body: str) -> str:
+    """引流收尾只保留一句：去掉末尾多余的收藏/留言堆叠。"""
+    text = (body or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+    if not text:
+        return text
+    paragraphs = [part.strip() for part in re.split(r"\n\s*\n", text) if part.strip()]
+    if not paragraphs:
+        return text
+    index = len(paragraphs)
+    while index > 0 and _CTA_MARKERS.search(paragraphs[index - 1]):
+        index -= 1
+    cta_blocks = paragraphs[index:]
+    if not cta_blocks:
+        return "\n\n".join(paragraphs)
+    sentences = [
+        part.strip()
+        for part in _SENTENCE_END.split("\n".join(cta_blocks))
+        if part.strip()
+    ]
+    cta_sentences = [sentence for sentence in sentences if _CTA_MARKERS.search(sentence)]
+    if not cta_sentences:
+        return "\n\n".join(paragraphs)
+    chosen = next((sentence for sentence in cta_sentences if "留言" in sentence), cta_sentences[0])
+    if not re.search(r"[。！？!?]$", chosen):
+        chosen = f"{chosen}。"
+    return "\n\n".join([*paragraphs[:index], chosen])
+
+
 def _tag_tokens(text: str) -> list[str]:
     return [part for part in re.split(r"[\s,，、#＃]+", text.strip()) if part]
 
@@ -490,8 +521,9 @@ def _direct_generation_prompt(
         "标题带 1 个贴合情绪的 emoji；正文自然穿插 2 到 4 个 emoji，贴在文字同一段里，"
         "不要单独占一行，不要堆在同一处，不要整篇不用表情。"
         "正文用短句，每句单独成段，段与段之间必须空一行（用空行分段，不要只用单个换行）。"
-        "正文末尾必须有引流收尾，否则不算完成：最后一两段用收藏、评论区留言等自然动作收束，"
-        "并点明本篇可对照的工艺/验收点，例如收藏后进场对照、评论区留言领对应验收要点；"
+        "正文末尾必须有引流收尾，否则不算完成：最后只写一句，用收藏或评论区留言收束，"
+        "并点明本篇可对照的点，例如收藏后进场对照、评论区留言领对应验收要点；"
+        "不要写两句或三段堆叠收藏加留言。"
         "若写评论区留言「关键词」，关键词只能按内容类型用「工艺」「案例」或「开工」，"
         "不要用设计风格名或其简称（如江南、原木、法式）。"
         "不要空泛收尾，不要硬广承诺效果，不要套统一结尾模板。"
@@ -508,7 +540,7 @@ def _direct_generation_prompt(
         f"{reference_block}"
         f"{knowledge_block}"
         f"{forbidden_block}\n"
-        "自我查验：输出前先通读标题和正文，发现歧义、拗口、不通顺或缺少引流收尾就改正，"
+        "自我查验：输出前先通读标题和正文，发现歧义、拗口、不通顺、缺少引流收尾或引流超过一句就改正，"
         "只把改正后的标题、正文和标签写入字段，不要写出查验过程。"
     )
 
@@ -865,9 +897,9 @@ async def generate_direct_content(
             )
         if needs_cta:
             repair_parts.append(
-                "正文末尾补上贴合本篇的引流收尾，用收藏或评论区留言等自然动作收束，"
-                "点明可对照的工艺/验收点；若留言带关键词，只用「工艺」「案例」或「开工」，"
-                "不要写设计风格简称；不要空泛收尾，不要硬广"
+                "正文末尾只补一句贴合本篇的引流收尾，用收藏或评论区留言收束，"
+                "点明可对照的点；若留言带关键词，只用「工艺」「案例」或「开工」，"
+                "不要写两句堆叠，不要写设计风格简称；不要空泛收尾，不要硬广"
             )
         try:
             article_repair = await model.ainvoke(
@@ -919,6 +951,7 @@ async def generate_direct_content(
         final_body,
         cta_comment_keyword(content_type_code, content_type_name),
     )
+    final_body = trim_cta_to_single_sentence(final_body)
     if is_case_share_content(content_type_code, content_type_name):
         topics = case_share_topics(body_topics, user_request, image_attached=image_sent)
     else:

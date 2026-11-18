@@ -85,6 +85,8 @@ async def test_direct_generation_uses_only_requested_inputs(monkeypatch):
     assert "爆款正文" not in prompt
     assert "发布标签由系统从对应知识库补齐" in prompt
     assert "正文末尾必须有引流收尾" in prompt
+    assert "最后只写一句" in prompt
+    assert "不要写两句或三段堆叠" in prompt
     assert "只能按内容类型用「工艺」「案例」或「开工」" in prompt
     assert "不要用设计风格名或其简称" in prompt
     assert "标题要顺口" in prompt
@@ -92,7 +94,7 @@ async def test_direct_generation_uses_only_requested_inputs(monkeypatch):
     assert '"报价": ["费用"]' in prompt
     assert prompt.index("封禁词替换表") < prompt.index("自我查验")
     assert "不要写出查验过程" in prompt
-    assert "缺少引流收尾就改正" in prompt
+    assert "引流超过一句就改正" in prompt
 
 
 @pytest.mark.unit
@@ -786,6 +788,19 @@ def test_cta_comment_keyword_follows_content_type():
         "想要同款思路的，评论区留言「案例」，客厅的几处做法我整理给你对照📋"
     )
     assert generation.rewrite_cta_comment_keyword("留言「原木」看看", "工艺") == "留言「工艺」看看"
+
+
+def test_trim_cta_to_single_sentence_keeps_one_ending():
+    raw = (
+        "卧室好不好住，看收口。\n\n"
+        "先收藏这篇，进场那几天拿它对着墙角和柜门一条条看。\n"
+        "评论区留言「案例」，我把这类卧室的验收要点发你。\n"
+        "留言「案例」，也能看看同户型的落地实景。"
+    )
+    out = generation.trim_cta_to_single_sentence(raw)
+    assert out == "卧室好不好住，看收口。\n\n评论区留言「案例」，我把这类卧室的验收要点发你。"
+    assert out.count("留言") == 1
+    assert "收藏这篇" not in out
 
 
 @pytest.mark.unit
