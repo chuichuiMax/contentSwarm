@@ -83,6 +83,19 @@ def text_has_emoji(text: str) -> bool:
     return bool(_EMOJI.search(text or ""))
 
 
+_CTA_MARKERS = re.compile(
+    r"(收藏|评论区|留言|关注我|对照一遍|照着对|进场对照|想弄明白|想看工地|想弄清)"
+)
+
+
+def body_has_cta(body: str) -> bool:
+    """正文末尾是否有引流收尾（收藏/评论区留言等互动引导）。"""
+    paragraphs = [part.strip() for part in re.split(r"\n\s*\n", body or "") if part.strip()]
+    if not paragraphs:
+        return False
+    return bool(_CTA_MARKERS.search("\n".join(paragraphs[-2:])))
+
+
 def _tag_tokens(text: str) -> list[str]:
     return [part for part in re.split(r"[\s,，、#＃]+", text.strip()) if part]
 
@@ -190,10 +203,14 @@ def _direct_request_content_type(user_request: str) -> tuple[str, str]:
 
 CASE_SHARE_CONTENT_NAMES = frozenset({"装修案例分享", "案例分享"})
 CRAFT_CONTENT_NAMES = frozenset({"工艺施工展示"})
+START_WORK_CONTENT_NAMES = frozenset({"开工", "开工记录"})
 CASE_SHARE_FIXED_TOPICS = ("装修", "装修案例")
 # 案例分享 topics 只留风格名；画面细部/硬装构件/家具词不当作风格标签。
 _CASE_SHARE_DETAIL_TAG = re.compile(
     r"(灯|石材|背景墙|柜|沙发|茶几|岛台|岩板|木饰面|吊顶|踢脚|窗帘|地毯|造型墙|地砖|瓷砖|地板|开关|插座)"
+)
+_CTA_COMMENT_KEYWORD = re.compile(
+    r"(留言\s*)([「『\"'“‘【])\s*([^」』\"'”’】]{1,12})\s*([」』\"'”’】])"
 )
 
 
@@ -207,6 +224,37 @@ def is_craft_content(content_type_code: str, content_type_name: str) -> bool:
     name = str(content_type_name or "").strip()
     code = str(content_type_code or "").strip()
     return name in CRAFT_CONTENT_NAMES or code == "CT06"
+
+
+def is_start_work_content(content_type_code: str, content_type_name: str) -> bool:
+    name = str(content_type_name or "").strip()
+    return name in START_WORK_CONTENT_NAMES or name.startswith("开工")
+
+
+def cta_comment_keyword(content_type_code: str, content_type_name: str) -> str:
+    """评论区留言关键词：按内容类型固定为工艺/案例/开工。"""
+    if is_craft_content(content_type_code, content_type_name):
+        return "工艺"
+    if is_case_share_content(content_type_code, content_type_name):
+        return "案例"
+    if is_start_work_content(content_type_code, content_type_name):
+        return "开工"
+    return ""
+
+
+def rewrite_cta_comment_keyword(body: str, keyword: str) -> str:
+    """把引流里的留言「风格简称」等改成内容类型关键词。"""
+    token = str(keyword or "").strip()
+    if not token:
+        return body or ""
+
+    def _replace(match: re.Match[str]) -> str:
+        current = match.group(3).strip()
+        if current == token:
+            return match.group(0)
+        return f"{match.group(1)}{match.group(2)}{token}{match.group(4)}"
+
+    return _CTA_COMMENT_KEYWORD.sub(_replace, body or "")
 
 
 def _request_business_value(user_request: str, key: str) -> str:
@@ -442,7 +490,10 @@ def _direct_generation_prompt(
         "标题带 1 个贴合情绪的 emoji；正文自然穿插 2 到 4 个 emoji，贴在文字同一段里，"
         "不要单独占一行，不要堆在同一处，不要整篇不用表情。"
         "正文用短句，每句单独成段，段与段之间必须空一行（用空行分段，不要只用单个换行）。"
-        "正文最后一段写一句引流引导，贴合本篇，例如评论区留言领对应验收要点、收藏后进场对照；"
+        "正文末尾必须有引流收尾，否则不算完成：最后一两段用收藏、评论区留言等自然动作收束，"
+        "并点明本篇可对照的工艺/验收点，例如收藏后进场对照、评论区留言领对应验收要点；"
+        "若写评论区留言「关键词」，关键词只能按内容类型用「工艺」「案例」或「开工」，"
+        "不要用设计风格名或其简称（如江南、原木、法式）。"
         "不要空泛收尾，不要硬广承诺效果，不要套统一结尾模板。"
         "返回字段 title、body、topics；不要输出解释。\n"
         f"{title_rules}\n"
@@ -457,7 +508,7 @@ def _direct_generation_prompt(
         f"{reference_block}"
         f"{knowledge_block}"
         f"{forbidden_block}\n"
-        "自我查验：输出前先通读标题和正文，发现歧义、拗口或不通顺就改正，"
+        "自我查验：输出前先通读标题和正文，发现歧义、拗口、不通顺或缺少引流收尾就改正，"
         "只把改正后的标题、正文和标签写入字段，不要写出查验过程。"
     )
 
@@ -802,26 +853,40 @@ async def generate_direct_content(
     final_body = apply_title_rules(final_body)
     if copy_body_is_placeholder(final_body):
         raise ValueError("模型没有返回可用正文")
-    if not text_has_emoji(final_title) or not text_has_emoji(final_body):
+    needs_emoji = not text_has_emoji(final_title) or not text_has_emoji(final_body)
+    needs_cta = not body_has_cta(final_body)
+    if needs_emoji or needs_cta:
+        repair_parts = []
+        if needs_emoji:
+            repair_parts.append(
+                "标题保留原意并带 1 个贴合情绪的 emoji；"
+                "正文每句单独成段且段间空一行，自然穿插 2 到 4 个 emoji，"
+                "emoji 必须跟文字同一段，不能单独占一行"
+            )
+        if needs_cta:
+            repair_parts.append(
+                "正文末尾补上贴合本篇的引流收尾，用收藏或评论区留言等自然动作收束，"
+                "点明可对照的工艺/验收点；若留言带关键词，只用「工艺」「案例」或「开工」，"
+                "不要写设计风格简称；不要空泛收尾，不要硬广"
+            )
         try:
-            emoji_repair = await model.ainvoke(
+            article_repair = await model.ainvoke(
                 [
                     HumanMessage(
                         content=(
-                            "下面这篇小红书标题或正文缺少表情。"
-                            "请重写标题和正文：标题保留原意并带 1 个贴合情绪的 emoji；"
-                            "正文每句单独成段且段间空一行，自然穿插 2 到 4 个 emoji，"
-                            "emoji 必须跟文字同一段，不能单独占一行；"
-                            "事实、工艺点和引流结尾不要改。\n"
+                            "下面这篇小红书标题或正文还缺表情或引流收尾。"
+                            "请重写标题和正文："
+                            + "；".join(repair_parts)
+                            + "；事实和工艺点不要改。\n"
                             "第一行只写新标题，空一行后写正文，不要标签，不要解释。\n\n"
                             f"原标题：{final_title}\n\n原正文：\n{final_body}"
                         )
                     )
                 ]
             )
-            repaired_article = _output_arguments(emoji_repair)
+            repaired_article = _output_arguments(article_repair)
         except Exception as exc:
-            logger.info("Emoji repair skipped: %s", exc)
+            logger.info("Article ending repair skipped: %s", exc)
             repaired_article = None
         if repaired_article:
             repaired_title = apply_title_rules(
@@ -836,16 +901,24 @@ async def generate_direct_content(
                 )
             )
             repaired_body = apply_title_rules(repaired_body)
+            emoji_ok = (not needs_emoji) or (
+                text_has_emoji(repaired_title) and text_has_emoji(repaired_body)
+            )
+            cta_ok = (not needs_cta) or body_has_cta(repaired_body)
             if (
                 repaired_title
                 and repaired_body
                 and not copy_body_is_placeholder(repaired_body)
-                and text_has_emoji(repaired_title)
-                and text_has_emoji(repaired_body)
+                and emoji_ok
+                and cta_ok
             ):
                 final_title = repaired_title
                 final_body = repaired_body
     content_type_code, content_type_name = _direct_request_content_type(user_request)
+    final_body = rewrite_cta_comment_keyword(
+        final_body,
+        cta_comment_keyword(content_type_code, content_type_name),
+    )
     if is_case_share_content(content_type_code, content_type_name):
         topics = case_share_topics(body_topics, user_request, image_attached=image_sent)
     else:

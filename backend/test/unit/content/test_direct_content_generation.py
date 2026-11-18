@@ -31,7 +31,9 @@ async def test_direct_generation_uses_only_requested_inputs(monkeypatch):
 
         async def ainvoke(self, messages):
             calls.append(messages)
-            return _tool_response({"title": "报价标题🔥", "body": "报价正文😭", "topics": ["报价"]})
+            return _tool_response(
+                {"title": "报价标题🔥", "body": "报价正文😭\n\n收藏这篇对照。", "topics": ["报价"]}
+            )
 
     monkeypatch.setattr(generation, "resolve_chat_model_spec", lambda value: value or "default")
     monkeypatch.setattr(
@@ -56,7 +58,7 @@ async def test_direct_generation_uses_only_requested_inputs(monkeypatch):
     )
 
     assert result.title == "费用标题🔥"
-    assert result.body == "费用正文😭"
+    assert result.body == "费用正文😭\n\n收藏这篇对照。"
     assert result.topics == ["装修避坑"]
     assert load_model_calls == [
         {
@@ -82,12 +84,15 @@ async def test_direct_generation_uses_only_requested_inputs(monkeypatch):
     assert "反差价值型" not in prompt
     assert "爆款正文" not in prompt
     assert "发布标签由系统从对应知识库补齐" in prompt
-    assert "正文最后一段写一句引流引导" in prompt
+    assert "正文末尾必须有引流收尾" in prompt
+    assert "只能按内容类型用「工艺」「案例」或「开工」" in prompt
+    assert "不要用设计风格名或其简称" in prompt
     assert "标题要顺口" in prompt
     assert "封禁词替换表" in prompt
     assert '"报价": ["费用"]' in prompt
     assert prompt.index("封禁词替换表") < prompt.index("自我查验")
     assert "不要写出查验过程" in prompt
+    assert "缺少引流收尾就改正" in prompt
 
 
 @pytest.mark.unit
@@ -172,7 +177,7 @@ async def test_review_notes_generation_uses_owner_voice_and_knowledge(monkeypatc
     assert "站在业主角度写好评笔记" in prompt
     assert "用好评笔记知识库里的业主口吻" in prompt
     assert "发布标签由系统从对应知识库补齐" in prompt
-    assert "正文最后一段写一句引流引导" in prompt
+    assert "正文末尾必须有引流收尾" in prompt
     assert "业主去未完工的工地看隐蔽工程" in prompt
     assert '"项目经理":"王五"' in prompt
     assert "爆款原文" not in prompt
@@ -260,7 +265,7 @@ async def test_direct_generation_sends_prompt_with_first_image(monkeypatch):
     assert "已附上第一张图片" in content[0]["text"]
     assert "沙发背景墙木饰面" in content[0]["text"]
     assert "发布标签由系统从对应知识库补齐" in content[0]["text"]
-    assert "正文最后一段写一句引流引导" in content[0]["text"]
+    assert "正文末尾必须有引流收尾" in content[0]["text"]
     assert "标题要顺口" in content[0]["text"]
     assert "标题带 1 个贴合情绪的 emoji" in content[0]["text"]
     assert "段与段之间必须空一行" in content[0]["text"]
@@ -443,8 +448,11 @@ async def test_unbroken_body_is_split_into_paragraphs(monkeypatch):
         async def ainvoke(self, messages):
             return _tool_response(
                 {
-                    "title": "客厅标题",
-                    "body": "长沙润樾府，145㎡，雅致现代风。客厅这块，住进去才知道有多顺。柜子别贪多，留白才耐看。",
+                    "title": "客厅标题🔥",
+                    "body": (
+                        "长沙润樾府，145㎡，雅致现代风。客厅这块，住进去才知道有多顺。"
+                        "柜子别贪多，留白才耐看。😭收藏这篇对照。"
+                    ),
                     "topics": ["装修避坑"],
                 }
             )
@@ -459,7 +467,12 @@ async def test_unbroken_body_is_split_into_paragraphs(monkeypatch):
         user_request="写一段内容",
     )
 
-    assert result.body == "长沙润樾府，145㎡，雅致现代风。\n\n客厅这块，住进去才知道有多顺。\n\n柜子别贪多，留白才耐看。"
+    assert result.body == (
+        "长沙润樾府，145㎡，雅致现代风。\n\n"
+        "客厅这块，住进去才知道有多顺。\n\n"
+        "柜子别贪多，留白才耐看。\n\n"
+        "😭收藏这篇对照。"
+    )
 
 
 @pytest.mark.unit
@@ -470,7 +483,9 @@ async def test_body_with_line_breaks_stays_unchanged(monkeypatch):
             return self
 
         async def ainvoke(self, messages):
-            return _tool_response({"title": "标题🔥", "body": "第一段。😭\n\n第二段。", "topics": []})
+            return _tool_response(
+                {"title": "标题🔥", "body": "第一段。😭\n\n第二段。\n\n收藏这篇对照。", "topics": []}
+            )
 
     monkeypatch.setattr(generation, "resolve_chat_model_spec", lambda value: value or "default")
     monkeypatch.setattr(generation, "load_chat_model", lambda **kwargs: FakeModel())
@@ -482,7 +497,7 @@ async def test_body_with_line_breaks_stays_unchanged(monkeypatch):
         user_request="写一段内容",
     )
 
-    assert result.body == "第一段。😭\n\n第二段。"
+    assert result.body == "第一段。😭\n\n第二段。\n\n收藏这篇对照。"
 
 
 @pytest.mark.unit
@@ -496,7 +511,7 @@ async def test_single_newline_body_is_expanded_to_blank_paragraphs(monkeypatch):
             return _tool_response(
                 {
                     "title": "标题🔥",
-                    "body": "第一句。😭\n第二句。\n第三句。",
+                    "body": "第一句。😭\n第二句。\n第三句。\n收藏这篇对照。",
                     "topics": [],
                 }
             )
@@ -511,7 +526,7 @@ async def test_single_newline_body_is_expanded_to_blank_paragraphs(monkeypatch):
         user_request="写一段内容",
     )
 
-    assert result.body == "第一句。😭\n\n第二句。\n\n第三句。"
+    assert result.body == "第一句。😭\n\n第二句。\n\n第三句。\n\n收藏这篇对照。"
 
 
 @pytest.mark.unit
@@ -527,7 +542,13 @@ async def test_missing_emoji_triggers_repair(monkeypatch):
             calls.append(messages)
             if len(calls) == 1:
                 return _tool_response({"title": "标题", "body": "第一段。\n\n第二段。", "topics": []})
-            return _tool_response({"title": "标题🔥", "body": "第一段。😭\n\n第二段。👍", "topics": []})
+            return _tool_response(
+                {
+                    "title": "标题🔥",
+                    "body": "第一段。😭\n\n第二段。👍\n\n收藏这篇对照。",
+                    "topics": [],
+                }
+            )
 
     monkeypatch.setattr(generation, "resolve_chat_model_spec", lambda value: value or "default")
     monkeypatch.setattr(generation, "load_chat_model", lambda **kwargs: FakeModel())
@@ -544,6 +565,46 @@ async def test_missing_emoji_triggers_repair(monkeypatch):
     assert "😭" in result.body
     assert generation.text_has_emoji(result.title)
     assert generation.text_has_emoji(result.body)
+    assert generation.body_has_cta(result.body)
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_missing_cta_triggers_repair(monkeypatch):
+    calls = []
+
+    class FakeModel:
+        def bind_tools(self, schemas, **kwargs):
+            return self
+
+        async def ainvoke(self, messages):
+            calls.append(messages)
+            if len(calls) == 1:
+                return _tool_response(
+                    {"title": "柜墙缝别忽视😤", "body": "这缝藏不住，装完再补就是硬抹。😭", "topics": []}
+                )
+            return _tool_response(
+                {
+                    "title": "柜墙缝别忽视😤",
+                    "body": "这缝藏不住，装完再补就是硬抹。😭\n\n收藏这篇，柜子进场照着看柜边和墙缝。",
+                    "topics": [],
+                }
+            )
+
+    monkeypatch.setattr(generation, "resolve_chat_model_spec", lambda value: value or "default")
+    monkeypatch.setattr(generation, "load_chat_model", lambda **kwargs: FakeModel())
+
+    result = await generation.generate_direct_content(
+        model_spec="deepseek:deepseek-flash",
+        creative_style={},
+        viral_source={"title": "", "body": ""},
+        user_request="写一段内容",
+    )
+
+    assert len(calls) == 2
+    assert "引流收尾" in calls[1][0].content
+    assert generation.body_has_cta(result.body)
+    assert "收藏这篇" in result.body
 
 
 @pytest.mark.unit
@@ -558,7 +619,7 @@ async def test_placeholder_body_is_requested_again(monkeypatch):
         async def ainvoke(self, messages):
             nonlocal calls
             calls += 1
-            body = "..." if calls == 1 else "卫生间这处工艺要盯紧😭"
+            body = "..." if calls == 1 else "卫生间这处工艺要盯紧😭\n\n收藏这篇对照。"
             return _tool_response({"title": "水电标题🔥", "body": body, "topics": ["装修避坑"]})
 
     monkeypatch.setattr(generation, "resolve_chat_model_spec", lambda value: value or "default")
@@ -572,7 +633,7 @@ async def test_placeholder_body_is_requested_again(monkeypatch):
     )
 
     assert calls == 2
-    assert result.body == "卫生间这处工艺要盯紧😭"
+    assert result.body == "卫生间这处工艺要盯紧😭\n\n收藏这篇对照。"
 
 
 @pytest.mark.unit
@@ -618,7 +679,9 @@ async def test_thinking_mode_tool_choice_retries_with_auto(monkeypatch):
                     "'Thinking mode does not support this tool_choice', "
                     "'type': 'invalid_request_error', 'code': 'invalid_request_error'}}"
                 )
-            return _tool_response({"title": "标题🔥", "body": "正文😭", "topics": ["装修避坑"]})
+            return _tool_response(
+                {"title": "标题🔥", "body": "正文😭\n\n收藏这篇对照。", "topics": ["装修避坑"]}
+            )
 
     monkeypatch.setattr(generation, "resolve_chat_model_spec", lambda value: value or "default")
     monkeypatch.setattr(generation, "load_chat_model", lambda **kwargs: FakeModel())
@@ -654,7 +717,9 @@ async def test_named_tool_choice_rejection_retries_with_auto(monkeypatch):
                     "Error code: 400 - {'code': 20015, 'message': "
                     "'Value error, Specifying functions for tool_choice is not yet supported.', 'data': None}"
                 )
-            return _tool_response({"title": "标题🔥", "body": "正文😭", "topics": ["装修避坑"]})
+            return _tool_response(
+                {"title": "标题🔥", "body": "正文😭\n\n收藏这篇对照。", "topics": ["装修避坑"]}
+            )
 
     monkeypatch.setattr(generation, "resolve_chat_model_spec", lambda value: value or "default")
     monkeypatch.setattr(generation, "load_chat_model", lambda **kwargs: FakeModel())
@@ -706,6 +771,23 @@ def test_publish_tags_are_removed_from_the_body():
     assert topics == ["装修日记", "装修避坑", "水电改造", "厨房收纳", "工地实拍"]
 
 
+def test_body_has_cta_checks_ending_paragraphs():
+    assert generation.body_has_cta("工艺讲完了。\n\n收藏这篇，进场对照。")
+    assert generation.body_has_cta("前面都讲完了。\n\n想弄清验收点，评论区留言你家情况。")
+    assert not generation.body_has_cta("这缝藏不住，装完再补就是硬抹。\n\n塞尺一塞就知道。")
+
+
+def test_cta_comment_keyword_follows_content_type():
+    assert generation.cta_comment_keyword("CT01", "") == "案例"
+    assert generation.cta_comment_keyword("CT06", "工艺施工展示") == "工艺"
+    assert generation.cta_comment_keyword("", "开工") == "开工"
+    body = "想要同款思路的，评论区留言「江南」，客厅的几处做法我整理给你对照📋"
+    assert generation.rewrite_cta_comment_keyword(body, "案例") == (
+        "想要同款思路的，评论区留言「案例」，客厅的几处做法我整理给你对照📋"
+    )
+    assert generation.rewrite_cta_comment_keyword("留言「原木」看看", "工艺") == "留言「工艺」看看"
+
+
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_model_body_detail_tags_are_dropped_for_kb_topics(monkeypatch):
@@ -716,8 +798,8 @@ async def test_model_body_detail_tags_are_dropped_for_kb_topics(monkeypatch):
         async def ainvoke(self, messages):
             return _tool_response(
                 {
-                    "title": "标题",
-                    "body": "我去工地看了水电。\n#水电改造 #工地实拍",
+                    "title": "标题🔥",
+                    "body": "我去工地看了水电。😭\n收藏这篇对照。\n#水电改造 #工地实拍",
                     "topics": ["沙发背景墙木饰面", "木饰面房门", "客厅无主灯射灯"],
                 }
             )
@@ -732,7 +814,7 @@ async def test_model_body_detail_tags_are_dropped_for_kb_topics(monkeypatch):
         user_request="写一段内容",
     )
 
-    assert result.body == "我去工地看了水电。"
+    assert result.body == "我去工地看了水电。😭\n\n收藏这篇对照。"
     assert result.topics == ["装修避坑"]
     assert "沙发背景墙木饰面" not in result.topics
     assert "水电改造" not in result.topics
@@ -785,7 +867,7 @@ async def test_image_prompt_no_longer_asks_for_detail_tags(monkeypatch):
 
     text = calls[0][0].content[0]["text"]
     assert "发布标签由系统从对应知识库补齐" in text
-    assert "正文最后一段写一句引流引导" in text
+    assert "正文末尾必须有引流收尾" in text
     assert "最近用过这些标签" not in text
     assert "根据这张图片生成 3 到 5 个小红书类型标签" not in text
 
@@ -902,7 +984,7 @@ def test_craft_image_prompt_avoids_fine_grained_scene_detail():
     assert "不要逐件描写家具、软装、杂志、摆件" in prompt
     assert "不要争论沙发背景墙或电视背景墙叫法" in prompt
     assert "看不到电视机，写沙发背景墙" not in prompt
-    assert "正文最后一段写一句引流引导" in prompt
+    assert "正文末尾必须有引流收尾" in prompt
     assert "标题要顺口" in prompt
 
 
@@ -942,7 +1024,9 @@ async def test_blank_prompt_uses_content_type_default_and_title_rule(monkeypatch
 
         async def ainvoke(self, messages):
             calls.append(messages)
-            return _tool_response({"title": "120㎡客厅终于装完", "body": "客厅做了线性灯。", "topics": []})
+            return _tool_response(
+                {"title": "120㎡客厅终于装完🔥", "body": "客厅做了线性灯。😭\n\n收藏这篇对照。", "topics": []}
+            )
 
     monkeypatch.setattr(generation, "resolve_chat_model_spec", lambda value: value or "default")
     monkeypatch.setattr(generation, "choose_sampling", lambda: {"temperature": 0.9, "top_p": 0.9})
@@ -959,8 +1043,8 @@ async def test_blank_prompt_uses_content_type_default_and_title_rule(monkeypatch
     prompt = calls[0][0].content
     assert "内容类型是「开工」" in prompt
     assert "文案限制：" in prompt
-    assert result.title == "120㎡终于装完"
-    assert result.body == "客厅做了线性灯。"
+    assert result.title == "120㎡终于装完🔥"
+    assert result.body == "客厅做了线性灯。😭\n\n收藏这篇对照。"
 
 
 @pytest.mark.unit
@@ -972,7 +1056,11 @@ async def test_direct_generation_strips_area_next_to_space_in_body(monkeypatch):
 
         async def ainvoke(self, messages):
             return _tool_response(
-                {"title": "洋湖这套终于住进去了", "body": "138㎡客厅做完。\n\n采光很好。", "topics": []}
+                {
+                    "title": "洋湖这套终于住进去了🔥",
+                    "body": "138㎡客厅做完。😭\n\n采光很好。\n\n收藏这篇对照。",
+                    "topics": [],
+                }
             )
 
     monkeypatch.setattr(generation, "resolve_chat_model_spec", lambda value: value or "default")
@@ -1028,6 +1116,41 @@ def test_case_share_topics_use_selected_style_without_image():
 
 @pytest.mark.unit
 @pytest.mark.asyncio
+async def test_case_share_rewrites_style_cta_comment_keyword(monkeypatch):
+    class FakeModel:
+        def bind_tools(self, schemas, **kwargs):
+            return self
+
+        async def ainvoke(self, messages):
+            return _tool_response(
+                {
+                    "title": "这个家一进门就让人静下来🍃",
+                    "body": "洋湖1号，188㎡，江南印象。😭\n\n想要同款思路的，评论区留言「江南」，客厅做法整理给你对照📋",
+                    "topics": ["江南印象"],
+                }
+            )
+
+    monkeypatch.setattr(generation, "resolve_chat_model_spec", lambda value: value or "default")
+    monkeypatch.setattr(generation, "load_chat_model", lambda **kwargs: FakeModel())
+
+    result = await generation.generate_direct_content(
+        model_spec="deepseek:deepseek-flash",
+        creative_style={},
+        viral_source={},
+        user_request=(
+            '{"contentType":{"typeName":"装修案例分享","contentTypeCode":"CT01"},'
+            '"businessVariables":{"设计风格":"江南印象"}}'
+        ),
+        generation_prompt="按案例写",
+    )
+
+    assert "留言「案例」" in result.body
+    assert "留言「江南」" not in result.body
+    assert "江南印象" in result.body
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
 async def test_case_share_generation_keeps_only_style_region_and_fixed_tags(monkeypatch):
     calls = []
 
@@ -1037,7 +1160,13 @@ async def test_case_share_generation_keeps_only_style_region_and_fixed_tags(monk
 
         async def ainvoke(self, messages):
             calls.append(messages)
-            return _tool_response({"title": "洋湖这套终于住进去了", "body": "客餐厅留了整面采光。", "topics": ["现代"]})
+            return _tool_response(
+                {
+                    "title": "洋湖这套终于住进去了🔥",
+                    "body": "客餐厅留了整面采光。😭\n\n收藏这篇对照。",
+                    "topics": ["现代"],
+                }
+            )
 
     monkeypatch.setattr(generation, "resolve_chat_model_spec", lambda value: value or "default")
     monkeypatch.setattr(generation, "choose_sampling", lambda: {"temperature": 0.4, "top_p": 0.9})

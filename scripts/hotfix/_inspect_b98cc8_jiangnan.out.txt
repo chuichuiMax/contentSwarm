@@ -1,0 +1,54 @@
+task_columns ['id', 'tenant_id', 'project_id', 'name', 'industry_template_version_id', 'workflow_version_id', 'workflow_definition_hash', 'rule_version_id', 'mode', 'content_goal', 'content_type_code', 'industry_pack_version_id', 'persona_profile_version_id', 'channel_profile_version_id', 'primary_narrative_axis', 'selected_angle_json', 'runtime_config_snapshot_json', 'selected_image_item_id', 'selected_poster_template_id', 'status', 'current_stage', 'brief_json', 'strategy_json', 'evidence_json', 'active_evidence_bundle_id', 'title_candidates_json', 'selected_title_json', 'review_json', 'latest_run_id', 'error_json', 'created_by', 'updated_by', 'created_at', 'updated_at', 'deleted_at']
+{
+  "task": {
+    "id": "ct_b98cc863f94345c7a194d89180b87345",
+    "tenant_id": "1",
+    "project_id": null,
+    "name": "装修与家居 · 获客转化",
+    "industry_template_version_id": "industry-decoration-v3",
+    "workflow_version_id": "content-workflow-single-blueprint-v4",
+    "workflow_definition_hash": "86f5cea73b1a1fc275893cdbfb06d840183427c818430c43d9862ffccbb6d3a3",
+    "rule_version_id": "content-rules-platform-v9",
+    "mode": "pro",
+    "content_goal": "acquire",
+    "content_type_code": "CT01",
+    "industry_pack_version_id": "industry-pack-decoration-v9",
+    "persona_profile_version_id": null,
+    "channel_profile_version_id": "channel-xiaohongshu-v1",
+    "primary_narrative_axis": null,
+    "selected_angle_json": "{}",
+    "runtime_config_snapshot_json": "{\"schema_version\": 3, \"rule_version_id\": \"content-rules-platform-v9\", \"industry_template_version_id\": \"industry-decoration-v3\", \"workflow_version_id\": \"content-workflow-single-blueprint-v4\", \"workflow_definition_hash\": \"86f5cea73b1a1fc275893cdbfb06d840183427c818430c43d9862ffccbb6d3a3\", \"industry_pack_version_id\": \"industry-pack-decoration-v9\", \"persona_profile_version_id\": null, \"channel_profile_version_id\": \"channel-xiaohongshu-v1\", \"content_type_code\": \"CT01\", \"creation_mode\": \"viral_rewrite\", \"selection_policy_snapshot\": {\"version\": \"industry-selection-v1\", \"industry_modes\": {\"decoration\": \"direction_scoped\"}, \"default_mode\": \"scored\", \"mode_skills\": {\"direction_scoped\": \"decoration-direction-formula-selector\", \"scored\": \"industry-strategy-scorer\"}, \"scoring\": {\"method\": {\"weights\": {\"g...",
+    "selected_image_item_id": "mli_0fc88e93e0e14828b90ef39a6c05d72e",
+    "selected_poster_template_id": null,
+    "status": "generated",
+    "current_stage": "generation",
+    "brief_json": "{\"task_id\": \"ct_b98cc863f94345c7a194d89180b87345\", \"industry\": \"decoration\", \"content_goal\": \"acquire\", \"content_type_code\": \"CT01\", \"industry_pack_version_id\": \"industry-pack-decoration-v9\", \"channel_profile_version_id\": \"channel-xiaohongshu-v1\", \"persona_profile_version_id\": null, \"mode\": \"pro\", \"brand\": {\"name\": \"鸿扬家装\"}, \"audience\": [\"五口之家\", \"装修\", \"家装\", \"装修记录\", \"装修灵感\", \"装修案例\", \"装修分享\", \"装修日常\", \"装修进行中\", \"家装装修\", \"装修设计\", \"室内设计\", \"装修风格\", \"装修效果图\", \"装修实景\", \"装修完工\", \"装修毕业照\", \"硬装\", \"全屋定制\", \"装修公司\", \"装修师傅\", \"装修工人\", \"装修现场\", \"装修材料\", \"装修预算\", \"装修报价\", \"装修流程\", \"装修攻略\", \"装修干货\", \"装修避坑\", \"装修知识\", \"装修经验\", \"装修小白\", \"装修新手\", \"装修课堂\", \"装修百科\", \"装修大全\", \"本地装修\", \"同城装修\", \"本地装修公司\", \"同城装修公司\", \"装修公司推荐\", \"装修公司怎么选\", \"装修公司哪家好\", \"靠谱装修公司\", \"装修公司避坑\", \"装修公司排名\", \"装修公司避雷\", \"装修公司测评\", \"装修公司对比\", \"装修公司口碑\", \"装修公司分享\", \"装修公司推荐清单\", \"装修公司怎么挑...",
+    "strategy_json": "{}",
+    "evidence_json": "{\"items\": []}",
+    "active_evidence_bundle_id": null,
+    "title_candidates_json": "[]",
+    "selected_title_json": "{\"text\": \"这个家一进门就让人静下来🍃\"}",
+    "review_json": "{\"status\": \"not_run\", \"checks\": [], \"review_mode\": \"direct_generation\"}",
+    "latest_run_id": "3d542c5d-788d-40bc-8a2b-4a2e910a5334",
+    "error_json": null,
+    "created_by": "mp_52903ebc22d445de8",
+    "updated_by": "mp_52903ebc22d445de8",
+    "created_at": "2026-11-18 07:59:12.524617",
+    "updated_at": "2026-11-18 08:00:42.440579",
+    "deleted_at": null,
+    "artifact_id": "ca_3d542c5d788d40bc8a2b4a2e910a5334",
+    "artifact_title": "这个家一进门就让人静下来🍃"
+  },
+  "para_count": 10,
+  "hits": [
+    "洋湖1号，188㎡，江南印象。",
+    "想要同款思路的，评论区留言「江南」，客厅的几处做法我整理给你对照📋"
+  ],
+  "tail": [
+    "阳台那边的窗帘垂到地面，纱透进光，坐沙发上啃一口水果都觉得舒服🍊。",
+    "五口人住一起，动静分区也留出来了，谁忙谁闲都不打架。",
+    "每家情况不一样，照搬模板才是坑。",
+    "想要同款思路的，评论区留言「江南」，客厅的几处做法我整理给你对照📋"
+  ],
+  "body": "洋湖1号，188㎡，江南印象。\n\n业主一家五口，当初只说了一句：想让进门的人慢下来。\n\n这句话我们没往模板里塞😌。\n\n客厅墙前放的是沙发，电视墙一侧留了整面的木色柜体，颜色压下来，人就跟着安静。\n\n门洞和柜门都做成拱形，转角不再是硬邦邦的直角。\n\n顶上两层线条收边，吊灯隔一段挂一盏，光线是散的，不扎眼。\n\n阳台那边的窗帘垂到地面，纱透进光，坐沙发上啃一口水果都觉得舒服🍊。\n\n五口人住一起，动静分区也留出来了，谁忙谁闲都不打架。\n\n每家情况不一样，照搬模板才是坑。\n\n想要同款思路的，评论区留言「江南」，客厅的几处做法我整理给你对照📋"
+}
