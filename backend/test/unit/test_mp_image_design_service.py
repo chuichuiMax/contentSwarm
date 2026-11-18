@@ -149,8 +149,8 @@ async def test_library_deduplicates_owner_asset_and_keeps_owners_separate(db):
     assert await db.scalar(select(func.count()).select_from(ImageDesignLibraryItem)) == 2
 
 
-async def test_generated_material_entry_is_visible_in_image_design_library(db):
-    from yuxi.image_design.mp_service import list_library
+async def test_generated_material_is_listed_only_after_explicit_selection(db):
+    from yuxi.image_design.mp_service import add_library_item, list_library
 
     category = ContentMaterialCategory(
         owner_uid="employee",
@@ -196,9 +196,16 @@ async def test_generated_material_entry_is_visible_in_image_design_library(db):
     db.add_all([category, asset, material, entry])
     await db.commit()
 
-    items = (await list_library(db, user(), page=1, page_size=100))["items"]
-    assert [(item["id"], item["source_role"], item["source_item_id"]) for item in items] == [
-        (entry.id, "generated", material.id)
+    before = await list_library(db, user(), page=1, page_size=100)
+    assert before["items"] == []
+    assert before["total"] == 0
+
+    await add_library_item(db, user(), MpLibraryCreate(source_library_item_id=material.id, source_role="reference"))
+
+    after = await list_library(db, user(), page=1, page_size=100)
+    assert after["total"] == 1
+    assert [(item["id"], item["source_role"], item["source_item_id"]) for item in after["items"]] == [
+        (entry.id, "reference", material.id)
     ]
 
 

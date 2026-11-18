@@ -214,19 +214,7 @@ async def test_mp_worker_saves_enterprise_target_to_actual_enterprise_gallery(db
     assert item.category_owner_uid == "admin"
     assert item.metadata_json["source_channel"] == "mp"
     assert item.metadata_json["source_folder"] == "generated"
-    assert db.design_library_items[0].source_material_item_id == item.id
-
-    db.design_library_items[0].hidden_at = worker.utc_now_naive()
-    await worker.attach_generated_asset(
-        db,
-        user=db.user,
-        asset=asset(),
-        requested=ImageDesignSaveTarget(scope="enterprise", gallery_id="actual-generated-id"),
-        job_id="idj_test",
-        workflow="room_adapt",
-        mp_fixed_target=True,
-    )
-    assert len(db.design_library_items) == 1 and db.design_library_items[0].hidden_at is not None
+    assert db.design_library_items == []
 
 
 @pytest.mark.asyncio
@@ -242,6 +230,7 @@ async def test_mp_worker_saves_private_option_to_personal_generated_gallery(db):
     )
     assert resolved.public_target == {"scope": "private", "gallery_id": "mp-generated-private"}
     assert item.category == "mp-generated-private"
+    assert db.design_library_items == []
 
 
 @pytest.mark.asyncio
@@ -325,9 +314,7 @@ async def test_attach_preserves_scope_owner_and_is_idempotent(db, scope, gallery
     assert first.public_target == {"scope": scope, "gallery_id": gallery_id}
     assert first.warning is None
     assert repeated.id == item.id and len(db.items) == 1
-    assert len(db.design_library_items) == 1
-    assert db.design_library_items[0].source_material_item_id == item.id
-    assert db.design_library_items[0].source_role == "generated"
+    assert db.design_library_items == []
     assert item.owner_uid == "employee"
     assert item.category_owner_uid == (
         "employee" if scope == "private" else "admin" if gallery_id else "system:material-library"

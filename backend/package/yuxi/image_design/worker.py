@@ -33,7 +33,6 @@ from yuxi.storage.postgres.models_content import (
     ContentCoverAsset,
     ContentMaterialCategory,
     ImageDesignJob,
-    ImageDesignLibraryItem,
 )
 from yuxi.storage.postgres.manager import pg_manager
 from yuxi.utils.datetime_utils import utc_now_naive
@@ -149,30 +148,6 @@ async def _poll(client: Image2Client, result: Image2Submission) -> Image2Submiss
     raise Image2Error("IMAGE2_POLL_TIMEOUT", "image2 异步任务等待超时", retryable=True)
 
 
-async def _ensure_generated_library_item(db, *, user, asset, material_item):
-    owner_uid = str(user.uid)
-    existing = await db.scalar(
-        select(ImageDesignLibraryItem).where(
-            ImageDesignLibraryItem.owner_uid == owner_uid,
-            ImageDesignLibraryItem.asset_id == asset.id,
-        )
-    )
-    if existing is not None:
-        return existing
-    entry = ImageDesignLibraryItem(
-        id=f"idl_{uuid.uuid4().hex}",
-        owner_uid=owner_uid,
-        tenant_id=str(user.department_id) if user.department_id is not None else None,
-        asset_id=asset.id,
-        source_material_item_id=material_item.id,
-        source_gallery_id=material_item.category,
-        source_role="generated",
-    )
-    db.add(entry)
-    await db.flush()
-    return entry
-
-
 async def attach_generated_asset(db, *, user, asset, requested, job_id, workflow, mp_fixed_target=False):
     """Attach in the caller's transaction, retaining a completed attachment on retry."""
     existing = await MaterialLibraryRepository(db, include_shared=True).get_item_by_asset(asset.id)
@@ -186,7 +161,6 @@ async def attach_generated_asset(db, *, user, asset, requested, job_id, workflow
             existing.category_owner_uid,
             metadata.get("save_warning"),
         )
-        await _ensure_generated_library_item(db, user=user, asset=asset, material_item=existing)
         return resolved, existing
 
     # An inaccessible or re-scoped folder is not a deleted folder. Do not hide
@@ -235,7 +209,6 @@ async def attach_generated_asset(db, *, user, asset, requested, job_id, workflow
         metadata=metadata,
     )
     asset.metadata_json = {**(asset.metadata_json or {}), **metadata}
-    await _ensure_generated_library_item(db, user=user, asset=asset, material_item=item)
     return resolved, item
 
 
