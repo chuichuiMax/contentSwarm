@@ -1027,6 +1027,9 @@ async def test_image2_copy_mode_sends_exact_copy_and_keeps_numbers(monkeypatch: 
         def __init__(self, _db):
             pass
 
+        async def get_job_by_idempotency(self, *_args):
+            return None
+
         async def get_assets_for_user(self, *_args, **_kwargs):
             return [source]
 
@@ -1076,11 +1079,17 @@ async def test_image2_copy_mode_sends_exact_copy_and_keeps_numbers(monkeypatch: 
 
 @pytest.mark.asyncio
 async def test_image2_copy_style_variant_uses_prompt_embedded_copy(monkeypatch: pytest.MonkeyPatch):
+    from unittest.mock import AsyncMock
+
+    monkeypatch.setitem(create_cover_generate_job.__globals__, "require_ai_cover_available", AsyncMock())
     captured = {}
 
     class FakeRepository:
         def __init__(self, _db):
             pass
+
+        async def get_job_by_idempotency(self, *_args):
+            return None
 
         async def get_assets_for_user(self, *_args, **_kwargs):
             return [SimpleNamespace(role="library_image")]
@@ -1132,6 +1141,9 @@ async def test_prompt_text_mode_keeps_handwritten_quote_copy_in_image_to_image(m
     class FakeRepository:
         def __init__(self, _db):
             pass
+
+        async def get_job_by_idempotency(self, *_args):
+            return None
 
         async def get_assets_for_user(self, *_args, **_kwargs):
             return [SimpleNamespace(id="reference-1", role="source")]

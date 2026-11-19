@@ -148,7 +148,10 @@ async def get_library_item_and_asset(db: AsyncSession, user: User, item_id: str)
 
 
 async def list_library(db: AsyncSession, user: User, *, page: int, page_size: int) -> dict[str, Any]:
-    query = _library_query(db, user).where(ImageDesignLibraryItem.hidden_at.is_(None))
+    query = _library_query(db, user).where(
+        ImageDesignLibraryItem.hidden_at.is_(None),
+        ImageDesignLibraryItem.source_role != "generated",
+    )
     total = await db.scalar(select(func.count()).select_from(query.subquery()))
     rows = (
         await db.execute(

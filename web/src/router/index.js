@@ -32,6 +32,13 @@ const router = createRouter({
       component: () => import('../views/CaseShareView.vue'),
       meta: { requiresAuth: false }
     },
+    // TODO: 上游提交缺少 RequirementList*.vue，临时禁用以免前端路由报错
+    // {
+    //   path: '/requirement-list/fill',
+    //   name: 'RequirementListShare',
+    //   component: () => import('../views/RequirementListShareView.vue'),
+    //   meta: { requiresAuth: false }
+    // },
     {
       path: '/customer-leads',
       component: AppLayout,
@@ -52,6 +59,16 @@ const router = createRouter({
         meta: { requiresAuth: true }
       }]
     },
+    // {
+    //   path: '/requirement-lists',
+    //   component: AppLayout,
+    //   children: [{
+    //     path: '',
+    //     name: 'RequirementLists',
+    //     component: () => import('../views/RequirementListView.vue'),
+    //     meta: { requiresAuth: true, keepAlive: false }
+    //   }]
+    // },
     {
       path: '/auth/oidc/callback', // oidc登录回调页面
       name: 'OIDCCallback',
@@ -288,6 +305,12 @@ const router = createRouter({
           name: 'CreativeStyleConfigComp',
           component: () => import('../views/CreativeStyleConfigView.vue'),
           meta: { keepAlive: false, requiresAuth: true }
+        },
+        {
+          path: 'material-audiences',
+          name: 'MaterialAudienceConfigComp',
+          component: () => import('../views/MaterialAudienceConfigView.vue'),
+          meta: { keepAlive: false, requiresAuth: true, requiresAdmin: true }
         },
         {
           path: 'target-audiences',

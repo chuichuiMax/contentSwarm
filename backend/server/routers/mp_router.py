@@ -4,7 +4,7 @@ from datetime import date
 from typing import Literal
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, File, Form, Query, Request, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile, status
 from fastapi.responses import RedirectResponse, Response, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,16 +13,19 @@ from server.utils.public_url import request_public_base_url
 from yuxi.services.material_library_service import create_material_share
 from yuxi.services.material_share_jobs import MaterialShareRequest, accept_material_share
 from yuxi.content_cover.ai_cover_prompt_catalog import spec_for_variant
-from yuxi.services.ai_cover_prompt_catalog_service import (
-    list_ai_cover_prompt_catalog,
-    resolve_ai_cover_preview_bytes,
-)
-from yuxi.services.ai_cover_template_service import (
-    apply_catalog_overrides,
-    list_custom_cover_prompts,
-    stored_cover_preview_bytes,
-)
+from yuxi.services.ai_cover_prompt_catalog_service import resolve_ai_cover_preview_bytes
+from yuxi.services.ai_cover_template_service import list_mp_ai_cover_prompts, stored_cover_preview_bytes
 from yuxi.services.personal_materials import folder_counts, list_folder
+# TODO: 上游提交缺少实体文件，临时禁用需求清单接口以免阻塞 API 启动
+# from yuxi.services.employee_service import resolve_employee_for_user
+# from yuxi.services.requirement_list_service import (
+#     SubmissionCreate,
+#     create_shared_submission,
+#     create_submission,
+#     get_submission,
+#     list_mp_submissions,
+# )
+# from yuxi.storage.postgres.models_content import RequirementListSubmission
 from yuxi.services.mp_service import (
     AuthCancelPayload,
     AuthConfirmPayload,
@@ -410,25 +413,11 @@ async def mp_ai_cover_prompts(
     _ctx: MpContext = Depends(get_mp_context),
     db: AsyncSession = Depends(get_db),
 ):
-    data = await list_ai_cover_prompt_catalog(
+    return await list_mp_ai_cover_prompts(
+        db,
         content_type_code=content_type_code,
         content_type_name=content_type_name,
     )
-    catalog = await apply_catalog_overrides(db, data.get("prompts") or [], content_type_name=content_type_name)
-    custom = await list_custom_cover_prompts(db, content_type_name=content_type_name)
-    data["prompts"] = [*catalog, *custom]
-    prompts = []
-    for item in data.get("prompts") or []:
-        variant = str(item.get("variant") or "").strip()
-        if not variant:
-            continue
-        prompts.append(
-            {
-                **item,
-                "preview_url": f"/api/mp/content/ai-cover-prompts/{variant}/preview.png",
-            }
-        )
-    return {"prompts": prompts, "oss_prefix": data.get("oss_prefix")}
 
 
 @mp.get("/content/ai-cover-prompts/{variant}/preview.png")
@@ -590,3 +579,47 @@ async def mp_delete_content(
     db: AsyncSession = Depends(get_db),
 ):
     return await delete_content(db, ctx, task_id)
+
+
+# @mp.get("/requirement-lists")
+# async def mp_requirement_lists(
+#     page: int = Query(default=1, ge=1),
+#     page_size: int = Query(default=20, ge=1, le=50),
+#     keyword: str = Query(default="", max_length=80),
+#     ctx: MpContext = Depends(get_mp_context),
+#     db: AsyncSession = Depends(get_db),
+# ):
+#     return await list_mp_submissions(db, ctx.user, page=page, page_size=page_size, keyword=keyword)
+#
+#
+# @mp.post("/requirement-lists")
+# async def mp_requirement_list_create(
+#     payload: SubmissionCreate,
+#     ctx: MpContext = Depends(get_mp_context),
+#     db: AsyncSession = Depends(get_db),
+# ):
+#     return await create_submission(db, ctx.user, payload)
+#
+#
+# @mp.post("/requirement-lists/public")
+# async def mp_requirement_list_public_create(
+#     payload: SubmissionCreate,
+#     db: AsyncSession = Depends(get_db),
+# ):
+#     return await create_shared_submission(db, payload)
+#
+#
+# @mp.get("/requirement-lists/{submission_id}")
+# async def mp_requirement_list_detail(
+#     submission_id: str,
+#     ctx: MpContext = Depends(get_mp_context),
+#     db: AsyncSession = Depends(get_db),
+# ):
+#     owned = await db.get(RequirementListSubmission, submission_id)
+#     if owned is None:
+#         raise HTTPException(status_code=404, detail="需求清单不存在")
+#     if owned.created_by != str(ctx.user.uid):
+#         employee = await resolve_employee_for_user(db, ctx.user)
+#         if not employee or owned.employee_code != employee.employee_code:
+#             raise HTTPException(status_code=404, detail="需求清单不存在")
+#     return await get_submission(db, submission_id)

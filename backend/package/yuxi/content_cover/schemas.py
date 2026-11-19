@@ -9,6 +9,10 @@ COVER_SIZES = {"1080x1440", "1080x1080"}
 AI_MODES = {"text_to_image", "image_to_image", "multi_reference", "mask"}
 
 
+class AiCoverStatusUpdate(BaseModel):
+    enabled: bool = Field(strict=True)
+
+
 class HyCanvasDesignCreate(BaseModel):
     artifact_id: str = Field(min_length=1, max_length=64)
     template_id: str = Field(

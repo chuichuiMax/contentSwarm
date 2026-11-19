@@ -112,6 +112,21 @@ async def test_mp_sms_login_me_schema_and_pc_token_isolation(test_client, admin_
             assert data["hycanvas_templates"][0]["overlay_url"].startswith(
                 "/api/mp/content/hycanvas-templates/"
             )
+        assert isinstance(data.get("ai_cover_prompts_by_type_code"), dict)
+        case_share = next(item for item in data["content_types"] if item["type_code"] == "CT01")
+        case_prompts = data["ai_cover_prompts_by_type_code"].get("CT01") or []
+        assert case_prompts
+        assert case_prompts[0]["preview_url"].startswith("/api/mp/content/ai-cover-prompts/")
+        assert any(item["variant"] == "smart-random" for item in case_prompts)
+        assert any(item["variant"] == "p12" for item in case_prompts)
+
+        ai_covers = await test_client.get(
+            "/api/mp/content/ai-cover-prompts",
+            headers=mp_headers,
+            params={"content_type_code": case_share["type_code"], "content_type_name": case_share["name"]},
+        )
+        assert ai_covers.status_code == 200, ai_covers.text
+        assert len(ai_covers.json().get("prompts") or []) >= len(case_prompts)
 
         review_schema = await test_client.get(
             "/api/mp/content/form-schema",

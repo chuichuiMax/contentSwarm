@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from server.utils.auth_middleware import get_admin_user, get_db, get_required_user
 from yuxi.content_cover.schemas import (
+    AiCoverStatusUpdate,
     CoverComposeCreate,
     CoverEditorProjectCreate,
     CoverEditorRenderCreate,
@@ -70,6 +71,7 @@ from yuxi.services.ai_cover_template_service import (
     list_managed_covers,
     stored_cover_preview_bytes,
     update_ai_cover_template,
+    update_ai_cover_status,
 )
 from yuxi.content_cover.ai_cover_prompt_catalog import spec_for_variant
 from yuxi.services.hycanvas_service import HyCanvasClient
@@ -118,6 +120,7 @@ async def create_ai_cover_prompt(
     prompt: str = Form(""),
     content_type_names: list[str] = Form(),
     file: UploadFile = File(...),
+    enabled: bool = Form(True),
     current_user: User = Depends(get_admin_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -128,6 +131,7 @@ async def create_ai_cover_prompt(
         prompt=prompt,
         content_type_names=content_type_names,
         file=file,
+        enabled=enabled,
     )
 
 
@@ -138,6 +142,7 @@ async def update_ai_cover_prompt(
     prompt: str = Form(""),
     content_type_names: list[str] = Form(),
     file: UploadFile | None = File(None),
+    enabled: bool | None = Form(None),
     current_user: User = Depends(get_admin_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -149,7 +154,19 @@ async def update_ai_cover_prompt(
         prompt=prompt,
         content_type_names=content_type_names,
         file=file,
+        enabled=enabled,
     )
+
+
+@content_covers.patch("/ai-cover-prompts/manage/{cover_id}/status")
+async def set_ai_cover_status(
+    cover_id: str,
+    payload: AiCoverStatusUpdate,
+    current_user: User = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    del current_user
+    return await update_ai_cover_status(db, cover_id, enabled=payload.enabled)
 
 
 @content_covers.delete("/ai-cover-prompts/manage/{cover_id}")

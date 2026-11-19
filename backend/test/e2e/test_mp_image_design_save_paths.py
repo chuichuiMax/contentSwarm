@@ -107,7 +107,7 @@ async def test_fixed_paths_persist_all_workflows_in_selected_pc_and_mp_gallery(t
                             )
                         ).all()
                     )
-                    assert len(references) == 1
+                    assert references == []
                     await db.commit()
 
                 pc = await test_client.get(
@@ -122,6 +122,15 @@ async def test_fixed_paths_persist_all_workflows_in_selected_pc_and_mp_gallery(t
                 )
                 assert pc.status_code == 200, pc.text
                 assert item.id in {row["id"] for row in pc.json()["items"]}
+                library = await test_client.get("/api/mp/image-design/library", headers=headers)
+                assert library.status_code == 200, library.text
+                assert asset_id not in {row["asset_id"] for row in library.json()["items"]}
+                picked = await test_client.post(
+                    "/api/mp/image-design/library",
+                    headers=headers,
+                    json={"source_library_item_id": item.id, "source_role": "reference"},
+                )
+                assert picked.status_code == 200, picked.text
                 library = await test_client.get("/api/mp/image-design/library", headers=headers)
                 assert library.status_code == 200, library.text
                 assert asset_id in {row["asset_id"] for row in library.json()["items"]}

@@ -28,6 +28,7 @@ import {
   ListTree,
   Hammer,
   Palette,
+  FolderTree,
   ChevronRight,
   ChevronDown
 } from 'lucide-vue-next'
@@ -243,11 +244,19 @@ const mainList = computed(() => {
     activeIcon: ClipboardList,
     permissionAny: ['customer_lead.view_list']
   })
+  // TODO: 上游提交缺少需求清单页面，临时隐藏入口
+  // dataStatsChildren.push({
+  //   name: '需求清单',
+  //   path: '/requirement-lists',
+  //   icon: ListTodo,
+  //   activeIcon: ListTodo,
+  //   alwaysVisible: true
+  // })
   items.push({
     name: '数据统计',
     icon: ChartColumn,
     activeIcon: ChartColumn,
-    activePaths: ['/traffic', '/customer-leads', '/case-shares'],
+    activePaths: ['/traffic', '/customer-leads', '/case-shares', '/requirement-lists'],
     children: dataStatsChildren
   })
 
@@ -284,6 +293,13 @@ const mainList = computed(() => {
         icon: Palette,
         activeIcon: Palette,
         permissionAny: ['content_type.view_list', 'content_type.create', 'content_type.view', 'content_type.delete']
+      },
+      {
+        name: '企业图库受众',
+        path: '/config-manage/material-audiences',
+        icon: FolderTree,
+        activeIcon: FolderTree,
+        requiresAdmin: true
       },
       {
         name: '目标人群配置',
@@ -339,6 +355,8 @@ const mainList = computed(() => {
   }
 
   const allowed = (item) => {
+    if (item.requiresAdmin) return userStore.isAdmin
+    if (item.alwaysVisible) return true
     if (!userStore.isPermissionScoped) return true
     if (item.materialLibraryAccess) return userStore.canAccessMaterialLibrary
     return userStore.canAny(item.permissionAny || [])

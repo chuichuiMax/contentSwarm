@@ -732,6 +732,9 @@ class PostgresManager(metaclass=SingletonMeta):
 
         self._check_initialized()
         stmts = [
+            "ALTER TABLE IF EXISTS ai_cover_templates ADD COLUMN IF NOT EXISTS enabled BOOLEAN NOT NULL DEFAULT TRUE",
+            "ALTER TABLE IF EXISTS ai_cover_catalog_overrides "
+            "ADD COLUMN IF NOT EXISTS enabled BOOLEAN NOT NULL DEFAULT TRUE",
             "ALTER TABLE IF EXISTS content_material_folder_settings "
             "ADD COLUMN IF NOT EXISTS description VARCHAR(255) NOT NULL DEFAULT ''",
             "ALTER TABLE IF EXISTS content_material_folder_settings "
@@ -1079,6 +1082,8 @@ class PostgresManager(metaclass=SingletonMeta):
             "ALTER TABLE IF EXISTS content_employees ADD COLUMN IF NOT EXISTS age INTEGER",
             "ALTER TABLE IF EXISTS content_employees ADD COLUMN IF NOT EXISTS current_branch VARCHAR(80) NOT NULL DEFAULT ''",
             "ALTER TABLE IF EXISTS content_employees ADD COLUMN IF NOT EXISTS current_department VARCHAR(128) NOT NULL DEFAULT ''",
+            "ALTER TABLE IF EXISTS requirement_list_submissions ADD COLUMN IF NOT EXISTS answers JSONB NOT NULL DEFAULT '{}'::jsonb",
+            "ALTER TABLE IF EXISTS requirement_list_submissions ALTER COLUMN address TYPE VARCHAR(200)",
             (
                 "ALTER TABLE IF EXISTS content_variables "
                 'ADD COLUMN IF NOT EXISTS ports JSONB NOT NULL DEFAULT \'["pc","app"]\'::jsonb'
@@ -1162,6 +1167,14 @@ class PostgresManager(metaclass=SingletonMeta):
             (
                 "ALTER TABLE IF EXISTS content_business_variables "
                 "ADD COLUMN IF NOT EXISTS ports JSONB NOT NULL DEFAULT '[\"pc\",\"app\"]'::jsonb"
+            ),
+            (
+                "ALTER TABLE IF EXISTS content_material_categories "
+                "ADD COLUMN IF NOT EXISTS audience_id VARCHAR(64)"
+            ),
+            (
+                "CREATE INDEX IF NOT EXISTS ix_content_material_categories_audience_id "
+                "ON content_material_categories (audience_id)"
             ),
         ]
         async with self.async_engine.begin() as conn:
