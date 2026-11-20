@@ -900,6 +900,41 @@ func TestApplyBackgroundImageKeepsTemplateLayersAboveSelectedMaterial(t *testing
 	if _, ok := background["src"]; ok {
 		t.Fatal("background pixels must live only in file.assets")
 	}
+	focal := asObj(background["focalPoint"])
+	if asNum(focal["x"]) != 0.5 || asNum(focal["y"]) != 1.0 {
+		t.Fatalf("background must keep the bottom edge when covering taller photos: %+v", focal)
+	}
+}
+
+func TestApplyBackgroundImageRecordsNaturalSizeAndBottomFocal(t *testing.T) {
+	var buffer bytes.Buffer
+	img := image.NewRGBA(image.Rect(0, 0, 40, 80))
+	if err := png.Encode(&buffer, img); err != nil {
+		t.Fatal(err)
+	}
+	file := map[string]any{
+		"assets": []any{},
+		"pages": []any{map[string]any{
+			"width": 1080.0, "height": 1440.0,
+			"children": []any{},
+		}},
+	}
+	err := applyBackgroundImage(file, InstantiateImage{
+		ContentType: "image/png",
+		DataBase64:  base64.StdEncoding.EncodeToString(buffer.Bytes()),
+	})
+	if err != nil {
+		t.Fatalf("applyBackgroundImage: %v", err)
+	}
+	background := asObj(asArr(asObj(asArr(file["pages"])[0])["children"])[0])
+	source := asObj(background["source"])
+	if asNum(source["naturalWidth"]) != 40 || asNum(source["naturalHeight"]) != 80 {
+		t.Fatalf("natural size = %+v", source)
+	}
+	focal := asObj(background["focalPoint"])
+	if asNum(focal["x"]) != 0.5 || asNum(focal["y"]) != 1.0 {
+		t.Fatalf("focalPoint = %+v", focal)
+	}
 }
 
 type tPersist struct{ p *persistence.Service }

@@ -2473,7 +2473,29 @@ class RequirementListSubmission(Base):
     answers = Column(JSON, nullable=False, default=dict)
     shared_at = Column(DateTime, nullable=False)
     submitted_at = Column(DateTime, nullable=False, index=True)
+    submitter_name = Column(String(80), nullable=False, default="")
     created_by = Column(String(64), nullable=False, index=True)
+    created_at = Column(DateTime, default=utc_now_naive)
+
+
+class RequirementListSubmissionShare(Base):
+    """需求清单记录共享给同事，被共享人可在 PC 需求清单中看到该条记录。"""
+
+    __tablename__ = "requirement_list_submission_shares"
+    __table_args__ = (
+        UniqueConstraint("submission_id", "member_uid", name="uq_rls_submission_member"),
+    )
+
+    id = Column(String(64), primary_key=True)
+    submission_id = Column(
+        String(64),
+        ForeignKey("requirement_list_submissions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    member_uid = Column(String(64), nullable=False, index=True)
+    member_name = Column(String(80), nullable=False, default="")
+    shared_by_uid = Column(String(64), nullable=False)
     created_at = Column(DateTime, default=utc_now_naive)
 
 

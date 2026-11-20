@@ -1,0 +1,9 @@
+[32m11-20 15:02:24[0m [1mINFO[0m [36mapp.py:79[0m: [1mLoading config from saves/config/base.toml[0m
+[32m11-20 15:02:25[0m [1mINFO[0m [36mmanager.py:93[0m: [1mPostgreSQL manager initialized[0m
+[32m11-20 15:02:25[0m [34m[1mDEBUG[0m [36mclient.py:71[0m: [34m[1mDocker MinIOClient public_endpoint: 172.16.103.15:9000[0m
+[32m11-20 15:02:25[0m [1mINFO[0m [36mclient.py:339[0m: [1m成功从 OSS 下载 'image/material-library/mp_52903ebc22d445de8/images/cca_424cab51a47849d0bc628de9a5d2151f/image.webp' (image)[0m
+INST 201 {"designId":"b884e7b0-e7b7-4d6f-a400-5ec5ab672c14"}
+
+DESIGN b884e7b0-e7b7-4d6f-a400-5ec5ab672c14
+FOCAL {'x': 0.5, 'y': 1} NAT {'assetId': 'contentswarm-inline-aefa205634b0e79695314184', 'naturalHeight': 1619, 'naturalWidth': 1080}
+SIZE (1080, 1440)

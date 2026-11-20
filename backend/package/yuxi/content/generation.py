@@ -243,6 +243,16 @@ _CASE_SHARE_DETAIL_TAG = re.compile(
 _CTA_COMMENT_KEYWORD = re.compile(
     r"(留言\s*)([「『\"'“‘【])\s*([^」』\"'”’】]{1,12})\s*([」』\"'”’】])"
 )
+_CASE_CRAFT_LEAK = re.compile(
+    r"(收口处|收口节点|工序|验收|进场时|进场对照|进场那|龙骨|腻子|靠尺|塞尺|"
+    r"找平|封板|嵌缝|基层|螺钉|工艺点|施工节点|隐蔽工程|挨个比|没细说)"
+)
+# 案例分享正文过细：逐件写构件/灯具/触感等画面细部。
+_CASE_OVER_DETAIL = re.compile(
+    r"(摸起来|挂着|一块一块|错着落|纸灯|灯笼|木纹|搭上去|肩膀上|手臂搭|"
+    r"上面挂着|两只|逐一|逐件|一一介绍|触感|摸着|照到我|拼的墙|"
+    r"茶几上|抱枕|杯垫|柜门缝|抽屉缝|摆件细节)"
+)
 
 
 def is_case_share_content(content_type_code: str, content_type_name: str) -> bool:
@@ -288,6 +298,16 @@ def rewrite_cta_comment_keyword(body: str, keyword: str) -> str:
     return _CTA_COMMENT_KEYWORD.sub(_replace, body or "")
 
 
+def case_body_has_craft_content(body: str) -> bool:
+    """案例分享正文是否混入工序/验收/收口等工艺表述。"""
+    return bool(_CASE_CRAFT_LEAK.search(body or ""))
+
+
+def case_body_is_over_detailed(body: str) -> bool:
+    """案例分享正文是否把画面细部写得过细（构件拼法、灯具、触感等）。"""
+    return len(_CASE_OVER_DETAIL.findall(body or "")) >= 2
+
+
 def _request_business_value(user_request: str, key: str) -> str:
     try:
         payload = json.loads(user_request)
@@ -319,17 +339,16 @@ def _case_share_style_tag(value: Any) -> str:
 
 
 def case_share_topics(model_topics: list[str], user_request: str, *, image_attached: bool) -> list[str]:
-    """案例分享的风格标签用识别结果，不用「装修风格」四个字。缺风格或地域时跳过。"""
+    """案例分享风格标签优先用表单「设计风格」，不用模型误认的中古/原木等。缺风格或地域时跳过。"""
 
-    style = ""
-    if image_attached:
+    # 表单已选定风格时以表单为准；封面 field 也写的是同一套风格，避免 topics 和画面文案打架。
+    style = _case_share_style_tag(_request_business_value(user_request, "设计风格"))
+    if not style and image_attached:
         for item in model_topics:
             text = _case_share_style_tag(item)
             if text:
                 style = text
                 break
-    if not style:
-        style = _case_share_style_tag(_request_business_value(user_request, "设计风格"))
     region_raw = _request_business_value(user_request, "所在区域")
     region = _case_share_tag(topic_region_name(region_raw) or region_raw)
     selected = [item for item in (style, region, *CASE_SHARE_FIXED_TOPICS) if item]
@@ -438,11 +457,19 @@ def _direct_generation_prompt(
     )
     content_type_code, content_type_name = _direct_request_content_type(user_request)
     craft_mode = is_craft_content(content_type_code, content_type_name)
+    case_mode = is_case_share_content(content_type_code, content_type_name)
     if image_attached and craft_mode:
         image_line = (
             "已附上第一张图片。图片只用来印证工艺点，围绕工艺主题写工序、验收或避坑。"
             "不要逐件描写家具、软装、杂志、摆件等画面细节，不要争论沙发背景墙或电视背景墙叫法。"
             "画面信息点到为止，不要把看图结果写成细部清单。\n\n"
+        )
+    elif image_attached and case_mode:
+        image_line = (
+            "已附上第一张图片。图片只用来感受空间氛围和整体风格，"
+            "不要把墙上构件、灯具、桌面触感、摆件拼法逐件写出来。"
+            "背景墙按画面里的家具来写：墙前是沙发、看不到电视机，写沙发背景墙；"
+            "只有看得到电视屏幕时，才写电视背景墙。不要把沙发背后的造型墙写成电视背景墙。\n\n"
         )
     elif image_attached:
         image_line = (
@@ -471,21 +498,26 @@ def _direct_generation_prompt(
     if is_case_share_content(content_type_code, content_type_name):
         topic_rule = (
             "topics 只写一个大众化装修风格名称，例如现代、原木、法式、奶油、中古。"
-            "有图片时只根据画面识别风格；看不出风格就让 topics 为空。"
-            "没有图片时 topics 留空。"
+            "业务变量里已有「设计风格」时，topics 必须写该风格名，不要另猜中古、原木等。"
+            "没有「设计风格」且有图片时，才根据画面识别一个风格；看不出就让 topics 为空。"
+            "没有图片且没有「设计风格」时 topics 留空。"
             "不要写线性灯、电视墙石材、柜体、沙发等画面细部词当风格；不要写装修、装修案例、装修避坑或城市推荐。"
-            "风格标签写识别出的风格名，不要写「装修风格」四个字。"
+            "风格标签写具体风格名，不要写「装修风格」四个字。"
             "标签只写入 topics，不要写进正文，不要带 # 号。\n"
         )
         case_share_body_rule = (
-            "正文可写硬装类设计元素（如造型、吊顶、墙面材质、灯光氛围、布局），结合图片点到为止；"
-            "家具软装不要写得太具体（沙发款式、茶几材质、窗帘地毯等不要逐件展开）。"
+            "这是装修案例分享：写居住感受和空间氛围，像人住进去后的体感。"
+            "即使用户生成提示词要求结合具体设计元素、颜色材质或逐一展开画面，也只保留整体印象；"
+            "硬装最多点到一两处（例如暖调墙面、木作墙），不要逐件描写构件拼法、灯具数量、桌面触感、摆件细节。"
+            "不要写成看图清单或室内杂志细部描写。"
+            "不要写工序、验收、收口节点、进场核对、基层做法等工艺施工内容，"
+            "也不要写「收口处没细说」「进场挨个比」这类工艺话术。"
             "背景墙命名规则仍可使用。\n"
         )
         knowledge_block = ""
         if knowledge_context.strip():
             knowledge_block = (
-                "用好评笔记知识库里的业主口吻、服务场景和工艺细节写文案。"
+                "用好评笔记知识库里的业主口吻和服务场景写文案，不要写成工艺施工说明。"
                 "表单里没有的金额、小区、工期和人名不要写入：\n"
                 f"{knowledge_context.strip()}\n\n"
             )
@@ -515,17 +547,36 @@ def _direct_generation_prompt(
         topic_rule = kb_topic_rule
         knowledge_block = ""
     title_rules = title_rule_instructions()
+    if is_case_share_content(content_type_code, content_type_name):
+        cta_rule = (
+            "正文末尾必须有引流收尾，否则不算完成：最后只写一句，"
+            "用收藏或评论区留言「案例」收束，例如想看同款思路就留言「案例」；"
+            "不要写进场验收、收口核对等工艺话术，不要写两句堆叠。"
+        )
+    elif craft_mode:
+        cta_rule = (
+            "正文末尾必须有引流收尾，否则不算完成：最后只写一句，"
+            "用收藏或评论区留言「工艺」收束，例如收藏后进场对照、留言领验收要点；"
+            "不要写两句或三段堆叠收藏加留言。"
+        )
+    elif is_start_work_content(content_type_code, content_type_name):
+        cta_rule = (
+            "正文末尾必须有引流收尾，否则不算完成：最后只写一句，"
+            "用收藏或评论区留言「开工」收束；不要写两句堆叠。"
+        )
+    else:
+        cta_rule = (
+            "正文末尾必须有引流收尾，否则不算完成：最后只写一句，用收藏或评论区留言收束；"
+            "若写留言「关键词」，按内容类型只用「工艺」「案例」或「开工」；不要写两句堆叠。"
+        )
     return (
         "按「用户生成提示词」和图片写文案，不要另起标题公式。"
         "标题要顺口，像人能直接说出来的完整一句；不要生硬堆砌面积和材料，例如不要写「做完整面木饰面」这类拗口搭配。"
         "标题带 1 个贴合情绪的 emoji；正文自然穿插 2 到 4 个 emoji，贴在文字同一段里，"
         "不要单独占一行，不要堆在同一处，不要整篇不用表情。"
         "正文用短句，每句单独成段，段与段之间必须空一行（用空行分段，不要只用单个换行）。"
-        "正文末尾必须有引流收尾，否则不算完成：最后只写一句，用收藏或评论区留言收束，"
-        "并点明本篇可对照的点，例如收藏后进场对照、评论区留言领对应验收要点；"
-        "不要写两句或三段堆叠收藏加留言。"
-        "若写评论区留言「关键词」，关键词只能按内容类型用「工艺」「案例」或「开工」，"
-        "不要用设计风格名或其简称（如江南、原木、法式）。"
+        f"{cta_rule}"
+        "不要用设计风格名或其简称（如江南、原木、法式）当留言关键词。"
         "不要空泛收尾，不要硬广承诺效果，不要套统一结尾模板。"
         "返回字段 title、body、topics；不要输出解释。\n"
         f"{title_rules}\n"
@@ -540,7 +591,8 @@ def _direct_generation_prompt(
         f"{reference_block}"
         f"{knowledge_block}"
         f"{forbidden_block}\n"
-        "自我查验：输出前先通读标题和正文，发现歧义、拗口、不通顺、缺少引流收尾或引流超过一句就改正，"
+        "自我查验：输出前先通读标题和正文，发现歧义、拗口、不通顺、缺少引流收尾、引流超过一句，"
+        "或正文把画面构件/灯具/触感写得过细，就改正，"
         "只把改正后的标题、正文和标签写入字段，不要写出查验过程。"
     )
 
@@ -885,9 +937,13 @@ async def generate_direct_content(
     final_body = apply_title_rules(final_body)
     if copy_body_is_placeholder(final_body):
         raise ValueError("模型没有返回可用正文")
+    content_type_code, content_type_name = _direct_request_content_type(user_request)
+    case_mode = is_case_share_content(content_type_code, content_type_name)
     needs_emoji = not text_has_emoji(final_title) or not text_has_emoji(final_body)
     needs_cta = not body_has_cta(final_body)
-    if needs_emoji or needs_cta:
+    needs_case_craft_strip = case_mode and case_body_has_craft_content(final_body)
+    needs_case_detail_strip = case_mode and case_body_is_over_detailed(final_body)
+    if needs_emoji or needs_cta or needs_case_craft_strip or needs_case_detail_strip:
         repair_parts = []
         if needs_emoji:
             repair_parts.append(
@@ -901,15 +957,31 @@ async def generate_direct_content(
                 "点明可对照的点；若留言带关键词，只用「工艺」「案例」或「开工」，"
                 "不要写两句堆叠，不要写设计风格简称；不要空泛收尾，不要硬广"
             )
+        if needs_case_craft_strip:
+            repair_parts.append(
+                "这是装修案例分享，删掉工序、验收、收口节点、进场核对等工艺内容，"
+                "改成居住感受和空间氛围；引流只用留言「案例」或收藏同款，不要写进场验收"
+            )
+        if needs_case_detail_strip:
+            repair_parts.append(
+                "正文写得太细了：改成居住感受和整体氛围，硬装最多保留一两处整体印象；"
+                "删掉构件拼法、灯具数量、桌面触感、摆件等逐件描写"
+            )
+        if needs_case_craft_strip:
+            keep_fact_rule = "小区、面积、风格和可见硬装事实不要改，不要保留工艺施工表述。"
+        elif needs_case_detail_strip:
+            keep_fact_rule = "小区、面积、风格和整体氛围不要改，不要保留逐件细部描写。"
+        else:
+            keep_fact_rule = "事实和工艺点不要改。"
         try:
             article_repair = await model.ainvoke(
                 [
                     HumanMessage(
                         content=(
-                            "下面这篇小红书标题或正文还缺表情或引流收尾。"
+                            "下面这篇小红书标题或正文还需要修正。"
                             "请重写标题和正文："
                             + "；".join(repair_parts)
-                            + "；事实和工艺点不要改。\n"
+                            + f"；{keep_fact_rule}\n"
                             "第一行只写新标题，空一行后写正文，不要标签，不要解释。\n\n"
                             f"原标题：{final_title}\n\n原正文：\n{final_body}"
                         )
@@ -937,16 +1009,19 @@ async def generate_direct_content(
                 text_has_emoji(repaired_title) and text_has_emoji(repaired_body)
             )
             cta_ok = (not needs_cta) or body_has_cta(repaired_body)
+            craft_ok = (not needs_case_craft_strip) or not case_body_has_craft_content(repaired_body)
+            detail_ok = (not needs_case_detail_strip) or not case_body_is_over_detailed(repaired_body)
             if (
                 repaired_title
                 and repaired_body
                 and not copy_body_is_placeholder(repaired_body)
                 and emoji_ok
                 and cta_ok
+                and craft_ok
+                and detail_ok
             ):
                 final_title = repaired_title
                 final_body = repaired_body
-    content_type_code, content_type_name = _direct_request_content_type(user_request)
     final_body = rewrite_cta_comment_keyword(
         final_body,
         cta_comment_keyword(content_type_code, content_type_name),

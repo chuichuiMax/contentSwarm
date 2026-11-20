@@ -1,0 +1,57 @@
+=== playwright in web-dev? ===
+[eval]:1
+try{require(playwright);console.log(pw_ok)}catch(e){console.log(pw_miss,e.message)}
+                                                                ^
+
+ReferenceError: pw_miss is not defined
+    at [eval]:1:65
+    at runScriptInThisContext (node:internal/vm:219:10)
+    at node:internal/process/execution:451:12
+    at [eval]-wrapper:6:24
+    at runScriptInContext (node:internal/process/execution:449:60)
+    at evalFunction (node:internal/process/execution:283:30)
+    at evalTypeScript (node:internal/process/execution:295:3)
+    at node:internal/main/eval_string:71:3
+
+Node.js v24.19.0
+
+=== AppLayout transform ===
+200 182060
+err False
+import { createHotContext as __vite__createHotContext } from "/@vite/client";import.meta.hot = __vite__createHotContext(
+
+=== missing imports ===
+missing []
+
+=== main.js error handler ===
+import { createApp } from 'vue'
+import { createPinia } from 'pinia'
+import piniaPluginPersistedstate from 'pinia-plugin-persistedstate'
+
+import App from './App.vue'
+import router from './router'
+
+import Antd from 'ant-design-vue'
+import 'ant-design-vue/dist/reset.css'
+import '@/assets/css/main.css'
+
+const app = createApp(App)
+const pinia = createPinia()
+pinia.use(piniaPluginPersistedstate)
+
+app.use(pinia)
+app.use(router)
+app.use(Antd)
+
+// 预加载信息配置
+import { useInfoStore } from '@/stores/info'
+const infoStore = useInfoStore()
+infoStore.loadInfoConfig().then((config) => {
+  const title = config?.branding?.title || config?.branding?.name
+  if (title) {
+    document.title = title
+  }
+})
+
+app.mount('#app')
+

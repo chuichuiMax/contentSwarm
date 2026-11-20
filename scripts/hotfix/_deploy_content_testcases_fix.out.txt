@@ -1,0 +1,14 @@
+=== sync into web-dev container ===
+-rw-r--r-- 1 root root 38311 Nov 19 09:38 /srv/contentswarm/web/src/data/_content_test_case_bodies.json
+-rw-rw-r-- 1 root root  4239 Nov 19 09:38 /srv/contentswarm/web/src/data/contentTestCases.js
+-rw-r--r--    1 root     root         38311 Nov 19 09:38 /app/src/data/_content_test_case_bodies.json
+-rw-rw-r--    1 root     root          4239 Nov 19 09:38 /app/src/data/contentTestCases.js
+
+=== vite transform checks ===
+contentTestCases:200 22481
+bodies:200 38311
+ContentStudio:200 1484874
+has_raw True
+has_json True
+has_err False
+head // 测试用例正文来自同目录 JSON（由 assets/content-test-cases/*.txt 生成）。 // Vite 8 经公网反代时 `?raw` 会 404，不能再用 `xxx.txt?raw` 静态导入，否则内容生产页整页无法加载。 import bodies from "/src/data/_content_test_case_bod

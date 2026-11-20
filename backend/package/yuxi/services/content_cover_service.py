@@ -1647,7 +1647,7 @@ async def create_hycanvas_cover_job(
             "image_field_label": image_field_label,
             "size": "1080x1440",
             "parameters": parameters,
-            "processing_version": "hycanvas-v3-original-cover-background",
+            "processing_version": "hycanvas-v4-bottom-cover-background",
         },
     )
     return {"job": serialize_job(job), "deduplicated": deduplicated}

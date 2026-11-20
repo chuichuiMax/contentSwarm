@@ -1,19 +1,23 @@
-import beijingQuote002 from '@/assets/content-test-cases/北京报价002.txt?raw'
-import chengduQuote003 from '@/assets/content-test-cases/成都报价003.txt?raw'
-import guangzhouQuote004 from '@/assets/content-test-cases/广州报价004.txt?raw'
-import dailyWork001 from '@/assets/content-test-cases/日常工作001.txt?raw'
-import dailyWork002 from '@/assets/content-test-cases/日常工作002.txt?raw'
-import dailyWork003 from '@/assets/content-test-cases/日常工作003.txt?raw'
-import dailyWork004 from '@/assets/content-test-cases/日常工作004.txt?raw'
-import dailyWork005 from '@/assets/content-test-cases/日常工作005.txt?raw'
-import dailyWork006 from '@/assets/content-test-cases/日常工作006.txt?raw'
-import constructionCraft001 from '@/assets/content-test-cases/施工工艺001.txt?raw'
-import quoteJsonTemplate from '@/assets/content-test-cases/施工报价json模板.txt?raw'
-import quoteJson005 from '@/assets/content-test-cases/施工报价json005.txt?raw'
-import quoteJson006 from '@/assets/content-test-cases/施工报价json006.txt?raw'
-import selfIntroduction001 from '@/assets/content-test-cases/自我介绍001.txt?raw'
-import selfIntroduction002 from '@/assets/content-test-cases/自我介绍002.txt?raw'
-import selfIntroduction003 from '@/assets/content-test-cases/自我介绍003.txt?raw'
+// 测试用例正文来自同目录 JSON（由 assets/content-test-cases/*.txt 生成）。
+// Vite 8 经公网反代时 `?raw` 会 404，不能再用 `xxx.txt?raw` 静态导入，否则内容生产页整页无法加载。
+import bodies from './_content_test_case_bodies.json'
+
+const beijingQuote002 = bodies['北京报价002.txt']
+const chengduQuote003 = bodies['成都报价003.txt']
+const guangzhouQuote004 = bodies['广州报价004.txt']
+const dailyWork001 = bodies['日常工作001.txt']
+const dailyWork002 = bodies['日常工作002.txt']
+const dailyWork003 = bodies['日常工作003.txt']
+const dailyWork004 = bodies['日常工作004.txt']
+const dailyWork005 = bodies['日常工作005.txt']
+const dailyWork006 = bodies['日常工作006.txt']
+const constructionCraft001 = bodies['施工工艺001.txt']
+const quoteJsonTemplate = bodies['施工报价json模板.txt']
+const quoteJson005 = bodies['施工报价json005.txt']
+const quoteJson006 = bodies['施工报价json006.txt']
+const selfIntroduction001 = bodies['自我介绍001.txt']
+const selfIntroduction002 = bodies['自我介绍002.txt']
+const selfIntroduction003 = bodies['自我介绍003.txt']
 
 export const CONTENT_TEST_CASE_CATEGORIES = [
   { value: 'daily-work', label: '日常工作' },

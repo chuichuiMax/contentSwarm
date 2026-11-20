@@ -86,8 +86,8 @@ async def test_direct_generation_uses_only_requested_inputs(monkeypatch):
     assert "发布标签由系统从对应知识库补齐" in prompt
     assert "正文末尾必须有引流收尾" in prompt
     assert "最后只写一句" in prompt
-    assert "不要写两句或三段堆叠" in prompt
-    assert "只能按内容类型用「工艺」「案例」或「开工」" in prompt
+    assert "不要写两句堆叠" in prompt
+    assert "按内容类型只用「工艺」「案例」或「开工」" in prompt
     assert "不要用设计风格名或其简称" in prompt
     assert "标题要顺口" in prompt
     assert "封禁词替换表" in prompt
@@ -790,6 +790,42 @@ def test_cta_comment_keyword_follows_content_type():
     assert generation.rewrite_cta_comment_keyword("留言「原木」看看", "工艺") == "留言「工艺」看看"
 
 
+def test_case_body_detects_craft_leak_phrases():
+    assert generation.case_body_has_craft_content("篇幅有限，很多收口处没细说。")
+    assert generation.case_body_has_craft_content("收藏这篇，进场时对着墙顶地挨个比一遍。")
+    assert not generation.case_body_has_craft_content("一进门脚步声都轻了，沙发背景墙很安静。")
+
+
+def test_case_body_detects_over_detailed_visual_inventory():
+    detailed = (
+        "坐在餐桌前，脖子先松下来了🍃\n\n"
+        "上面挂着一块深色木块拼的墙面，一块一块错着落。\n\n"
+        "头顶两只纸灯笼亮着，光是散的，照到我肩膀上很软。\n\n"
+        "桌面木纹摸起来是温的，手臂搭上去不想挪。\n\n"
+        "想看同款思路就留言「案例」。"
+    )
+    assert generation.case_body_is_over_detailed(detailed)
+    assert not generation.case_body_is_over_detailed(
+        "一进门心里就松了🍃\n\n暖调木作墙很安静，吃饭时也踏实😌\n\n想看同款思路就留言「案例」。"
+    )
+
+
+def test_case_share_prompt_rejects_fine_grained_inventory():
+    prompt = generation._direct_generation_prompt(
+        style_block="",
+        viral_source={"title": "", "body": ""},
+        user_request='{"contentType":{"contentTypeCode":"CT01","typeName":"装修案例分享"}}',
+        generation_prompt="结合图片中的具体设计元素写",
+        forbidden_lexicon={},
+        knowledge_context="",
+        image_attached=True,
+    )
+    assert "图片只用来感受空间氛围和整体风格" in prompt
+    assert "即使用户生成提示词要求结合具体设计元素" in prompt
+    assert "不要逐件描写构件拼法、灯具数量、桌面触感" in prompt
+    assert "只写提示词要求、并且图片里能看到的内容" not in prompt
+
+
 def test_trim_cta_to_single_sentence_keeps_one_ending():
     raw = (
         "卧室好不好住，看收口。\n\n"
@@ -1166,6 +1202,108 @@ async def test_case_share_rewrites_style_cta_comment_keyword(monkeypatch):
 
 @pytest.mark.unit
 @pytest.mark.asyncio
+async def test_case_share_strips_craft_content_via_repair(monkeypatch):
+    calls = []
+
+    class FakeModel:
+        def bind_tools(self, schemas, **kwargs):
+            return self
+
+        async def ainvoke(self, messages):
+            calls.append(messages)
+            if len(calls) == 1:
+                return _tool_response(
+                    {
+                        "title": "原来家安静下来，人就不累了🌙",
+                        "body": (
+                            "一进门脚步声都轻了半截🍃\n\n"
+                            "篇幅有限，很多收口处没细说。\n\n"
+                            "收藏这篇，进场时对着墙顶地挨个比一遍。"
+                        ),
+                        "topics": ["现代"],
+                    }
+                )
+            return _tool_response(
+                {
+                    "title": "原来家安静下来，人就不累了🌙",
+                    "body": "一进门脚步声都轻了半截🍃\n\n想看同款安静家，评论区留言「案例」。",
+                    "topics": ["现代"],
+                }
+            )
+
+    monkeypatch.setattr(generation, "resolve_chat_model_spec", lambda value: value or "default")
+    monkeypatch.setattr(generation, "load_chat_model", lambda **kwargs: FakeModel())
+
+    result = await generation.generate_direct_content(
+        model_spec="deepseek:deepseek-flash",
+        creative_style={},
+        viral_source={},
+        user_request='{"contentType":{"typeName":"装修案例分享","contentTypeCode":"CT01"}}',
+        generation_prompt="按案例写",
+    )
+
+    assert len(calls) == 2
+    assert "案例分享" in calls[1][0].content
+    assert "收口处" not in result.body
+    assert "进场时" not in result.body
+    assert "留言「案例」" in result.body
+    assert not generation.case_body_has_craft_content(result.body)
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_case_share_strips_over_detailed_body_via_repair(monkeypatch):
+    calls = []
+
+    class FakeModel:
+        def bind_tools(self, schemas, **kwargs):
+            return self
+
+        async def ainvoke(self, messages):
+            calls.append(messages)
+            if len(calls) == 1:
+                return _tool_response(
+                    {
+                        "title": "吃饭时抬头看看这面墙🍃",
+                        "body": (
+                            "坐在餐桌前，脖子先松下来了🍃\n\n"
+                            "上面挂着一块深色木块拼的墙面，一块一块错着落。\n\n"
+                            "头顶两只纸灯笼亮着，光是散的，照到我肩膀上很软。\n\n"
+                            "桌面木纹摸起来是温的，手臂搭上去不想挪。\n\n"
+                            "想看同款思路就留言「案例」。"
+                        ),
+                        "topics": ["写意木构"],
+                    }
+                )
+            return _tool_response(
+                {
+                    "title": "吃饭时抬头看看这面墙🍃",
+                    "body": "一坐下心里就松了🍃\n\n暖调木作墙很安静，吃饭也踏实😌\n\n想看同款思路就留言「案例」。",
+                    "topics": ["写意木构"],
+                }
+            )
+
+    monkeypatch.setattr(generation, "resolve_chat_model_spec", lambda value: value or "default")
+    monkeypatch.setattr(generation, "load_chat_model", lambda **kwargs: FakeModel())
+
+    result = await generation.generate_direct_content(
+        model_spec="deepseek:deepseek-flash",
+        creative_style={},
+        viral_source={},
+        user_request='{"contentType":{"typeName":"装修案例分享","contentTypeCode":"CT01"}}',
+        generation_prompt="结合图片中的具体设计元素写",
+    )
+
+    assert len(calls) == 2
+    assert "正文写得太细了" in calls[1][0].content
+    assert "纸灯笼" not in result.body
+    assert "摸起来" not in result.body
+    assert "留言「案例」" in result.body
+    assert not generation.case_body_is_over_detailed(result.body)
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
 async def test_case_share_generation_keeps_only_style_region_and_fixed_tags(monkeypatch):
     calls = []
 
@@ -1204,7 +1342,10 @@ async def test_case_share_generation_keeps_only_style_region_and_fixed_tags(monk
     prompt = content if isinstance(content, str) else "".join(part.get("text", "") for part in content if isinstance(part, dict))
     assert "只写一个大众化装修风格名称" in prompt
     assert "不要写线性灯、电视墙石材" in prompt
-    assert "正文可写硬装类设计元素" in prompt
-    assert "家具软装不要写得太具体" in prompt
+    assert "这是装修案例分享" in prompt
+    assert "不要写工序、验收、收口节点、进场核对" in prompt
+    assert "留言「案例」" in prompt
+    assert "不要逐件描写构件拼法、灯具数量、桌面触感" in prompt
+    assert "图片只用来感受空间氛围和整体风格" in prompt
     assert "话题必须包含装修避坑" not in prompt
     assert result.topics == ["现代", "长沙", "装修", "装修案例"]

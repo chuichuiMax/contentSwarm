@@ -1,0 +1,32 @@
+[32m11-20 11:21:26[0m [1mINFO[0m [36mapp.py:79[0m: [1mLoading config from saves/config/base.toml[0m
+Traceback (most recent call last):
+  File "/tmp/_fetch_cover_via_app.py", line 59, in <module>
+    asyncio.run(main())
+  File "/usr/local/lib/python3.12/asyncio/runners.py", line 195, in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/asyncio/base_events.py", line 691, in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+  File "/tmp/_fetch_cover_via_app.py", line 16, in main
+    from yuxi.services.hycanvas_service import HyCanvasClient
+  File "/app/package/yuxi/services/hycanvas_service.py", line 16, in <module>
+    from yuxi.repositories.content_repository import ContentRepository
+  File "/app/package/yuxi/repositories/content_repository.py", line 11, in <module>
+    from yuxi.content.rule_library import active_combination_rules
+  File "/app/package/yuxi/content/__init__.py", line 7, in <module>
+    from yuxi.content.v3.decoration_only import ensure_decoration_only_rules
+  File "/app/package/yuxi/content/v3/decoration_only.py", line 7, in <module>
+    from yuxi.repositories.content_repository import ContentRepository
+ImportError: cannot import name 'ContentRepository' from partially initialized module 'yuxi.repositories.content_repository' (most likely due to a circular import) (/app/package/yuxi/repositories/content_repository.py)
+
+MISS /tmp/cover_out.png [Errno 2] No such file
+
+MISS /tmp/cover_src.bin [Errno 2] No such file
+
+MISS /tmp/cover_render.png [Errno 2] No such file
+
+MISS /tmp/cover_template_render.png [Errno 2] No such file

@@ -1,0 +1,11 @@
+SYNCED=/app/package/yuxi/services
+[32m11-20 14:51:52[0m [1mINFO[0m [36mapp.py:79[0m: [1mLoading config from saves/config/base.toml[0m
+[32m11-20 14:51:53[0m [1mINFO[0m [36mmanager.py:93[0m: [1mPostgreSQL manager initialized[0m
+[32m11-20 14:51:53[0m [34m[1mDEBUG[0m [36mclient.py:71[0m: [34m[1mDocker MinIOClient public_endpoint: 172.16.103.15:9000[0m
+[32m11-20 14:51:53[0m [1mINFO[0m [36mclient.py:339[0m: [1m成功从 OSS 下载 'image/material-library/mp_52903ebc22d445de8/images/cca_424cab51a47849d0bc628de9a5d2151f/image.webp' (image)[0m
+SRC 97324 image/webp
+PREVIEW 0 200 image/png 102900
+SIZE (270, 360)
+BOTTOM_BRIGHT 763 / 37800 mean [77.1, 74.2, 62.5]
+/tmp/_verify_bottom_cover_render.py:41: DeprecationWarning: Image.Image.getdata is deprecated and will be removed in Pillow 14 (2027-10-15). Use get_flattened_data instead.
+  px = list(bottom.getdata())

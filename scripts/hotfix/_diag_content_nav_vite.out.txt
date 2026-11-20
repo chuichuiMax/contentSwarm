@@ -1,0 +1,37 @@
+=== containers ===
+web-dev Up 5 minutes
+api-dev Up 27 minutes (healthy)
+
+=== web recent errors ===
+4:49:03 PM [vite] (client) hmr update /src/views/ContentStudioView.vue
+4:49:03 PM [vite] (client) hmr update /src/components/ApiKeyManagementComponent.vue, /src/views/ContentStudioView.vue, /src/components/common/MarkdownPreview.vue, /src/components/AgentMessageComponent.vue, /src/components/RefsComponent.vue, /src/views/DataBaseInfoView.vue
+4:49:03 PM [vite] (client) hmr update /src/views/ContentStudioView.vue, /src/views/ContentResultView.vue
+4:49:03 PM [vite] (client) hmr update /src/views/ContentStudioView.vue, /src/components/content/ContentStrategyDecision.vue
+4:49:03 PM [vite] (client) hmr update /src/views/ContentStudioView.vue, /src/views/DataBaseView.vue, /src/views/DataBaseInfoView.vue, /src/components/content/ContentViralAssets.vue
+4:49:03 PM [vite] (client) hmr update /src/layouts/AppLayout.vue, /src/views/ContentStudioView.vue, /src/views/ContentHistoryView.vue, /src/views/ContentRuleLibraryView.vue
+4:49:03 PM [vite] (client) page reload src/utils/errorHandler.js
+4:49:03 PM [vite] (client) hmr update /src/views/MaterialLibraryView.vue, /src/views/ContentStudioView.vue, /src/views/ImageDesignView.vue, /src/components/material/MaterialImagePickerModal.vue
+4:49:03 PM [vite] (client) hmr update /src/views/ContentStudioView.vue, /src/views/CreativeStyleConfigView.vue
+4:49:03 PM [vite] (client) hmr update /src/views/ContentStudioView.vue
+4:49:03 PM [vite] (client) hmr update /src/views/ContentStudioView.vue
+4:49:03 PM [vite] (client) hmr update /src/views/ContentStudioView.vue
+ ELIFECYCLE  Command failed with exit code 143.
+ ELIFECYCLE  Command failed with exit code 143.
+
+=== node syntax checks ===
+SYNTAX_OK
+
+=== vite dep probe ===
+=== vite ContentStudio ===
+code 200 size 1484858
+has_err False
+head import { createHotContext as __vite__createHotContext } from "/@vite/client";import.meta.hot = __vite__createHotContext("/src/views/ContentStudioView.vue");import { computed, nextT
+dep_count 24
+ok 24 bad 0
+=== critical modules ===
+/src/utils/contentRequestPayload.js 200 46980 ok
+/src/apis/base.js 200 59815 ok
+/src/stores/contentStudio.js 200 88992 ok
+/src/apis/content_api.js 200 70050 ok
+/src/components/content/ContentStudioToolbar.vue 200 8928 ok
+/src/components/material/CaseGalleryStyleFilter.vue 200 10177 ok

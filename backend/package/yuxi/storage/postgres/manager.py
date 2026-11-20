@@ -1084,6 +1084,19 @@ class PostgresManager(metaclass=SingletonMeta):
             "ALTER TABLE IF EXISTS content_employees ADD COLUMN IF NOT EXISTS current_department VARCHAR(128) NOT NULL DEFAULT ''",
             "ALTER TABLE IF EXISTS requirement_list_submissions ADD COLUMN IF NOT EXISTS answers JSONB NOT NULL DEFAULT '{}'::jsonb",
             "ALTER TABLE IF EXISTS requirement_list_submissions ALTER COLUMN address TYPE VARCHAR(200)",
+            "ALTER TABLE IF EXISTS requirement_list_submissions ADD COLUMN IF NOT EXISTS submitter_name VARCHAR(80) NOT NULL DEFAULT ''",
+            (
+                "CREATE TABLE IF NOT EXISTS requirement_list_submission_shares ("
+                "id VARCHAR(64) PRIMARY KEY, "
+                "submission_id VARCHAR(64) NOT NULL REFERENCES requirement_list_submissions(id) ON DELETE CASCADE, "
+                "member_uid VARCHAR(64) NOT NULL, "
+                "member_name VARCHAR(80) NOT NULL DEFAULT '', "
+                "shared_by_uid VARCHAR(64) NOT NULL, "
+                "created_at TIMESTAMP)"
+            ),
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_rls_submission_member "
+            "ON requirement_list_submission_shares(submission_id, member_uid)",
+            "CREATE INDEX IF NOT EXISTS ix_rls_share_member_uid ON requirement_list_submission_shares(member_uid)",
             (
                 "ALTER TABLE IF EXISTS content_variables "
                 'ADD COLUMN IF NOT EXISTS ports JSONB NOT NULL DEFAULT \'["pc","app"]\'::jsonb'

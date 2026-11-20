@@ -13,12 +13,14 @@ HOST = "172.16.103.17"
 BASE = "/opt/contentSwarm"
 FILES = (
     "backend/package/yuxi/services/requirement_list_service.py",
+    "backend/package/yuxi/utils/line_breaks.py",
     "backend/server/routers/mp_router.py",
     "backend/server/routers/requirement_list_router.py",
     "backend/server/routers/__init__.py",
     "backend/package/yuxi/storage/postgres/models_content.py",
     "backend/package/yuxi/storage/postgres/manager.py",
 )
+INIT_PATCH = REPO / "scripts" / "hotfix" / "_prod_init_patch.py"
 
 
 def _pw() -> str:
@@ -70,6 +72,12 @@ def main() -> int:
         print("OK", rel)
     sftp.close()
 
+    print(">>> patch production __init__ (drop routers absent on 103.17)")
+    sftp = c.open_sftp()
+    sftp.put(str(INIT_PATCH), "/tmp/_prod_init_patch.py")
+    sftp.close()
+    print(run(c, "python3 /tmp/_prod_init_patch.py", timeout=60))
+
     print(">>> restart api")
     print(run(c, "docker restart api-dev", timeout=120))
     time.sleep(15)
@@ -79,7 +87,8 @@ def main() -> int:
         "import urllib.request; "
         "spec=urllib.request.urlopen('http://127.0.0.1:5050/openapi.json', timeout=10).read().decode(); "
         "print('mp_public', '/api/mp/requirement-lists/public' in spec); "
-        "print('pc_public', '/api/requirement-lists/public' in spec)\""
+        "        print('pc_public', '/api/requirement-lists/public' in spec); "
+        "print('visitor_session', '/api/mp/requirement-lists/visitor-sessions' in spec)\""
     )
     print(run(c, verify, timeout=60))
 

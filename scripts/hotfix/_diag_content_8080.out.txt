@@ -1,0 +1,156 @@
+=== docker publish ports ===
+contentswarm-hycanvas-app-1	0.0.0.0:3000->3000/tcp, [::]:3000->3000/tcp, 0.0.0.0:8005->8005/tcp, [::]:8005->8005/tcp
+web-dev	0.0.0.0:5173->5173/tcp, [::]:5173->5173/tcp
+api-dev	0.0.0.0:5050->5050/tcp, [::]:5050->5050/tcp
+worker-dev	
+sandbox-provisioner	0.0.0.0:8002->8002/tcp, [::]:8002->8002/tcp
+graph	0.0.0.0:7474->7474/tcp, [::]:7474->7474/tcp, 7473/tcp, 0.0.0.0:7687->7687/tcp, [::]:7687->7687/tcp
+milvus	0.0.0.0:9091->9091/tcp, [::]:9091->9091/tcp, 0.0.0.0:19530->19530/tcp, [::]:19530->19530/tcp
+postgres	0.0.0.0:5432->5432/tcp, [::]:5432->5432/tcp
+contentswarm-hycanvas-db-1	5432/tcp
+redis	0.0.0.0:6379->6379/tcp, [::]:6379->6379/tcp
+minio	0.0.0.0:9000-9001->9000-9001/tcp, [::]:9000-9001->9000-9001/tcp
+milvus-etcd-dev	2379-2380/tcp
+
+=== curl 8080 paths ===
+URL /
+code:200 ctype:text/html size:451 redir:
+<!DOCTYPE html> <html lang="zh-CN">   <head>     <script type="module" src="/@vite/client"></script>      <meta charset="UTF-8">     <link rel="icon" type="imag
+URL /content/new
+code:200 ctype:text/html size:451 redir:
+<!DOCTYPE html> <html lang="zh-CN">   <head>     <script type="module" src="/@vite/client"></script>      <meta charset="UTF-8">     <link rel="icon" type="imag
+URL /model-manage/employees
+code:200 ctype:text/html size:451 redir:
+<!DOCTYPE html> <html lang="zh-CN">   <head>     <script type="module" src="/@vite/client"></script>      <meta charset="UTF-8">     <link rel="icon" type="imag
+URL /src/views/ContentStudioView.vue
+code:200 ctype:text/javascript size:1484858 redir:
+import { createHotContext as __vite__createHotContext } from "/@vite/client";import.meta.hot = __vite__createHotContext("/src/views/ContentStudioView.vue");impo
+URL /assets/index.js
+code:200 ctype:text/html size:451 redir:
+<!DOCTYPE html> <html lang="zh-CN">   <head>     <script type="module" src="/@vite/client"></script>      <meta charset="UTF-8">     <link rel="icon" type="imag
+
+=== nginx/caddy/proxy configs ===
+AGENTS.md
+apps
+ARCHITECTURE.md
+backend
+certs
+CLAUDE.md
+config
+CONTRIBUTING.md
+design-qa-comparison.png
+design-qa-implementation.png
+design-qa.md
+docker
+docker-compose.hycanvas-fast.yml
+docker-compose.live-capacity.yml
+docker-compose-prod.yml
+docker-compose.prod.yml
+docker-compose.source.yml
+docker-compose-test.yml
+docker-compose-uat.yml
+docker-compose.yml
+docs
+LICENSE
+Makefile
+README.en.md
+README.md
+scripts
+tmp
+tools
+web
+部署脚本.md
+/srv/contentswarm/docker-compose-test.yml
+/srv/contentswarm/docker-compose-prod.yml
+/srv/contentswarm/apps/hycanvas/docker-compose.dev.yml
+/srv/contentswarm/apps/hycanvas/docker-compose.yml
+/srv/contentswarm/apps/hycanvas/docker-compose.prod.yml
+/srv/contentswarm/docker/nginx/nginx.conf
+/srv/contentswarm/docker/nginx/default.conf
+/srv/contentswarm/docker/nginx/contentswarm-host-dev-proxy.conf
+/srv/contentswarm/docker/nginx/static-spa.conf
+/srv/contentswarm/scripts/systemd/nginx-ssl-prestart.conf
+/srv/contentswarm/scripts/nginx/yuxi-boyun.conf
+/srv/contentswarm/scripts/nginx/yuxi-root-public-origin.conf
+/srv/contentswarm/docker-compose.hycanvas-fast.yml
+/srv/contentswarm/docker-compose.yml
+/srv/contentswarm/docker-compose.source.yml
+/srv/contentswarm/docker-compose-uat.yml
+/srv/contentswarm/docker-compose.live-capacity.yml
+/srv/contentswarm/docker-compose.prod.yml
+/srv/contentswarm/docker-compose-test.yml:21:  PADDLEX_URI: ${PADDLEX_URI:-http://paddlex:8080}
+/srv/contentswarm/docker-compose-test.yml:184:      SANDBOX_CONTAINER_PORT: ${SANDBOX_CONTAINER_PORT:-8080}
+/srv/contentswarm/docker-compose-test.yml:457:      test: ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
+/srv/contentswarm/docker-compose-prod.yml:21:  PADDLEX_URI: ${PADDLEX_URI:-http://paddlex:8080}
+/srv/contentswarm/docker-compose-prod.yml:184:      SANDBOX_CONTAINER_PORT: ${SANDBOX_CONTAINER_PORT:-8080}
+/srv/contentswarm/docker-compose-prod.yml:456:      test: ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
+/srv/contentswarm/docker/nginx/default.conf:19:        proxy_pass http://api:5050/api/;
+/srv/contentswarm/docker/nginx/default.conf:41:        proxy_pass http://api:5050/share/case/;
+/srv/contentswarm/docker/nginx/default.conf:51:        proxy_pass http://api:5050/share/case/;
+/srv/contentswarm/docker/nginx/default.conf:67:        try_files $uri =404;
+/srv/contentswarm/docker/nginx/default.conf:78:        try_files $uri /index.html;
+/srv/contentswarm/docker/nginx/default.conf:85:        proxy_pass http://hycanvas-app:8005;
+/srv/contentswarm/docker/nginx/default.conf:104:        proxy_pass http://hycanvas-app:8005;
+/srv/contentswarm/docker/nginx/default.conf:117:        proxy_pass http://hycanvas-app:3000;
+/srv/contentswarm/docker/nginx/default.conf:123:        proxy_pass http://hycanvas-app:3000;
+/srv/contentswarm/docker/nginx/default.conf:131:        proxy_pass http://hycanvas-app:3000;
+/srv/contentswarm/docker/nginx/default.conf:139:        proxy_pass http://hycanvas-app:3000;
+/srv/contentswarm/docker/nginx/default.conf:147:        proxy_pass http://api:5050/api/;
+/srv/contentswarm/docker/nginx/default.conf:169:        proxy_pass http://minio:9000/public/;
+/srv/contentswarm/docker/nginx/contentswarm-host-dev-proxy.conf:1:# 测试机宿主机 Nginx：公网 :8080 → web-dev (Vite 5173)；HyCanvas 同端口反代（8005/3000 常未公网放行）。
+/srv/contentswarm/docker/nginx/contentswarm-host-dev-proxy.conf:3:    listen 8080;
+/srv/contentswarm/docker/nginx/contentswarm-host-dev-proxy.conf:4:    listen [::]:8080;
+/srv/contentswarm/docker/nginx/contentswarm-host-dev-proxy.conf:10:        proxy_pass http://127.0.0.1:8005;
+/srv/contentswarm/docker/nginx/contentswarm-host-dev-proxy.conf:23:        proxy_pass http://127.0.0.1:8005;
+/srv/contentswarm/docker/nginx/contentswarm-host-dev-proxy.conf:35:        proxy_pass http://127.0.0.1:3000;
+/srv/contentswarm/docker/nginx/contentswarm-host-dev-proxy.conf:41:        proxy_pass http://127.0.0.1:3000;
+/srv/contentswarm/docker/nginx/contentswarm-host-dev-proxy.conf:49:        proxy_pass http://127.0.0.1:3000;
+/srv/contentswarm/docker/nginx/contentswarm-host-dev-proxy.conf:57:        proxy_pass http://127.0.0.1:3000;
+/srv/contentswarm/docker/nginx/contentswarm-host-dev-proxy.conf:65:        proxy_pass http://127.0.0.1:5050;
+/srv/contentswarm/docker/nginx/contentswarm-host-dev-proxy.conf:73:        proxy_pass http://127.0.0.1:5050;
+/srv/contentswarm/docker/nginx/contentswarm-host-dev-proxy.conf:87:        proxy_pass http://127.0.0.1:5173;
+/srv/contentswarm/docker/nginx/static-spa.conf:9:        try_files $uri =404;
+/srv/contentswarm/docker/nginx/static-spa.conf:18:        try_files $uri /index.html;
+/srv/contentswarm/scripts/nginx/yuxi-boyun.conf:28:    proxy_pass http://127.0.0.1:8090/api/;
+/srv/contentswarm/scripts/nginx/yuxi-boyun.conf:44:    proxy_pass http://127.0.0.1:8090/;
+/srv/contentswarm/scripts/nginx/yuxi-root-public-origin.conf:2:# Keep each location's existing proxy_pass; this file does not select an upstream.
+/srv/contentswarm/docker-compose.yml:29:  PADDLEX_URI: ${PADDLEX_URI:-http://paddlex:8080}
+/srv/contentswarm/docker-compose.yml:256:      - SANDBOX_CONTAINER_PORT=${SANDBOX_CONTAINER_PORT:-8080}
+/srv/contentswarm/docker-compose.yml:301:      - "5173:5173"
+/srv/contentswarm/docker-compose.yml:481:      CONTENTSWARM_URL: ${CONTENTSWARM_PUBLIC_URL:-http://127.0.0.1:5173}
+/srv/contentswarm/docker-compose.yml:588:      - "8080:8080"
+/srv/contentswarm/docker-compose.yml:590:      test: ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
+/srv/contentswarm/docker-compose.source.yml:21:  PADDLEX_URI: ${PADDLEX_URI:-http://paddlex:8080}
+/srv/contentswarm/docker-compose.source.yml:184:      SANDBOX_CONTAINER_PORT: ${SANDBOX_CONTAINER_PORT:-8080}
+/srv/contentswarm/docker-compose.source.yml:457:      test: ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
+/srv/contentswarm/docker-compose-uat.yml:21:  PADDLEX_URI: ${PADDLEX_URI:-http://paddlex:8080}
+/srv/contentswarm/docker-compose-uat.yml:184:      SANDBOX_CONTAINER_PORT: ${SANDBOX_CONTAINER_PORT:-8080}
+/srv/contentswarm/docker-compose-uat.yml:456:      test: ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
+/srv/contentswarm/docker-compose.live-capacity.yml:28:      - "5173:80"
+/srv/contentswarm/docker-compose.prod.yml:20:  PADDLEX_URI: ${PADDLEX_URI:-http://paddlex:8080}
+/srv/contentswarm/docker-compose.prod.yml:168:      - SANDBOX_CONTAINER_PORT=${SANDBOX_CONTAINER_PORT:-8080}
+/srv/contentswarm/docker-compose.prod.yml:453:      test: ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
+/etc/nginx/snippets/fastcgi-php.conf:5:try_files $fastcgi_script_name =404;
+/etc/nginx/snippets/fastcgi-php.conf:7:# Bypass the fact that try_files resets $fastcgi_path_info
+/etc/nginx/snippets/hycanvas-proxy.conf:2:    proxy_pass http://127.0.0.1:8005;
+/etc/nginx/snippets/hycanvas-proxy.conf:14:    proxy_pass http://127.0.0.1:8005;
+/etc/nginx/snippets/hycanvas-proxy.conf:24:    proxy_pass http://127.0.0.1:8005;
+/etc/nginx/snippets/hycanvas-proxy.conf:30:    proxy_pass http://127.0.0.1:3000;
+/etc/nginx/snippets/hycanvas-proxy.conf:38:    proxy_pass http://127.0.0.1:3000;
+/etc/nginx/snippets/hycanvas-proxy.conf:44:    proxy_pass http://127.0.0.1:3000;
+/etc/nginx/snippets/hycanvas-proxy.conf:50:    proxy_pass http://127.0.0.1:3000;
+/etc/nginx/snippets/hycanvas-proxy.conf:58:    proxy_pass http://127.0.0.1:3000;
+/etc/nginx/snippets/hycanvas-proxy.conf:66:    proxy_pass http://127.0.0.1:3000;
+/etc/nginx/snippets/hycanvas-proxy.conf:72:    proxy_pass http://127.0.0.1:3000;
+/etc/nginx/conf.d/contentswarm-dev-proxy.conf:1:# 公网 :8080 → web-dev (Vite 5173)；HyCanvas 走同端口避免 8005/3000 未放行。
+/etc/nginx/conf.d/contentswarm-dev-proxy.conf:3:    listen 8080;
+/etc/nginx/conf.d/contentswarm-dev-proxy.conf:4:    listen [::]:8080;
+/etc/nginx/conf.d/contentswarm-dev-proxy.conf:10:        proxy_pass http://127.0.0.1:8005;
+/etc/nginx/conf.d/contentswarm-dev-proxy.conf:23:        proxy_pass http://127.0.0.1:8005;
+/etc/nginx/conf.d/contentswarm-dev-proxy.conf:35:        proxy_pass http://127.0.0.1:3000;
+/etc/nginx/conf.d/contentswarm-dev-proxy.conf:41:        proxy_pass http://127.0.0.1:3000;
+/etc/nginx/conf.d/contentswarm-dev-proxy.conf:49:        proxy_pass http://127.0.0.1:3000;
+/etc/nginx/conf.d/contentswarm-dev-proxy.conf:57:        proxy_pass http://127.0.0.1:3000;
+/etc/nginx/conf.d/contentswarm-dev-proxy.conf:65:        proxy_pass http://127.0.0.1:5050;
+/etc/nginx/conf.d/contentswarm-dev-proxy.conf:73:        proxy_pass http://127.0.0.1:5050;
+/etc/nginx/conf.d/contentswarm-dev-proxy.conf:87:        proxy_pass http://127.0.0.1:5173;

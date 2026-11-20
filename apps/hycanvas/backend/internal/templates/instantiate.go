@@ -1,12 +1,19 @@
 package templates
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"image"
+	_ "image/jpeg"
+	_ "image/png"
 	"strings"
 	"unicode"
+
+	_ "golang.org/x/image/webp"
 )
 
 type InstantiateImage struct {
@@ -104,11 +111,15 @@ func (s *Service) Instantiate(ctx context.Context, userID, templateID string, in
 // bottom layer of every page. Template text and decoration stay above it and
 // remain editable, so a template contributes visual styling rather than
 // replacing the selected photo with its own page color.
+//
+// Cover crop keeps the bottom edge (focalY=1): taller source photos often put
+// brand watermarks near the floor, and center-crop was slicing them in half.
 func applyBackgroundImage(file map[string]any, image InstantiateImage) error {
 	if image.DataBase64 == "" || !strings.HasPrefix(image.ContentType, "image/") {
 		return ErrBadRequest
 	}
 	assetID := registerInlineImageAsset(file, image)
+	naturalW, naturalH := backgroundNaturalSize(image)
 	for pageIndex, pageRaw := range asArr(file["pages"]) {
 		page := asObj(pageRaw)
 		width, height := asNum(page["width"]), asNum(page["height"])
@@ -116,22 +127,35 @@ func applyBackgroundImage(file map[string]any, image InstantiateImage) error {
 			return ErrBadRequest
 		}
 		background := map[string]any{
-			"id":        fmt.Sprintf("contentswarm-background-%d", pageIndex),
-			"name":      "ContentSwarm 素材背景",
-			"type":      "image",
-			"transform": map[string]any{"x": 0.0, "y": 0.0, "scaleX": 1.0, "scaleY": 1.0, "rotation": 0.0},
-			"size":      map[string]any{"width": width, "height": height},
-			"opacity":   1.0,
-			"blendMode": "normal",
-			"locked":    true,
-			"fit":       "cover",
-			"source":    map[string]any{"assetId": assetID, "naturalWidth": 0.0, "naturalHeight": 0.0},
-			"data":      map[string]any{"background": true, "source": "contentswarm-material-library"},
+			"id":         fmt.Sprintf("contentswarm-background-%d", pageIndex),
+			"name":       "ContentSwarm 素材背景",
+			"type":       "image",
+			"transform":  map[string]any{"x": 0.0, "y": 0.0, "scaleX": 1.0, "scaleY": 1.0, "rotation": 0.0},
+			"size":       map[string]any{"width": width, "height": height},
+			"opacity":    1.0,
+			"blendMode":  "normal",
+			"locked":     true,
+			"fit":        "cover",
+			"focalPoint": map[string]any{"x": 0.5, "y": 1.0},
+			"source":     map[string]any{"assetId": assetID, "naturalWidth": naturalW, "naturalHeight": naturalH},
+			"data":       map[string]any{"background": true, "source": "contentswarm-material-library"},
 		}
 		page["children"] = append([]any{background}, asArr(page["children"])...)
 		delete(page, "background")
 	}
 	return nil
+}
+
+func backgroundNaturalSize(img InstantiateImage) (float64, float64) {
+	data, err := base64.StdEncoding.DecodeString(img.DataBase64)
+	if err != nil {
+		return 0, 0
+	}
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(data))
+	if err != nil {
+		return 0, 0
+	}
+	return float64(cfg.Width), float64(cfg.Height)
 }
 
 // registerInlineImageAsset keeps automation-supplied pixels in the standard

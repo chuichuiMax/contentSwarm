@@ -38,7 +38,13 @@ const activeQuestions = ref(requirementFormPack('rough').questions)
 const answers = reactive(blankAnswers(activeQuestions.value))
 const toastText = ref('')
 const toastVisible = ref(false)
+const shareRecord = ref(null)
+const shareKeyword = ref('')
+const shareCandidates = ref([])
+const shareSelected = ref([])
+const shareLoading = ref(false)
 let toastTimer = 0
+let shareTimer = 0
 
 const readonly = computed(() => mode.value === 'detail')
 const pageCount = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)))
@@ -205,6 +211,66 @@ const submitForm = async () => {
   }
 }
 
+const loadShareCandidates = async () => {
+  shareLoading.value = true
+  try {
+    const response = await requirementListApi.shareEmployees({ keyword: shareKeyword.value.trim() })
+    shareCandidates.value = response.items || []
+  } catch (error) {
+    shareCandidates.value = []
+    showToast(error.message || '员工列表暂时无法加载')
+  } finally {
+    shareLoading.value = false
+  }
+}
+
+const openShare = (record) => {
+  shareRecord.value = record
+  shareKeyword.value = ''
+  shareSelected.value = []
+  void loadShareCandidates()
+}
+
+const closeShare = () => {
+  shareRecord.value = null
+  shareKeyword.value = ''
+  shareCandidates.value = []
+  shareSelected.value = []
+}
+
+const toggleShareEmployee = (employeeId) => {
+  const next = [...shareSelected.value]
+  const index = next.indexOf(employeeId)
+  if (index >= 0) next.splice(index, 1)
+  else next.push(employeeId)
+  shareSelected.value = next
+}
+
+const submitShare = async () => {
+  if (!shareRecord.value) return
+  const picked = shareCandidates.value.filter((item) => shareSelected.value.includes(item.id))
+  if (!picked.length) {
+    showToast('请至少选择一位员工')
+    return
+  }
+  try {
+    const updated = await requirementListApi.share(shareRecord.value.id, { employee_ids: picked.map((item) => item.id) })
+    const index = records.value.findIndex((item) => item.id === shareRecord.value.id)
+    if (index >= 0) {
+      records.value[index] = { ...records.value[index], ...updated }
+    }
+    closeShare()
+    showToast('共享成功，所选员工已可查看该条需求清单')
+  } catch (error) {
+    showToast(error.message || '共享失败')
+  }
+}
+
+const onShareKeywordInput = () => {
+  clearTimeout(shareTimer)
+  shareTimer = window.setTimeout(() => { void loadShareCandidates() }, 280)
+}
+
 const removeRow = async (record) => {
   try {
     await requirementListApi.remove(record.id)
@@ -250,6 +316,7 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   document.removeEventListener('keydown', onKeydown)
   clearTimeout(toastTimer)
+  clearTimeout(shareTimer)
 })
 </script>
 
@@ -311,7 +378,7 @@ onBeforeUnmount(() => {
             <tr>
               <th>序</th><th>需求清单类型</th><th>客户姓名</th><th>手机号码</th><th>楼盘地址</th>
               <th>分享人</th><th>岗位</th><th>工号</th><th>完成度</th><th>所属门店</th>
-              <th>分享时间</th><th>提交时间</th><th>操作</th>
+              <th>分享时间</th><th>提交时间</th><th>提交人</th><th>共享成员</th><th>操作</th>
             </tr>
           </thead>
           <tbody>
@@ -328,9 +395,22 @@ onBeforeUnmount(() => {
               <td>{{ textOf(record.branch) }}</td>
               <td class="num">{{ record.shared_at }}</td>
               <td class="num">{{ record.submitted_at }}</td>
+              <td>{{ textOf(record.submitter_name) }}</td>
+              <td class="members">
+                <span v-if="!record.shared_members?.length" class="muted">未共享</span>
+                <span v-else v-for="member in record.shared_members" :key="member.uid" class="member-chip">
+                  <span class="tag">企微</span>{{ member.name }}
+                </span>
+              </td>
               <td>
                 <button type="button" class="detail-btn" @click="openDetail(record)">查看详情</button>
-                <button type="button" class="del" @click="removeRow(record)">删除</button>
+                <button
+                  v-if="record.can_share"
+                  type="button"
+                  class="detail-btn"
+                  @click="openShare(record)"
+                >共享</button>
+                <button v-if="record.can_share" type="button" class="del" @click="removeRow(record)">删除</button>
               </td>
             </tr>
           </tbody>
@@ -356,6 +436,40 @@ onBeforeUnmount(() => {
     </section>
 
     <div class="toast" :class="{ show: toastVisible }" role="status">{{ toastText }}</div>
+
+    <div v-if="shareRecord" class="overlay show" @click.self="closeShare">
+      <div class="share-dialog" role="dialog" aria-modal="true" aria-label="共享需求清单">
+        <div class="share-head">
+          <h3>共享需求清单</h3>
+          <button type="button" class="icon-btn" aria-label="关闭" @click="closeShare">×</button>
+        </div>
+        <p class="share-tip">选择同事后，对方可在需求清单列表中查看本条记录。</p>
+        <label class="share-search">
+          <input
+            v-model="shareKeyword"
+            aria-label="搜索员工"
+            placeholder="输入姓名、工号或手机号"
+            @input="onShareKeywordInput"
+          >
+        </label>
+        <div class="share-list" :aria-busy="shareLoading">
+          <label v-for="employee in shareCandidates" :key="employee.id" class="share-item">
+            <input
+              type="checkbox"
+              :checked="shareSelected.includes(employee.id)"
+              @change="toggleShareEmployee(employee.id)"
+            >
+            <span class="share-name">{{ employee.name }}</span>
+            <span class="share-meta">{{ employee.employee_code }} · {{ employee.branch || '—' }}</span>
+          </label>
+          <div v-if="!shareLoading && !shareCandidates.length" class="share-empty">没有匹配的员工</div>
+        </div>
+        <div class="share-foot">
+          <button type="button" class="btn plain" @click="closeShare">取消</button>
+          <button type="button" class="btn primary" @click="submitShare">确认共享</button>
+        </div>
+      </div>
+    </div>
 
     <div v-if="mode" class="overlay show" @click.self="closeModal">
       <div class="modal" role="dialog" aria-modal="true" :aria-label="modalTitle">
@@ -425,6 +539,21 @@ tr.fresh { background: #eaf1ff; }
 .detail-btn, .del { border: 0; background: none; cursor: pointer; font-size: 12px; }
 .detail-btn { color: #2f6bff; }
 .del { margin-left: 10px; color: #f2544b; }
+.members { max-width: 160px; white-space: normal; }
+.muted { color: #9aa1ad; }
+.member-chip { display: inline-flex; align-items: center; gap: 4px; margin: 0 6px 4px 0; font-size: 11px; }
+.member-chip .tag { padding: 0 4px; border-radius: 2px; background: #e8f1ff; color: #2f6bff; font-size: 10px; }
+.share-dialog { display: flex; flex-direction: column; width: 520px; max-width: calc(100vw - 48px); max-height: min(78vh, 640px); overflow: hidden; border-radius: 12px; background: #fff; }
+.share-head, .share-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 20px; }
+.share-head { border-bottom: 1px solid #e9ecf2; h3 { margin: 0; font-size: 15px; } }
+.share-tip { margin: 0; padding: 0 20px; color: #8a9099; font-size: 12px; }
+.share-search { display: block; padding: 12px 20px 0; input { width: 100%; height: 34px; padding: 0 10px; border: 1px solid #e2e6ef; border-radius: 4px; font: inherit; } }
+.share-list { flex: 1; min-height: 0; overflow-y: auto; padding: 12px 20px; }
+.share-item { display: grid; grid-template-columns: 16px 1fr; gap: 6px 10px; align-items: center; padding: 8px 0; border-bottom: 1px solid #f3f4f7; cursor: pointer; }
+.share-name { color: #1f2329; font-size: 13px; }
+.share-meta { grid-column: 2; color: #9aa1ad; font-size: 11px; }
+.share-empty { padding: 24px 0; color: #9aa1ad; text-align: center; font-size: 12px; }
+.share-foot { justify-content: flex-end; border-top: 1px solid #e9ecf2; }
 .empty { padding: 36px; color: #9aa1ad; text-align: center; }
 .pager { display: flex; align-items: flex-end; justify-content: space-between; padding: 16px; color: #9aa1ad; font-size: 12px; }
 .pages { display: flex; gap: 8px; }

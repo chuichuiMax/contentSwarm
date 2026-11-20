@@ -6,10 +6,12 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 
 from yuxi.services.requirement_list_service import (
+    MpSharedSubmissionCreate,
     SubmissionCreate,
     SubmissionFilters,
-    _can_see,
+    _can_manage,
     _filtered,
+    _owns_submission,
     _range_bounds,
     _visible,
     completion_percent,
@@ -58,6 +60,19 @@ def test_submission_answers_reject_oversized_payload():
         SubmissionCreate(requirement_type="毛坯房", customer_name="刘洋", answers={"note": "x" * 20001})
 
 
+def test_mp_shared_submission_requires_wechat_fields():
+    with pytest.raises(ValidationError):
+        MpSharedSubmissionCreate(
+            requirement_type="毛坯房",
+            customer_name="刘洋",
+            address="长沙",
+            staff_code="H001",
+            visitor_session_id="",
+            phone_code="",
+            submitter_nickname="",
+        )
+
+
 def test_shared_submission_requires_staff_code():
     payload = SubmissionCreate(requirement_type="毛坯房", customer_name="刘洋", staff_code="  ")
     with pytest.raises(HTTPException) as caught:
@@ -97,7 +112,7 @@ def test_completion_percent_uses_filled_fields_over_total():
     assert completion_percent({"q3_other": "备注"}, name="", phone="", address="") == 4
 
 
-def test_only_superadmin_sees_every_submission():
+def test_only_owner_or_superadmin_can_manage_submission():
     from types import SimpleNamespace
 
     own = SimpleNamespace(created_by="user-1")
@@ -105,10 +120,11 @@ def test_only_superadmin_sees_every_submission():
     user = SimpleNamespace(role="user", uid="user-1")
     admin = SimpleNamespace(role="admin", uid="admin-1")
     root = SimpleNamespace(role="superadmin", uid="root")
-    assert _can_see(own, user)
-    assert not _can_see(other, user)
-    assert not _can_see(other, admin)
-    assert _can_see(other, root)
+    assert _owns_submission(own, user)
+    assert _can_manage(own, user)
+    assert not _can_manage(other, user)
+    assert not _can_manage(other, admin)
+    assert _can_manage(other, root)
 
 
 def test_visible_query_limits_non_superadmin():
@@ -119,4 +135,5 @@ def test_visible_query_limits_non_superadmin():
     scoped = str(_visible(_filtered(SubmissionFilters()), user).compile(compile_kwargs={"literal_binds": True}))
     open_query = str(_visible(_filtered(SubmissionFilters()), root).compile(compile_kwargs={"literal_binds": True}))
     assert "created_by = 'user-1'" in scoped
+    assert "requirement_list_submission_shares" in scoped
     assert "created_by =" not in open_query

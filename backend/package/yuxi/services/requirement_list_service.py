@@ -8,16 +8,21 @@ import json
 import uuid
 from datetime import datetime, time, timedelta
 
+import httpx
 from fastapi import HTTPException
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.repositories.employee_repository import EmployeeRepository
 from yuxi.services.employee_service import resolve_employee_for_user
+from yuxi.services.mp_service import _wechat_credentials, _wechat_phone_by_code
+from yuxi.services.run_queue_service import get_redis_client
 from yuxi.storage.postgres.models_business import User
-from yuxi.storage.postgres.models_content import RequirementListSubmission
+from yuxi.storage.postgres.models_content import RequirementListSubmission, RequirementListSubmissionShare
 from yuxi.utils.datetime_utils import SHANGHAI_TZ, UTC, shanghai_now, utc_now_naive
+
+REQUIREMENT_VISITOR_SESSION_TTL = 600
 
 REQUIREMENT_TYPES = ("毛坯房", "精装房", "旧房焕新")
 STORE_OPTIONS = ("长沙芙蓉店", "长沙袁家岭店", "长沙河西店", "长沙星沙店")
@@ -165,6 +170,18 @@ class SubmissionCreate(BaseModel):
         )
 
 
+class RequirementVisitorSessionCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    code: str = Field(min_length=1, max_length=128)
+    staff_code: str = Field(min_length=1, max_length=64)
+
+
+class MpSharedSubmissionCreate(SubmissionCreate):
+    visitor_session_id: str = Field(min_length=8, max_length=64)
+    phone_code: str = Field(min_length=1, max_length=512)
+    submitter_nickname: str = Field(min_length=1, max_length=32)
+
+
 class SubmissionFilters(BaseModel):
     keyword: str = Field(default="", max_length=80)
     branch: str | None = Field(default=None, max_length=80)
@@ -197,14 +214,62 @@ def _range_bounds(kind: str) -> tuple[datetime, datetime] | None:
     return start, end
 
 
-def _can_see(row: RequirementListSubmission, user: User) -> bool:
-    return user.role == "superadmin" or row.created_by == str(user.uid)
+def _owns_submission(row: RequirementListSubmission, user: User) -> bool:
+    return row.created_by == str(user.uid)
+
+
+def _can_manage(row: RequirementListSubmission, user: User) -> bool:
+    return user.role == "superadmin" or _owns_submission(row, user)
 
 
 def _visible(stmt, user: User):
     if user.role == "superadmin":
         return stmt
-    return stmt.where(RequirementListSubmission.created_by == str(user.uid))
+    uid = str(user.uid)
+    shared = (
+        select(RequirementListSubmissionShare.id)
+        .where(
+            RequirementListSubmissionShare.submission_id == RequirementListSubmission.id,
+            RequirementListSubmissionShare.member_uid == uid,
+        )
+        .correlate(RequirementListSubmission)
+        .exists()
+    )
+    return stmt.where(or_(RequirementListSubmission.created_by == uid, shared))
+
+
+async def _has_share_access(db: AsyncSession, row: RequirementListSubmission, user: User) -> bool:
+    if user.role == "superadmin" or _owns_submission(row, user):
+        return True
+    found = await db.scalar(
+        select(RequirementListSubmissionShare.id).where(
+            RequirementListSubmissionShare.submission_id == row.id,
+            RequirementListSubmissionShare.member_uid == str(user.uid),
+        )
+    )
+    return found is not None
+
+
+def _member_rows(shares: list[RequirementListSubmissionShare]) -> list[dict[str, str]]:
+    return [{"uid": item.member_uid, "name": item.member_name, "channel": "企微"} for item in shares]
+
+
+async def _shares_by_submission(
+    db: AsyncSession, submission_ids: list[str]
+) -> dict[str, list[RequirementListSubmissionShare]]:
+    if not submission_ids:
+        return {}
+    rows = (
+        await db.scalars(
+            select(RequirementListSubmissionShare)
+            .where(RequirementListSubmissionShare.submission_id.in_(submission_ids))
+            .order_by(RequirementListSubmissionShare.created_at.asc())
+        )
+    ).all()
+    grouped: dict[str, list[RequirementListSubmissionShare]] = {}
+    for item in rows:
+        grouped.setdefault(item.submission_id, []).append(item)
+    return grouped
 
 
 def _filtered(filters: SubmissionFilters):
@@ -219,6 +284,7 @@ def _filtered(filters: SubmissionFilters):
                 RequirementListSubmission.phone.ilike(like),
                 RequirementListSubmission.address.ilike(like),
                 RequirementListSubmission.sharer_name.ilike(like),
+                RequirementListSubmission.submitter_name.ilike(like),
                 RequirementListSubmission.employee_code.ilike(like),
                 RequirementListSubmission.branch.ilike(like),
             )
@@ -240,7 +306,14 @@ def _filtered(filters: SubmissionFilters):
     return stmt
 
 
-def submission_data(row: RequirementListSubmission, *, reveal_phone: bool = False, with_answers: bool = False) -> dict:
+def submission_data(
+    row: RequirementListSubmission,
+    *,
+    reveal_phone: bool = False,
+    with_answers: bool = False,
+    user: User | None = None,
+    shared_members: list[dict[str, str]] | None = None,
+) -> dict:
     progress_value = completion_percent(
         dict(row.answers or {}),
         name=row.customer_name or "",
@@ -261,7 +334,11 @@ def submission_data(row: RequirementListSubmission, *, reveal_phone: bool = Fals
         "branch": row.branch,
         "shared_at": display_stamp(row.shared_at),
         "submitted_at": display_stamp(row.submitted_at),
+        "submitter_name": row.submitter_name or "",
+        "shared_members": shared_members if shared_members is not None else [],
     }
+    if user is not None:
+        data["can_share"] = _can_manage(row, user)
     if with_answers:
         data["answers"] = dict(row.answers or {})
     return data
@@ -274,6 +351,7 @@ async def create_submission(db: AsyncSession, user: User, payload: SubmissionCre
     if not staff_code:
         raise HTTPException(status_code=422, detail="当前账号没有员工编码，无法提交需求清单")
     now = utc_now_naive()
+    submitter_name = (employee.name if employee else "") or (user.username or "")
     row = RequirementListSubmission(
         id=f"rls_{uuid.uuid4().hex}",
         requirement_type=data.requirement_type,
@@ -294,12 +372,13 @@ async def create_submission(db: AsyncSession, user: User, payload: SubmissionCre
         answers=data.answers,
         shared_at=now,
         submitted_at=now,
+        submitter_name=submitter_name,
         created_by=str(user.uid),
         created_at=now,
     )
     db.add(row)
     await db.flush()
-    return submission_data(row)
+    return submission_data(row, user=user)
 
 
 async def _sharer_uid(db: AsyncSession, employee) -> str:
@@ -311,7 +390,97 @@ async def _sharer_uid(db: AsyncSession, employee) -> str:
     return f"mp_{employee.id.replace('-', '')[:17]}"
 
 
-async def create_shared_submission(db: AsyncSession, payload: SubmissionCreate) -> dict:
+async def create_requirement_visitor_session(db: AsyncSession, payload: RequirementVisitorSessionCreate) -> dict:
+    staff_code = payload.staff_code.strip()
+    employee = await EmployeeRepository(db).get_by_code(staff_code)
+    if employee is None or not employee.enabled:
+        raise HTTPException(status_code=422, detail="分享人工号不存在")
+    appid, secret = _wechat_credentials()
+    if not appid or not secret:
+        raise HTTPException(status_code=503, detail="微信服务未配置")
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            response = await client.get(
+                "https://api.weixin.qq.com/sns/jscode2session",
+                params={
+                    "appid": appid,
+                    "secret": secret,
+                    "js_code": payload.code.strip(),
+                    "grant_type": "authorization_code",
+                },
+            )
+            response.raise_for_status()
+            identity = response.json()
+    except (httpx.HTTPError, ValueError) as exc:
+        raise HTTPException(status_code=503, detail="微信身份服务暂时不可用，请稍后重试") from exc
+    if identity.get("errcode") or not identity.get("openid"):
+        raise HTTPException(status_code=422, detail="微信身份验证失败，请重新打开分享链接")
+    session_id = uuid.uuid4().hex
+    redis = await get_redis_client()
+    await redis.setex(
+        f"mp:rls:{session_id}",
+        REQUIREMENT_VISITOR_SESSION_TTL,
+        json.dumps({"appid": appid, "staff_code": staff_code, "openid": identity["openid"]}),
+    )
+    return {"session_id": session_id, "expires_in": REQUIREMENT_VISITOR_SESSION_TTL}
+
+
+async def _resolve_requirement_visitor_phone(
+    *,
+    visitor_session_id: str,
+    phone_code: str,
+    staff_code: str,
+) -> str:
+    staff_code = staff_code.strip()
+    key = f"mp:rls:{visitor_session_id.strip()}"
+    redis = await get_redis_client()
+    raw = await redis.get(key)
+    if raw is None:
+        raise HTTPException(status_code=401, detail="微信授权会话已过期，请重新打开页面")
+    session = json.loads(raw)
+    appid, secret = _wechat_credentials()
+    if session.get("staff_code") != staff_code or session.get("appid") != appid:
+        raise HTTPException(status_code=403, detail="微信授权与分享员工不匹配")
+    phone = str(session.get("phone") or "").strip()
+    cached_code = session.get("phone_code")
+    if not phone or cached_code != phone_code:
+        try:
+            phone = await _wechat_phone_by_code(appid, secret, phone_code)
+        except httpx.HTTPError as exc:
+            raise HTTPException(status_code=503, detail="微信手机号服务暂时不可用，请稍后重试") from exc
+        session["phone"] = phone
+        session["phone_code"] = phone_code
+        await redis.setex(key, REQUIREMENT_VISITOR_SESSION_TTL, json.dumps(session))
+    if not phone or not phone.isdigit() or len(phone) < 11:
+        raise HTTPException(status_code=422, detail="未能获取有效手机号")
+    return phone
+
+
+async def create_mp_shared_submission(db: AsyncSession, payload: MpSharedSubmissionCreate) -> dict:
+    """小程序访客分享：微信授权手机号 + 昵称写入提交人。"""
+    nickname = payload.submitter_nickname.strip()
+    visitor_phone = await _resolve_requirement_visitor_phone(
+        visitor_session_id=payload.visitor_session_id,
+        phone_code=payload.phone_code,
+        staff_code=payload.staff_code,
+    )
+    base = SubmissionCreate(
+        requirement_type=payload.requirement_type,
+        customer_name=payload.customer_name,
+        phone=visitor_phone,
+        address=payload.address,
+        staff_code=payload.staff_code,
+        answers=payload.answers,
+    )
+    return await create_shared_submission(db, base, submitter_name=nickname)
+
+
+async def create_shared_submission(
+    db: AsyncSession,
+    payload: SubmissionCreate,
+    *,
+    submitter_name: str | None = None,
+) -> dict:
     """客户通过分享链接提交。分享人、岗位、工号和门店按链接中的员工固化。"""
     data = payload.normalized()
     if not data.staff_code:
@@ -340,6 +509,7 @@ async def create_shared_submission(db: AsyncSession, payload: SubmissionCreate) 
         answers=data.answers,
         shared_at=now,
         submitted_at=now,
+        submitter_name=(submitter_name or data.customer_name or employee.name or "").strip(),
         created_by=await _sharer_uid(db, employee),
         created_at=now,
     )
@@ -408,8 +578,16 @@ async def list_submissions(
         )
     ).all()
     branches = list(STORE_OPTIONS) + [item for item in found if item not in STORE_OPTIONS]
+    share_map = await _shares_by_submission(db, [row.id for row in rows])
     return {
-        "items": [submission_data(row) for row in rows],
+        "items": [
+            submission_data(
+                row,
+                user=user,
+                shared_members=_member_rows(share_map.get(row.id, [])),
+            )
+            for row in rows
+        ],
         "total": int(total or 0),
         "page": page,
         "page_size": page_size,
@@ -417,16 +595,102 @@ async def list_submissions(
     }
 
 
+class ShareMembersPayload(BaseModel):
+    employee_ids: list[str] = Field(min_length=1, max_length=30)
+
+    @field_validator("employee_ids")
+    @classmethod
+    def normalize_ids(cls, value: list[str]) -> list[str]:
+        normalized = [item.strip() for item in value if item and item.strip()]
+        if not normalized:
+            raise ValueError("请至少选择一位员工")
+        return list(dict.fromkeys(normalized))
+
+
+async def list_share_employees(db: AsyncSession, *, keyword: str = "") -> dict:
+    rows = await EmployeeRepository(db).list_employees(keyword=keyword or None)
+    items = []
+    for employee in rows[:50]:
+        if not employee.enabled:
+            continue
+        items.append(
+            {
+                "id": employee.id,
+                "name": employee.name,
+                "employee_code": employee.employee_code,
+                "branch": employee.current_branch,
+            }
+        )
+    return {"items": items}
+
+
+async def share_submission(db: AsyncSession, user: User, submission_id: str, payload: ShareMembersPayload) -> dict:
+    row = await db.get(RequirementListSubmission, submission_id)
+    if row is None or not _can_manage(row, user):
+        raise HTTPException(status_code=404, detail="需求清单不存在")
+    repo = EmployeeRepository(db)
+    owner_uid = str(user.uid)
+    for employee_id in payload.employee_ids:
+        employee = await repo.get(employee_id)
+        if employee is None or not employee.enabled:
+            raise HTTPException(status_code=422, detail="所选员工不存在或已禁用")
+        member_uid = await _sharer_uid(db, employee)
+        if member_uid == row.created_by:
+            continue
+        exists = await db.scalar(
+            select(RequirementListSubmissionShare.id).where(
+                RequirementListSubmissionShare.submission_id == row.id,
+                RequirementListSubmissionShare.member_uid == member_uid,
+            )
+        )
+        if exists is not None:
+            continue
+        db.add(
+            RequirementListSubmissionShare(
+                id=f"rlss_{uuid.uuid4().hex}",
+                submission_id=row.id,
+                member_uid=member_uid,
+                member_name=employee.name or "",
+                shared_by_uid=owner_uid,
+                created_at=utc_now_naive(),
+            )
+        )
+    await db.flush()
+    shares = (
+        await db.scalars(
+            select(RequirementListSubmissionShare)
+            .where(RequirementListSubmissionShare.submission_id == row.id)
+            .order_by(RequirementListSubmissionShare.created_at.asc())
+        )
+    ).all()
+    return submission_data(row, user=user, reveal_phone=True, shared_members=_member_rows(list(shares)))
+
+
 async def get_submission(db: AsyncSession, submission_id: str, user: User | None = None) -> dict:
     row = await db.get(RequirementListSubmission, submission_id)
-    if row is None or (user is not None and not _can_see(row, user)):
+    if row is None:
         raise HTTPException(status_code=404, detail="需求清单不存在")
-    return submission_data(row, reveal_phone=True, with_answers=True)
+    if user is not None and not await _has_share_access(db, row, user):
+        raise HTTPException(status_code=404, detail="需求清单不存在")
+    shares = (
+        await db.scalars(
+            select(RequirementListSubmissionShare)
+            .where(RequirementListSubmissionShare.submission_id == row.id)
+            .order_by(RequirementListSubmissionShare.created_at.asc())
+        )
+    ).all()
+    return submission_data(
+        row,
+        reveal_phone=True,
+        with_answers=True,
+        user=user,
+        shared_members=_member_rows(list(shares)),
+    )
 
 
 async def delete_submission(db: AsyncSession, submission_id: str, user: User) -> dict:
     row = await db.get(RequirementListSubmission, submission_id)
-    if row is None or not _can_see(row, user):
+    if row is None or not _can_manage(row, user):
         raise HTTPException(status_code=404, detail="需求清单不存在")
     await db.delete(row)
     return {"id": submission_id}
@@ -455,10 +719,14 @@ async def export_submissions(db: AsyncSession, user: User, filters: SubmissionFi
         "所属门店",
         "分享时间",
         "提交时间",
+        "提交人",
+        "共享成员",
     ]
     writer.writerow(header)
+    share_map = await _shares_by_submission(db, [row.id for row in rows])
     for index, row in enumerate(rows, start=1):
-        item = submission_data(row, reveal_phone=True)
+        item = submission_data(row, reveal_phone=True, shared_members=_member_rows(share_map.get(row.id, [])))
+        members = "、".join(member["name"] for member in item["shared_members"] if member.get("name")) or "未共享"
         writer.writerow(
             [
                 index,
@@ -473,6 +741,8 @@ async def export_submissions(db: AsyncSession, user: User, filters: SubmissionFi
                 item["branch"],
                 item["shared_at"],
                 item["submitted_at"],
+                item["submitter_name"],
+                members,
             ]
         )
     return buffer.getvalue().encode("utf-8-sig")

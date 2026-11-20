@@ -1,0 +1,81 @@
+len 1477422
+has_err False
+has_payload True
+has_case_gallery True
+
+=== contentStudio loadBootstrap code ===
+async function loadBootstrap(force = false) {
+    if (bootstrap.value && !force) return bootstrap.value
+    loading.bootstrap = true
+    try {
+      bootstrap.value = await contentApi.getBootstrap()
+      return bootstrap.value
+    } finally {
+      loading.bootstrap = false
+    }
+  }
+
+  async function createTask(payload) {
+    loading.saving = true
+    try {
+      const response = await contentApi.createTask(payload)
+      task.value = response.task
+      await loadTask(response.task.id)
+      return task.value
+    } finally {
+      loading.saving = false
+    }
+  }
+
+  async function loadTask(taskId) {
+    if (!taskId) return null
+    loading.task = true
+    lastError.value = null
+    try {
+      const response = await contentApi.getTask(taskId)
+      task.value = response.task
+      template.value = response.template
+      artifact.value = response.artifact
+      return response
+    } c
+
+=== content_api bootstrap methods ===
+  getBootstrap: () => apiGet('/api/content/bootstrap'),
+  getCoverBootstrap: () => apiGet('/api/content/covers/bootstrap'),
+  listIndustryTemplates: () => apiGet('/api/content/admin/industry-templates'),
+
+=== login and hit content bootstrap ===
+Traceback (most recent call last):
+  File "<stdin>", line 1, in <module>
+ModuleNotFoundError: No module named 'asyncpg'
+
+[32m11-19 17:08:16[0m [1mINFO[0m [36mapp.py:79[0m: [1mLoading config from saves/config/base.toml[0m
+/api/content/bootstrap 200 b'{"industry_templates":[{"id":"industry-decoration-v3","slug":"decoration","tenant_id":null,"version":3,"status":"publish'
+/api/content/studio/bootstrap HTTP 404 b'{"detail":"Not Found"}'
+/api/content/industry-templates HTTP 404 b'{"detail":"Not Found"}'
+/api/content/tasks 200 b'{"items":[{"id":"ct_21e40f7dae3d41dabc674fb56aad25a8","tenant_id":"1","project_id":null,"name":"\xe8\xa3\x85\xe4\xbf\xae\xe4\xb8\x8e\xe5\xae\xb6\xe5\xb1\x85 \xc2\xb7 \xe8\x8e\xb7\xe5\xae'
+
+=== check lucide FilePenLine in AppLayout ===
+FilePenLine import True
+import block:
+import { ref, onMounted, computed, provide, watch } from 'vue'
+import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
+  FilePenLine,
+} from 'lucide-vue-next'
+import { useConfigStore } from '@/stores/config'
+import { useAgentStore } from '@/stores/agent'
+import { useChatThreadsStore } from '@/stores/chatThreads'
+import { useChatUIStore } from '@/stores/chatUI'
+import { useDatabaseStore } from '@/stores/database'
+import { useInfoStore } from '@/stores/info'
+import { useTaskerStore } from '@/stores/tasker'
+import { useUserStore } from '@/stores/user'
+import { useContentStudioStore } from '@/stores/contentStudio'
+import { storeToRefs } from 'pinia'
+import { contentApi } from '@/apis/content_api'
+import UserInfoComponent from '@/components/UserInfoComponent.vue'
+import DebugComponent from '@/components/DebugComponent.vue'
+import TaskCenterDrawer from '@/components/TaskCenterDrawer.vue'
+import SettingsModal from '@/components/SettingsModal.vue'
+import ConversationNavSection from '@/components/ConversationNavSection.vue'
+import RecentContentNavSection from '@/components/content/RecentContentNavSection.vue'

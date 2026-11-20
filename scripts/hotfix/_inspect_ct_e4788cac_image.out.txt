@@ -1,0 +1,10 @@
+ASSET_COLS ['id', 'owner_uid', 'tenant_id', 'content_task_id', 'role', 'original_file_name', 'content_type', 'file_size', 'image_width', 'image_height', 'sha256', 'bucket_name', 'object_name', 'metadata_json', 'created_at', 'deleted_at', 'hidden_from_works_at']
+ASSET {"id": "cca_03dd463fe4e04b5292c78b76a3771b3e"}
+REQ {"source_asset_ids": ["cca_424cab51a47849d0bc628de9a5d2151f"], "template_id": "baa7b9b9-effc-4a98-a6c3-f1e790fe34cc", "title": "一进餐厅坐下就觉得心静了🍃", "fields": {"field_1": "复合写意", "field_2": "236㎡", "field_3": "洋湖天序"}, "image_field_label": null, "size": "1080x1440", "parameters": {"generation_mode": "direct"}, "processing_version": "hycanvas-v3-original-cover-background"}
+RES {"asset_ids": ["cca_03dd463fe4e04b5292c78b76a3771b3e"], "hycanvas_design_snapshot": {"design_id": "2769a923-4297-4577-bd19-06455d95980b", "editor_url": "http://124.232.148.28:8080/editor/?id=2769a923-4297-4577-bd19-06455d95980b", "render_url": "/api/content/covers/hycanvas/designs/2769a923-4297-4577-bd19-06455d95980b/render.png", "template_id": "baa7b9b9-effc-4a98-a6c3-f1e790fe34cc", "title": "一进餐厅坐下就觉得心静了🍃", "fields": {"field_1": "复合写意", "field_2": "236㎡", "field_3": "洋湖天序"}, "source_image_asset_id": "cca_424cab51a47849d0bc628de9a5d2151f", "cover_asset_id": "cca_03dd463fe4e04b5292c78b76a3771b3e"}}
+FAIL http://127.0.0.1:5050/api/content/covers/assets/cca_03dd463fe4e04b5292c78b76a3771b3e/file HTTP Error 401: Unauthorized
+FAIL http://127.0.0.1:5050/api/content/covers/assets/cca_03dd463fe4e04b5292c78b76a3771b3e HTTP Error 405: Method Not Allowed
+FAIL http://127.0.0.1:5050/api/content/covers/hycanvas/designs/2769a923-4297-4577-bd19-06455d95980b/render.png HTTP Error 401: Unauthorized
+FAIL http://127.0.0.1:8080/api/content/covers/hycanvas/designs/2769a923-4297-4577-bd19-06455d95980b/render.png <urlopen error [Errno 111] Connection refused>
+
+NO_LOCAL_IMG [Errno 2] No such file

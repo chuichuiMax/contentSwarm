@@ -14,6 +14,8 @@ export const requirementListApi = {
   detail: (id) => apiGet(`/api/requirement-lists/${encodeURIComponent(id)}`),
   create: (payload) => apiPost('/api/requirement-lists', payload),
   submitPublic: (payload) => apiPost('/api/requirement-lists/public', payload, {}, false),
+  shareEmployees: (params) => apiGet(`/api/requirement-lists/employees${query(params)}`),
+  share: (id, payload) => apiPost(`/api/requirement-lists/${encodeURIComponent(id)}/share`, payload),
   remove: (id) => apiDelete(`/api/requirement-lists/${encodeURIComponent(id)}`),
   export: (params) => apiGet(`/api/requirement-lists/export${query(params)}`, {}, true, 'blob')
 }

@@ -1,0 +1,29 @@
+[32m11-19 17:13:27[0m [1mINFO[0m [36mapp.py:79[0m: [1mLoading config from saves/config/base.toml[0m
+user {'id': 1, 'username': 'tiechuideUId', 'role': 'superadmin'}
+TOKEN eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxIiwiZXhwIjoxNzk1Njg0NDA3LCJpc3MiOiJ5dXhpLWtub3c6aW5zdGFuY2UtZDYwMTA3ZmI0OGQxYzFhOSIsImF1ZCI6Inl1eGkta25vdy1hcGkifQ.oXD3WO73g0GwEKfnAyd4u6G80CZ5OJ130jlfPreuuwo
+
+npm error code EUNSUPPORTEDPROTOCOL
+npm error Unsupported URL Type "workspace:": workspace:*
+npm error A complete log of this run can be found in: /root/.npm/_logs/2026-11-19T09_13_32_051Z-debug-0.log
+npm warn exec The following package was not found and will be installed: playwright@1.65.1
+╔═══════════════════════════════════════════════════════════════════════════════╗
+║ WARNING: It looks like you are running 'npx playwright install' without first ║
+║ installing your project's dependencies.                                       ║
+║                                                                               ║
+║ To avoid unexpected behavior, please install your dependencies first, and     ║
+║ then run Playwright's install command:                                        ║
+║                                                                               ║
+║     npm install                                                               ║
+║     npx playwright install                                                    ║
+║                                                                               ║
+║ If your project does not yet depend on Playwright, first install the          ║
+║ applicable npm package (most commonly @playwright/test), and                  ║
+║ then run Playwright's install command to download the browsers:               ║
+║                                                                               ║
+║     npm install @playwright/test                                              ║
+║     npx playwright install                                                    ║
+║                                                                               ║
+╚═══════════════════════════════════════════════════════════════════════════════╝
+BEWARE: your OS is not officially supported by Playwright; downloading fallback build for ubuntu24.04-x64.
+Downloading Chrome for Testing 159.0.8154.6 (playwright chromium v1255) from https://cdn.playwright.dev/builds/cft/159.0.8154.6/linux64/chrome-linux64.zip
+|                                                                                |   0% of 199.3 MiB

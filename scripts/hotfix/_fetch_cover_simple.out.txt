@@ -1,0 +1,29 @@
+[32m11-20 11:22:10[0m [1mINFO[0m [36mapp.py:79[0m: [1mLoading config from saves/config/base.toml[0m
+[32m11-20 11:22:10[0m [1mINFO[0m [36mmanager.py:93[0m: [1mPostgreSQL manager initialized[0m
+[32m11-20 11:22:11[0m [34m[1mDEBUG[0m [36mclient.py:71[0m: [34m[1mDocker MinIOClient public_endpoint: 172.16.103.15:9000[0m
+[32m11-20 11:22:11[0m [1mINFO[0m [36mclient.py:339[0m: [1m成功从 OSS 下载 'content-covers/mp_52903ebc22d445de8/ccj_f3f9fb3f95a24c18816c87f3d3957a62/output-1.png' (content-covers)[0m
+/tmp/_fetch_cover_simple.py:31: DeprecationWarning: Image.Image.getdata is deprecated and will be removed in Pillow 14 (2027-10-15). Use get_flattened_data instead.
+  px = list(crop.getdata())
+[32m11-20 11:22:11[0m [1mINFO[0m [36mclient.py:339[0m: [1m成功从 OSS 下载 'image/material-library/mp_52903ebc22d445de8/images/cca_424cab51a47849d0bc628de9a5d2151f/image.webp' (image)[0m
+IMG cca_03dd463fe4e04b5292c78b76a3771b3e (1080, 1440) RGB image/png 721177
+top mean [88.2, 87.2, 82.8] bright 0 / 86400
+mid mean [169.7, 169.7, 168.5] bright 47018 / 86400
+bottom mean [85.6, 85.0, 79.8] bright 875 / 86400
+IMG cca_424cab51a47849d0bc628de9a5d2151f (1080, 1619) RGB image/webp 97324
+top mean [72.0, 70.5, 65.6] bright 0 / 86400
+mid mean [179.0, 179.1, 177.8] bright 47452 / 86400
+bottom mean [72.7, 71.1, 65.5] bright 3947 / 86400
+HYCANVAS_BASE http://hycanvas-app:8005
+tpl 401 application/problem+json 189
+tpl_render 401 application/problem+json 200
+design_render 401 application/problem+json 198
+
+MISS /tmp/cover_out.png [Errno 2] No such file
+
+MISS /tmp/cover_src.bin [Errno 2] No such file
+
+MISS /tmp/tpl_render.png [Errno 2] No such file
+
+MISS /tmp/design_render.png [Errno 2] No such file
+
+MISS /tmp/cca_03dd463fe4e04b5292c78b76a3771b3e_bottom.png [Errno 2] No such file

@@ -1,0 +1,22 @@
+META {"id": "ct_6bec6ba63c214fa5815bba2af6fb6452", "name": "装修与家居 · 获客转化", "status": "generated", "content_type_code": "CT01", "content_goal": "acquire", "selected_image_item_id": "mli_193fa20fe7b243bbacf2417e249a55d2", "contentType": {"typeName": "装修案例分享", "contentTypeId": "4800e839-b33d-4467-a788-ac1b8b39cf6e", "contentTypeCode": "CT01"}, "businessVariables": {"外框面积": "188", "基础": "18万", "木制品": "6.5万", "主材": "8万", "目标人群": "毛坯", "楼盘信息": "洋湖1号", "设计风格": "写意木构", "所在区域": "长沙", "居住人口": "四口之家"}}
+ART_TABLES ['content_artifacts', 'content_artifact_versions']
+COLS content_artifacts ['id', 'task_id', 'tenant_id', 'status', 'current_version', 'title', 'body', 'topics', 'strategy_snapshot', 'evidence_snapshot', 'evidence_usage_snapshot', 'review_snapshot', 'cover_asset_id', 'cover_job_id', 'hycanvas_design_snapshot', 'content_type_snapshot', 'angle_snapshot', 'pattern_slot_snapshot', 'persona_snapshot', 'channel_snapshot', 'compliance_snapshot', 'runtime_config_snapshot', 'edit_diff_snapshot', 'created_by', 'created_at', 'updated_at']
+ART_ID ca_dec7ee4ce0524eda9cbda45572fcbb34
+TITLE 吃饭时抬头看看这面墙 心里就松了🍃
+BODY_BEGIN
+坐在餐桌前，脖子先松下来了🍃
+
+墙面是种很淡的暖调，眼睛看久了不累。
+
+上面挂着一块深色木块拼的墙面，一块一块错着落，像有风穿过。
+
+头顶两只纸灯笼亮着，光是散的，照到我肩膀上很软。
+
+桌面木纹摸起来是温的，手臂搭上去不想挪。
+
+吃饭时不看电视，就抬头看那块木拼的墙。
+
+安静，也踏实😌
+
+想看同款思路就留言「案例」。
+BODY_END

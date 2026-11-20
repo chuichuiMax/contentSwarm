@@ -1,0 +1,188 @@
+=== containers ===
+web-dev Up 14 minutes
+api-dev Up 13 minutes (healthy)
+
+=== web logs ===
+4:49:03 PM [vite] (client) hmr update /src/views/WorkspaceView.vue
+4:49:03 PM [vite] (client) hmr update /src/components/common/FileTypeIcon.vue
+4:49:03 PM [vite] (client) hmr update /src/components/common/MarkdownPreview.vue
+4:49:03 PM [vite] (client) page reload src/utils/oidcAutoStart.js
+4:49:03 PM [vite] (client) hmr update /src/views/DataBaseView.vue, /src/views/DataBaseInfoView.vue, /src/components/FileTable.vue, /src/components/ChunkParamsConfig.vue
+4:49:03 PM [vite] (client) hmr update /src/components/common/FileTypeIcon.vue
+4:49:03 PM [vite] (client) hmr update /src/components/AgentChatComponent.vue?vue&type=style&index=0&scoped=bfe43e9f&lang.less
+4:49:03 PM [vite] (client) hmr update /src/components/UserInfoComponent.vue, /src/components/AccountSettingsComponent.vue, /src/components/common/FallbackAvatar.vue, /src/components/UserManagementComponent.vue, /src/views/AgentView.vue, /src/components/model-management/AgentEditModal.vue, /src/components/AgentChatComponent.vue, /src/components/model-management/AgentManagePanel.vue, /src/components/dashboard/FeedbackModalComponent.vue
+4:49:03 PM [vite] (client) page reload src/assets/content-test-cases/日常工作006.txt
+4:49:03 PM [vite] (client) page reload src/assets/content-test-cases/自我介绍003.txt
+4:49:03 PM [vite] (client) page reload src/assets/content-test-cases/施工报价json006.txt
+4:49:03 PM [vite] (client) page reload src/assets/content-test-cases/日常工作001.txt
+4:49:03 PM [vite] (client) page reload src/assets/content-test-cases/日常工作005.txt
+4:49:03 PM [vite] (client) page reload index.html
+4:49:03 PM [vite] (client) hmr update /src/views/ContentStudioView.vue, /src/views/CreativeStyleConfigView.vue
+4:49:03 PM [vite] (client) hmr update /src/components/common/FileTypeIcon.vue
+4:49:03 PM [vite] (client) hmr update /src/views/ContentStudioView.vue
+4:49:03 PM [vite] (client) hmr update /src/components/AgentChatComponent.vue
+4:49:03 PM [vite] (client) hmr update /src/assets/css/main.css, /src/components/AgentChatComponent.vue?vue&type=style&index=0&scoped=bfe43e9f&lang.less, /src/components/dashboard/StatsOverviewComponent.vue?vue&type=style&index=0&scoped=f0a01cd3&lang.less
+4:49:03 PM [vite] (client) hmr update /src/components/common/FileTypeIcon.vue
+4:49:03 PM [vite] (client) page reload src/assets/content-test-cases/施工报价json模板.txt
+4:49:03 PM [vite] (client) hmr update /src/components/common/MarkdownPreview.vue, /src/components/AgentInputArea.vue, /src/components/MessageInputComponent.vue, /src/components/AgentMessageComponent.vue, /src/components/common/MentionTextRenderer.vue, /src/components/AgentChatComponent.vue, /src/views/DataBaseInfoView.vue, /src/components/workspace/WorkspaceFileList.vue, /src/components/AgentFilePreview.vue, /src/components/FileDetailModal.vue
+4:49:03 PM [vite] (client) hmr update /src/components/common/FileTypeIcon.vue
+4:49:03 PM [vite] (client) page reload src/apis/graph_api.js
+4:49:03 PM [vite] (client) hmr update /src/components/common/FileTypeIcon.vue
+4:49:03 PM [vite] (client) hmr update /src/components/AgentArtifactsCard.vue, /src/components/AgentPanel.vue
+4:49:03 PM [vite] (client) hmr update /src/components/common/MarkdownPreview.vue, /src/components/AgentFilePreview.vue
+4:49:03 PM [vite] (client) hmr update /src/components/AgentChatComponent.vue
+4:49:03 PM [vite] (client) page reload src/apis/tool_api.js
+4:49:03 PM [vite] (client) hmr update /src/components/common/FileTypeIcon.vue
+4:49:03 PM [vite] (client) page reload src/assets/content-test-cases/日常工作004.txt
+4:49:03 PM [vite] vite.config.js changed, restarting server...
+4:49:03 PM [vite] (client) hmr update /src/components/BasicSettingsSection.vue
+4:49:03 PM [vite] (client) hmr update /src/components/common/FileTypeIcon.vue
+4:49:03 PM [vite] (client) hmr update /src/views/DashboardView.vue, /src/components/dashboard/CallStatsComponent.vue, /src/components/dashboard/FeedbackModalComponent.vue
+4:49:03 PM [vite] (client) page reload src/utils/materialUploadImage.js
+4:49:03 PM [vite] (client) hmr update /src/components/common/FileTypeIcon.vue
+4:49:03 PM [vite] (client) hmr update /src/components/content/GenerationCallLog.vue
+4:49:03 PM [vite] (client) hmr update /src/assets/css/contentflow-homepage.less?vue&type=style&index=0&src=b4e148ca&scoped=b4e148ca&lang.less
+4:49:03 PM [vite] (client) hmr update /src/components/common/FileTypeIcon.vue
+4:49:03 PM [vite] (client) hmr update /src/components/common/FileTypeIcon.vue
+4:49:03 PM [vite] (client) hmr update /src/components/AgentInputArea.vue, /src/components/MessageInputComponent.vue, /src/components/AgentMessageComponent.vue, /src/components/common/MentionTextRenderer.vue, /src/components/AgentChatComponent.vue, /src/views/DataBaseInfoView.vue, /src/components/workspace/WorkspaceFileList.vue
+4:49:03 PM [vite] (client) page reload src/apis/base.js
+4:49:03 PM [vite] (client) page reload src/apis/mention_api.js
+4:49:03 PM [vite] (client) hmr update /src/components/common/FileTypeIcon.vue
+4:49:03 PM [vite] (client) hmr update /src/components/AgentChatComponent.vue, /src/components/ThreadMessageList.vue
+4:49:03 PM [vite] (client) page reload src/assets/content-test-cases/日常工作003.txt
+4:49:03 PM [vite] (client) page reload src/router/index.js
+4:49:03 PM [vite] (client) page reload src/assets/content-test-cases/施工报价json005.txt
+4:49:03 PM [vite] (client) hmr update /src/components/AgentChatComponent.vue
+4:49:03 PM [vite] (client) hmr update /src/assets/css/main.css, /src/components/AgentChatComponent.vue?vue&type=style&index=0&scoped=bfe43e9f&lang.less
+4:49:03 PM [vite] (client) hmr update /src/assets/css/main.css, /src/components/AgentChatComponent.vue?vue&type=style&index=0&scoped=bfe43e9f&lang.less
+4:49:03 PM [vite] (client) hmr update /src/layouts/AppLayout.vue, /src/components/DebugComponent.vue, /src/components/ToolCallingResult/tools/QueryKbTool.vue, /src/components/ToolCallingResult/tools/FindKbDocumentTool.vue, /src/components/ToolCallingResult/tools/OpenKbDocumentTool.vue, /src/views/DataBaseView.vue, /src/views/DataBaseInfoView.vue, /src/components/FileTable.vue, /src/components/FileDetailModal.vue, /src/components/TaskCenterDrawer.vue, /src/components/StatusBar.vue
+4:49:03 PM [vite] (client) hmr update /src/components/common/FileTypeIcon.vue
+4:49:03 PM [vite] (client) page reload src/assets/content-test-cases/成都报价003.txt
+4:49:03 PM [vite] (client) hmr update /src/assets/css/main.css, /src/components/AgentChatComponent.vue?vue&type=style&index=0&scoped=bfe43e9f&lang.less
+4:49:03 PM [vite] (client) page reload public/protocols/user-agreement.template.html
+4:49:03 PM [vite] (client) page reload src/apis/resident_population_api.js
+4:49:03 PM [vite] (client) page reload src/apis/skill_api.js
+4:49:03 PM [vite] (client) hmr update /src/components/common/FileTypeIcon.vue
+4:49:03 PM [vite] (client) hmr update /src/components/model-management/AgentEditModal.vue
+4:49:03 PM [vite] (client) hmr update /src/views/MaterialLibraryView.vue, /src/views/MaterialAudienceConfigView.vue
+4:49:03 PM [vite] (client) hmr update /src/views/DataBaseInfoView.vue?vue&type=style&index=0&scoped=73843d79&lang.less
+4:49:03 PM [vite] (client) hmr update /src/components/EmbeddingModelSelector.vue?vue&type=style&index=0&scoped=70b82162&lang.less, /src/components/ModelSelectorComponent.vue?vue&type=style&index=0&scoped=1e26b82d&lang.less, /src/components/RerankModelSelector.vue?vue&type=style&index=0&scoped=4aa6f790&lang.less
+4:49:03 PM [vite] (client) hmr update /src/views/ContentStudioView.vue
+4:49:03 PM [vite] (client) hmr update /src/components/common/FileTypeIcon.vue
+4:49:03 PM [vite] (client) hmr update /src/layouts/AppLayout.vue, /src/layouts/AppLayout.vue?vue&type=style&index=0&scoped=e7291ef4&lang.less
+4:49:03 PM [vite] (client) hmr update /src/views/ContentStudioView.vue
+4:49:03 PM [vite] (client) hmr update /src/views/CoverManageView.vue
+4:49:04 PM [vite] server restarted.
+ ELIFECYCLE  Command failed with exit code 143.
+
+> yuxi-web@0.7.0 server /app
+> vite serve --host
+
+
+  VITE v8.0.11  ready in 696 ms
+
+  ➜  Local:   http://localhost:5173/
+  ➜  Network: http://172.18.0.13:5173/
+
+=== api health ===
+200
+=== routes grep remote ===
+/srv/contentswarm/web/src/utils/__tests__/permissions.test.js:13:  assert.equal(canAccessScopedPath(true, grants, '/agent'), false)
+/srv/contentswarm/web/src/utils/__tests__/permissions.test.js:25:  assert.equal(homePathForGrants(false, []), '/agent')
+/srv/contentswarm/web/src/utils/permissions.js:19:  ['chat.access', '/agent'],
+/srv/contentswarm/web/src/utils/permissions.js:45:  { prefix: '/agent', any: ['chat.access'] },
+/srv/contentswarm/web/src/utils/permissions.js:72:  if (!permissionScoped) return '/agent'
+/srv/contentswarm/web/src/components/AgentChatComponent.vue:617:import { AgentValidator } from '@/utils/agentValidator'
+/srv/contentswarm/web/src/components/AgentChatComponent.vue:618:import { useAgentStore } from '@/stores/agent'
+/srv/contentswarm/web/src/components/DebugComponent.vue:164:import { isBuiltinAgent, useAgentStore } from '@/stores/agent'
+/srv/contentswarm/web/src/components/AttachmentOptionsComponent.vue:26:import { multimodalApi } from '@/apis/agent_api'
+/srv/contentswarm/web/src/components/AgentRuntimeConfigForm.vue:381:import { useAgentStore } from '@/stores/agent'
+/srv/contentswarm/web/src/components/AgentRuntimeConfigForm.vue:388:} from '@/utils/agentConfigUtils'
+/srv/contentswarm/web/src/components/content/PosterOcrReviewModal.vue:439:            <span>未确认前模板不会进入内容生产工作流。</span>
+/srv/contentswarm/web/src/components/content/ContentStageStepper.vue:22:  <ol class="content-stage-stepper" aria-label="内容生产阶段">
+/srv/contentswarm/web/src/components/AgentMessageComponent.vue:156:import { useAgentStore } from '@/stores/agent'
+/srv/contentswarm/web/src/components/workspace/WorkspaceSidebar.vue:83:const agentsPath = '/agents/'
+/srv/contentswarm/web/src/components/ToolCallingResult/BaseToolCall.vue:95:import { useAgentStore } from '@/stores/agent'
+/srv/contentswarm/web/src/components/AgentArtifactsCard.vue:38:import { threadApi } from '@/apis/agent_api'
+/srv/contentswarm/web/src/components/model-management/AgentManagePanel.vue:13:import { agentApi } from '@/apis/agent_api'
+/srv/contentswarm/web/src/components/model-management/AgentManagePanel.vue:15:import { isBuiltinAgent, useAgentStore } from '@/stores/agent'
+/srv/contentswarm/web/src/components/model-management/AgentEditModal.vue:19:import { isBuiltinAgent, useAgentStore } from '@/stores/agent'
+/srv/contentswarm/web/src/components/AgentEnvSettingsCard.vue:31:import { agentEnvApi } from '@/apis/agent_env_api'
+/srv/contentswarm/web/src/views/OIDCCallbackView.vue:32:import { useAgentStore } from '@/stores/agent'
+/srv/contentswarm/web/src/views/OIDCCallbackView.vue:101:          router.push('/agent')
+/srv/contentswarm/web/src/views/OIDCCallbackView.vue:104:          router.push('/agent')
+/srv/contentswarm/web/src/views/LoginView.vue:24:              <h2>让内容生产成为<br />可持续的企业能力</h2>
+/srv/contentswarm/web/src/views/LoginView.vue:37:                alt="ContentFlow"
+/srv/contentswarm/web/src/views/LoginView.vue:273:          © {{ new Date().getFullYear() }} ContentFlow 企业内容生产平台
+/srv/contentswarm/web/src/views/LoginView.vue:285:import { useAgentStore } from '@/stores/agent'
+/srv/contentswarm/web/src/views/LoginView.vue:317:  return '把结构化创作方法、企业真实业务资料和生成模型组合成可配置、可执行、可审核、可追溯的内容生产流程。'
+/srv/contentswarm/web/src/views/LoginView.vue:472:        router.push('/agent')
+/srv/contentswarm/web/src/views/LoginView.vue:475:        router.push('/agent')
+/srv/contentswarm/web/src/views/CoverManageView.vue:207:    content: '删除后，内容生产选择 AI 封面时不再显示。',
+/srv/contentswarm/web/src/views/CoverManageView.vue:262:        <p class="cover-manage-note">内容生产选择「AI封面」时仅展示启用的模板。上传后使用本地照片文件名，相同文件名不能重复上传。</p>
+/srv/contentswarm/web/src/views/ContentResultView.vue:146:          <span>内容生产</span>
+/srv/contentswarm/web/src/views/ContentResultView.vue:334:      <a-button @click="router.push('/content/new')">返回内容生产</a-button>
+/srv/contentswarm/web/src/views/XiaohongshuAccountsView.vue:163:          <ArrowLeft :size="16" />返回内容生产
+/srv/contentswarm/web/src/views/AgentView.vue:97:import { agentApi } from '@/apis/agent_api'
+/srv/contentswarm/web/src/views/AgentView.vue:100:import { isBuiltinAgent, useAgentStore } from '@/stores/agent'
+/srv/contentswarm/web/src/views/HomeView.vue:5:      <p>正在连接内容生产平台...</p>
+/srv/contentswarm/web/src/views/HomeView.vue:16:        <button class="brand" type="button" aria-label="ContentFlow 首页" @click="router.push('/')">
+/srv/contentswarm/web/src/views/HomeView.vue:17:          <img src="/contentflow-homepage-logo.svg" alt="ContentFlow" />
+/srv/contentswarm/web/src/views/HomeView.vue:18:          <span>ContentFlow 内容策略 Agent</span>
+/srv/contentswarm/web/src/views/HomeView.vue:49:              ContentFlow · 行业增长获客系统
+/srv/contentswarm/web/src/views/HomeView.vue:56:              ContentFlow 内容策略 Agent 将行业客群洞察、增长指标与真实服务价值串成可执行链路，
+/srv/contentswarm/web/src/views/HomeView.vue:314:              <span>ContentFlow 内容策略 Agent</span>
+/srv/contentswarm/web/src/views/HomeView.vue:328:          ContentFlow · 内容增长系统
+/srv/contentswarm/web/src/views/HomeView.vue:330:        <p>© {{ currentYear }} ContentFlow. 让行业知识与真实业务，成为持续增长的内容资产。</p>
+/srv/contentswarm/web/src/views/CoverGenerationView.vue:616:          <label class="wide-field"><span>封面标题 <small>推荐填写；留空时使用关联内容资产标题</small></span><input v-model="form.title" maxlength="60" placeholder="例如：内容生产新方式" /></label>
+/srv/contentswarm/web/src/router/index.js:79:      path: '/agent',
+/srv/contentswarm/web/src/stores/user.js:3:import { useAgentStore } from './agent'
+/srv/contentswarm/web/src/stores/agent.js:4:import { isDefaultAllAgentResourceKind } from '@/utils/agentConfigUtils'
+/srv/contentswarm/web/src/apis/agent_api.js:45:    return apiGet(query ? `/api/agent?${query}` : '/api/agent')
+/srv/contentswarm/web/src/apis/agent_api.js:48:  getAgentBackends: () => apiGet('/api/agent/backends'),
+/srv/contentswarm/web/src/apis/agent_api.js:55:  getAgentDetail: (agentId) => apiGet(`/api/agent/${agentId}`),
+/srv/contentswarm/web/src/apis/agent_api.js:91:  createAgent: (payload) => apiPost('/api/agent', payload),
+/srv/contentswarm/web/src/apis/agent_api.js:93:  updateAgent: (agentId, payload) => apiPut(`/api/agent/${agentId}`, payload),
+/srv/contentswarm/web/src/apis/agent_api.js:95:  deleteAgent: (agentId) => apiDelete(`/api/agent/${agentId}`),
+/srv/contentswarm/web/src/apis/agent_api.js:103:    apiPost('/api/agent/runs', {
+/srv/contentswarm/web/src/apis/agent_api.js:120:  getAgentRun: (runId) => apiGet(`/api/agent/runs/${runId}`),
+/srv/contentswarm/web/src/apis/agent_api.js:127:  cancelAgentRun: (runId) => apiPost(`/api/agent/runs/${runId}/cancel`, {}),
+/srv/contentswarm/web/src/apis/agent_api.js:134:  getThreadActiveRun: (threadId) => apiGet(`/api/agent/thread/${threadId}/active_run`),
+/srv/contentswarm/web/src/apis/agent_api.js:153:    return fetch(apiUrl(`/api/agent/runs/${runId}/events?${params.toString()}`), {
+/srv/contentswarm/web/src/apis/index.js:10:export * from './agent_api' // 智能体API
+/srv/contentswarm/web/src/apis/index.js:18:export * from './content_api' // 通用内容生产 API
+/srv/contentswarm/web/src/apis/agent_env_api.js:3:const AGENT_ENV_PATH = '/api/user/agent-env'
+/srv/contentswarm/web/src/apis/dashboard_api.js:93:    return apiAdminGet('/api/dashboard/stats/agents')
+/srv/contentswarm/web/src/apis/dashboard_api.js:107:        apiAdminGet('/api/dashboard/stats/agents')
+/srv/contentswarm/web/src/apis/dashboard_api.js:125:   * @param {string} type - 数据类型 (models/agents/tokens/tools)
+/srv/contentswarm/web/src/layouts/AppLayout.vue:37:import { useAgentStore } from '@/stores/agent'
+/srv/contentswarm/web/src/layouts/AppLayout.vue:122:  return route.path.startsWith('/agent') ? currentThreadId.value : null
+/srv/contentswarm/web/src/layouts/AppLayout.vue:135:      path: '/agent',
+/srv/contentswarm/web/src/layouts/AppLayout.vue:145:    name: '内容生产',
+/srv/contentswarm/web/src/layouts/AppLayout.vue:480:    if (!route.path.startsWith('/agent')) return
+/srv/contentswarm/web/src/layouts/AppLayout.vue:512:          <img src="/contentflow-logo.svg" alt="ContentFlow" class="brand-logo" />
+/srv/contentswarm/web/src/layouts/AppLayout.vue:523:            alt="ContentFlow"
+/srv/contentswarm/web/src/composables/useAgentMentionConfig.js:9:} from '@/utils/agentConfigUtils'
+/srv/contentswarm/web/src/App.vue:3:import { useAgentStore } from '@/stores/agent'
+
+=== public index ===
+200451 /tmp/_idx.html
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <script type="module" src="/@vite/client"></script>
+
+    <meta charset="UTF-8">
+    <link rel="icon" type="image/png" href="/favicon.png">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ContentFlow - 企业内容生产平台</title>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module"
+=== js assets recent errors in nginx/web ===
+var z=new Proxy({},{get(_,key){throw new Error(`:5:23
+  3  |      throw new Error(`Module "`);
+  6  |  var z=new Proxy({},{get(_,key){throw new Error(`" has been externalized for browser compatibility. Cannot access "`);
+4:49:03 PM [vite] (client) page reload src/utils/errorHandler.js
+ ELIFECYCLE  Command failed with exit code 143.

@@ -1,0 +1,26 @@
+FILE design 2769a923-4297-4577-bd19-06455d95980b 200 134209
+design pages 1 top_keys ['assets', 'dpi', 'fonts', 'format', 'id', 'meta', 'pages', 'schemaVersion', 'title', 'unit']
+design PAGE0 1080.0 1440.0 bg_type NoneType bg None
+design NODE_COUNT 5 TYPES ['image', 'shape', 'text']
+design NEAR_BOTTOM_COUNT 1
+design NEAR {"type": "image", "name": "ContentSwarm 素材背景", "text": "", "x": 0.0, "y": 0.0, "w": 1080.0, "h": 1440.0, "bottom": 1440.0, "opacity": 1, "fit": "cover", "assetId": "contentswarm-inline-aefa205634b0e79695314184", "data": {"background": true, "source": "contentswarm-material-library"}, "keys": ["blendMode", "data", "fit", "id", "locked", "name", "opacity", "size", "source", "transform", "type"]}
+design NODE {"type": "image", "name": "ContentSwarm 素材背景", "x": 0.0, "y": 0.0, "w": 1080.0, "h": 1440.0, "bottom": 1440.0, "opacity": 1, "fit": "cover", "assetId": "contentswarm-inline-aefa205634b0e79695314184", "data": {"background": true, "source": "contentswarm-material-library"}}
+design NODE {"type": "shape", "name": "矩形", "x": 0.0, "y": 798.4, "w": 1080.0, "h": 380.2, "bottom": 1178.6, "opacity": 0.5, "fit": null, "assetId": null, "data": {}}
+design TEXT {"name": "添加标题", "text": "复合写意", "x": 377.9, "y": 1039.0, "w": 235.5, "h": 67.0, "bottom": 1106.0}
+design TEXT {"name": "添加标题", "text": "236㎡", "x": 641.0, "y": 1039.0, "w": 181.5, "h": 67.0, "bottom": 1106.0}
+design TEXT {"name": "添加标题", "text": "洋湖天序", "x": 213.1, "y": 819.6, "w": 653.7, "h": 219.4, "bottom": 1039.0}
+FILE source_design 7b54dec4-f940-4263-b4ec-657f9fde89a4 200 3619
+source_design pages 1 top_keys ['assets', 'dpi', 'fonts', 'format', 'id', 'meta', 'pages', 'schemaVersion', 'title', 'unit']
+source_design PAGE0 1080.0 1440.0 bg_type NoneType bg None
+source_design NODE_COUNT 4 TYPES ['shape', 'text']
+source_design NEAR_BOTTOM_COUNT 0
+source_design NODE {"type": "shape", "name": "矩形", "x": 0.0, "y": 798.4, "w": 1080.0, "h": 380.2, "bottom": 1178.6, "opacity": 0.5, "fit": null, "assetId": null, "data": {}}
+source_design TEXT {"name": "添加标题", "text": "法式复古", "x": 377.9, "y": 1039.0, "w": 235.5, "h": 67.0, "bottom": 1106.0}
+source_design TEXT {"name": "添加标题", "text": "236㎡", "x": 641.0, "y": 1039.0, "w": 181.5, "h": 67.0, "bottom": 1106.0}
+source_design TEXT {"name": "添加标题", "text": "长沙润府", "x": 213.1, "y": 819.6, "w": 653.7, "h": 219.4, "bottom": 1039.0}
+RENDER 200 732440
+RENDER_SIZE (1080, 1440)
+tpl_overlay 200 image/png 12348
+tpl_overlay size (270, 360)
+tpl_render 200 image/png 12806
+tpl_render size (270, 360)

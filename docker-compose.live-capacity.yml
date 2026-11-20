@@ -55,6 +55,7 @@ services:
       - "host.docker.internal:host-gateway"
     env_file:
       - .env
+    # 与 worker-dev 同源：须带 HYCANVAS_* 默认值（勿用跨文件 YAML anchor）
     environment:
       HOST_IP: ${HOST_IP:-}
       LITE_MODE: ${LITE_MODE:-false}
@@ -71,6 +72,14 @@ services:
       MILVUS_DB_NAME: ${MILVUS_DB_NAME:-default}
       MILVUS_TOKEN: ${MILVUS_TOKEN:-}
       MINIO_URI: ${MINIO_URI:-http://minio:9000}
+      HYCANVAS_BASE_URL: ${HYCANVAS_BASE_URL:-http://hycanvas-app:8005}
+      HYCANVAS_PUBLIC_URL: ${HYCANVAS_DEV_PUBLIC_URL:-http://127.0.0.1:${HYCANVAS_DEV_FRONTEND_PORT:-3000}}
+      HYCANVAS_DEV_PUBLIC_URL: ${HYCANVAS_DEV_PUBLIC_URL:-http://127.0.0.1:${HYCANVAS_DEV_FRONTEND_PORT:-3000}}
+      HYCANVAS_API_KEY: ${HYCANVAS_API_KEY:-hyk_contentswarm_local_integration_key_change_me}
+      HYCANVAS_WORKSPACE_ID: ${HYCANVAS_WORKSPACE_ID:-00000000-0000-4000-8000-000000001001}
+      IMAGE2_BASE_URL: ${IMAGE2_BASE_URL:-}
+      IMAGE2_API_KEY: ${IMAGE2_API_KEY:-}
+      IMAGE2_MODEL: ${IMAGE2_MODEL:-}
       POSTGRES_POOL_SIZE: ${POSTGRES_POOL_SIZE:-10}
       POSTGRES_MAX_OVERFLOW: ${POSTGRES_MAX_OVERFLOW:-40}
     command: python -m server.worker_dev

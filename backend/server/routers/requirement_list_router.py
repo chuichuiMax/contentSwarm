@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from server.utils.auth_middleware import get_db, get_required_user
 from yuxi.services.requirement_list_service import (
+    ShareMembersPayload,
     SubmissionCreate,
     SubmissionFilters,
     create_shared_submission,
@@ -11,7 +12,9 @@ from yuxi.services.requirement_list_service import (
     delete_submission,
     export_submissions,
     get_submission,
+    list_share_employees,
     list_submissions,
+    share_submission,
 )
 from yuxi.storage.postgres.models_business import User
 
@@ -51,6 +54,29 @@ async def export(
 @requirement_lists.post("/public")
 async def public_create(payload: SubmissionCreate, db: AsyncSession = Depends(get_db)):
     return JSONResponse(await create_shared_submission(db, payload), headers={"Cache-Control": "private, no-store"})
+
+
+@requirement_lists.get("/employees")
+async def share_employees(
+    keyword: str = Query("", max_length=64),
+    user: User = Depends(get_required_user),
+    db: AsyncSession = Depends(get_db),
+):
+    del user
+    return JSONResponse(await list_share_employees(db, keyword=keyword), headers={"Cache-Control": "private, no-store"})
+
+
+@requirement_lists.post("/{submission_id}/share")
+async def share(
+    submission_id: str,
+    payload: ShareMembersPayload,
+    user: User = Depends(get_required_user),
+    db: AsyncSession = Depends(get_db),
+):
+    return JSONResponse(
+        await share_submission(db, user, submission_id, payload),
+        headers={"Cache-Control": "private, no-store"},
+    )
 
 
 @requirement_lists.get("/{submission_id}")

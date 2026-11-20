@@ -1,0 +1,17 @@
+[32m11-19 17:22:01[0m [1mINFO[0m [36mapp.py:79[0m: [1mLoading config from saves/config/base.toml[0m
+user {'id': 1, 'username': 'tiechuideUId', 'role': 'superadmin'}
+TOKEN eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxIiwiZXhwIjoxNzk1Njg0OTIxLCJpc3MiOiJ5dXhpLWtub3c6aW5zdGFuY2UtZDYwMTA3ZmI0OGQxYzFhOSIsImF1ZCI6Inl1eGkta25vdy1hcGkifQ._MIqWLIOd1gJrT_suEDMaH1oCW_XFEmLuAHvpHqhWt0
+
+=== discover ===
+=== bins ===
+no-host-pw
+
+=== setup ===
+bash: line 1: pip3: command not found
+/usr/bin/python3: No module named playwright
+
+=== result ===
+Traceback (most recent call last):
+  File "/tmp/_nav_host_pw.py", line 3, in <module>
+    from playwright.async_api import async_playwright
+ModuleNotFoundError: No module named 'playwright'

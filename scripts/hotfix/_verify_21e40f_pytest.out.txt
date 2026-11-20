@@ -1,0 +1,3 @@
+OCI runtime exec failed: exec failed: unable to start container process: exec: "/app/.venv/bin/pytest": stat /app/.venv/bin/pytest: no such file or directory
+error: Failed to spawn: `pytest`
+  Caused by: No such file or directory (os error 2)

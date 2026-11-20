@@ -1,0 +1,70 @@
+{
+  "before": {
+    "href": "http://124.232.148.28:8080/model-manage/employees",
+    "hasEmployees": true,
+    "nav": [
+      "创建新对话",
+      "内容生产",
+      "视觉创作",
+      "图片设计",
+      "工作区",
+      "知识库",
+      "智能体扩展",
+      "智能体管理",
+      "账号管理",
+      "员工管理",
+      "封面管理",
+      "数据总览"
+    ]
+  },
+  "clicked": {
+    "ok": true,
+    "href": "/content/new"
+  },
+  "after": {
+    "href": "http://124.232.148.28:8080/content/new",
+    "hasEmployees": false,
+    "text": "创建新对话\n内容生产\n视觉创作\n图片设计\n工作区\n知识库\n智能体扩展\n智能体管理\n账号管理\n员工管理\n数据统计\n配置管理\n封面管理\n数据总览\n最近生成\n正在加载\ntiechuideUId\n内容创作\n爆款仿写\n账号管理\n图片识别\n生产历史\n创作规则库\n阶段 1\n业务素材与事实简报\n\n先确定企业真实业务资料，后续标题与正文共享同一份事实。\n\n创作模式\n爆款仿写\n系统比较已准备的完整文章参考，复用选中结构，业务事实来自本次真实资料。\n装修与家居报价、工艺、实景案例和装修避坑\n内容目标*\n创建任务并填写素材",
+    "activeNav": [
+      "内容生产"
+    ]
+  },
+  "direct": {
+    "href": "http://124.232.148.28:8080/content/new",
+    "hasEmployees": false,
+    "text": "创建新对话\n内容生产\n视觉创作\n图片设计\n工作区\n知识库\n智能体扩展\n智能体管理\n账号管理\n员工管理\n数据统计\n配置管理\n封面管理\n数据总览\n最近生成\n暂无生成内容\ntiechuideUId\n内容创作\n装修与家居\n爆款仿写\n账号管理\n图片识别\n生产历史\n创作规则库\n阶段 1\n业务素材与事实简报\n\n先确定企业真实业务资料，后续标题与正文共享同一份事实。\n\n创作模式\n爆款仿写\n系统比较已准备的完整文章参考，复用选中结构，业务事实来自本次真实资料。\n\n填写资料后，系统自动匹配参考结构与创作方式，无需选择内容方向。\n\n装修与家居报价、工艺、实景案例和装修避坑\n内容目标*\n获客转化 · 形成咨询、留资或到店行动\n创建任务并填写素材"
+  },
+  "pageErrors": [],
+  "consoleErrors": [],
+  "failed": [
+    {
+      "url": "http://124.232.148.28:8080/src/apis/auth_api.js",
+      "err": "net::ERR_ABORTED"
+    },
+    {
+      "url": "http://124.232.148.28:8080/src/views/LoginView.vue?vue&type=style&index=0&scoped=45f5edd7&lang.less",
+      "err": "net::ERR_ABORTED"
+    },
+    {
+      "url": "http://124.232.148.28:8080/api/content/tasks?page=1&page_size=100",
+      "err": "net::ERR_ABORTED"
+    },
+    {
+      "url": "http://124.232.148.28:8080/api/material-library/galleries?industry_slug=decoration",
+      "err": "net::ERR_ABORTED"
+    },
+    {
+      "url": "http://124.232.148.28:8080/api/content/covers/photo-layouts",
+      "err": "net::ERR_ABORTED"
+    },
+    {
+      "url": "http://124.232.148.28:8080/api/content/covers/hycanvas/templates",
+      "err": "net::ERR_ABORTED"
+    },
+    {
+      "url": "http://124.232.148.28:8080/api/content/covers/ai-cover-prompts",
+      "err": "net::ERR_ABORTED"
+    }
+  ],
+  "bad": []
+}

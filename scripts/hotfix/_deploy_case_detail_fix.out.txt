@@ -1,0 +1,14 @@
+=== sync into api-dev ===
+SYNC_OK
+
+=== update DB creative styles ===
+styles 5
+updated 信息流类型 hits 2
+updated 重点楼盘案例介绍 hits 1
+skip 设计风格亮点介绍 hits 0 len 739
+updated 设计风格亮点介绍（2） hits 1
+skip 实景案例拆解型 hits 0 len 1158
+UPDATED 3
+
+=== pytest targeted ===
+/usr/local/bin/python: No module named pytest

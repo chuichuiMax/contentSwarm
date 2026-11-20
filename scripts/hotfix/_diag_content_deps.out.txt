@@ -1,0 +1,86 @@
+OK /srv/contentswarm/web/src/components/material/CaseGalleryStyleFilter.vue 2223
+OK /srv/contentswarm/web/src/components/content/ContentPhotoComposition.vue 8154
+OK /srv/contentswarm/web/src/data/contentTestCases.js 4404
+MISS /srv/contentswarm/web/src/data/contentTestCases.ts -
+OK /srv/contentswarm/web/src/utils/contentRequestPayload.js 8797
+onMounted_at 61
+onMounted, reactive, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { message } from 'ant-design-vue'
+import CaseGalleryStyleFilter from '@/components/material/CaseGalleryStyleFilter.vue'
+import ContentPhotoComposition from '@/components/content/ContentPhotoComposition.vue'
+import {
+  ArrowLeft,
+  BookOpenCheck,
+  CheckCircle2,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  CircleAlert,
+  Clock3,
+  Copy,
+  ExternalLink,
+  ClipboardList,
+  FileClock,
+  Folder,
+  FileText,
+  MessageSquare,
+  FolderOpen,
+  Image,
+  LayoutTemplate,
+  LoaderCircle,
+  PencilLine,
+  RefreshCw,
+  Save,
+  Send,
+  ShieldCheck,
+  Sparkles,
+  Tags,
+  WandSparkles,
+  X,
+  ZoomIn
+} from 'lucide-vue-next'
+import AgentInputArea from '@/components/AgentInputArea.vue'
+import ContentStudioToolbar from '@/components/content/ContentStudioToolbar.vue'
+import ContentOcrDrawer from '@/components/content/ContentOcrDrawer.vue'
+import ContentWorkflowStrategyPanel from '@/components/content/ContentWorkflowStrategyPanel.vue'
+import ContentStrategyDecision from '@/components/content/ContentStrategyDecision.vue'
+import XiaohongshuAccountPublishModal from '@/components/content/XiaohongshuAccountPublishModal.vue'
+import MarkdownPreview from '@/components/common/MarkdownPreview.vue'
+import { contentApi } from '@/apis/content_api'
+import { materialLibraryApi } from '@/apis/material_library_api'
+import { employeeApi } from '@/apis/employee_api'
+import { CONTENT_TEST_CASES } from '@/data/contentTestCases'
+import { creativeStyleApi } from '@/apis/creative_style_api'
+import { useContentStudioStore } from '@/stores/contentStudio'
+import { formatContentRequestJson } from '@/utils/contentRequestPayload'
+import { CONTENT_TYPE_NAME_TO_CODE } from '@/utils/content_creation_types'
+import { useUserStore } from '@/stores/user'
+import {
+  formatEvidenceReference,
+  hasSelectedViralReference
+} from '@/utils/contentEvidencePresentation'
+import {
+  filterCaseGalleryChildren,
+  isEnterpriseCaseGallery,
+  materialGalleryListLabel
+} from '@/utils/caseGallery'
+import {
+  AI_COVER_SMART_RANDOM_VARIANT,
+  findAiCoverPromptOption,
+  isAiCoverSmartRandomVariant
+} from '@/constants/aiCoverPromptCatalog'
+i
+
+=== curl deps ===
+/src/components/material/CaseGalleryStyleFilter.vue 200 10177
+
+/src/components/content/ContentPhotoComposition.vue 200 49531
+
+/src/data/contentTestCases.js 200 23759
+
+/src/utils/contentRequestPayload.js 200 46980
+
+=== api content bootstrap endpoints ===
+health:200
+templates:404

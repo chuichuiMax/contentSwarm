@@ -1,0 +1,34 @@
+ASSET cca_03dd463fe4e04b5292c78b76a3771b3e {"bucket": "content-covers", "object": "content-covers/mp_52903ebc22d445de8/ccj_f3f9fb3f95a24c18816c87f3d3957a62/output-1.png", "w": 1080, "h": 1440, "size": 721177, "ctype": "image/png", "meta": "{\"source\": \"content_production\", \"source_channel\": \"pc\", \"source_folder\": \"works\", \"job_id\": \"ccj_f3f9fb3f95a24c18816c87f3d3957a62\", \"mode\": \"hycanvas\", \"template_replicate\": false, \"poster_billboard\": false, \"editor_render\": false, \"editor_project_id\": null, \"derived_from_asset_id\": null, \"generation_strategy\": \"default\", \"quality_report\": {}, \"poster_quality_report\": {}}"}
+ENV MINIO_URI http://minio:9000
+ENV OSS_ACCESS_KEY_ID ***
+ENV OSS_ACCESS_KEY_SECRET ***
+Traceback (most recent call last):
+  File "/tmp/_fetch_cover_minio.py", line 46, in <module>
+    asyncio.run(main())
+  File "/usr/local/lib/python3.12/asyncio/runners.py", line 195, in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/asyncio/base_events.py", line 691, in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+  File "/tmp/_fetch_cover_minio.py", line 38, in main
+    resp=client.get_object(bucket, obj)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/minio/api.py", line 1257, in get_object
+    return self._execute(
+           ^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/minio/api.py", line 441, in _execute
+    region = self._get_region(bucket_name)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/minio/api.py", line 498, in _get_region
+    response = self._url_open(
+               ^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/minio/api.py", line 427, in _url_open
+    raise response_error
+minio.error.S3Error: S3 operation failed; code: NoSuchBucket, message: The specified bucket does not exist, resource: /content-covers, request_id: 18E9A299C8F55737, host_id: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855, bucket_name: content-covers
+
+
+PULL_FAIL [Errno 2] No such file

@@ -1,0 +1,6 @@
+[32m11-19 16:57:11[0m [1mINFO[0m [36mapp.py:79[0m: [1mLoading config from saves/config/base.toml[0m
+{"title": "原来家安静下来，人就不累了🌙", "changed": true, "has_cta": true, "has_craft": false, "has_case_cta": true, "tail": ["这样的空间不靠装饰取胜，墙顶地一气呵成，安静感就出来了。", "想看同款安静家，评论区留言「案例」。"]}
+
+===pytest===
+error: Failed to spawn: `pytest`
+  Caused by: No such file or directory (os error 2)

@@ -1,0 +1,3 @@
+CONT=contentswarm-hycanvas-app-1
+UPDATED=/app/backend
+ok  	hycanvas/backend/internal/templates	0.281s

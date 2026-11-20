@@ -26,6 +26,7 @@ import {
   ImagePlus,
   Braces,
   ListTree,
+  ListTodo,
   Hammer,
   Palette,
   FolderTree,
@@ -244,14 +245,13 @@ const mainList = computed(() => {
     activeIcon: ClipboardList,
     permissionAny: ['customer_lead.view_list']
   })
-  // TODO: 上游提交缺少需求清单页面，临时隐藏入口
-  // dataStatsChildren.push({
-  //   name: '需求清单',
-  //   path: '/requirement-lists',
-  //   icon: ListTodo,
-  //   activeIcon: ListTodo,
-  //   alwaysVisible: true
-  // })
+  dataStatsChildren.push({
+    name: '需求清单',
+    path: '/requirement-lists',
+    icon: ListTodo,
+    activeIcon: ListTodo,
+    alwaysVisible: true
+  })
   items.push({
     name: '数据统计',
     icon: ChartColumn,

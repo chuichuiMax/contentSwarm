@@ -56,10 +56,30 @@ class AreaWithSpaceRule(TitleRule):
         return re.sub(r"[^\S\n]{2,}", " ", text).strip(" ，,、")
 
 
+# 标题里两段中文之间用空格断开时，改成逗号，例如「坐在客厅里 整个人都松了」。
+_CJK_GAP = re.compile(r"([\u4e00-\u9fff])[^\S\n]+([\u4e00-\u9fff])")
+
+
+class CjkTitleSpaceRule(TitleRule):
+    """标题分句用逗号，不用空格。"""
+
+    def apply(self, title: str) -> str:
+        text = str(title or "")
+        while True:
+            nxt = _CJK_GAP.sub(r"\1，\2", text)
+            if nxt == text:
+                return text
+            text = nxt
+
+
 TITLE_RULES: tuple[TitleRule, ...] = (
     AreaWithSpaceRule(
         code="area_with_space",
         description="项目面积是整户面积，标题和正文里都不要把面积和单个空间写在一起",
+    ),
+    CjkTitleSpaceRule(
+        code="cjk_title_space",
+        description="标题里两段中文之间不要留空格，改用逗号分开",
     ),
 )
 
