@@ -33,6 +33,8 @@ def default_generation_prompt(content_type_name: str) -> str:
     )
 DIRECT_TITLE_MAX_CHARS = 20
 DIRECT_TOPIC_LIMIT = 10
+DIRECT_BODY_MIN_CHARS = 120
+DIRECT_BODY_MIN_PARAGRAPHS = 3
 RECENT_IMAGE_TOPIC_LIMIT = 20
 _TOPIC_REGION_KEYS = ("所在区域", "city", "location", "region", "serviceCity")
 SKILL_VERSIONS = {
@@ -86,6 +88,161 @@ def text_has_emoji(text: str) -> bool:
 _CTA_MARKERS = re.compile(
     r"(收藏|评论区|留言|关注我|对照一遍|照着对|进场对照|想弄明白|想看工地|想弄清)"
 )
+
+
+def direct_body_too_short(body: str) -> bool:
+    """直生正文过短：单句钩子或缺少分段。"""
+    text = (body or "").strip()
+    if not text:
+        return True
+    compact = re.sub(r"\s+", "", text)
+    if len(compact) < DIRECT_BODY_MIN_CHARS:
+        return True
+    paragraphs = [part.strip() for part in re.split(r"\n\s*\n", text) if part.strip()]
+    if len(paragraphs) >= DIRECT_BODY_MIN_PARAGRAPHS:
+        return False
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    return len(lines) < DIRECT_BODY_MIN_PARAGRAPHS
+
+
+def craft_body_too_short(body: str) -> bool:
+    """兼容旧调用。"""
+    return direct_body_too_short(body)
+
+
+def viral_structure_block(viral_source: dict[str, Any]) -> str:
+    """仿写爆款时注入结构参考，不默认让模型看见完整复制指令外的正文。"""
+    if not isinstance(viral_source, dict):
+        return ""
+    body = str(viral_source.get("body") or "").strip()
+    if not body:
+        return ""
+    title = str(viral_source.get("title") or "").strip()
+    trimmed = body if len(body) <= 4000 else f"{body[:4000]}…"
+    return (
+        "参考爆款结构（只学段落节奏与信息层次，不要照抄题材、句子和案例细节；"
+        "爆款里的城市、区县、小区名一律不要写入成品，地区以业务数据为准，"
+        "必须按本篇业务数据与图片改写）：\n"
+        f"爆款标题：{title}\n"
+        f"爆款正文：\n{trimmed}\n\n"
+    )
+
+
+_OUT_OF_SCOPE_LOCATION_MARKERS = (
+    "浦东新区",
+    "浦东",
+    "陆家嘴",
+    "上海",
+    "北京",
+    "广州",
+    "深圳",
+    "杭州",
+    "南京",
+    "武汉",
+    "成都",
+    "重庆",
+    "西安",
+    "苏州",
+    "天津",
+    "青岛",
+    "厦门",
+    "福州",
+    "合肥",
+    "郑州",
+    "昆明",
+    "哈尔滨",
+    "沈阳",
+    "大连",
+    "黄浦",
+    "闵行",
+    "徐汇",
+    "静安",
+    "杨浦",
+    "长宁",
+    "虹口",
+    "普陀",
+    "奉贤",
+    "松江",
+    "嘉定",
+    "宝山",
+    "青浦",
+    "金山",
+    "崇明",
+)
+
+
+def _allowed_localities(user_request: str) -> frozenset[str]:
+    allowed: set[str] = set()
+    region = _request_business_value(user_request, "所在区域")
+    if region:
+        allowed.add(region)
+        if city := topic_region_name(region):
+            allowed.add(city)
+    project = _request_business_value(user_request, "楼盘信息")
+    if project:
+        allowed.add(project)
+    try:
+        payload = json.loads(user_request)
+    except json.JSONDecodeError:
+        return frozenset(allowed)
+    if not isinstance(payload, dict):
+        return frozenset(allowed)
+    facts = payload.get("facts")
+    if isinstance(facts, dict):
+        location = str(facts.get("location") or "")
+        for part in re.split(r"[·|/\s,，]+", location):
+            token = part.strip().removesuffix("市")
+            if len(token) >= 2:
+                allowed.add(token)
+        background = str(facts.get("case_background") or "").strip()
+        if background:
+            allowed.add(background)
+        product = str(facts.get("product") or "").strip()
+        if product:
+            allowed.add(product)
+    return frozenset(allowed)
+
+
+def _location_marker_allowed(marker: str, allowed: frozenset[str]) -> bool:
+    for item in allowed:
+        if marker in item or item in marker:
+            return True
+    return False
+
+
+def body_has_unauthorized_locality(text: str, user_request: str) -> bool:
+    """正文/标题是否出现业务数据未包含的外地地名。"""
+    allowed = _allowed_localities(user_request)
+    if not allowed:
+        return False
+    haystack = text or ""
+    for marker in _OUT_OF_SCOPE_LOCATION_MARKERS:
+        if marker not in haystack:
+            continue
+        if _location_marker_allowed(marker, allowed):
+            continue
+        return True
+    return False
+
+
+def _location_grounding_block(user_request: str) -> str:
+    region = _request_business_value(user_request, "所在区域")
+    project = _request_business_value(user_request, "楼盘信息")
+    allowed = _allowed_localities(user_request)
+    if not region and not project and not allowed:
+        return ""
+    lines = ["地区与楼盘以业务数据为准。爆款参考里的城市、区县、小区名不要照抄进标题或正文。"]
+    if region:
+        lines.append(f"本篇所在区域：{region}。")
+    if project:
+        lines.append(f"本篇楼盘/项目：{project}。")
+    if allowed:
+        sample = "、".join(sorted(allowed)[:8])
+        lines.append(
+            f"地名只能使用业务数据中的范围（如 {sample}），"
+            "禁止写浦东、上海、北京等与业务无关的城市或区县。"
+        )
+    return "\n".join(lines) + "\n\n"
 
 
 def body_has_cta(body: str) -> bool:
@@ -338,19 +495,44 @@ def _case_share_style_tag(value: Any) -> str:
     return text
 
 
+_STYLE_SUFFIX = re.compile(r"(风|风格|印象|风情|主义)$")
+
+
+def _format_case_share_style_topic(value: Any) -> str:
+    """短风格名补「风」：现代 → 现代风；已有后缀或长名保持原样。"""
+
+    text = _case_share_style_tag(value)
+    if not text:
+        return ""
+    if _STYLE_SUFFIX.search(text) or len(text) > 3:
+        return text
+    return f"{text}风"
+
+
+def _format_case_share_region_topic(value: Any) -> str:
+    """城市标签写成「城市+装修」：长沙 → 长沙装修。"""
+
+    text = _case_share_tag(value)
+    if not text:
+        return ""
+    if text.endswith("装修"):
+        return text
+    return f"{text}装修"
+
+
 def case_share_topics(model_topics: list[str], user_request: str, *, image_attached: bool) -> list[str]:
     """案例分享风格标签优先用表单「设计风格」，不用模型误认的中古/原木等。缺风格或地域时跳过。"""
 
     # 表单已选定风格时以表单为准；封面 field 也写的是同一套风格，避免 topics 和画面文案打架。
-    style = _case_share_style_tag(_request_business_value(user_request, "设计风格"))
+    style = _format_case_share_style_topic(_request_business_value(user_request, "设计风格"))
     if not style and image_attached:
         for item in model_topics:
-            text = _case_share_style_tag(item)
+            text = _format_case_share_style_topic(item)
             if text:
                 style = text
                 break
     region_raw = _request_business_value(user_request, "所在区域")
-    region = _case_share_tag(topic_region_name(region_raw) or region_raw)
+    region = _format_case_share_region_topic(topic_region_name(region_raw) or region_raw)
     selected = [item for item in (style, region, *CASE_SHARE_FIXED_TOPICS) if item]
     return append_topics_within_limit([], selected)
 
@@ -446,8 +628,9 @@ def _direct_generation_prompt(
     reference_knowledge: str = "",
     recent_topics: list[str] | None = None,
 ) -> str:
-    del style_block, viral_source
+    del style_block
     generation_prompt = str(generation_prompt or "")
+    viral_block = viral_structure_block(viral_source)
     knowledge_context = str(knowledge_context or "")
     reference_knowledge = str(reference_knowledge or "")
     forbidden_block = (
@@ -502,7 +685,7 @@ def _direct_generation_prompt(
             "没有「设计风格」且有图片时，才根据画面识别一个风格；看不出就让 topics 为空。"
             "没有图片且没有「设计风格」时 topics 留空。"
             "不要写线性灯、电视墙石材、柜体、沙发等画面细部词当风格；不要写装修、装修案例、装修避坑或城市推荐。"
-            "风格标签写具体风格名，不要写「装修风格」四个字。"
+            "风格标签写具体风格名，不要写「装修风格」四个字；系统会把短风格整理成「现代风」、城市整理成「长沙装修」。"
             "标签只写入 topics，不要写进正文，不要带 # 号。\n"
         )
         case_share_body_rule = (
@@ -575,6 +758,8 @@ def _direct_generation_prompt(
         "标题带 1 个贴合情绪的 emoji；正文自然穿插 2 到 4 个 emoji，贴在文字同一段里，"
         "不要单独占一行，不要堆在同一处，不要整篇不用表情。"
         "正文用短句，每句单独成段，段与段之间必须空一行（用空行分段，不要只用单个换行）。"
+        f"正文至少 {DIRECT_BODY_MIN_PARAGRAPHS} 个段落、总字数不少于 {DIRECT_BODY_MIN_CHARS} 字；"
+        "禁止只输出一句开场问句或钩子。\n"
         f"{cta_rule}"
         "不要用设计风格名或其简称（如江南、原木、法式）当留言关键词。"
         "不要空泛收尾，不要硬广承诺效果，不要套统一结尾模板。"
@@ -584,6 +769,8 @@ def _direct_generation_prompt(
         f"{image_line}"
         f"{case_share_body_rule}"
         f"{craft_body_rule}"
+        f"{viral_block}"
+        f"{_location_grounding_block(user_request)}"
         "用户生成提示词：\n"
         f"{generation_prompt.strip()}\n\n"
         "业务数据只用来核对事实。提示词和内容类型知识库没有要求的金额、小区、人名和经历不要补写。\n"
@@ -939,11 +1126,21 @@ async def generate_direct_content(
         raise ValueError("模型没有返回可用正文")
     content_type_code, content_type_name = _direct_request_content_type(user_request)
     case_mode = is_case_share_content(content_type_code, content_type_name)
+    craft_mode = is_craft_content(content_type_code, content_type_name)
     needs_emoji = not text_has_emoji(final_title) or not text_has_emoji(final_body)
     needs_cta = not body_has_cta(final_body)
+    needs_body_expand = direct_body_too_short(final_body)
+    needs_location_fix = body_has_unauthorized_locality(f"{final_title}\n{final_body}", user_request)
     needs_case_craft_strip = case_mode and case_body_has_craft_content(final_body)
     needs_case_detail_strip = case_mode and case_body_is_over_detailed(final_body)
-    if needs_emoji or needs_cta or needs_case_craft_strip or needs_case_detail_strip:
+    if (
+        needs_emoji
+        or needs_cta
+        or needs_body_expand
+        or needs_location_fix
+        or needs_case_craft_strip
+        or needs_case_detail_strip
+    ):
         repair_parts = []
         if needs_emoji:
             repair_parts.append(
@@ -956,6 +1153,25 @@ async def generate_direct_content(
                 "正文末尾只补一句贴合本篇的引流收尾，用收藏或评论区留言收束，"
                 "点明可对照的点；若留言带关键词，只用「工艺」「案例」或「开工」，"
                 "不要写两句堆叠，不要写设计风格简称；不要空泛收尾，不要硬广"
+            )
+        if needs_body_expand:
+            if craft_mode:
+                expand_hint = "分别写做法要点、验收对照和避坑提醒"
+            elif case_mode:
+                expand_hint = "分别写空间感受、居住场景和整体印象"
+            else:
+                expand_hint = "分别写核心信息、细节展开和可对照要点"
+            repair_parts.append(
+                f"正文太短：按业务数据写满至少 {DIRECT_BODY_MIN_PARAGRAPHS} 段短句，"
+                f"总字数不少于 {DIRECT_BODY_MIN_CHARS} 字，{expand_hint}；"
+                "不要只留一句开场问句"
+            )
+        if needs_location_fix:
+            region = _request_business_value(user_request, "所在区域")
+            project = _request_business_value(user_request, "楼盘信息")
+            repair_parts.append(
+                f"删掉与业务不符的地名（如浦东、上海等），地区只能写业务数据中的"
+                f"「{region or '所在区域'}」「{project or '楼盘'}」相关表述"
             )
         if needs_case_craft_strip:
             repair_parts.append(
@@ -971,6 +1187,8 @@ async def generate_direct_content(
             keep_fact_rule = "小区、面积、风格和可见硬装事实不要改，不要保留工艺施工表述。"
         elif needs_case_detail_strip:
             keep_fact_rule = "小区、面积、风格和整体氛围不要改，不要保留逐件细部描写。"
+        elif needs_body_expand or needs_location_fix:
+            keep_fact_rule = "小区、面积、区域、工艺或报价等业务事实不要改。"
         else:
             keep_fact_rule = "事实和工艺点不要改。"
         try:
@@ -1011,6 +1229,10 @@ async def generate_direct_content(
             cta_ok = (not needs_cta) or body_has_cta(repaired_body)
             craft_ok = (not needs_case_craft_strip) or not case_body_has_craft_content(repaired_body)
             detail_ok = (not needs_case_detail_strip) or not case_body_is_over_detailed(repaired_body)
+            expand_ok = (not needs_body_expand) or not direct_body_too_short(repaired_body)
+            location_ok = (not needs_location_fix) or not body_has_unauthorized_locality(
+                f"{repaired_title}\n{repaired_body}", user_request
+            )
             if (
                 repaired_title
                 and repaired_body
@@ -1019,14 +1241,64 @@ async def generate_direct_content(
                 and cta_ok
                 and craft_ok
                 and detail_ok
+                and expand_ok
+                and location_ok
             ):
                 final_title = repaired_title
                 final_body = repaired_body
+    if direct_body_too_short(final_body):
+        cta_kw = cta_comment_keyword(content_type_code, content_type_name)
+        cta_tail = f"收藏或留言「{cta_kw}」" if cta_kw else "收藏或评论区留言"
+        try:
+            expand_article = await model.ainvoke(
+                [
+                    HumanMessage(
+                        content=(
+                            "下面这篇小红书文案正文过短。请重写标题和正文："
+                            f"至少 {DIRECT_BODY_MIN_PARAGRAPHS} 段短句、不少于 {DIRECT_BODY_MIN_CHARS} 字，"
+                            f"按内容类型写清要点，末尾一句引流（{cta_tail}）；"
+                            "业务事实不要改。第一行只写新标题，空一行后写正文，不要解释。\n\n"
+                            f"原标题：{final_title}\n\n原正文：\n{final_body}\n\n"
+                            "业务数据：\n"
+                            f"{user_request[:3000]}"
+                        )
+                    )
+                ]
+            )
+            expanded = _output_arguments(expand_article)
+        except Exception as exc:
+            logger.info("Direct body expand skipped: %s", exc)
+            expanded = None
+        if expanded:
+            expanded_title = apply_title_rules(
+                normalize_escaped_newlines(
+                    replace_forbidden_words(expanded["title"], forbidden_replacements)
+                ).strip()
+            )
+            expanded_body = normalize_published_body(
+                replace_forbidden_words(
+                    normalize_escaped_newlines(expanded["body"]),
+                    forbidden_replacements,
+                )
+            )
+            expanded_body = apply_title_rules(expanded_body)
+            if (
+                expanded_title
+                and expanded_body
+                and not copy_body_is_placeholder(expanded_body)
+                and not direct_body_too_short(expanded_body)
+            ):
+                final_title = expanded_title
+                final_body = expanded_body
     final_body = rewrite_cta_comment_keyword(
         final_body,
         cta_comment_keyword(content_type_code, content_type_name),
     )
     final_body = trim_cta_to_single_sentence(final_body)
+    if body_has_unauthorized_locality(f"{final_title}\n{final_body}", user_request):
+        raise ValueError("正文地区与业务数据不符，请再生成一次")
+    if direct_body_too_short(final_body):
+        raise ValueError("正文过短，请再生成一次")
     if is_case_share_content(content_type_code, content_type_name):
         topics = case_share_topics(body_topics, user_request, image_attached=image_sent)
     else:

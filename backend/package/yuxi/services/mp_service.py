@@ -959,6 +959,16 @@ async def get_me(ctx: MpContext) -> dict[str, Any]:
     return {"employee": _me_dict(ctx.employee), "user_uid": str(ctx.user.uid)}
 
 
+async def get_me_work_code(ctx: MpContext) -> dict[str, Any]:
+    employee = ctx.employee
+    return {
+        "employee_code": str(employee.employee_code or "").strip(),
+        "login_account": str(employee.login_account or "").strip(),
+        "name": str(employee.name or "").strip(),
+        "role": str(employee.role or "").strip(),
+    }
+
+
 async def update_me(db: AsyncSession, ctx: MpContext, payload: MeUpdatePayload) -> dict[str, Any]:
     ctx.employee.bio = payload.bio.strip()
     await db.commit()

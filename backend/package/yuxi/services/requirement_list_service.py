@@ -199,7 +199,7 @@ def mask_phone(phone: str) -> str:
 def display_stamp(value: datetime | None) -> str:
     if value is None:
         return ""
-    return value.replace(tzinfo=UTC).astimezone(SHANGHAI_TZ).strftime("%Y%m%d %H:%M")
+    return value.replace(tzinfo=UTC).astimezone(SHANGHAI_TZ).strftime("%Y-%m-%d %H:%M")
 
 
 def _range_bounds(kind: str) -> tuple[datetime, datetime] | None:
@@ -222,7 +222,7 @@ def _can_manage(row: RequirementListSubmission, user: User) -> bool:
     return user.role == "superadmin" or _owns_submission(row, user)
 
 
-def _visible(stmt, user: User):
+def _visible(stmt, user: User, *, employee_code: str | None = None):
     if user.role == "superadmin":
         return stmt
     uid = str(user.uid)
@@ -235,7 +235,11 @@ def _visible(stmt, user: User):
         .correlate(RequirementListSubmission)
         .exists()
     )
-    return stmt.where(or_(RequirementListSubmission.created_by == uid, shared))
+    clauses: list = [RequirementListSubmission.created_by == uid, shared]
+    code = (employee_code or "").strip()
+    if code:
+        clauses.append(RequirementListSubmission.employee_code == code)
+    return stmt.where(or_(*clauses))
 
 
 async def _has_share_access(db: AsyncSession, row: RequirementListSubmission, user: User) -> bool:
@@ -247,7 +251,15 @@ async def _has_share_access(db: AsyncSession, row: RequirementListSubmission, us
             RequirementListSubmissionShare.member_uid == str(user.uid),
         )
     )
-    return found is not None
+    if found is not None:
+        return True
+    employee = await resolve_employee_for_user(db, user)
+    return bool(
+        employee
+        and employee.employee_code
+        and row.employee_code
+        and row.employee_code == employee.employee_code
+    )
 
 
 def _member_rows(shares: list[RequirementListSubmissionShare]) -> list[dict[str, str]]:
@@ -422,7 +434,12 @@ async def create_requirement_visitor_session(db: AsyncSession, payload: Requirem
         REQUIREMENT_VISITOR_SESSION_TTL,
         json.dumps({"appid": appid, "staff_code": staff_code, "openid": identity["openid"]}),
     )
-    return {"session_id": session_id, "expires_in": REQUIREMENT_VISITOR_SESSION_TTL}
+    return {
+        "session_id": session_id,
+        "expires_in": REQUIREMENT_VISITOR_SESSION_TTL,
+        "sharer_name": employee.name or "",
+        "sharer_role": employee.role or "",
+    }
 
 
 async def _resolve_requirement_visitor_phone(
@@ -456,6 +473,14 @@ async def _resolve_requirement_visitor_phone(
     return phone
 
 
+def _guest_submitter_label(nickname: str, phone: str) -> str:
+    nick = str(nickname or "").strip()
+    digits = str(phone or "").strip()
+    if nick and digits:
+        return f"{nick} · {digits}"[:80]
+    return (nick or digits)[:80]
+
+
 async def create_mp_shared_submission(db: AsyncSession, payload: MpSharedSubmissionCreate) -> dict:
     """小程序访客分享：微信授权手机号 + 昵称写入提交人。"""
     nickname = payload.submitter_nickname.strip()
@@ -472,7 +497,9 @@ async def create_mp_shared_submission(db: AsyncSession, payload: MpSharedSubmiss
         staff_code=payload.staff_code,
         answers=payload.answers,
     )
-    return await create_shared_submission(db, base, submitter_name=nickname)
+    return await create_shared_submission(
+        db, base, submitter_name=_guest_submitter_label(nickname, visitor_phone)
+    )
 
 
 async def create_shared_submission(
@@ -528,17 +555,8 @@ async def list_mp_submissions(
 ) -> dict:
     employee = await resolve_employee_for_user(db, user)
     filters = SubmissionFilters(keyword=keyword)
-    base = _filtered(filters)
-    uid = str(user.uid)
-    if employee and employee.employee_code:
-        base = base.where(
-            or_(
-                RequirementListSubmission.created_by == uid,
-                RequirementListSubmission.employee_code == employee.employee_code,
-            )
-        )
-    else:
-        base = base.where(RequirementListSubmission.created_by == uid)
+    staff_code = employee.employee_code if employee else None
+    base = _visible(_filtered(filters), user, employee_code=staff_code)
     total = await db.scalar(select(func.count()).select_from(base.subquery()))
     rows = (
         await db.scalars(
@@ -547,8 +565,16 @@ async def list_mp_submissions(
             .limit(page_size)
         )
     ).all()
+    share_map = await _shares_by_submission(db, [row.id for row in rows])
     return {
-        "items": [submission_data(row) for row in rows],
+        "items": [
+            submission_data(
+                row,
+                user=user,
+                shared_members=_member_rows(share_map.get(row.id, [])),
+            )
+            for row in rows
+        ],
         "total": int(total or 0),
         "page": page,
         "page_size": page_size,
@@ -558,7 +584,9 @@ async def list_mp_submissions(
 async def list_submissions(
     db: AsyncSession, user: User, page: int, page_size: int, filters: SubmissionFilters
 ) -> dict:
-    base = _visible(_filtered(filters), user)
+    employee = await resolve_employee_for_user(db, user)
+    staff_code = employee.employee_code if employee else None
+    base = _visible(_filtered(filters), user, employee_code=staff_code)
     total = await db.scalar(select(func.count()).select_from(base.subquery()))
     rows = (
         await db.scalars(
@@ -572,6 +600,7 @@ async def list_submissions(
             _visible(
                 select(RequirementListSubmission.branch).where(RequirementListSubmission.branch != ""),
                 user,
+                employee_code=staff_code,
             )
             .distinct()
             .order_by(RequirementListSubmission.branch.asc())
@@ -697,9 +726,11 @@ async def delete_submission(db: AsyncSession, submission_id: str, user: User) ->
 
 
 async def export_submissions(db: AsyncSession, user: User, filters: SubmissionFilters) -> bytes:
+    employee = await resolve_employee_for_user(db, user)
+    staff_code = employee.employee_code if employee else None
     rows = (
         await db.scalars(
-            _visible(_filtered(filters), user).order_by(
+            _visible(_filtered(filters), user, employee_code=staff_code).order_by(
                 RequirementListSubmission.submitted_at.desc(), RequirementListSubmission.id.desc()
             )
         )

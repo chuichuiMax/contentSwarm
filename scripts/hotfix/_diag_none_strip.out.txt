@@ -1,0 +1,139 @@
+11-21 10:51:36 INFO: 220.168.34.198:56128 - "GET /api/content/covers/ai-cover-prompts/smart-random/preview.png?content_type_code=&content_type_name= HTTP/1.1" 200 - 2783ms
+11-21 10:51:36 INFO: 220.168.34.198:56114 - "GET /api/content/covers/ai-cover-prompts/p1/preview.png?content_type_code=&content_type_name= HTTP/1.1" 200 - 2797ms
+11-21 10:51:36 INFO: 220.168.34.198:56120 - "GET /api/content/covers/ai-cover-prompts/p2/preview.png?content_type_code=&content_type_name= HTTP/1.1" 200 - 2887ms
+11-21 10:51:36 INFO: 220.168.34.198:56138 - "GET /api/content/covers/ai-cover-prompts/p3/preview.png?content_type_code=&content_type_name= HTTP/1.1" 200 - 2909ms
+11-21 10:51:36 INFO: 220.168.34.198:56176 - "GET /api/content/tasks/ct_f19c6636bc24454a8464a08d341fd5e9 HTTP/1.1" 200 - 31ms
+11-21 10:51:36 INFO: 220.168.34.198:56100 - "GET /api/content/covers/ai-cover-prompts/p4/preview.png?content_type_code=&content_type_name= HTTP/1.1" 200 - 2917ms
+11-21 10:51:36 INFO: 220.168.34.198:56190 - "PUT /api/content/tasks/ct_f19c6636bc24454a8464a08d341fd5e9/brief HTTP/1.1" 200 - 8ms
+11-21 10:51:36 INFO: 220.168.34.198:56192 - "GET /api/content/tasks?page=1&page_size=100 HTTP/1.1" 200 - 199ms
+11-21 10:51:36 INFO: 220.168.34.198:56214 - "GET /api/content/covers/photo-layouts HTTP/1.1" 200 - 8ms
+11-21 10:51:37 INFO: 220.168.34.198:56236 - "GET /api/content/covers/ai-cover-prompts HTTP/1.1" 200 - 24ms
+11-21 10:51:37 INFO: 220.168.34.198:56168 - "GET /api/content/covers/ai-cover-prompts/p5/preview.png?content_type_code=&content_type_name= HTTP/1.1" 200 - 3087ms
+11-21 10:51:37 INFO: 220.168.34.198:56264 - "PUT /api/content/tasks/ct_f19c6636bc24454a8464a08d341fd5e9/brief HTTP/1.1" 200 - 17ms
+11-21 10:51:37 INFO: 220.168.34.198:56278 - "GET /api/creative-styles?content_type_id=1deb1a05-4f90-4194-88a4-86414d8187aa&enabled_only=true HTTP/1.1" 200 - 19ms
+11-21 10:51:37 INFO: 220.168.34.198:56294 - "PATCH /api/content/tasks/ct_f19c6636bc24454a8464a08d341fd5e9 HTTP/1.1" 200 - 28ms
+11-21 10:51:37 INFO: 220.168.34.198:56312 - "GET /api/content/covers/ai-cover-prompts?content_type_code=CT06&content_type_name=%E5%B7%A5%E8%89%BA%E6%96%BD%E5%B7%A5%E5%B1%95%E7%A4%BA HTTP/1.1" 200 - 26ms
+11-21 10:51:38 INFO: 220.168.34.198:56328 - "GET /api/content/tasks?page=1&page_size=100 HTTP/1.1" 200 - 215ms
+11-21 10:51:39 INFO: 220.168.34.198:56224 - "GET /api/content/covers/hycanvas/templates HTTP/1.1" 200 - 2335ms
+11-21 10:51:39 INFO: 220.168.34.198:56338 - "PUT /api/content/tasks/ct_f19c6636bc24454a8464a08d341fd5e9/brief HTTP/1.1" 200 - 17ms
+11-21 10:51:39 INFO: 220.168.34.198:56354 - "GET /api/content/tasks?page=1&page_size=100 HTTP/1.1" 200 - 205ms
+11-21 10:51:40 INFO: 220.168.34.198:56258 - "GET /api/content/covers/ai-cover-prompts/p14/preview.png?content_type_code=&content_type_name= HTTP/1.1" 200 - 2923ms
+11-21 10:51:40 INFO: 220.168.34.198:56308 - "GET /api/content/covers/ai-cover-prompts/p9/preview.png?content_type_code=&content_type_name= HTTP/1.1" 200 - 2930ms
+11-21 10:51:41 INFO: 220.168.34.198:56240 - "GET /api/content/covers/ai-cover-prompts/p7/preview.png?content_type_code=&content_type_name= HTTP/1.1" 200 - 4066ms
+11-21 10:51:41 INFO: 220.168.34.198:56250 - "GET /api/content/covers/ai-cover-prompts/p8/preview.png?content_type_code=&content_type_name= HTTP/1.1" 200 - 4244ms
+11-21 10:51:42 INFO: 220.168.34.198:56340 - "GET /api/content/covers/ai-cover-prompts/p10/preview.png?content_type_code=&content_type_name= HTTP/1.1" 200 - 2775ms
+11-21 10:51:42 INFO: 220.168.34.198:44718 - "PUT /api/content/tasks/ct_f19c6636bc24454a8464a08d341fd5e9/brief HTTP/1.1" 200 - 30ms
+11-21 10:51:42 INFO: 220.168.34.198:56362 - "GET /api/content/covers/ai-cover-prompts/p11/preview.png?content_type_code=&content_type_name= HTTP/1.1" 200 - 2660ms
+11-21 10:51:44 INFO: 220.168.34.198:56376 - "GET /api/content/covers/ai-cover-prompts/p13/preview.png?content_type_code=&content_type_name= HTTP/1.1" 200 - 2848ms
+11-21 10:51:44 INFO: 220.168.34.198:56388 - "GET /api/content/covers/ai-cover-prompts/p15/preview.png?content_type_code=&content_type_name= HTTP/1.1" 200 - 2786ms
+11-21 10:51:44 INFO: 220.168.34.198:44740 - "GET /api/content/tasks?page=1&page_size=100 HTTP/1.1" 200 - 212ms
+11-21 10:51:44 INFO: 220.168.34.198:44756 - "GET /api/content/covers/ai-cover-prompts/c717fdac557aa4d5f/preview.png?content_type_code=&content_type_name= HTTP/1.1" 200 - 7ms
+11-21 10:51:45 INFO: 220.168.34.198:44768 - "GET /api/content/target-audience-tags?audience=%E6%AF%9B%E5%9D%AF HTTP/1.1" 200 - 9ms
+11-21 10:51:45 INFO: 220.168.34.198:44722 - "GET /api/content/covers/ai-cover-prompts/p16/preview.png?content_type_code=&content_type_name= HTTP/1.1" 200 - 3026ms
+11-21 10:51:46 INFO: 220.168.34.198:44802 - "PUT /api/content/tasks/ct_f19c6636bc24454a8464a08d341fd5e9/brief HTTP/1.1" 200 - 37ms
+11-21 10:51:46 INFO: 220.168.34.198:44728 - "GET /api/content/covers/ai-cover-prompts/p17/preview.png?content_type_code=&content_type_name= HTTP/1.1" 200 - 3427ms
+11-21 10:51:47 INFO: 220.168.34.198:44826 - "GET /api/content/tasks?page=1&page_size=100 HTTP/1.1" 200 - 296ms
+11-21 10:51:48 INFO: 220.168.34.198:44778 - "GET /api/content/covers/ai-cover-prompts/smart-random/preview.png?content_type_code=CT06&content_type_name=%E5%B7%A5%E8%89%BA%E6%96%BD%E5%B7%A5%E5%B1%95%E7%A4%BA HTTP/1.1" 200 - 2934ms
+11-21 10:51:48 INFO: 220.168.34.198:44800 - "GET /api/content/covers/ai-cover-prompts/p2/preview.png?content_type_code=CT06&content_type_name=%E5%B7%A5%E8%89%BA%E6%96%BD%E5%B7%A5%E5%B1%95%E7%A4%BA HTTP/1.1" 200 - 2964ms
+11-21 10:51:48 INFO: 220.168.34.198:44786 - "GET /api/content/covers/ai-cover-prompts/p1/preview.png?content_type_code=CT06&content_type_name=%E5%B7%A5%E8%89%BA%E6%96%BD%E5%B7%A5%E5%B1%95%E7%A4%BA HTTP/1.1" 200 - 3086ms
+11-21 10:51:49 INFO: 220.168.34.198:44818 - "GET /api/content/covers/ai-cover-prompts/p3/preview.png?content_type_code=CT06&content_type_name=%E5%B7%A5%E8%89%BA%E6%96%BD%E5%B7%A5%E5%B1%95%E7%A4%BA HTTP/1.1" 200 - 2930ms
+11-21 10:51:49 INFO: 220.168.34.198:44850 - "PUT /api/content/tasks/ct_f19c6636bc24454a8464a08d341fd5e9/brief HTTP/1.1" 200 - 25ms
+11-21 10:51:50 INFO: 220.168.34.198:44874 - "GET /api/content/tasks?page=1&page_size=100 HTTP/1.1" 200 - 213ms
+11-21 10:51:51 INFO: 220.168.34.198:44838 - "GET /api/content/covers/ai-cover-prompts/p4/preview.png?content_type_code=CT06&content_type_name=%E5%B7%A5%E8%89%BA%E6%96%BD%E5%B7%A5%E5%B1%95%E7%A4%BA HTTP/1.1" 200 - 2685ms
+11-21 10:51:52 INFO: 220.168.34.198:44842 - "GET /api/content/covers/ai-cover-prompts/p5/preview.png?content_type_code=CT06&content_type_name=%E5%B7%A5%E8%89%BA%E6%96%BD%E5%B7%A5%E5%B1%95%E7%A4%BA HTTP/1.1" 200 - 2873ms
+11-21 10:51:54 INFO: 220.168.34.198:44866 - "GET /api/content/covers/ai-cover-prompts/p7/preview.png?content_type_code=CT06&content_type_name=%E5%B7%A5%E8%89%BA%E6%96%BD%E5%B7%A5%E5%B1%95%E7%A4%BA HTTP/1.1" 200 - 4145ms
+11-21 10:51:54 INFO: 220.168.34.198:44896 - "GET /api/content/covers/ai-cover-prompts/p14/preview.png?content_type_code=CT06&content_type_name=%E5%B7%A5%E8%89%BA%E6%96%BD%E5%B7%A5%E5%B1%95%E7%A4%BA HTTP/1.1" 200 - 2865ms
+11-21 10:51:55 INFO: 220.168.34.198:55336 - "GET /api/content/covers/ai-cover-prompts/p9/preview.png?content_type_code=CT06&content_type_name=%E5%B7%A5%E8%89%BA%E6%96%BD%E5%B7%A5%E5%B1%95%E7%A4%BA HTTP/1.1" 200 - 2727ms
+11-21 10:51:55 INFO: 220.168.34.198:44888 - "GET /api/content/covers/ai-cover-prompts/p8/preview.png?content_type_code=CT06&content_type_name=%E5%B7%A5%E8%89%BA%E6%96%BD%E5%B7%A5%E5%B1%95%E7%A4%BA HTTP/1.1" 200 - 3967ms
+11-21 10:51:55 INFO: 220.168.34.198:55346 - "GET /api/content/covers/ai-cover-prompts/p10/preview.png?content_type_code=CT06&content_type_name=%E5%B7%A5%E8%89%BA%E6%96%BD%E5%B7%A5%E5%B1%95%E7%A4%BA HTTP/1.1" 200 - 2783ms
+11-21 10:51:56 INFO: 220.168.34.198:55358 - "PUT /api/content/tasks/ct_f19c6636bc24454a8464a08d341fd5e9/brief HTTP/1.1" 200 - 20ms
+11-21 10:51:56 INFO: 220.168.34.198:55364 - "GET /api/content/tasks?page=1&page_size=100 HTTP/1.1" 200 - 185ms
+11-21 10:51:56 INFO: 220.168.34.198:55366 - "PUT /api/content/tasks/ct_f19c6636bc24454a8464a08d341fd5e9/brief HTTP/1.1" 200 - 40ms
+11-21 10:51:56 INFO: 220.168.34.198:55352 - "GET /api/content/covers/ai-cover-prompts/p11/preview.png?content_type_code=CT06&content_type_name=%E5%B7%A5%E8%89%BA%E6%96%BD%E5%B7%A5%E5%B1%95%E7%A4%BA HTTP/1.1" 200 - 2915ms
+11-21 10:52:15 INFO: 220.168.34.198:57836 - "PUT /api/content/tasks/ct_f19c6636bc24454a8464a08d341fd5e9/brief HTTP/1.1" 200 - 26ms
+11-21 10:52:15 INFO: 220.168.34.198:57852 - "GET /api/content/tasks?page=1&page_size=100 HTTP/1.1" 200 - 194ms
+11-21 10:52:18 INFO: 220.168.34.198:57864 - "PUT /api/content/tasks/ct_f19c6636bc24454a8464a08d341fd5e9/brief HTTP/1.1" 200 - 22ms
+11-21 10:52:18 INFO: 220.168.34.198:57868 - "GET /api/content/tasks?page=1&page_size=100 HTTP/1.1" 200 - 185ms
+11-21 10:52:18 INFO: 220.168.34.198:57876 - "POST /api/content/tasks/ct_f19c6636bc24454a8464a08d341fd5e9/direct-generate HTTP/1.1" 200 - 157ms
+11-21 10:52:18 INFO: 220.168.34.198:57878 - "GET /api/content/runs/dd759cd6-6b84-40fe-a099-3af18725934c/events?after_seq=0-0 HTTP/1.1" 200 - 3ms
+---FULL_TAIL---
+[32m11-21 10:51:53[0m [34m[1mDEBUG[0m [36mai_cover_prompt_catalog_service.py:91[0m: [34m[1mAI 封面 HTTP 404: https://hongyang02.oss-cn-hangzhou.aliyuncs.com/image/AI-cover/%E6%8F%90%E7%A4%BA%E8%AF%8D%E5%85%AB.webp?x-oss-signature-version=OSS4-HMAC-SHA256&x-oss-date=202[0m
+[32m11-21 10:51:53[0m [34m[1mDEBUG[0m [36mai_cover_prompt_catalog_service.py:91[0m: [34m[1mAI 封面 HTTP 404: https://hongyang02.oss-cn-hangzhou.aliyuncs.com/image/AI-cover/%E6%8F%90%E7%A4%BA%E8%AF%8D%E4%B9%9D.jpg?x-oss-signature-version=OSS4-HMAC-SHA256&x-oss-date=2026[0m
+[32m11-21 10:51:53[0m [34m[1mDEBUG[0m [36mai_cover_prompt_catalog_service.py:91[0m: [34m[1mAI 封面 HTTP 404: https://hongyang02.oss-cn-hangzhou.aliyuncs.com/image/AI-cover/p7.jpg?x-oss-signature-version=OSS4-HMAC-SHA256&x-oss-date=20261121T025152Z&x-oss-expires=86399&x[0m
+[32m11-21 10:51:53[0m [34m[1mDEBUG[0m [36mai_cover_prompt_catalog_service.py:91[0m: [34m[1mAI 封面 HTTP 403: https://hongyang02.oss-cn-hangzhou.aliyuncs.com/image/AI-cover/提示词八.png[0m
+[32m11-21 10:51:53[0m [34m[1mDEBUG[0m [36mai_cover_prompt_catalog_service.py:91[0m: [34m[1mAI 封面 HTTP 404: https://hongyang02.oss-cn-hangzhou.aliyuncs.com/image/AI-cover/%E6%8F%90%E7%A4%BA%E8%AF%8D%E5%85%AB.jpg?x-oss-signature-version=OSS4-HMAC-SHA256&x-oss-date=2026[0m
+[32m11-21 10:51:53[0m [34m[1mDEBUG[0m [36mai_cover_prompt_catalog_service.py:91[0m: [34m[1mAI 封面 HTTP 403: https://hongyang02.oss-cn-hangzhou.aliyuncs.com/image/AI-cover/提示词九.jpg[0m
+[32m11-21 10:51:53[0m [34m[1mDEBUG[0m [36mai_cover_prompt_catalog_service.py:91[0m: [34m[1mAI 封面 HTTP 403: https://hongyang02.oss-cn-hangzhou.aliyuncs.com/image/AI-cover/提示词八.webp[0m
+[32m11-21 10:51:53[0m [34m[1mDEBUG[0m [36mai_cover_prompt_catalog_service.py:91[0m: [34m[1mAI 封面 HTTP 404: https://hongyang02.oss-cn-hangzhou.aliyuncs.com/image/AI-cover/%E6%8F%90%E7%A4%BA%E8%AF%8D%E5%8D%81.png?x-oss-signature-version=OSS4-HMAC-SHA256&x-oss-date=2026[0m
+[32m11-21 10:51:53[0m [34m[1mDEBUG[0m [36mai_cover_prompt_catalog_service.py:91[0m: [34m[1mAI 封面 HTTP 403: https://hongyang02.oss-cn-hangzhou.aliyuncs.com/image/AI-cover/p7.jpg[0m
+[32m11-21 10:51:53[0m [34m[1mDEBUG[0m [36mai_cover_prompt_catalog_service.py:91[0m: [34m[1mAI 封面 HTTP 404: https://hongyang02.oss-cn-hangzhou.aliyuncs.com/image/AI-cover/%E6%8F%90%E7%A4%BA%E8%AF%8D%E4%B9%9D.webp?x-oss-signature-version=OSS4-HMAC-SHA256&x-oss-date=202[0m
+[32m11-21 10:51:53[0m [34m[1mDEBUG[0m [36mai_cover_prompt_catalog_service.py:91[0m: [34m[1mAI 封面 HTTP 404: https://hongyang02.oss-cn-hangzhou.aliyuncs.com/image/AI-cover/p14.png?x-oss-signature-version=OSS4-HMAC-SHA256&x-oss-date=20261121T025153Z&x-oss-expires=86399&[0m
+[32m11-21 10:51:53[0m [34m[1mDEBUG[0m [36mai_cover_prompt_catalog_service.py:91[0m: [34m[1mAI 封面 HTTP 404: https://hongyang02.oss-cn-hangzhou.aliyuncs.com/image/AI-cover/p7.webp?x-oss-signature-version=OSS4-HMAC-SHA256&x-oss-date=20261121T025153Z&x-oss-expires=86399&[0m
+[32m11-21 10:51:53[0m [34m[1mDEBUG[0m [36mai_cover_prompt_catalog_service.py:91[0m: [34m[1mAI 封面 HTTP 403: https://hongyang02.oss-cn-hangzhou.aliyuncs.com/image/AI-cover/提示词八.jpg[0m
+[32m11-21 10:51:53[0m [34m[1mDEBUG[0m [36mai_cover_prompt_catalog_service.py:91[0m: [34m[1mAI 封面 HTTP 403: https://hongyang02.oss-cn-hangzhou.aliyuncs.com/image/AI-cover/提示词十.png[0m
+[32m11-21 10:51:53[0m [34m[1mDEBUG[0m [36mai_cover_prompt_catalog_service.py:91[0m: [34m[1mAI 封面 HTTP 403: https://hongyang02.oss-cn-hangzhou.aliyuncs.com/image/AI-cover/p14.png[0m
+[32m11-21 10:51:53[0m [34m[1mDEBUG[0m [36mai_cover_prompt_catalog_service.py:91[0m: [34m[1mAI 封面 HTTP 404: https://hongyang02.oss-cn-hangzhou.aliyuncs.com/image/AI-cover/%E6%8F%90%E7%A4%BA%E8%AF%8D%E5%85%AB.webp?x-oss-signature-version=OSS4-HMAC-SHA256&x-oss-date=202[0m
+[32m11-21 10:51:53[0m [34m[1mDEBUG[0m [36mai_cover_prompt_catalog_service.py:91[0m: [34m[1mAI 封面 HTTP 404: https://hongyang02.oss-cn-hangzhou.aliyuncs.com/image/AI-cover/%E6%8F%90%E7%A4%BA%E8%AF%8D%E5%8D%81%E4%B8%80.png?x-oss-signature-version=OSS4-HMAC-SHA256&x-oss-[0m
+[32m11-21 10:51:53[0m [34m[1mDEBUG[0m [36mai_cover_prompt_catalog_service.py:91[0m: [34m[1mAI 封面 HTTP 403: https://hongyang02.oss-cn-hangzhou.aliyuncs.com/image/AI-cover/提示词九.webp[0m
+[32m11-21 10:51:53[0m [34m[1mDEBUG[0m [36mai_cover_prompt_catalog_service.py:91[0m: [34m[1mAI 封面 HTTP 403: https://hongyang02.oss-cn-hangzhou.aliyuncs.com/image/AI-cover/p7.webp[0m
+[32m11-21 10:51:53[0m [34m[1mDEBUG[0m [36mai_cover_prompt_catalog_service.py:91[0m: [34m[1mAI 封面 HTTP 404: https://hongyang02.oss-cn-hangzhou.aliyuncs.com/image/AI-cover/%E6%8F%90%E7%A4%BA%E8%AF%8D%E5%8D%81.jpg?x-oss-signature-version=OSS4-HMAC-SHA256&x-oss-date=2026[0m
+[32m11-21 10:51:53[0m [34m[1mDEBUG[0m [36mai_cover_prompt_catalog_service.py:91[0m: [34m[1mAI 封面 HTTP 404: https://hongyang02.oss-cn-hangzhou.aliyuncs.com/image/AI-cover/p14.jpg?x-oss-signature-version=OSS4-HMAC-SHA256&x-oss-date=20261121T025153Z&x-oss-expires=86399&[0m
+[32m11-21 10:51:53[0m [34m[1mDEBUG[0m [36mai_cover_prompt_catalog_service.py:91[0m: [34m[1mAI 封面 HTTP 404: https://hongyang02.oss-cn-hangzhou.aliyuncs.com/image/AI-cover/p9.png?x-oss-signature-version=OSS4-HMAC-SHA256&x-oss-date=20261121T025153Z&x-oss-expires=86399&x[0m
+[32m11-21 10:51:53[0m [34m[1mDEBUG[0m [36mai_cover_prompt_catalog_service.py:91[0m: [34m[1mAI 封面 HTTP 403: https://hongyang02.oss-cn-hangzhou.aliyuncs.com/image/AI-cover/提示词八.webp[0m
+[32m11-21 10:51:54[0m [34m[1mDEBUG[0m [36mai_cover_prompt_catalog_service.py:91[0m: [34m[1mAI 封面 HTTP 403: https://hongyang02.oss-cn-hangzhou.aliyuncs.com/image/AI-cover/提示词十一.png[0m
+[32m11-21 10:51:54[0m [34m[1mDEBUG[0m [36mai_cover_prompt_catalog_service.py:91[0m: [34m[1mAI 封面 HTTP 403: https://hongyang02.oss-cn-hangzhou.aliyuncs.com/image/AI-cover/提示词十.jpg[0m
+[32m11-21 10:51:54[0m [34m[1mDEBUG[0m [36mai_cover_prompt_catalog_service.py:91[0m: [34m[1mAI 封面 HTTP 404: https://hongyang02.oss-cn-hangzhou.aliyuncs.com/image/AI-cover/p8.png?x-oss-signature-version=OSS4-HMAC-SHA256&x-oss-date=20261121T025153Z&x-oss-expires=86399&x[0m
+[32m11-21 10:51:54[0m [34m[1mDEBUG[0m [36mai_cover_prompt_catalog_service.py:91[0m: [34m[1mAI 封面 HTTP 403: https://hongyang02.oss-cn-hangzhou.aliyuncs.com/image/AI-cover/p14.jpg[0m
+11-21 10:51:54 INFO: 220.168.34.198:44866 - "GET /api/content/covers/ai-cover-prompts/p7/preview.png?content_type_code=CT06&content_type_name=%E5%B7%A5%E8%89%BA%E6%96%BD%E5%B7%A5%E5%B1%95%E7%A4%BA HTTP/1.1" 200 - 4145ms
+[32m11-21 10:51:54[0m [34m[1mDEBUG[0m [36mai_cover_prompt_catalog_service.py:91[0m: [34m[1mAI 封面 HTTP 403: https://hongyang02.oss-cn-hangzhou.aliyuncs.com/image/AI-cover/p9.png[0m
+[32m11-21 10:51:54[0m [34m[1mDEBUG[0m [36mai_cover_prompt_catalog_service.py:91[0m: [34m[1mAI 封面 HTTP 404: https://hongyang02.oss-cn-hangzhou.aliyuncs.com/image/AI-cover/%E6%8F%90%E7%A4%BA%E8%AF%8D%E5%8D%81%E4%B8%80.jpg?x-oss-signature-version=OSS4-HMAC-SHA256&x-oss-[0m
+[32m11-21 10:51:54[0m [34m[1mDEBUG[0m [36mai_cover_prompt_catalog_service.py:91[0m: [34m[1mAI 封面 HTTP 404: https://hongyang02.oss-cn-hangzhou.aliyuncs.com/image/AI-cover/%E6%8F%90%E7%A4%BA%E8%AF%8D%E5%8D%81.webp?x-oss-signature-version=OSS4-HMAC-SHA256&x-oss-date=202[0m
+[32m11-21 10:51:54[0m [34m[1mDEBUG[0m [36mai_cover_prompt_catalog_service.py:91[0m: [34m[1mAI 封面 HTTP 404: https://hongyang02.oss-cn-hangzhou.aliyuncs.com/image/AI-cover/p9.jpg?x-oss-signature-version=OSS4-HMAC-SHA256&x-oss-date=20261121T025154Z&x-oss-expires=86399&x[0m
+[32m11-21 10:51:54[0m [34m[1mDEBUG[0m [36mai_cover_prompt_catalog_service.py:91[0m: [34m[1mAI 封面 HTTP 404: https://hongyang02.oss-cn-hangzhou.aliyuncs.com/image/AI-cover/p14.webp?x-oss-signature-version=OSS4-HMAC-SHA256&x-oss-date=20261121T025154Z&x-oss-expires=86399[0m
+[32m11-21 10:51:54[0m [34m[1mDEBUG[0m [36mai_cover_prompt_catalog_service.py:91[0m: [34m[1mAI 封面 HTTP 403: https://hongyang02.oss-cn-hangzhou.aliyuncs.com/image/AI-cover/p8.png[0m
+[32m11-21 10:51:54[0m [34m[1mDEBUG[0m [36mai_cover_prompt_catalog_service.py:91[0m: [34m[1mAI 封面 HTTP 403: https://hongyang02.oss-cn-hangzhou.aliyuncs.com/image/AI-cover/提示词十一.jpg[0m
+[32m11-21 10:51:54[0m [34m[1mDEBUG[0m [36mai_cover_prompt_catalog_service.py:91[0m: [34m[1mAI 封面 HTTP 403: https://hongyang02.oss-cn-hangzhou.aliyuncs.com/image/AI-cover/提示词十.webp[0m
+[32m11-21 10:51:54[0m [34m[1mDEBUG[0m [36mai_cover_prompt_catalog_service.py:91[0m: [34m[1mAI 封面 HTTP 404: https://hongyang02.oss-cn-hangzhou.aliyuncs.com/image/AI-cover/p8.jpg?x-oss-signature-version=OSS4-HMAC-SHA256&x-oss-date=20261121T025154Z&x-oss-expires=86399&x[0m
+[32m11-21 10:51:54[0m [34m[1mDEBUG[0m [36mai_cover_prompt_catalog_service.py:91[0m: [34m[1mAI 封面 HTTP 403: https://hongyang02.oss-cn-hangzhou.aliyuncs.com/image/AI-cover/p9.jpg[0m
+[32m11-21 10:51:54[0m [34m[1mDEBUG[0m [36mai_cover_prompt_catalog_service.py:91[0m: [34m[1mAI 封面 HTTP 403: https://hongyang02.oss-cn-hangzhou.aliyuncs.com/image/AI-cover/p14.webp[0m
+[32m11-21 10:51:54[0m [34m[1mDEBUG[0m [36mai_cover_prompt_catalog_service.py:91[0m: [34m[1mAI 封面 HTTP 404: https://hongyang02.oss-cn-hangzhou.aliyuncs.com/image/AI-cover/%E6%8F%90%E7%A4%BA%E8%AF%8D%E5%8D%81%E4%B8%80.webp?x-oss-signature-version=OSS4-HMAC-SHA256&x-oss[0m
+[32m11-21 10:51:54[0m [34m[1mDEBUG[0m [36mai_cover_prompt_catalog_service.py:91[0m: [34m[1mAI 封面 HTTP 404: https://hongyang02.oss-cn-hangzhou.aliyuncs.com/image/AI-cover/p10.png?x-oss-signature-version=OSS4-HMAC-SHA256&x-oss-date=20261121T025154Z&x-oss-expires=86399&[0m
+[32m11-21 10:51:54[0m [34m[1mDEBUG[0m [36mai_cover_prompt_catalog_service.py:91[0m: [34m[1mAI 封面 HTTP 404: https://hongyang02.oss-cn-hangzhou.aliyuncs.com/image/AI-cover/p9.webp?x-oss-signature-version=OSS4-HMAC-SHA256&x-oss-date=20261121T025154Z&x-oss-expires=86399&[0m
+[32m11-21 10:51:54[0m [34m[1mDEBUG[0m [36mai_cover_prompt_catalog_service.py:91[0m: [34m[1mAI 封面 HTTP 403: https://hongyang02.oss-cn-hangzhou.aliyuncs.com/image/AI-cover/p8.jpg[0m
+[32m11-21 10:51:54[0m [34m[1mDEBUG[0m [36mai_cover_prompt_catalog_service.py:91[0m: [34m[1mAI 封面 HTTP 403: https://hongyang02.oss-cn-hangzhou.aliyuncs.com/image/AI-cover/提示词十一.webp[0m
+[32m11-21 10:51:54[0m [34m[1mDEBUG[0m [36mai_cover_prompt_catalog_service.py:91[0m: [34m[1mAI 封面 HTTP 403: https://hongyang02.oss-cn-hangzhou.aliyuncs.com/image/AI-cover/p9.webp[0m
+[32m11-21 10:51:54[0m [34m[1mDEBUG[0m [36mai_cover_prompt_catalog_service.py:91[0m: [34m[1mAI 封面 HTTP 403: https://hongyang02.oss-cn-hangzhou.aliyuncs.com/image/AI-cover/p10.png[0m
+[32m11-21 10:51:54[0m [34m[1mDEBUG[0m [36mai_cover_prompt_catalog_service.py:91[0m: [34m[1mAI 封面 HTTP 404: https://hongyang02.oss-cn-hangzhou.aliyuncs.com/image/AI-cover/p8.webp?x-oss-signature-version=OSS4-HMAC-SHA256&x-oss-date=20261121T025154Z&x-oss-expires=86399&[0m
+11-21 10:51:54 INFO: 220.168.34.198:44896 - "GET /api/content/covers/ai-cover-prompts/p14/preview.png?content_type_code=CT06&content_type_name=%E5%B7%A5%E8%89%BA%E6%96%BD%E5%B7%A5%E5%B1%95%E7%A4%BA HTTP/1.1" 200 - 2865ms
+[32m11-21 10:51:54[0m [34m[1mDEBUG[0m [36mai_cover_prompt_catalog_service.py:91[0m: [34m[1mAI 封面 HTTP 404: https://hongyang02.oss-cn-hangzhou.aliyuncs.com/image/AI-cover/p11.png?x-oss-signature-version=OSS4-HMAC-SHA256&x-oss-date=20261121T025154Z&x-oss-expires=86399&[0m
+[32m11-21 10:51:55[0m [34m[1mDEBUG[0m [36mai_cover_prompt_catalog_service.py:91[0m: [34m[1mAI 封面 HTTP 404: https://hongyang02.oss-cn-hangzhou.aliyuncs.com/image/AI-cover/p10.jpg?x-oss-signature-version=OSS4-HMAC-SHA256&x-oss-date=20261121T025154Z&x-oss-expires=86399&[0m
+[32m11-21 10:51:55[0m [34m[1mDEBUG[0m [36mai_cover_prompt_catalog_service.py:91[0m: [34m[1mAI 封面 HTTP 403: https://hongyang02.oss-cn-hangzhou.aliyuncs.com/image/AI-cover/p8.webp[0m
+11-21 10:51:55 INFO: 220.168.34.198:55336 - "GET /api/content/covers/ai-cover-prompts/p9/preview.png?content_type_code=CT06&content_type_name=%E5%B7%A5%E8%89%BA%E6%96%BD%E5%B7%A5%E5%B1%95%E7%A4%BA HTTP/1.1" 200 - 2727ms
+[32m11-21 10:51:55[0m [34m[1mDEBUG[0m [36mai_cover_prompt_catalog_service.py:91[0m: [34m[1mAI 封面 HTTP 403: https://hongyang02.oss-cn-hangzhou.aliyuncs.com/image/AI-cover/p11.png[0m
+11-21 10:51:55 INFO: 127.0.0.1:49722 - "GET /api/system/health HTTP/1.1" 200 - 0ms
+[32m11-21 10:51:55[0m [34m[1mDEBUG[0m [36mai_cover_prompt_catalog_service.py:91[0m: [34m[1mAI 封面 HTTP 403: https://hongyang02.oss-cn-hangzhou.aliyuncs.com/image/AI-cover/p10.jpg[0m
+[32m11-21 10:51:55[0m [34m[1mDEBUG[0m [36mai_cover_prompt_catalog_service.py:91[0m: [34m[1mAI 封面 HTTP 404: https://hongyang02.oss-cn-hangzhou.aliyuncs.com/image/AI-cover/p11.jpg?x-oss-signature-version=OSS4-HMAC-SHA256&x-oss-date=20261121T025155Z&x-oss-expires=86399&[0m
+[32m11-21 10:51:55[0m [34m[1mDEBUG[0m [36mai_cover_prompt_catalog_service.py:91[0m: [34m[1mAI 封面 HTTP 404: https://hongyang02.oss-cn-hangzhou.aliyuncs.com/image/AI-cover/p10.webp?x-oss-signature-version=OSS4-HMAC-SHA256&x-oss-date=20261121T025155Z&x-oss-expires=86399[0m
+11-21 10:51:55 INFO: 220.168.34.198:44888 - "GET /api/content/covers/ai-cover-prompts/p8/preview.png?content_type_code=CT06&content_type_name=%E5%B7%A5%E8%89%BA%E6%96%BD%E5%B7%A5%E5%B1%95%E7%A4%BA HTTP/1.1" 200 - 3967ms
+[32m11-21 10:51:55[0m [34m[1mDEBUG[0m [36mai_cover_prompt_catalog_service.py:91[0m: [34m[1mAI 封面 HTTP 403: https://hongyang02.oss-cn-hangzhou.aliyuncs.com/image/AI-cover/p10.webp[0m
+[32m11-21 10:51:55[0m [34m[1mDEBUG[0m [36mai_cover_prompt_catalog_service.py:91[0m: [34m[1mAI 封面 HTTP 403: https://hongyang02.oss-cn-hangzhou.aliyuncs.com/image/AI-cover/p11.jpg[0m
+[32m11-21 10:51:55[0m [34m[1mDEBUG[0m [36mai_cover_prompt_catalog_service.py:91[0m: [34m[1mAI 封面 HTTP 404: https://hongyang02.oss-cn-hangzhou.aliyuncs.com/image/AI-cover/p11.webp?x-oss-signature-version=OSS4-HMAC-SHA256&x-oss-date=20261121T025155Z&x-oss-expires=86399[0m
+11-21 10:51:55 INFO: 220.168.34.198:55346 - "GET /api/content/covers/ai-cover-prompts/p10/preview.png?content_type_code=CT06&content_type_name=%E5%B7%A5%E8%89%BA%E6%96%BD%E5%B7%A5%E5%B1%95%E7%A4%BA HTTP/1.1" 200 - 2783ms
+11-21 10:51:56 INFO: 220.168.34.198:55358 - "PUT /api/content/tasks/ct_f19c6636bc24454a8464a08d341fd5e9/brief HTTP/1.1" 200 - 20ms
+[32m11-21 10:51:56[0m [34m[1mDEBUG[0m [36mai_cover_prompt_catalog_service.py:91[0m: [34m[1mAI 封面 HTTP 403: https://hongyang02.oss-cn-hangzhou.aliyuncs.com/image/AI-cover/p11.webp[0m
+11-21 10:51:56 INFO: 220.168.34.198:55360 - "GET /api/material-library/items?material_type=cover_template&page=1&page_size=100&sort=newest HTTP/1.1" 200 - 28ms
+11-21 10:51:56 INFO: 220.168.34.198:55364 - "GET /api/content/tasks?page=1&page_size=100 HTTP/1.1" 200 - 185ms
+11-21 10:51:56 INFO: 220.168.34.198:55366 - "PUT /api/content/tasks/ct_f19c6636bc24454a8464a08d341fd5e9/brief HTTP/1.1" 200 - 40ms
+11-21 10:51:56 INFO: 220.168.34.198:55352 - "GET /api/content/covers/ai-cover-prompts/p11/preview.png?content_type_code=CT06&content_type_name=%E5%B7%A5%E8%89%BA%E6%96%BD%E5%B7%A5%E5%B1%95%E7%A4%BA HTTP/1.1" 200 - 2915ms
+11-21 10:52:00 INFO: 220.168.34.198:55370 - "GET /api/material-library/items?material_type=image&category=mlc_920ec565e2024ea0a4cd3ce6772b00bf&status=enabled&page=1&page_size=100&sort=newest&exclude_task_id=ct_f19c6636bc24454a8464a08d341fd5e9 HTTP/1.1" 200 - 170ms
+11-21 10:52:03 INFO: 220.168.34.198:54210 - "GET /api/material-library/items?material_type=cover_template&page=1&page_size=100&sort=newest HTTP/1.1" 200 - 17ms
+11-21 10:52:13 INFO: 220.168.34.198:57818 - "GET /api/material-library/items?material_type=cover_template&page=1&page_size=100&sort=newest HTTP/1.1" 200 - 15ms
+11-21 10:52:14 INFO: 220.168.34.198:57830 - "GET /api/material-library/items/mli_f36d547ddf164543bf00b031aee47e4e/file HTTP/1.1" 200 - 197ms
+[32m11-21 10:52:14[0m [1mINFO[0m [36mclient.py:339[0m: [1m成功从 OSS 下载 'image/material-library/mp_52903ebc22d445de8/images/cca_0e813eee779a44c6ace433f7833bce40/image.webp' (image)[0m
+11-21 10:52:15 INFO: 220.168.34.198:57836 - "PUT /api/content/tasks/ct_f19c6636bc24454a8464a08d341fd5e9/brief HTTP/1.1" 200 - 26ms
+11-21 10:52:15 INFO: 220.168.34.198:57852 - "GET /api/content/tasks?page=1&page_size=100 HTTP/1.1" 200 - 194ms
+11-21 10:52:18 INFO: 220.168.34.198:57864 - "PUT /api/content/tasks/ct_f19c6636bc24454a8464a08d341fd5e9/brief HTTP/1.1" 200 - 22ms
+11-21 10:52:18 INFO: 220.168.34.198:57868 - "GET /api/content/tasks?page=1&page_size=100 HTTP/1.1" 200 - 185ms
+11-21 10:52:18 INFO: 220.168.34.198:57876 - "POST /api/content/tasks/ct_f19c6636bc24454a8464a08d341fd5e9/direct-generate HTTP/1.1" 200 - 157ms
+11-21 10:52:18 INFO: 220.168.34.198:57878 - "GET /api/content/runs/dd759cd6-6b84-40fe-a099-3af18725934c/events?after_seq=0-0 HTTP/1.1" 200 - 3ms
+11-21 10:52:25 INFO: 127.0.0.1:37418 - "GET /api/system/health HTTP/1.1" 200 - 0ms

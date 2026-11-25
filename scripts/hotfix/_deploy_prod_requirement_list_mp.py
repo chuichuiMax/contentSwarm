@@ -12,6 +12,7 @@ REPO = Path(__file__).resolve().parents[2]
 HOST = "172.16.103.17"
 BASE = "/opt/contentSwarm"
 FILES = (
+    "backend/package/yuxi/services/mp_service.py",
     "backend/package/yuxi/services/requirement_list_service.py",
     "backend/package/yuxi/utils/line_breaks.py",
     "backend/server/routers/mp_router.py",
@@ -88,7 +89,8 @@ def main() -> int:
         "spec=urllib.request.urlopen('http://127.0.0.1:5050/openapi.json', timeout=10).read().decode(); "
         "print('mp_public', '/api/mp/requirement-lists/public' in spec); "
         "        print('pc_public', '/api/requirement-lists/public' in spec); "
-        "print('visitor_session', '/api/mp/requirement-lists/visitor-sessions' in spec)\""
+        "print('visitor_session', '/api/mp/requirement-lists/visitor-sessions' in spec); "
+        "print('me_work_code', '/api/mp/me/work-code' in spec)\""
     )
     print(run(c, verify, timeout=60))
 

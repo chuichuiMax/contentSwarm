@@ -669,7 +669,7 @@ async def _create_direct_cover_job(run, output) -> dict:
                 }
             )
             task_row = await ContentRepository(db).get_task_for_user(run.thread_id, user)
-            content_type_code = task_row.content_type_code if task_row else ""
+            content_type_code = str((task_row.content_type_code if task_row else "") or "")
             content_type_name = str(
                 content_brief.get("typeName") or content_brief.get("content_type_name") or ""
             )

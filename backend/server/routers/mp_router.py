@@ -20,6 +20,7 @@ from yuxi.services.employee_service import resolve_employee_for_user
 from yuxi.services.requirement_list_service import (
     MpSharedSubmissionCreate,
     RequirementVisitorSessionCreate,
+    ShareMembersPayload,
     SubmissionCreate,
     create_mp_shared_submission,
     create_requirement_visitor_session,
@@ -27,6 +28,8 @@ from yuxi.services.requirement_list_service import (
     create_submission,
     get_submission,
     list_mp_submissions,
+    list_share_employees,
+    share_submission,
 )
 from yuxi.storage.postgres.models_content import RequirementListSubmission
 from yuxi.services.mp_service import (
@@ -54,6 +57,7 @@ from yuxi.services.mp_service import (
     get_artifact,
     get_form_schema,
     get_me,
+    get_me_work_code,
     get_pricing,
     get_run,
     poll_mp_run_events,
@@ -140,6 +144,11 @@ async def mp_logout(_ctx: MpContext = Depends(get_mp_context)):
 @mp.get("/me")
 async def mp_get_me(ctx: MpContext = Depends(get_mp_context)):
     return await get_me(ctx)
+
+
+@mp.get("/me/work-code")
+async def mp_get_me_work_code(ctx: MpContext = Depends(get_mp_context)):
+    return await get_me_work_code(ctx)
 
 
 @mp.get("/auth/profile")
@@ -584,6 +593,25 @@ async def mp_delete_content(
     return await delete_content(db, ctx, task_id)
 
 
+@mp.get("/requirement-lists/share-employees")
+async def mp_requirement_list_share_employees(
+    keyword: str = Query(default="", max_length=64),
+    _ctx: MpContext = Depends(get_mp_context),
+    db: AsyncSession = Depends(get_db),
+):
+    return await list_share_employees(db, keyword=keyword)
+
+
+@mp.post("/requirement-lists/{submission_id}/share")
+async def mp_requirement_list_share(
+    submission_id: str,
+    payload: ShareMembersPayload,
+    ctx: MpContext = Depends(get_mp_context),
+    db: AsyncSession = Depends(get_db),
+):
+    return await share_submission(db, ctx.user, submission_id, payload)
+
+
 @mp.get("/requirement-lists")
 async def mp_requirement_lists(
     page: int = Query(default=1, ge=1),
@@ -626,11 +654,4 @@ async def mp_requirement_list_detail(
     ctx: MpContext = Depends(get_mp_context),
     db: AsyncSession = Depends(get_db),
 ):
-    owned = await db.get(RequirementListSubmission, submission_id)
-    if owned is None:
-        raise HTTPException(status_code=404, detail="需求清单不存在")
-    if owned.created_by != str(ctx.user.uid):
-        employee = await resolve_employee_for_user(db, ctx.user)
-        if not employee or owned.employee_code != employee.employee_code:
-            raise HTTPException(status_code=404, detail="需求清单不存在")
-    return await get_submission(db, submission_id)
+    return await get_submission(db, submission_id, ctx.user)

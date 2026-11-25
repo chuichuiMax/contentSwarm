@@ -1,0 +1,19 @@
+PUT ai_cover_prompt.py
+PUT content_direct_worker.py
+PUT visual_template_fields.py
+PUT test_cover_generation.py
+SYNC api-dev:/app/package/yuxi/content_cover/ai_cover_prompt.py ''
+SYNC worker-dev:/app/package/yuxi/content_cover/ai_cover_prompt.py ''
+SYNC api-dev:/app/package/yuxi/services/content_direct_worker.py ''
+SYNC worker-dev:/app/package/yuxi/services/content_direct_worker.py ''
+SYNC api-dev:/app/package/yuxi/content/control/visual_template_fields.py ''
+SYNC worker-dev:/app/package/yuxi/content/control/visual_template_fields.py ''
+SYNC api-dev:/app/test/unit/content/test_cover_generation.py ''
+SYNC worker-dev:/app/test/unit/content/test_cover_generation.py ''
+===check===
+OK_NONE_STRIP
+[32m11-21 10:56:10[0m [1mINFO[0m [36mapp.py:79[0m: [1mLoading config from saves/config/base.toml[0m
+
+===pytest===
+error: Failed to spawn: `pytest`
+  Caused by: No such file or directory (os error 2)

@@ -158,6 +158,40 @@ def test_resolve_hycanvas_template_fields_accepts_chinese_service_years_role():
     assert fields == {"years": "15年"}
 
 
+def test_resolve_hycanvas_template_fields_shortens_long_process_type_for_cover_badge():
+    fields = resolve_hycanvas_template_fields(
+        [
+            {
+                "kind": "text",
+                "key": "field_1",
+                "label": "防臭防堵",
+                "semanticRole": "process_type",
+                "constraints": {},
+            }
+        ],
+        visual_text=["水电这步没查，入住就等着砸墙😩", "管线要分色，接线盒要做标记"],
+        brief={"business_variables": {"工艺类型": "水电施工与隐蔽验收"}},
+    )
+    assert fields["field_1"] == "水电施工"
+
+
+def test_resolve_hycanvas_template_fields_respects_process_type_max_chars():
+    fields = resolve_hycanvas_template_fields(
+        [
+            {
+                "kind": "text",
+                "key": "field_1",
+                "label": "工艺",
+                "semanticRole": "process_type",
+                "constraints": {"maxChars": 4},
+            }
+        ],
+        visual_text=["标题", "副标题"],
+        brief={"business_variables": {"工艺类型": "油漆施工验收"}},
+    )
+    assert fields["field_1"] == "油漆施工"
+
+
 def test_resolve_hycanvas_template_fields_covers_fact_roles_from_business_variables():
     brief = {
         "brand": {"name": "鸿扬家装"},

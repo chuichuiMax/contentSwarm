@@ -59,6 +59,11 @@ async def test_mp_sms_login_me_schema_and_pc_token_isolation(test_client, admin_
         me = await test_client.get("/api/mp/me", headers=mp_headers)
         assert me.status_code == 200, me.text
         assert me.json()["employee"]["login_account"] == phone
+        assert me.json()["employee"].get("employee_code")
+
+        work_code = await test_client.get("/api/mp/me/work-code", headers=mp_headers)
+        assert work_code.status_code == 200, work_code.text
+        assert work_code.json()["employee_code"] == me.json()["employee"]["employee_code"]
 
         patched = await test_client.patch("/api/mp/me", headers=mp_headers, json={"bio": "整装顾问"})
         assert patched.status_code == 200, patched.text

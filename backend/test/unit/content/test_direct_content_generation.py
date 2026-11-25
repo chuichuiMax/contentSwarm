@@ -82,7 +82,8 @@ async def test_direct_generation_uses_only_requested_inputs(monkeypatch):
     assert prompt.index("用户生成提示词") < prompt.index("业务数据只用来核对事实")
     assert '"serialNo":"002"' in prompt
     assert "反差价值型" not in prompt
-    assert "爆款正文" not in prompt
+    assert "参考爆款结构" in prompt
+    assert "爆款正文" in prompt
     assert "发布标签由系统从对应知识库补齐" in prompt
     assert "正文末尾必须有引流收尾" in prompt
     assert "最后只写一句" in prompt
@@ -146,7 +147,76 @@ async def test_direct_generation_omits_empty_creative_style(monkeypatch):
 
     prompt = calls[0][0].content
     assert "创作风格：" not in prompt
-    assert "爆款正文" not in prompt
+    assert "参考爆款结构" in prompt
+
+
+@pytest.mark.unit
+def test_craft_body_too_short_detects_hook_only():
+    assert generation.direct_body_too_short("安乡的朋友，你家吊顶注意到了吗？👀")
+    long_body = "第一段做法。\n\n第二段验收。\n\n第三段避坑。\n\n收藏对照。"
+    assert not generation.direct_body_too_short(long_body)
+    multiline = "第一段做法。\n第二段验收。\n第三段避坑。\n收藏对照留言工艺。"
+    assert not generation.direct_body_too_short(multiline)
+
+
+@pytest.mark.unit
+def test_viral_structure_block_empty_without_body():
+    assert generation.viral_structure_block({}) == ""
+    assert generation.viral_structure_block({"title": "t"}) == ""
+
+
+@pytest.mark.unit
+def test_body_rejects_foreign_locality_for_changsha_task():
+    user_request = (
+        '{"businessVariables":{"所在区域":"长沙","楼盘信息":"新芙蓉之都"},'
+        '"facts":{"location":"长沙 · 新芙蓉之都","case_background":"新芙蓉之都"}}'
+    )
+    assert generation.body_has_unauthorized_locality("这套房子在浦东", user_request)
+    assert not generation.body_has_unauthorized_locality("长沙新芙蓉之都三代同堂", user_request)
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_craft_short_body_expands_or_fails(monkeypatch):
+    calls = []
+
+    class FakeModel:
+        def bind_tools(self, schemas, **kwargs):
+            return self
+
+        async def ainvoke(self, messages):
+            calls.append(messages)
+            if len(calls) == 1:
+                return _tool_response(
+                    {
+                        "title": "工艺标题🔥",
+                        "body": "安乡拆改期一句钩子？👀",
+                        "topics": [],
+                    }
+                )
+            return AIMessage(
+                content=(
+                    "工艺标题✨\n\n"
+                    "拆改阶段吊顶要先把造型线和起拱尺寸在墙上标出来，师傅进场才不会凭感觉下刀。\n\n"
+                    "我会用水平仪和对角线量一遍，接缝和弧度都要先验收再过下一道工序。\n\n"
+                    "避坑别急着上石膏板，基层没找平后期裂缝很难补。\n\n"
+                    "收藏这篇，进场时可以留言工艺对照。"
+                )
+            )
+
+    monkeypatch.setattr(generation, "resolve_chat_model_spec", lambda value: value or "default")
+    monkeypatch.setattr(generation, "choose_sampling", lambda: {"temperature": 1, "top_p": 1})
+    monkeypatch.setattr(generation, "load_chat_model", lambda **kwargs: FakeModel())
+
+    result = await generation.generate_direct_content(
+        model_spec=None,
+        creative_style={},
+        viral_source={"title": "", "body": ""},
+        user_request='{"contentType":{"typeName":"工艺施工展示","contentTypeCode":"CT06"}}',
+        generation_prompt="写一篇工艺展示",
+    )
+    assert len(calls) >= 2
+    assert not generation.craft_body_too_short(result.body)
 
 
 @pytest.mark.unit
@@ -1138,13 +1208,13 @@ def test_case_share_topics_skip_empty_style_and_region():
     assert topics == ["装修", "装修案例"]
 
 
-def test_case_share_topics_use_image_style_and_manual_region():
+def test_case_share_topics_prefer_form_style_and_format_region():
     topics = generation.case_share_topics(
         ["#现代", "客餐厅线性灯"],
         '{"businessVariables":{"所在区域":"长沙市","设计风格":"原木"}}',
         image_attached=True,
     )
-    assert topics == ["现代", "长沙", "装修", "装修案例"]
+    assert topics == ["原木风", "长沙装修", "装修", "装修案例"]
 
 
 def test_case_share_topics_skip_detail_tags_and_fallback_to_form_style():
@@ -1153,7 +1223,25 @@ def test_case_share_topics_skip_detail_tags_and_fallback_to_form_style():
         '{"businessVariables":{"所在区域":"长沙市","设计风格":"原木"}}',
         image_attached=True,
     )
-    assert topics == ["原木", "长沙", "装修", "装修案例"]
+    assert topics == ["原木风", "长沙装修", "装修", "装修案例"]
+
+
+def test_case_share_topics_format_modern_and_city_tags():
+    topics = generation.case_share_topics(
+        ["#现代"],
+        '{"businessVariables":{"所在区域":"长沙","设计风格":""}}',
+        image_attached=True,
+    )
+    assert topics == ["现代风", "长沙装修", "装修", "装修案例"]
+
+
+def test_case_share_topics_keep_existing_style_suffix():
+    topics = generation.case_share_topics(
+        [],
+        '{"businessVariables":{"所在区域":"长沙市","设计风格":"江南印象"}}',
+        image_attached=False,
+    )
+    assert topics == ["江南印象", "长沙装修", "装修", "装修案例"]
 
 
 def test_case_share_topics_use_selected_style_without_image():
@@ -1162,7 +1250,7 @@ def test_case_share_topics_use_selected_style_without_image():
         '{"businessVariables":{"设计风格":"法式"}}',
         image_attached=False,
     )
-    assert topics == ["法式", "装修", "装修案例"]
+    assert topics == ["法式风", "装修", "装修案例"]
 
 
 @pytest.mark.unit
@@ -1348,4 +1436,4 @@ async def test_case_share_generation_keeps_only_style_region_and_fixed_tags(monk
     assert "不要逐件描写构件拼法、灯具数量、桌面触感" in prompt
     assert "图片只用来感受空间氛围和整体风格" in prompt
     assert "话题必须包含装修避坑" not in prompt
-    assert result.topics == ["现代", "长沙", "装修", "装修案例"]
+    assert result.topics == ["现代风", "长沙装修", "装修", "装修案例"]

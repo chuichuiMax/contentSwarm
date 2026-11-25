@@ -1,0 +1,13 @@
+===api src===
+574:    code = str(content_type_code or "").strip().upper()
+
+===worker src===
+574:    code = str(content_type_code or "").strip().upper()
+
+===check===
+OK
+[32m11-21 10:56:51[0m [1mINFO[0m [36mapp.py:79[0m: [1mLoading config from saves/config/base.toml[0m
+
+===pytest===
+error: Failed to spawn: `pytest`
+  Caused by: No such file or directory (os error 2)

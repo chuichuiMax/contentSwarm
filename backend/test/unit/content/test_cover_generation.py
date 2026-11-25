@@ -992,6 +992,12 @@ def test_ai_cover_eligible_variants_includes_p12_for_case_share():
     assert "p12" in pool_by_name
 
 
+def test_ai_cover_eligible_variants_tolerates_none_content_type():
+    pool = ai_cover_eligible_variants(content_type_code=None, content_type_name=None)
+    assert "p12" not in pool
+    assert pool == ai_cover_eligible_variants(content_type_code="", content_type_name="")
+
+
 def test_select_ai_cover_prompt_p12_uses_site_header_prompt(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(
         "yuxi.content_cover.ai_cover_prompt.random.choice",

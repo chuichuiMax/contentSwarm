@@ -571,8 +571,8 @@ def ai_cover_suppresses_post_title_overlay(variant: str) -> bool:
 
 
 def is_case_share_content_type(*, content_type_code: str = "", content_type_name: str = "") -> bool:
-    code = content_type_code.strip().upper()
-    name = content_type_name.strip()
+    code = str(content_type_code or "").strip().upper()
+    name = str(content_type_name or "").strip()
     return code in AI_COVER_CASE_SHARE_TYPE_CODES or name in AI_COVER_CASE_SHARE_TYPE_NAMES
 
 

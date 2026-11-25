@@ -1,0 +1,2 @@
+SELECT column_name FROM information_schema.columns WHERE table_name = 'requirement_list_submissions' AND column_name IN ('submitter_name');
+SELECT to_regclass('public.requirement_list_submission_shares') AS shares_table;

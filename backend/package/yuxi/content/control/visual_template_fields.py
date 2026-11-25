@@ -355,6 +355,28 @@ def _fit_cover_text(value: str, max_chars: int | None) -> str:
     return text
 
 
+# 工艺角标模板槽位通常按 4～6 字设计；长句会把字号压得很小，同一模板看起来字体不一致。
+_PROCESS_TYPE_COVER_MAX = 6
+_PROCESS_TYPE_SPLIT = re.compile(r"[与和、/｜|]")
+
+
+def _shorten_cover_process_type(value: str, max_chars: int | None = None) -> str:
+    """封面工艺类型取短名，避免「水电施工与隐蔽验收」挤扁黄字角标。"""
+
+    text = re.sub(r"[\r\n]+", "", str(value or "")).strip()
+    if not text:
+        return ""
+    limit = max_chars if isinstance(max_chars, int) and max_chars > 0 else _PROCESS_TYPE_COVER_MAX
+    parts = [part.strip() for part in _PROCESS_TYPE_SPLIT.split(text) if part.strip()]
+    if len(parts) >= 2:
+        head = parts[0]
+        if 2 <= len(head) <= limit:
+            text = head
+    if len(text) > limit:
+        text = text[:limit]
+    return text
+
+
 def compile_cover_narrative_fields(
     *,
     declarations: list[dict[str, Any]],
@@ -467,16 +489,22 @@ def resolve_hycanvas_template_fields(
         role = _infer_template_field_role(declared_role, label)
         if role == "label":
             continue
-        value = _value_from_semantic_role(
-            role,
-            sources=sources,
-            brief=brief,
-            template_fields=template_fields,
-            field_key=field_key,
-            label=label,
+        value = str(
+            _value_from_semantic_role(
+                role,
+                sources=sources,
+                brief=brief,
+                template_fields=template_fields,
+                field_key=field_key,
+                label=label,
+            )
+            or ""
         ).strip()
         if not value:
-            value = _value_from_field_label(label, brief=brief, sources=sources).strip()
+            value = str(_value_from_field_label(label, brief=brief, sources=sources) or "").strip()
+        constraints = field.get("constraints") or {}
+        max_chars = constraints.get("maxChars")
+        max_chars = int(max_chars) if isinstance(max_chars, int) and max_chars > 0 else None
         if role == "project_area":
             match = re.search(r"\d+(?:\.\d+)?", value)
             value = match.group(0) if match else ""
@@ -487,7 +515,8 @@ def resolve_hycanvas_template_fields(
             value = match.group(0) if match else ""
         elif role == "service_years" and value and "年" not in value:
             value = f"{value}年"
-        constraints = field.get("constraints") or {}
+        elif role == "process_type":
+            value = _shorten_cover_process_type(value, max_chars)
         if constraints.get("required") and not value:
             if role in _FACT_ROLES:
                 continue
@@ -498,6 +527,8 @@ def resolve_hycanvas_template_fields(
             )
         if role in _FACT_ROLES or role in _NARRATIVE_ROLES:
             value = re.sub(r"[\r\n]+", "", value)
+        if role != "process_type" and max_chars and value:
+            value = value[:max_chars]
         if not value and role in _FACT_ROLES and not constraints.get("required"):
             continue
         fields[field_key] = value

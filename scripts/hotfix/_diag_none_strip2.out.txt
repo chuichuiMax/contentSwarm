@@ -1,0 +1,6 @@
+RUNS 0
+
+====LOGS====
+NO_NoneType_IN_30m
+---
+NO_AttributeError

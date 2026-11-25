@@ -8,6 +8,7 @@ from pydantic import ValidationError
 from yuxi.services.requirement_list_service import (
     MpSharedSubmissionCreate,
     SubmissionCreate,
+    _guest_submitter_label,
     SubmissionFilters,
     _can_manage,
     _filtered,
@@ -27,7 +28,7 @@ def test_mask_phone_keeps_prefix_and_suffix():
 
 
 def test_display_stamp_uses_shanghai_time():
-    assert display_stamp(datetime(2026, 10, 15, 6, 11)) == "20261015 14:11"
+    assert display_stamp(datetime(2026, 10, 15, 6, 11)) == "2026-10-15 14:11"
 
 
 def test_today_range_covers_one_shanghai_day(monkeypatch):
@@ -58,6 +59,11 @@ def test_submission_create_requires_one_customer_field():
 def test_submission_answers_reject_oversized_payload():
     with pytest.raises(ValidationError):
         SubmissionCreate(requirement_type="毛坯房", customer_name="刘洋", answers={"note": "x" * 20001})
+
+
+def test_guest_submitter_label_joins_nickname_and_phone():
+    assert _guest_submitter_label(" 微信用户 ", "13812344221") == "微信用户 · 13812344221"
+    assert _guest_submitter_label("", "13812344221") == "13812344221"
 
 
 def test_mp_shared_submission_requires_wechat_fields():
@@ -137,3 +143,15 @@ def test_visible_query_limits_non_superadmin():
     assert "created_by = 'user-1'" in scoped
     assert "requirement_list_submission_shares" in scoped
     assert "created_by =" not in open_query
+
+
+def test_visible_query_includes_staff_code_records():
+    from types import SimpleNamespace
+
+    user = SimpleNamespace(role="user", uid="user-1")
+    scoped = str(
+        _visible(_filtered(SubmissionFilters()), user, employee_code="H04454").compile(
+            compile_kwargs={"literal_binds": True}
+        )
+    )
+    assert "employee_code = 'H04454'" in scoped

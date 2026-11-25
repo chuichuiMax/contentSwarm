@@ -1,0 +1,82 @@
+TABLES ['agents', 'content_viral_article_versions', 'content_viral_file_jobs', 'content_cover_image2_settings', 'content_material_categories', 'content_analytics_events', 'content_accounts', 'content_roles', 'content_variables', 'content_business_variables', 'content_process_standards', 'content_target_audiences', 'content_resident_populations', 'content_types', 'content_covers', 'agent_runs', 'content_rule_versions', 'content_creation_methods', 'content_material_folder_settings', 'content_title_formulas', 'content_combination_rules', 'content_body_formulas', 'content_workflow_versions', 'content_industry_template_versions', 'content_type_definitions', 'content_formula_patterns', 'content_lexicon_packs', 'content_lexicon_versions', 'content_variable_definitions', 'content_industry_pack_versions', 'content_industry_variable_mappings', 'content_persona_profiles', 'content_persona_profile_versions', 'content_channel_profiles', 'content_channel_profile_versions', 'content_compliance_policy_versions', 'content_replacement_rules', 'content_material_share_items', 'content_material_shares', 'agent_envs', 'evaluation_runs', 'content_formula_slot_bindings', 'content_lexicon_entries', 'content_tasks', 'evaluation_run_items', 'content_ocr_results', 'content_media_evidence_items', 'content_evidence_items', 'content_evidence_bundle_versions', 'content_node_runs', 'content_cover_assets', 'content_artifacts', 'content_employees', 'content_mp_favorites', 'content_match_decision_snapshots', 'content_artifact_versions', 'content_material_library_items', 'content_material_usages', 'content_case_visit_leads', 'content_cover_poster_templates', 'content_cover_jobs', 'content_distribution_jobs', 'content_material_share_jobs', 'content_formula_selection_snapshots', 'content_cover_edit_projects', 'content_review_records', 'content_case_visit_submissions', 'content_distribution_results', 'content_material_audiences']
+COLS agent_runs ['id', 'thread_id', 'agent_id', 'uid', 'status', 'request_id', 'conversation_id', 'parent_run_id', 'parent_agent_run_id', 'run_type', 'resume_request_id', 'input_message_id', 'output_message_id', 'checkpoint_thread_id', 'last_event_id', 'input_payload', 'error_type', 'error_message', 'started_at', 'finished_at', 'created_at', 'updated_at']
+ROW agent_runs {"id": "dd759cd6-6b84-40fe-a099-3af18725934c", "thread_id": "ct_f19c6636bc24454a8464a08d341fd5e9", "status": "running", "error_type": null, "error_message": null, "created_at": "2026-11-21 02:52:18.283878", "updated_at": "2026-11-21 02:52:18.748320"}
+ROW agent_runs {"id": "e7063b75-a8ff-4717-9fe0-7e5d36d11e2d", "thread_id": "ct_a1963f3555c6423d8874da0ab35a2fb7", "status": "failed", "error_type": "AttributeError", "error_message": "'NoneType' object has no attribute 'strip'", "created_at": "2026-11-21 02:48:35.021322", "updated_at": "2026-11-21 02:48:38.454176"}
+ROW agent_runs {"id": "b233c2d8-13a7-484c-90ec-b2ce95a4996d", "thread_id": "ct_3c1e98e5f7d24f87b6a8b9e15a02be79", "status": "completed", "error_type": null, "error_message": null, "created_at": "2026-11-21 02:47:35.760350", "updated_at": "2026-11-21 02:47:45.131597"}
+ROW agent_runs {"id": "ae0de0eb-cd0b-42ed-b93d-de05f196fa81", "thread_id": "ct_07a79207ff734c8796d2828d2c61e316", "status": "completed", "error_type": null, "error_message": null, "created_at": "2026-11-21 02:46:34.289744", "updated_at": "2026-11-21 02:46:45.389298"}
+ROW agent_runs {"id": "f48305dd-2b95-47e1-b13d-63ce69061e56", "thread_id": "ct_e4cc304a402e4af487eed19e501e1473", "status": "completed", "error_type": null, "error_message": null, "created_at": "2026-11-21 02:44:35.174085", "updated_at": "2026-11-21 02:44:42.115118"}
+COLS evaluation_runs ['id', 'run_id', 'name', 'kb_id', 'dataset_id', 'status', 'retrieval_config', 'metrics', 'overall_score', 'total_items', 'completed_items', 'started_at', 'completed_at', 'created_by']
+COLS evaluation_run_items ['id', 'run_id', 'dataset_item_id', 'item_index', 'query_text', 'gold_chunk_ids', 'gold_answer', 'generated_answer', 'retrieved_chunks', 'metrics', 'created_at']
+COLS content_node_runs ['id', 'task_id', 'agent_run_id', 'node_id', 'node_type', 'status', 'attempt', 'delegated_agent_run_id', 'input_snapshot', 'output_snapshot', 'error_type', 'error_message', 'started_at', 'finished_at']
+ROW content_node_runs {"id": "cnr_ff985051979346c49d8cd4cf2840a5d5", "task_id": "ct_de6974190c2d4824ac818a08ad2ed706", "status": "failed", "error_type": "ContentApplicationError", "error_message": "生产包缺少公式词库 Hash"}
+ROW content_node_runs {"id": "cnr_ff870713d2f94968b645ed1f5a8b3a8f", "task_id": "ct_9f4aae3829724b3798706e1b6db8ad1a", "status": "completed", "error_type": null, "error_message": null}
+ROW content_node_runs {"id": "cnr_ff790a3de69f4caab00d47e4249d50e4", "task_id": "ct_657735f8034c4d039bd00a094f52424d", "status": "completed", "error_type": null, "error_message": null}
+ROW content_node_runs {"id": "cnr_ff58ef6d196f4c1981ec3b72e2bc2f2c", "task_id": "ct_55297a66b19a45739969222d6f6c91e2", "status": "failed", "error_type": "ContentApplicationError", "error_message": "生产包缺少公式词库 Hash"}
+ROW content_node_runs {"id": "cnr_ff58e985b6b6419bba95cc5690d9bde4", "task_id": "ct_fee4dec6bd7447e6a243b5b2cb48d29c", "status": "completed", "error_type": null, "error_message": null}
+TASK {"id": "ct_f19c6636bc24454a8464a08d341fd5e9", "status": "running", "name": "装修与家居 · 获客转化", "latest_run_id": "dd759cd6-6b84-40fe-a099-3af18725934c", "error_message": null}
+TASK_KEYS ['id', 'tenant_id', 'project_id', 'name', 'industry_template_version_id', 'workflow_version_id', 'workflow_definition_hash', 'rule_version_id', 'mode', 'content_goal', 'content_type_code', 'industry_pack_version_id', 'persona_profile_version_id', 'channel_profile_version_id', 'primary_narrative_axis', 'selected_angle_json', 'runtime_config_snapshot_json', 'selected_image_item_id', 'selected_poster_template_id', 'status', 'current_stage', 'brief_json', 'strategy_json', 'evidence_json', 'active_evidence_bundle_id', 'title_candidates_json', 'selected_title_json', 'review_json', 'latest_run_id', 'error_json', 'created_by', 'updated_by', 'created_at', 'updated_at', 'deleted_at']
+
+====LOGS====
+==== contentswarm-hycanvas-app-1 ====
+none
+==== web-dev ====
+none
+==== api-dev ====
+none
+==== worker-dev ====
+  File "[32m/app/package/yuxi/services/[0m[32m[1mcontent_direct_worker.py[0m", line [33m679[0m, in [35m_create_direct_cover_job[0m
+    [1mai_selection[0m [35m[1m=[0m [35m[1mawait[0m [1mcover_generation_selection[0m[1m([0m
+    [36m                     └ [0m[36m[1m<function cover_generation_selection at 0x70e05d7f0180>[0m
+
+  File "[32m/app/package/yuxi/services/[0m[32m[1mai_cover_template_service.py[0m", line [33m622[0m, in [35mcover_generation_selection[0m
+    [35m[1mawait[0m [1mvalidate_ai_cover_choice[0m[1m([0m
+    [36m      └ [0m[36m[1m<function validate_ai_cover_choice at 0x70e05d7cf920>[0m
+
+  File "[32m/app/package/yuxi/services/[0m[32m[1mai_cover_template_service.py[0m", line [33m321[0m, in [35mvalidate_ai_cover_choice[0m
+    [35m[1mfor[0m [1mvariant[0m [35m[1min[0m [1mai_cover_eligible_variants[0m[1m([0m
+    [36m               └ [0m[36m[1m<function ai_cover_eligible_variants at 0x70e05e8dd4e0>[0m
+
+  File "[32m/app/package/yuxi/content_cover/[0m[32m[1mai_cover_prompt.py[0m", line [33m584[0m, in [35mai_cover_eligible_variants[0m
+    [35m[1mif[0m [1mis_case_share_content_type[0m[1m([0m[1mcontent_type_code[0m[35m[1m=[0m[1mcontent_type_code[0m[1m,[0m [1mcontent_type_name[0m[35m[1m=[0m[1mcontent_type_name[0m[1m)[0m[1m:[0m
+    [36m   │                                            │                                    └ [0m[36m[1m''[0m
+    [36m   │                                            └ [0m[36m[1mNone[0m
+    [36m   └ [0m[36m[1m<function is_case_share_content_type at 0x70e05e8dd440>[0m
+
+  File "[32m/app/package/yuxi/content_cover/[0m[32m[1mai_cover_prompt.py[0m", line [33m574[0m, in [35mis_case_share_content_type[0m
+    [1mcode[0m [35m[1m=[0m [1mcontent_type_code[0m[35m[1m.[0m[1mstrip[0m[1m([0m[1m)[0m[35m[1m.[0m[1mupper[0m[1m([0m[1m)[0m
+    [36m       └ [0m[36m[1mNone[0m
+
+[31m[1mAttributeError[0m:[1m 'NoneType' object has no attribute 'strip'[0m
+10:48:38:   3.25s ← content-direct:e7063b75-a8ff-4717-9fe0-7e5d36d11e2d:process_direct_content_run ● 
+10:48:44: recording health: Nov-21 10:48:44 j_complete=55 j_failed=0 j_retried=0 j_ongoing=0 queued=1
+10:48:45:   1.00s → cron:dispatch_material_shares()
+10:48:45:   0.00s ← cron:dispatch_material_shares ● 
+10:48:59: recording health: Nov-21 10:48:59 j_complete=56 j_failed=0 j_retried=0 j_ongoing=0 queued=1
+10:49:00:   1.00s → cron:dispatch_material_shares()
+10:49:00:   0.00s ← cron:dispatch_material_shares ● 
+10:49:14: recording health: Nov-21 10:49:14 j_complete=57 j_failed=0 j_retried=0 j_ongoing=0 queued=1
+10:49:15:   1.00s → cron:dispatch_material_shares()
+10:49:15:   0.00s ← cron:dispatch_material_shares ● 
+10:49:29: recording health: Nov-21 10:49:29 j_complete=58 j_failed=0 j_retried=0 j_ongoing=0 queued=1
+10:49:30:   1.00s → cron:dispatch_material_shares()
+10:49:30:   0.00s ← cron:dispatch_material_shares ● 
+10:49:44: recording health: Nov-21 10:49:44 j_complete=59 j_failed=0 j_retried=0 j_ongoing=0 queued=1
+10:49:45:   1.00s → cron:dispatch_material_shares()
+10:49:45:   0.00s ← cron:dispatch_material_shares ● 
+10:49:59: recordi
+==== sandbox-provisioner ====
+none
+==== graph ====
+none
+==== milvus ====
+none
+==== postgres ====
+none
+==== contentswarm-hycanvas-db-1 ====
+none
+==== redis ====
+none
+==== minio ====
+none
+==== milvus-etcd-dev ====
+none

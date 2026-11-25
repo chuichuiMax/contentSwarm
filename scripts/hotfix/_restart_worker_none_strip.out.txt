@@ -1,0 +1,6 @@
+restart=worker-dev
+
+status=Up 8 seconds (health: starting)
+
+check=WORKER_OK
+[32m11-21 10:57:27[0m [1mINFO[0m [36mapp.py:79[0m: [1mLoading config from saves/config/base.toml[0m
